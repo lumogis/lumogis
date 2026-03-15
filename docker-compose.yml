@@ -1,0 +1,95 @@
+services:
+  orchestrator:
+    build: ./orchestrator
+    ports:
+    - "8000:8000"
+    env_file: .env
+    environment:
+      FILESYSTEM_ROOT: /data
+    volumes:
+      - ${FILESYSTEM_ROOT:-/tmp/lumogis-data}:/data:ro
+    depends_on:
+      - qdrant
+      - postgres
+      - falkordb
+    # internal only, no host port
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-lumogis}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lumogis-dev}
+      POSTGRES_DB: ${POSTGRES_DB:-lumogis}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    # internal only, no host port
+
+  falkordb:
+    image: falkordb/falkordb:latest
+    volumes:
+      - falkordb_data:/data
+    # internal only, no host port
+
+  mongodb:
+    image: mongo:7
+    volumes:
+      - mongodb_data:/data/db
+    # internal only, no exposed ports
+
+  librechat:
+    image: ghcr.io/danny-avila/librechat:latest
+    ports:
+      - "3080:3080"
+    env_file: .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3080
+      MONGO_URI: ${MONGO_URI}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+    volumes:
+      - ./config/librechat.yaml:/app/librechat.yaml:ro
+    depends_on:
+      - orchestrator
+      - mongodb
+
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_data:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    # internal only, no exposed ports
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./config/litellm.yaml:/app/config.yaml
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+    depends_on:
+      - ollama
+    # internal only, no exposed ports
+
+volumes:
+  mongodb_data:
+  ollama_data:
+  qdrant_data:
+  postgres_data:
+  falkordb_data:

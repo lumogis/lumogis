@@ -1,0 +1,26 @@
+version: 1.3.5
+cache: true
+
+endpoints:
+  custom:
+    - name: "Lumogis (Claude)"
+      apiKey: "ignored"
+      baseURL: "http://orchestrator:8000/v1"
+      models:
+        default: ["claude"]
+        fetch: false
+      titleConvo: false
+      summarize: false
+      forcePrompt: false
+      modelDisplayLabel: "Claude"
+
+    - name: "Lumogis (Local)"
+      apiKey: "ignored"
+      baseURL: "http://orchestrator:8000/v1"
+      models:
+        default: ["local"]
+        fetch: false
+      titleConvo: false
+      summarize: false
+      forcePrompt: false
+      modelDisplayLabel: "Mistral (Local)"

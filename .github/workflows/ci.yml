@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -r orchestrator/requirements.txt
+          pip install ruff
+
+      - name: Lint
+        run: |
+          ruff check orchestrator/
+          ruff format --check orchestrator/
+
+      - name: Test
+        run: |
+          cd orchestrator && python -m pytest tests/ -x -q
