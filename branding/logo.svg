@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 48" fill="none" role="img" aria-label="lumogis">
+
+  <!-- ── Constellation mark (44×44 canvas, left-anchored) ── -->
+
+  <!-- Soft glow behind central node -->
+  <circle cx="26" cy="26" r="10" fill="#E8632A" opacity="0.12"/>
+
+  <!-- Connecting lines -->
+  <!-- central → top-left -->
+  <line x1="26" y1="26" x2="13" y2="7"  stroke="#E8632A" stroke-width="1.1" stroke-linecap="round" opacity="0.55"/>
+  <!-- central → upper-right -->
+  <line x1="26" y1="26" x2="40" y2="11" stroke="#E8632A" stroke-width="1.1" stroke-linecap="round" opacity="0.55"/>
+  <!-- upper-right → lower-right (the asymmetric trailing branch) -->
+  <line x1="40" y1="11" x2="42" y2="37" stroke="#E8632A" stroke-width="0.9" stroke-linecap="round" opacity="0.35"/>
+
+  <!-- Satellite nodes -->
+  <circle cx="13" cy="7"  r="2.2" fill="#F0965A"/>
+  <circle cx="40" cy="11" r="2.6" fill="#F0965A"/>
+  <circle cx="42" cy="37" r="1.9" fill="#F0965A"/>
+
+  <!-- Central node — bright, two-layer -->
+  <circle cx="26" cy="26" r="5"   fill="#E8632A"/>
+  <circle cx="26" cy="26" r="2.4" fill="#FDE8D8"/>
+
+  <!-- ── Wordmark ── -->
+  <!-- Uses Geist / Inter / system geometric sans; weight 300, generous tracking -->
+  <text
+    x="58" y="32"
+    font-family="'Geist', 'Inter', 'DM Sans', ui-sans-serif, system-ui, sans-serif"
+    font-size="21"
+    font-weight="300"
+    letter-spacing="1.5"
+    fill="#18120E"
+  >lumogis</text>
+
+</svg>

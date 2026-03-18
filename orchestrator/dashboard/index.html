@@ -1,0 +1,693 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lumogis</title>
+<style>
+/* ── Variables ─────────────────────────────────────────────────── */
+:root {
+  --bg:       #0d1117;
+  --surface:  #161b22;
+  --border:   #30363d;
+  --txt:      #e6edf3;
+  --txt2:     #8b949e;
+  --accent:   #58a6ff;
+  --green:    #3fb950;
+  --yellow:   #d29922;
+  --red:      #f85149;
+  --radius:   6px;
+  --mono:     ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+[data-theme="light"] {
+  --bg:       #ffffff;
+  --surface:  #f6f8fa;
+  --border:   #d0d7de;
+  --txt:      #1f2328;
+  --txt2:     #656d76;
+  --accent:   #0969da;
+  --green:    #1a7f37;
+  --yellow:   #9a6700;
+  --red:      #cf222e;
+}
+
+/* ── Reset ─────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--txt); font: 14px/1.5 system-ui, sans-serif; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+button {
+  cursor: pointer; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface); color: var(--txt); padding: 4px 12px; font-size: 13px;
+  transition: border-color .15s, background .15s;
+}
+button:hover { border-color: var(--accent); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+input, select {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  color: var(--txt); padding: 6px 10px; font-size: 13px; outline: none; width: 100%;
+}
+input:focus, select:focus { border-color: var(--accent); }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th { color: var(--txt2); font-weight: 600; text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+td { padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: var(--surface); }
+
+/* ── Layout ────────────────────────────────────────────────────── */
+.app { display: flex; flex-direction: column; min-height: 100vh; }
+
+/* ── Header ────────────────────────────────────────────────────── */
+.header {
+  display: flex; align-items: center; gap: 16px; padding: 0 24px;
+  height: 52px; border-bottom: 1px solid var(--border); position: sticky; top: 0;
+  background: var(--bg); z-index: 100;
+}
+.logo { font-weight: 700; font-size: 16px; letter-spacing: -.3px; }
+.logo span { color: var(--accent); }
+.spacer { flex: 1; }
+.sse-badge {
+  display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--txt2);
+}
+.sse-dot {
+  width: 8px; height: 8px; border-radius: 50%; background: var(--red);
+  transition: background .3s;
+}
+.sse-dot.live { background: var(--green); }
+.theme-btn { font-size: 16px; background: none; border: none; padding: 4px; }
+.theme-btn:hover { background: none; border: none; color: var(--accent); }
+
+/* ── Nav tabs ──────────────────────────────────────────────────── */
+.nav { display: flex; gap: 2px; padding: 0 24px; border-bottom: 1px solid var(--border); }
+.nav-tab {
+  padding: 10px 16px; font-size: 13px; background: none; border: none;
+  border-bottom: 2px solid transparent; border-radius: 0; color: var(--txt2);
+  cursor: pointer; transition: color .15s, border-color .15s;
+}
+.nav-tab:hover { color: var(--txt); background: none; }
+.nav-tab.active { color: var(--txt); border-bottom-color: var(--accent); }
+
+/* ── Content area ──────────────────────────────────────────────── */
+.content { flex: 1; padding: 24px; max-width: 1200px; width: 100%; margin: 0 auto; }
+
+/* ── Panel sections ────────────────────────────────────────────── */
+.panel { display: none; }
+.panel.active { display: block; }
+.panel-title { font-size: 18px; font-weight: 600; margin-bottom: 20px; }
+.grid-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+.stat-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 16px; display: flex; flex-direction: column; gap: 4px;
+}
+.stat-label { font-size: 12px; color: var(--txt2); text-transform: uppercase; letter-spacing: .5px; }
+.stat-value { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.stat-sub { font-size: 12px; color: var(--txt2); }
+.service-grid { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 24px; }
+.service-badge {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 8px 14px; font-size: 13px;
+}
+.badge-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--txt2); }
+.badge-dot.ok { background: var(--green); }
+.badge-dot.unreachable { background: var(--red); }
+.card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); overflow: hidden;
+}
+.card-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; border-bottom: 1px solid var(--border);
+  font-weight: 600; font-size: 13px;
+}
+.card-body { overflow-x: auto; }
+.empty { padding: 32px; text-align: center; color: var(--txt2); font-size: 13px; }
+.score-bar {
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.score-pill {
+  display: inline-block; padding: 1px 7px; border-radius: 10px;
+  font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums;
+  background: var(--border); color: var(--txt);
+}
+.score-pill.high { background: rgba(63, 185, 80, .18); color: var(--green); }
+.score-pill.mid  { background: rgba(210, 153, 34, .18); color: var(--yellow); }
+.score-pill.low  { background: rgba(248, 81, 73, .12); color: var(--red); }
+.tag {
+  display: inline-block; padding: 1px 7px; border-radius: 10px;
+  font-size: 11px; background: var(--border); color: var(--txt2); margin: 1px;
+}
+.section-gap { margin-top: 24px; }
+.toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+.toolbar input { max-width: 280px; }
+.toolbar select { max-width: 160px; }
+.btn-primary {
+  background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600;
+}
+.btn-primary:hover { opacity: .88; border-color: var(--accent); }
+.btn-danger { border-color: var(--red); color: var(--red); }
+.btn-danger:hover { background: rgba(248,81,73,.12); border-color: var(--red); }
+.btn-undo { font-size: 11px; padding: 2px 8px; }
+.reversed { opacity: .5; font-style: italic; }
+.source-preview-box {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px; margin-top: 12px; font-size: 13px;
+}
+.source-preview-box h4 { margin-bottom: 8px; font-size: 13px; }
+.source-preview-box ul { list-style: none; display: flex; flex-direction: column; gap: 6px; padding: 0; }
+.source-preview-box li { border-left: 3px solid var(--accent); padding-left: 10px; }
+.add-source-form { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 24px; }
+.add-source-form h3 { font-size: 14px; font-weight: 600; margin-bottom: 12px; }
+.form-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.form-row input { max-width: 320px; flex: 1; }
+.flash { font-size: 12px; color: var(--green); padding: 4px 0; }
+.flash.err { color: var(--red); }
+.export-box { text-align: center; padding: 48px 24px; }
+.export-box p { color: var(--txt2); margin-bottom: 24px; font-size: 13px; }
+.export-box .btn-primary { font-size: 15px; padding: 10px 28px; }
+.mono { font-family: var(--mono); font-size: 12px; }
+.truncate { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.live-badge {
+  display: inline-block; padding: 1px 6px; border-radius: 10px;
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px;
+  background: rgba(63, 185, 80, .18); color: var(--green); margin-left: 6px;
+}
+.refresh-btn { font-size: 12px; padding: 3px 10px; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- Header -->
+  <header class="header">
+    <div class="logo">lumo<span>gis</span></div>
+    <div class="sse-badge">
+      <div class="sse-dot" id="sseDot"></div>
+      <span id="sseLabel">connecting…</span>
+    </div>
+    <div class="spacer"></div>
+    <button class="theme-btn" id="themeBtn" title="Toggle light/dark mode" onclick="toggleTheme()">☀️</button>
+  </header>
+
+  <!-- Nav -->
+  <nav class="nav" role="tablist">
+    <button class="nav-tab active" role="tab" onclick="switchTab('health')">Health</button>
+    <button class="nav-tab" role="tab" onclick="switchTab('signals')">Signals <span id="signalsBadge" class="live-badge" style="display:none">live</span></button>
+    <button class="nav-tab" role="tab" onclick="switchTab('sources')">Sources</button>
+    <button class="nav-tab" role="tab" onclick="switchTab('entities')">Entities</button>
+    <button class="nav-tab" role="tab" onclick="switchTab('activity')">Activity</button>
+    <button class="nav-tab" role="tab" onclick="switchTab('export')">Export</button>
+  </nav>
+
+  <main class="content">
+
+    <!-- ── Health ────────────────────────────────────────────── -->
+    <section class="panel active" id="panel-health">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+        <div class="panel-title">System Health</div>
+        <button class="refresh-btn" onclick="loadHealth()">↺ Refresh</button>
+      </div>
+      <div id="healthServices" class="service-grid"></div>
+      <div id="healthStats" class="grid-3"></div>
+      <div id="healthExtra"></div>
+    </section>
+
+    <!-- ── Signals ───────────────────────────────────────────── -->
+    <section class="panel" id="panel-signals">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <div class="panel-title">Signal Feed</div>
+        <button class="refresh-btn" onclick="loadSignals()">↺ Refresh</button>
+      </div>
+      <div class="toolbar">
+        <input id="signalQuery" placeholder="Filter by topic or entity…" oninput="loadSignals()">
+        <select id="signalMinScore" onchange="loadSignals()">
+          <option value="">All scores</option>
+          <option value="0.7">Relevance ≥ 0.7</option>
+          <option value="0.5">Relevance ≥ 0.5</option>
+          <option value="0.3">Relevance ≥ 0.3</option>
+        </select>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <span>Recent signals</span>
+          <span id="signalsCount" class="mono" style="color:var(--txt2);font-size:12px"></span>
+        </div>
+        <div class="card-body" id="signalsTable"></div>
+      </div>
+    </section>
+
+    <!-- ── Sources ───────────────────────────────────────────── -->
+    <section class="panel" id="panel-sources">
+      <div class="panel-title">Signal Sources</div>
+
+      <div class="add-source-form">
+        <h3>Add source</h3>
+        <div class="form-row">
+          <input id="sourceUrl" placeholder="https://example.com/feed.rss or any URL…">
+          <button onclick="previewSource()">Preview</button>
+          <button class="btn-primary" id="confirmSourceBtn" onclick="confirmSource()" disabled>Add source</button>
+        </div>
+        <div id="sourcePreview"></div>
+        <div id="sourceFlash" class="flash"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span>Active sources</span>
+          <button class="refresh-btn" onclick="loadSources()">↺ Refresh</button>
+        </div>
+        <div class="card-body" id="sourcesTable"></div>
+      </div>
+    </section>
+
+    <!-- ── Entities ──────────────────────────────────────────── -->
+    <section class="panel" id="panel-entities">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <div class="panel-title">Entities</div>
+        <button class="refresh-btn" onclick="loadEntities()">↺ Refresh</button>
+      </div>
+      <div class="toolbar">
+        <input id="entitySearch" placeholder="Search by name…" oninput="renderEntities()">
+        <select id="entityTypeFilter" onchange="renderEntities()">
+          <option value="">All types</option>
+          <option value="PERSON">Person</option>
+          <option value="ORG">Organisation</option>
+          <option value="PLACE">Place</option>
+          <option value="EVENT">Event</option>
+          <option value="CONCEPT">Concept</option>
+        </select>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <span>Known entities</span>
+          <span id="entitiesCount" class="mono" style="color:var(--txt2);font-size:12px"></span>
+        </div>
+        <div class="card-body" id="entitiesTable"></div>
+      </div>
+    </section>
+
+    <!-- ── Activity ──────────────────────────────────────────── -->
+    <section class="panel" id="panel-activity">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <div class="panel-title">Activity Log</div>
+        <button class="refresh-btn" onclick="loadActivity()">↺ Refresh</button>
+      </div>
+      <div class="toolbar">
+        <select id="activityConnector" onchange="loadActivity()">
+          <option value="">All connectors</option>
+          <option value="filesystem">filesystem</option>
+          <option value="calendar">calendar</option>
+          <option value="email">email</option>
+          <option value="web">web</option>
+        </select>
+        <select id="activityType" onchange="loadActivity()">
+          <option value="">All action types</option>
+          <option value="read_file">read_file</option>
+          <option value="write_file">write_file</option>
+          <option value="delete_file">delete_file</option>
+          <option value="send_email">send_email</option>
+        </select>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <span>Audit log</span>
+          <span id="activityCount" class="mono" style="color:var(--txt2);font-size:12px"></span>
+        </div>
+        <div class="card-body" id="activityTable"></div>
+      </div>
+    </section>
+
+    <!-- ── Export ────────────────────────────────────────────── -->
+    <section class="panel" id="panel-export">
+      <div class="panel-title">Export</div>
+      <div class="card">
+        <div class="export-box">
+          <p>Download a complete NDJSON export of all your data — documents, entities, relations, sessions. Human-readable and portable. Your data is yours.</p>
+          <button class="btn-primary" onclick="triggerExport()">⬇ Download export</button>
+          <div id="exportStatus" style="margin-top:12px;font-size:12px;color:var(--txt2)"></div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script>
+'use strict';
+
+// ── State ─────────────────────────────────────────────────────────
+const state = {
+  tab: 'health',
+  entities: [],        // cached for client-side filter
+  sourcePreview: null, // pending preview data
+};
+
+// ── Helpers ───────────────────────────────────────────────────────
+const $ = (id) => document.getElementById(id);
+const fmt = {
+  score: (v) => {
+    const n = parseFloat(v);
+    const cls = n >= 0.7 ? 'high' : n >= 0.4 ? 'mid' : 'low';
+    return `<span class="score-pill ${cls}">${n.toFixed(2)}</span>`;
+  },
+  date: (iso) => {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    const now = new Date();
+    const diff = now - d;
+    if (diff < 60000) return 'just now';
+    if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+    return d.toLocaleDateString();
+  },
+  tags: (arr) => (arr || []).map(t => `<span class="tag">${esc(t)}</span>`).join(''),
+  esc: (s) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'),
+};
+function esc(s) { return fmt.esc(s); }
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...opts });
+  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  return r.json();
+}
+
+function setHtml(id, html) {
+  const el = $(id);
+  if (el) el.innerHTML = html;
+}
+
+function tableWrap(html) {
+  return `<div class="card-body"><table>${html}</table></div>`;
+}
+
+// ── Theme ─────────────────────────────────────────────────────────
+function toggleTheme() {
+  const html = document.documentElement;
+  const next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  html.setAttribute('data-theme', next);
+  $('themeBtn').textContent = next === 'dark' ? '☀️' : '🌙';
+  localStorage.setItem('lg-theme', next);
+}
+(function initTheme() {
+  const saved = localStorage.getItem('lg-theme') || 'dark';
+  document.documentElement.setAttribute('data-theme', saved);
+  $('themeBtn').textContent = saved === 'dark' ? '☀️' : '🌙';
+})();
+
+// ── Tab routing ───────────────────────────────────────────────────
+const LOADERS = { health: loadHealth, signals: loadSignals, sources: loadSources, entities: loadEntities, activity: loadActivity };
+function switchTab(name) {
+  state.tab = name;
+  document.querySelectorAll('.nav-tab').forEach((b, i) => {
+    const tabs = ['health','signals','sources','entities','activity','export'];
+    b.classList.toggle('active', tabs[i] === name);
+  });
+  document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === `panel-${name}`));
+  if (LOADERS[name]) LOADERS[name]();
+}
+
+// ── SSE ───────────────────────────────────────────────────────────
+function initSSE() {
+  const dot = $('sseDot');
+  const label = $('sseLabel');
+  let es;
+  function connect() {
+    es = new EventSource('/events');
+    es.onopen = () => {
+      dot.classList.add('live');
+      label.textContent = 'live';
+    };
+    es.onerror = () => {
+      dot.classList.remove('live');
+      label.textContent = 'reconnecting…';
+      es.close();
+      setTimeout(connect, 5000);
+    };
+    es.addEventListener('signal_received', (e) => {
+      const d = JSON.parse(e.data);
+      $('signalsBadge').style.display = 'inline-block';
+      if (state.tab === 'signals') loadSignals();
+    });
+    es.addEventListener('action_executed', (e) => {
+      if (state.tab === 'activity') loadActivity();
+    });
+    es.addEventListener('routine_elevation_ready', (e) => {
+      const d = JSON.parse(e.data);
+      showToast(`Routine ready for elevation: ${d.connector} — ${d.action_type}`);
+    });
+  }
+  connect();
+}
+
+function showToast(msg) {
+  const t = document.createElement('div');
+  t.style.cssText = 'position:fixed;bottom:20px;right:20px;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:10px 16px;font-size:13px;z-index:999;box-shadow:0 4px 12px rgba(0,0,0,.3)';
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 5000);
+}
+
+// ── Health panel ──────────────────────────────────────────────────
+async function loadHealth() {
+  try {
+    const d = await api('/');
+    const services = d.services || {};
+    setHtml('healthServices', Object.entries(services).map(([k, v]) =>
+      `<div class="service-badge"><div class="badge-dot ${v}"></div><span>${esc(k)}</span><span style="color:var(--txt2);font-size:11px">${esc(v)}</span></div>`
+    ).join(''));
+    setHtml('healthStats', [
+      { label: 'Documents indexed', value: d.documents_indexed ?? 0, sub: 'in Qdrant' },
+      { label: 'Sessions stored', value: d.sessions_stored ?? 0, sub: 'conversations' },
+      { label: 'Entities known', value: d.entities_known ?? 0, sub: 'extracted' },
+    ].map(s =>
+      `<div class="stat-card">
+        <div class="stat-label">${s.label}</div>
+        <div class="stat-value">${s.value}</div>
+        <div class="stat-sub">${s.sub}</div>
+      </div>`
+    ).join(''));
+    const allOk = Object.values(services).every(v => v === 'ok');
+    setHtml('healthExtra', `
+      <div class="card" style="margin-top:0">
+        <div class="card-body" style="padding:14px 16px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <div class="badge-dot ${allOk ? 'ok' : 'unreachable'}"></div>
+            <span style="font-weight:600">${allOk ? 'All services operational' : 'Degraded — check logs'}</span>
+            <span style="color:var(--txt2);font-size:12px;margin-left:auto">Last refreshed ${new Date().toLocaleTimeString()}</span>
+          </div>
+        </div>
+      </div>
+    `);
+  } catch (e) {
+    setHtml('healthServices', `<div class="empty">Could not reach orchestrator: ${esc(e.message)}</div>`);
+  }
+}
+
+// ── Signals panel ─────────────────────────────────────────────────
+async function loadSignals() {
+  const q = $('signalQuery')?.value?.trim() || '';
+  const minScore = $('signalMinScore')?.value || '';
+  let url = '/signals?limit=50';
+  if (q) url += `&topic=${encodeURIComponent(q)}`;
+  if (minScore) url += `&min_relevance_score=${minScore}`;
+  try {
+    const d = await api(url);
+    const rows = d.signals || [];
+    $('signalsCount').textContent = `${rows.length} of ${d.total ?? rows.length}`;
+    if (!rows.length) { setHtml('signalsTable', '<div class="empty">No signals yet. Add a source to start monitoring.</div>'); return; }
+    setHtml('signalsTable', `<table>
+      <thead><tr><th>Title</th><th>Source</th><th>Importance</th><th>Relevance</th><th>Topics</th><th>When</th></tr></thead>
+      <tbody>${rows.map(r => `<tr>
+        <td><a href="${esc(r.url)}" target="_blank" rel="noopener" class="truncate" style="display:block;max-width:280px">${esc(r.title || '—')}</a></td>
+        <td class="mono truncate" style="max-width:120px">${esc(r.source_id?.slice(0,8) || '—')}</td>
+        <td>${fmt.score(r.importance_score)}</td>
+        <td>${fmt.score(r.relevance_score)}</td>
+        <td>${fmt.tags(r.topics)}</td>
+        <td style="white-space:nowrap;color:var(--txt2)">${fmt.date(r.created_at)}</td>
+      </tr>`).join('')}</tbody>
+    </table>`);
+  } catch (e) {
+    setHtml('signalsTable', `<div class="empty">Error: ${esc(e.message)}</div>`);
+  }
+}
+
+// ── Sources panel ─────────────────────────────────────────────────
+async function loadSources() {
+  try {
+    const d = await api('/sources');
+    const rows = d.sources || [];
+    if (!rows.length) { setHtml('sourcesTable', '<div class="empty">No sources yet. Add one above.</div>'); return; }
+    setHtml('sourcesTable', `<table>
+      <thead><tr><th>Name</th><th>Type</th><th>URL</th><th>Category</th><th>Last polled</th><th>Last signal</th><th>Polling</th></tr></thead>
+      <tbody>${rows.map(r => `<tr>
+        <td><strong>${esc(r.name)}</strong></td>
+        <td><span class="tag">${esc(r.source_type)}</span></td>
+        <td><a href="${esc(r.url)}" target="_blank" rel="noopener" class="truncate mono" style="display:block;max-width:220px">${esc(r.url)}</a></td>
+        <td>${esc(r.category || '—')}</td>
+        <td style="color:var(--txt2)">${fmt.date(r.last_polled_at)}</td>
+        <td style="color:var(--txt2)">${fmt.date(r.last_signal_at)}</td>
+        <td><div class="badge-dot ${r.polling_active ? 'ok' : ''}" style="display:inline-block"></div></td>
+      </tr>`).join('')}</tbody>
+    </table>`);
+  } catch (e) {
+    setHtml('sourcesTable', `<div class="empty">Error: ${esc(e.message)}</div>`);
+  }
+}
+
+async function previewSource() {
+  const url = $('sourceUrl').value.trim();
+  if (!url) return;
+  $('sourcePreview').innerHTML = '<div style="color:var(--txt2);font-size:12px;padding:8px 0">Detecting feed type…</div>';
+  $('sourceFlash').textContent = '';
+  state.sourcePreview = null;
+  $('confirmSourceBtn').disabled = true;
+  try {
+    const d = await api('/sources', {
+      method: 'POST',
+      body: JSON.stringify({ url, confirm: false }),
+    });
+    state.sourcePreview = d;
+    const items = (d.preview_items || []).slice(0, 3);
+    $('sourcePreview').innerHTML = `
+      <div class="source-preview-box">
+        <h4>Detected: <span class="tag">${esc(d.source_type)}</span> — ${esc(d.url || url)}</h4>
+        ${items.length ? `<ul>${items.map(i => `<li><strong>${esc(i.title || i.url || '—')}</strong><br><span style="color:var(--txt2);font-size:11px">${esc(i.url || '')}</span></li>`).join('')}</ul>` : '<p style="color:var(--txt2)">No preview items available.</p>'}
+      </div>`;
+    $('confirmSourceBtn').disabled = false;
+  } catch (e) {
+    $('sourcePreview').innerHTML = '';
+    $('sourceFlash').className = 'flash err';
+    $('sourceFlash').textContent = `Preview failed: ${e.message}`;
+  }
+}
+
+async function confirmSource() {
+  if (!state.sourcePreview) return;
+  const url = $('sourceUrl').value.trim();
+  $('confirmSourceBtn').disabled = true;
+  $('sourceFlash').className = 'flash';
+  $('sourceFlash').textContent = 'Adding…';
+  try {
+    await api('/sources', {
+      method: 'POST',
+      body: JSON.stringify({ url, confirm: true }),
+    });
+    $('sourceFlash').textContent = 'Source added and scheduled.';
+    $('sourceUrl').value = '';
+    $('sourcePreview').innerHTML = '';
+    state.sourcePreview = null;
+    loadSources();
+  } catch (e) {
+    $('confirmSourceBtn').disabled = false;
+    $('sourceFlash').className = 'flash err';
+    $('sourceFlash').textContent = `Failed: ${e.message}`;
+  }
+}
+
+// ── Entities panel ────────────────────────────────────────────────
+async function loadEntities() {
+  try {
+    const d = await api('/entities?limit=200');
+    state.entities = Array.isArray(d) ? d : [];
+    renderEntities();
+  } catch (e) {
+    setHtml('entitiesTable', `<div class="empty">Error: ${esc(e.message)}</div>`);
+  }
+}
+
+function renderEntities() {
+  const q = ($('entitySearch')?.value || '').toLowerCase();
+  const typeF = $('entityTypeFilter')?.value || '';
+  let rows = state.entities;
+  if (q) rows = rows.filter(r => r.name?.toLowerCase().includes(q));
+  if (typeF) rows = rows.filter(r => (r.entity_type || '').toUpperCase() === typeF);
+  $('entitiesCount').textContent = `${rows.length} shown`;
+  if (!rows.length) { setHtml('entitiesTable', '<div class="empty">No entities yet. Ingest documents or end a session to extract them.</div>'); return; }
+  setHtml('entitiesTable', `<table>
+    <thead><tr><th>Name</th><th>Type</th><th>Mentions</th><th>Aliases</th><th>Tags</th></tr></thead>
+    <tbody>${rows.map(r => `<tr>
+      <td><strong>${esc(r.name)}</strong></td>
+      <td><span class="tag">${esc(r.entity_type || '?')}</span></td>
+      <td style="font-variant-numeric:tabular-nums">${r.mention_count ?? 0}</td>
+      <td>${(r.aliases || []).map(a => `<span class="tag">${esc(a)}</span>`).join('')}</td>
+      <td>${fmt.tags(r.context_tags)}</td>
+    </tr>`).join('')}</tbody>
+  </table>`);
+}
+
+// ── Activity panel ────────────────────────────────────────────────
+async function loadActivity() {
+  const connector = $('activityConnector')?.value || '';
+  const actionType = $('activityType')?.value || '';
+  let url = '/audit?limit=50';
+  if (connector) url += `&connector=${encodeURIComponent(connector)}`;
+  if (actionType) url += `&action_type=${encodeURIComponent(actionType)}`;
+  try {
+    const d = await api(url);
+    const rows = d.audit || [];
+    $('activityCount').textContent = `${rows.length} of ${d.total ?? rows.length}`;
+    if (!rows.length) { setHtml('activityTable', '<div class="empty">No actions recorded yet.</div>'); return; }
+    setHtml('activityTable', `<table>
+      <thead><tr><th>Action</th><th>Connector</th><th>Mode</th><th>Summary</th><th>Result</th><th>When</th><th></th></tr></thead>
+      <tbody>${rows.map(r => {
+        const reversed = !!r.reversed_at;
+        return `<tr id="audit-${esc(r.id)}" class="${reversed ? 'reversed' : ''}">
+          <td class="mono">${esc(r.action_name || '—')}</td>
+          <td><span class="tag">${esc(r.connector || '—')}</span></td>
+          <td><span class="tag">${esc(r.mode || '—')}</span></td>
+          <td class="truncate" style="max-width:200px" title="${esc(r.input_summary || '')}">${esc(r.input_summary || '—')}</td>
+          <td class="truncate" style="max-width:160px" title="${esc(r.result_summary || '')}">${esc(r.result_summary || '—')}</td>
+          <td style="white-space:nowrap;color:var(--txt2)">${fmt.date(r.executed_at)}</td>
+          <td>${r.reverse_token && !reversed
+            ? `<button class="btn-undo btn-danger" onclick="undoAction('${esc(r.reverse_token)}', '${esc(r.id)}')">Undo</button>`
+            : reversed ? '<span style="font-size:11px;color:var(--txt2)">reversed</span>' : ''
+          }</td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table>`);
+  } catch (e) {
+    setHtml('activityTable', `<div class="empty">Error: ${esc(e.message)}</div>`);
+  }
+}
+
+async function undoAction(reverseToken, rowId) {
+  try {
+    await api(`/audit/${encodeURIComponent(reverseToken)}/reverse`, { method: 'POST' });
+    const row = document.getElementById(`audit-${rowId}`);
+    if (row) {
+      row.classList.add('reversed');
+      const undoBtn = row.querySelector('.btn-undo');
+      if (undoBtn) undoBtn.outerHTML = '<span style="font-size:11px;color:var(--txt2)">reversed</span>';
+    }
+  } catch (e) {
+    showToast(`Undo failed: ${e.message}`);
+  }
+}
+
+// ── Export panel ──────────────────────────────────────────────────
+async function triggerExport() {
+  const status = $('exportStatus');
+  status.textContent = 'Building export…';
+  try {
+    const r = await fetch('/export');
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    const blob = await r.blob();
+    const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `lumogis-export-${ts}.ndjson`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    status.textContent = `Export downloaded — ${(blob.size / 1024).toFixed(1)} KB`;
+  } catch (e) {
+    status.textContent = `Export failed: ${e.message}`;
+    status.style.color = 'var(--red)';
+  }
+}
+
+// ── Init ──────────────────────────────────────────────────────────
+initSSE();
+loadHealth();
+</script>
+</body>
+</html>

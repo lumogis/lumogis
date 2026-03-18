@@ -8,11 +8,12 @@ services:
       FILESYSTEM_ROOT: /data
     volumes:
       - ${FILESYSTEM_ROOT:-/tmp/lumogis-data}:/data:ro
+      - ./config/models.yaml:/app/models.yaml:ro
+      - ./ai-workspace:/workspace
     depends_on:
       - qdrant
       - postgres
       - falkordb
-    # internal only, no host port
 
   qdrant:
     image: qdrant/qdrant:latest
@@ -29,20 +30,44 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-lumogis}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
-    # internal only, no host port
+      - ./postgres/00-create-ap-db.sh:/docker-entrypoint-initdb.d/00-create-ap-db.sh:ro
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
 
   falkordb:
     image: falkordb/falkordb:latest
     volumes:
       - falkordb_data:/data
-    # internal only, no host port
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+
+  activepieces:
+    image: activepieces/activepieces:latest
+    ports:
+      - "8080:80"
+    environment:
+      AP_ENGINE_EXECUTABLE_PATH: dist/packages/engine/main.js
+      AP_POSTGRES_HOST: postgres
+      AP_POSTGRES_PORT: 5432
+      AP_POSTGRES_DATABASE: activepieces
+      AP_POSTGRES_USERNAME: ${POSTGRES_USER:-lumogis}
+      AP_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lumogis-dev}
+      AP_REDIS_HOST: redis
+      AP_REDIS_PORT: 6379
+      AP_ENCRYPTION_KEY: ${AP_ENCRYPTION_KEY}
+      AP_JWT_SECRET: ${AP_JWT_SECRET}
+      AP_FRONTEND_URL: http://localhost:8080
+      AP_EXECUTION_MODE: UNSANDBOXED
+    depends_on:
+      - postgres
+      - redis
 
   mongodb:
     image: mongo:7
     volumes:
       - mongodb_data:/data/db
-    # internal only, no exposed ports
 
   librechat:
     image: ghcr.io/danny-avila/librechat:latest
@@ -55,8 +80,15 @@ services:
       MONGO_URI: ${MONGO_URI}
       JWT_SECRET: ${JWT_SECRET}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      APP_TITLE: ${APP_TITLE:-Lumogis}
     volumes:
       - ./config/librechat.yaml:/app/librechat.yaml:ro
+      - ./branding/favicon-16x16.png:/app/client/public/assets/favicon-16x16.png:ro
+      - ./branding/favicon-32x32.png:/app/client/public/assets/favicon-32x32.png:ro
+      - ./branding/favicon-16x16.png:/app/client/dist/assets/favicon-16x16.png:ro
+      - ./branding/favicon-32x32.png:/app/client/dist/assets/favicon-32x32.png:ro
+      - ./branding/logo.svg:/app/client/public/assets/logo.svg:ro
+      - ./branding/logo.svg:/app/client/dist/assets/logo.svg:ro
     depends_on:
       - orchestrator
       - mongodb
@@ -65,27 +97,28 @@ services:
     image: ollama/ollama:latest
     volumes:
       - ollama_data:/root/.ollama
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-    # internal only, no exposed ports
+    # GPU support added via docker-compose.gpu.yml (set by make setup)
 
-  litellm:
-    image: ghcr.io/berriai/litellm:main-latest
-    ports:
-      - "4000:4000"
-    volumes:
-      - ./config/litellm.yaml:/app/config.yaml
-    command: ["--config", "/app/config.yaml", "--port", "4000"]
-    environment:
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-    depends_on:
-      - ollama
-    # internal only, no exposed ports
+  # LiteLLM is optional — see docker-compose.litellm.yml
+  # Enable for rate limiting, spend tracking, and observability.
+
+  # ntfy: self-hosted push notification server for signal alerts (Chunk 12a).
+  # To enable:
+  #   1. Uncomment the service below.
+  #   2. Set NOTIFIER_BACKEND=ntfy in .env
+  #   3. Set NTFY_URL=http://ntfy:80 and NTFY_TOPIC=lumogis in .env
+  #   4. docker compose up -d ntfy
+  #
+  # ntfy:
+  #   image: binwiederhier/ntfy:latest
+  #   command: serve
+  #   ports:
+  #     - "8088:80"
+  #   volumes:
+  #     - ntfy_data:/var/cache/ntfy
+  #   environment:
+  #     NTFY_BASE_URL: http://localhost:8088
+  #     NTFY_CACHE_FILE: /var/cache/ntfy/cache.db
 
 volumes:
   mongodb_data:
@@ -93,3 +126,5 @@ volumes:
   qdrant_data:
   postgres_data:
   falkordb_data:
+  redis_data:
+  # ntfy_data:   # uncomment if ntfy service above is enabled

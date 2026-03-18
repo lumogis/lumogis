@@ -22,11 +22,16 @@ def _search_files(input_: dict) -> str:
     try:
         from services.search import semantic_search
 
-        results = semantic_search(query, limit=10)
+        results = semantic_search(query, limit=5)
         return json.dumps(
             {
                 "results": [
-                    {"path": r.file_path, "text": r.chunk_text, "score": r.score} for r in results
+                    {
+                        "path": r.file_path,
+                        "text": r.chunk_text[:500],
+                        "score": r.score,
+                    }
+                    for r in results
                 ],
                 "count": len(results),
             }
@@ -34,6 +39,96 @@ def _search_files(input_: dict) -> str:
     except Exception:
         _log.exception("Semantic search failed, falling back to filename search")
         return _fallback_search(query)
+
+
+def _query_entity(input_: dict) -> str:
+    """Look up what Lumogis knows about a named entity.
+
+    Searches Postgres by exact name / alias match first, then falls back to
+    Qdrant semantic similarity. Returns entity metadata and every session /
+    document the entity was mentioned in (last 10 appearances).
+    """
+    name = (input_.get("name") or "").strip()
+    if not name:
+        return json.dumps({"error": "name is required"})
+
+    try:
+        import config as _cfg
+
+        ms = _cfg.get_metadata_store()
+        embedder = _cfg.get_embedder()
+        vs = _cfg.get_vector_store()
+
+        # Postgres lookup: canonical name or alias match
+        row = ms.fetch_one(
+            "SELECT entity_id, name, entity_type, aliases, context_tags, mention_count "
+            "FROM entities "
+            "WHERE lower(name) = lower(%s) "
+            "   OR lower(%s) = ANY(SELECT lower(a) FROM unnest(aliases) a)",
+            (name, name),
+        )
+
+        if row:
+            entity_id = row["entity_id"]
+            entity_meta = {
+                "name": row["name"],
+                "type": row["entity_type"],
+                "aliases": row["aliases"],
+                "context_tags": row["context_tags"],
+                "mention_count": row["mention_count"],
+            }
+        else:
+            # Qdrant semantic fallback
+            vector = embedder.embed(name)
+            hits = vs.search(
+                collection="entities",
+                vector=vector,
+                limit=1,
+                threshold=0.75,
+            )
+            if not hits:
+                return json.dumps({"found": False, "name": name})
+            top_payload = hits[0].get("payload", {})
+            entity_id = top_payload.get("entity_id")
+            entity_meta = {
+                "name": top_payload.get("name", name),
+                "type": top_payload.get("entity_type"),
+                "aliases": top_payload.get("aliases", []),
+                "context_tags": top_payload.get("context_tags", []),
+                "mention_count": None,
+            }
+
+        # Fetch provenance edges (last 10)
+        appearances: list[dict] = []
+        if entity_id:
+            relations = ms.fetch_all(
+                "SELECT relation_type, evidence_type, evidence_id, created_at "
+                "FROM entity_relations "
+                "WHERE source_id = %s "
+                "ORDER BY created_at DESC LIMIT 10",
+                (entity_id,),
+            )
+            appearances = [
+                {
+                    "type": r["relation_type"],
+                    "evidence_type": r["evidence_type"],
+                    "evidence_id": r["evidence_id"],
+                    "at": str(r["created_at"]),
+                }
+                for r in relations
+            ]
+
+        return json.dumps(
+            {
+                "found": True,
+                "entity": entity_meta,
+                "appearances": appearances,
+            }
+        )
+
+    except Exception:
+        _log.exception("query_entity failed for name=%r", name)
+        return json.dumps({"error": "entity lookup failed", "name": name})
 
 
 def _fallback_search(query: str) -> str:
@@ -62,13 +157,18 @@ TOOL_SPECS: list[ToolSpec] = [
         is_write=False,
         definition={
             "name": "search_files",
-            "description": "Searches files by name under the configured filesystem root.",
-            "input_schema": {
+            "description": (
+                "Semantic search over indexed files. Returns the top 5 "
+                "matching text chunks with file paths and relevance scores. "
+                "Use a single broad query — do not call repeatedly with "
+                "slight variations. Use read_file to inspect a specific result."
+            ),
+            "parameters": {
                 "type": "object",
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Substring to match in filename.",
+                        "description": "Natural language search query.",
                     }
                 },
                 "required": ["query"],
@@ -84,7 +184,7 @@ TOOL_SPECS: list[ToolSpec] = [
         definition={
             "name": "read_file",
             "description": "Reads file contents (first 3000 characters).",
-            "input_schema": {
+            "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {
@@ -96,6 +196,33 @@ TOOL_SPECS: list[ToolSpec] = [
             },
         },
         handler=_read_file,
+    ),
+    ToolSpec(
+        name="query_entity",
+        connector="lumogis-memory",
+        action_type="query_entity",
+        is_write=False,
+        definition={
+            "name": "query_entity",
+            "description": (
+                "Look up everything Lumogis knows about a named person, "
+                "organisation, project, or concept. Returns entity metadata "
+                "(type, aliases, context tags, mention count) and a list of "
+                "sessions and documents where the entity appeared. "
+                "Use this when asked 'what do you know about [name]?'"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Name of the entity to look up.",
+                    }
+                },
+                "required": ["name"],
+            },
+        },
+        handler=_query_entity,
     ),
 ]
 

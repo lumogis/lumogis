@@ -109,3 +109,58 @@ def seed_defaults() -> None:
 def get_all_permissions() -> list[dict]:
     store = config.get_metadata_store()
     return store.fetch_all("SELECT connector, mode FROM connector_permissions ORDER BY connector")
+
+
+def routine_check(connector: str, action_type: str) -> None:
+    """Increment approval count and fire ROUTINE_ELEVATION_READY if threshold reached.
+
+    Threshold: approval_count >= 15 with edit_count == 0.
+    Never auto-elevates — only fires the hook so plugins can handle it.
+    Hard-limited action_types are never elevated (enforced in executor.py).
+    """
+    try:
+        store = config.get_metadata_store()
+        store.execute(
+            """INSERT INTO routine_do_tracking (connector, action_type, approval_count)
+               VALUES (%s, %s, 1)
+               ON CONFLICT (connector, action_type) DO UPDATE
+               SET approval_count = routine_do_tracking.approval_count + 1,
+                   updated_at = NOW()""",
+            (connector, action_type),
+        )
+        row = store.fetch_one(
+            "SELECT approval_count, edit_count, auto_approved "
+            "FROM routine_do_tracking WHERE connector = %s AND action_type = %s",
+            (connector, action_type),
+        )
+        if row and int(row["approval_count"]) >= 15 and int(row["edit_count"]) == 0:
+            import hooks
+            from events import Event
+
+            hooks.fire(
+                Event.ROUTINE_ELEVATION_READY,
+                connector=connector,
+                action_type=action_type,
+                approval_count=row["approval_count"],
+            )
+            _log.info(
+                "Routine elevation ready: %s/%s (%d approvals, 0 edits)",
+                connector,
+                action_type,
+                row["approval_count"],
+            )
+    except Exception as exc:
+        _log.warning("routine_check error for %s/%s: %s", connector, action_type, exc)
+
+
+def elevate_to_routine(connector: str, action_type: str) -> None:
+    """Explicitly elevate an action_type to routine Do (user-initiated)."""
+    store = config.get_metadata_store()
+    store.execute(
+        """INSERT INTO routine_do_tracking (connector, action_type, auto_approved, granted_at)
+           VALUES (%s, %s, TRUE, NOW())
+           ON CONFLICT (connector, action_type) DO UPDATE
+           SET auto_approved = TRUE, granted_at = NOW(), updated_at = NOW()""",
+        (connector, action_type),
+    )
+    _log.info("Elevated to routine Do: %s/%s", connector, action_type)

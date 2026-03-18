@@ -42,6 +42,8 @@ def _safe_call(event: str, cb, *args, **kwargs) -> None:
 
 
 def shutdown() -> None:
+    global _executor
     _executor.shutdown(wait=True)
+    _executor = ThreadPoolExecutor(max_workers=4)
     _listeners.clear()
     _log.info("Hooks shutdown: executor stopped, listeners cleared")

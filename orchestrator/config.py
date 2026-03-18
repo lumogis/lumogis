@@ -7,13 +7,80 @@ Call shutdown() during app teardown to close connections.
 
 import logging
 import os
+from pathlib import Path
 
+import yaml
 from ports.embedder import Embedder
+from ports.llm_provider import LLMProvider
 from ports.metadata_store import MetadataStore
 from ports.vector_store import VectorStore
 
 _log = logging.getLogger(__name__)
 _instances: dict[str, object] = {}
+_models_config: dict | None = None
+
+
+def _load_models_yaml() -> dict:
+    """Load and cache config/models.yaml."""
+    global _models_config
+    if _models_config is None:
+        config_path = os.environ.get(
+            "MODELS_CONFIG", str(Path(__file__).resolve().parent / "models.yaml"),
+        )
+        with open(config_path) as f:
+            _models_config = yaml.safe_load(f).get("models", {})
+    return _models_config
+
+
+def get_model_config(model_name: str) -> dict:
+    """Return a single model's config entry from models.yaml."""
+    models = _load_models_yaml()
+    if model_name not in models:
+        raise ValueError(f"Unknown model '{model_name}'. Available: {list(models.keys())}")
+    return models[model_name]
+
+
+def is_local_model(model_name: str) -> bool:
+    """True if the model runs locally (e.g. via Ollama); used for loading hints."""
+    try:
+        cfg = get_model_config(model_name)
+        base = (cfg.get("base_url") or "").lower()
+        return "ollama" in base
+    except ValueError:
+        return False
+
+
+def get_llm_provider(model_name: str) -> LLMProvider:
+    """Return a cached LLMProvider adapter for the given model name."""
+    key = f"llm_{model_name}"
+    if key not in _instances:
+        cfg = get_model_config(model_name)
+        proxy = cfg.get("proxy_url")
+        adapter_type = cfg["adapter"]
+
+        if adapter_type == "anthropic":
+            from adapters.anthropic_llm import AnthropicLLM
+
+            api_key = os.environ.get(cfg.get("api_key_env", ""), "")
+            _instances[key] = AnthropicLLM(
+                model=cfg["model"],
+                api_key=api_key,
+                base_url=proxy,
+            )
+        elif adapter_type == "openai":
+            from adapters.openai_llm import OpenAILLM
+
+            _instances[key] = OpenAILLM(
+                model=cfg["model"],
+                base_url=proxy or cfg.get("base_url"),
+                api_key=os.environ.get(cfg.get("api_key_env", ""), None),
+                context_budget=cfg.get("context_budget"),
+            )
+        else:
+            raise ValueError(f"Unknown adapter type '{adapter_type}' for model '{model_name}'")
+
+        _log.info("LLM provider created: %s (adapter=%s, model=%s)", model_name, adapter_type, cfg["model"])
+    return _instances[key]  # type: ignore[return-value]
 
 
 def get_vector_store() -> VectorStore:
@@ -83,7 +150,7 @@ def get_reranker():
 
 _extractor_registry: dict[str, callable] = {}
 
-_optional_adapters = {"ocr_extractor", "docx_extractor"}
+_ocr_adapters = {"ocr_extractor"}
 
 
 def extractor(*extensions):
@@ -106,7 +173,7 @@ def get_extractors() -> dict[str, callable]:
 
         ocr_enabled = os.environ.get("EXTRACTOR_OCR_ENABLED", "true").lower() == "true"
         for _, name, _ in pkgutil.iter_modules(adapters_path):
-            if name in _optional_adapters and not ocr_enabled:
+            if name in _ocr_adapters and not ocr_enabled:
                 continue
             try:
                 importlib.import_module(f"adapters.{name}")
@@ -114,6 +181,48 @@ def get_extractors() -> dict[str, callable]:
                 _log.debug("Skipping adapter %s (missing deps)", name)
         _instances["extractors"] = dict(_extractor_registry)
     return _instances["extractors"]
+
+
+def get_notifier():
+    """Return a cached Notifier adapter.
+
+    NOTIFIER_BACKEND env var:
+      "ntfy"  -> NtfyNotifier (posts to ntfy server at NTFY_URL)
+      "none"  -> NullNotifier (no-op, default)
+    """
+    if "notifier" not in _instances:
+        backend = os.environ.get("NOTIFIER_BACKEND", "none")
+        if backend == "ntfy":
+            from adapters.ntfy_notifier import NtfyNotifier
+
+            _instances["notifier"] = NtfyNotifier()
+        else:
+            from adapters.null_notifier import NullNotifier
+
+            _instances["notifier"] = NullNotifier()
+        _log.info("Notifier: %s (backend=%s)", type(_instances["notifier"]).__name__, backend)
+    return _instances["notifier"]
+
+
+def get_scheduler():
+    """Return the shared APScheduler BackgroundScheduler singleton.
+
+    The scheduler is created here but NOT started — call scheduler.start()
+    from main.py lifespan so startup order is controlled.
+    """
+    if "scheduler" not in _instances:
+        from apscheduler.schedulers.background import BackgroundScheduler
+
+        scheduler = BackgroundScheduler(
+            job_defaults={
+                "misfire_grace_time": 60,
+                "coalesce": True,
+                "max_instances": 1,
+            }
+        )
+        _instances["scheduler"] = scheduler
+        _log.info("APScheduler BackgroundScheduler created")
+    return _instances["scheduler"]
 
 
 def shutdown() -> None:

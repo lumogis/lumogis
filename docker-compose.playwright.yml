@@ -1,0 +1,66 @@
+# Playwright service overlay for JS-rendered page fetching.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.playwright.yml up -d
+#
+# Also set in .env:
+#   PLAYWRIGHT_ENABLED=true
+#   PLAYWRIGHT_URL=http://playwright:3000
+#
+# The Playwright service exposes a minimal HTTP API:
+#   POST /render  {"url": "https://..."} -> {"html": "..."}
+#   GET  /health  -> 200 OK
+#
+# adapters/playwright_fetcher.py calls this API and falls back to
+# page_scraper (trafilatura) if PLAYWRIGHT_ENABLED=false or the
+# service is unreachable.
+
+services:
+  playwright:
+    image: mcr.microsoft.com/playwright:v1.44.0-jammy
+    command: >
+      node -e "
+      const http = require('http');
+      const { chromium } = require('playwright');
+      let browser;
+      (async () => {
+        browser = await chromium.launch();
+        const server = http.createServer(async (req, res) => {
+          if (req.method === 'GET' && req.url === '/health') {
+            res.writeHead(200); res.end('OK'); return;
+          }
+          if (req.method === 'POST' && req.url === '/render') {
+            let body = '';
+            req.on('data', d => body += d);
+            req.on('end', async () => {
+              try {
+                const { url } = JSON.parse(body);
+                const page = await browser.newPage();
+                await page.goto(url, { waitUntil: 'networkidle', timeout: 20000 });
+                const html = await page.content();
+                await page.close();
+                res.writeHead(200, {'Content-Type': 'application/json'});
+                res.end(JSON.stringify({ html }));
+              } catch (e) {
+                res.writeHead(500); res.end(JSON.stringify({ error: String(e) }));
+              }
+            });
+          } else {
+            res.writeHead(404); res.end();
+          }
+        });
+        server.listen(3000, () => console.log('Playwright server on :3000'));
+      })();
+      "
+    expose:
+      - "3000"
+    environment:
+      - PLAYWRIGHT_ENABLED=true
+    shm_size: "1gb"
+
+  orchestrator:
+    environment:
+      PLAYWRIGHT_ENABLED: "true"
+      PLAYWRIGHT_URL: "http://playwright:3000"
+    depends_on:
+      - playwright

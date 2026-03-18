@@ -1,0 +1,40 @@
+models:
+  claude:
+    adapter: anthropic
+    model: claude-sonnet-4-20250514
+    api_key_env: ANTHROPIC_API_KEY
+    tools: true
+    # proxy_url: http://litellm:4000  # uncomment to route through LiteLLM
+
+  qwen:
+    adapter: openai
+    model: qwen2.5:7b
+    base_url: http://ollama:11434/v1
+    tools: true
+    # proxy_url: http://litellm:4000
+
+  qwen-coder:
+    adapter: openai
+    model: qwen2.5-coder:7b
+    base_url: http://ollama:11434/v1
+    tools: false
+
+  llama:
+    adapter: openai
+    model: llama3.2:3b
+    base_url: http://ollama:11434/v1
+    tools: false
+
+  # --- Examples: uncomment and set API keys in .env ---
+  # chatgpt:
+  #   adapter: openai
+  #   model: gpt-4o
+  #   api_key_env: OPENAI_API_KEY
+  #   tools: true
+  #
+  # perplexity:
+  #   adapter: openai
+  #   model: sonar-pro
+  #   api_key_env: PERPLEXITY_API_KEY
+  #   base_url: https://api.perplexity.ai
+  #   tools: false

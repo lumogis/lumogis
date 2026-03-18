@@ -7,7 +7,7 @@ requires-python = ">=3.12"
 testpaths = ["orchestrator/tests"]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-    "integration: marks tests that require running services",
+    "integration: marks tests that require running Docker stack (see make test-integration)",
 ]
 asyncio_mode = "auto"
 

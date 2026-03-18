@@ -3,24 +3,82 @@ cache: true
 
 endpoints:
   custom:
-    - name: "Lumogis (Claude)"
+    - name: "Lumogis"
       apiKey: "ignored"
       baseURL: "http://orchestrator:8000/v1"
       models:
-        default: ["claude"]
+        default: ["claude", "qwen", "qwen-coder", "llama"]
         fetch: false
       titleConvo: false
       summarize: false
       forcePrompt: false
-      modelDisplayLabel: "Claude"
+      modelDisplayLabel: "Lumogis"
 
-    - name: "Lumogis (Local)"
-      apiKey: "ignored"
-      baseURL: "http://orchestrator:8000/v1"
-      models:
-        default: ["local"]
-        fetch: false
-      titleConvo: false
-      summarize: false
-      forcePrompt: false
-      modelDisplayLabel: "Mistral (Local)"
+modelSpecs:
+  enforce: true
+  prioritize: true
+  list:
+    - name: "claude"
+      label: "Claude (Cloud)"
+      default: true
+      description: >
+        Best for complex questions, research, and file search.
+        Can search your indexed files by meaning and read their contents.
+        Your files stay on your machine — only the question and relevant
+        context snippets are sent to Claude via your own API key.
+      iconURL: "anthropic"
+      preset:
+        endpoint: "Lumogis"
+        model: "claude"
+        modelLabel: "Claude (Cloud)"
+        greeting: |
+          You are connected to Claude via your own Anthropic API key.
+          Your files stay on your machine — only the question and relevant context snippets are sent to Claude. No files are uploaded or stored externally.
+          I can search your indexed files by meaning and read their contents. Best for complex questions, research, and anything that benefits from tool use.
+    - name: "qwen"
+      label: "Qwen 2.5 (Local)"
+      description: >
+        Smart local model with file search — can search your indexed files
+        by meaning and read their contents, all running on your GPU.
+        Good for reasoning, analysis, and private research.
+        Nothing leaves your machine.
+      iconURL: "ollama"
+      preset:
+        endpoint: "Lumogis"
+        model: "qwen"
+        modelLabel: "Qwen 2.5 (Local)"
+        promptPrefix: "You are Qwen 2.5, a 7-billion-parameter language model running locally via Ollama. You are part of Lumogis, a local-first AI assistant. You can search and read the user's local files. You run entirely on the user's machine — no data leaves their device."
+        greeting: |
+          You are connected to Qwen 2.5 (7B) running locally on your GPU via Ollama.
+          Everything stays on your machine — nothing is sent to any external service.
+          I can search your indexed files by meaning and read their contents — fully private file search with zero data leaving your machine.
+    - name: "qwen-coder"
+      label: "Qwen 2.5 Coder (Local)"
+      description: >
+        Specialised coding model — code generation, debugging, code review,
+        and technical explanations. Runs entirely on your GPU.
+        Nothing leaves your machine.
+      iconURL: "ollama"
+      preset:
+        endpoint: "Lumogis"
+        model: "qwen-coder"
+        modelLabel: "Qwen 2.5 Coder (Local)"
+        promptPrefix: "You are Qwen 2.5 Coder, a 7-billion-parameter coding model running locally via Ollama. You are part of Lumogis, a local-first AI assistant. You specialise in code generation, debugging, and code review. You run entirely on the user's machine — no data leaves their device."
+        greeting: |
+          You are connected to Qwen 2.5 Coder (7B) running locally on your GPU via Ollama.
+          Everything stays on your machine — nothing is sent to any external service.
+          I'm specialised for coding: generation, debugging, review, and technical explanations.
+    - name: "llama"
+      label: "Llama 3.2 (Local)"
+      description: >
+        Lightweight and fast — best for quick questions, brainstorming, and drafting. Smallest model, fastest responses. Runs entirely on your GPU. Nothing leaves your machine.
+      iconURL: "ollama"
+      preset:
+        endpoint: "Lumogis"
+        model: "llama"
+        modelLabel: "Llama 3.2 (Local)"
+        promptPrefix: "You are Llama 3.2, a 3-billion-parameter language model running locally via Ollama. You are part of Lumogis, a local-first AI assistant. You run entirely on the user's machine — no data leaves their device. Never identify yourself as LLaMA 2 or any other model."
+        greeting: |
+          You are connected to Llama 3.2 (3B) running locally on your GPU via Ollama.
+          Everything stays on your machine — nothing is sent to any external service.
+          I'm the fastest option — good for quick questions, brainstorming, and drafting. For complex research, switch to Claude.

@@ -1,4 +1,4 @@
-# lumogis
+# lumogis-core
 
 **The AI comes to your data. Not the other way around.**
 
@@ -12,128 +12,180 @@ Lumogis fixes the thing that causes the hesitation. Your files, documents, and c
 
 This is not a privacy policy. It is not a setting. It is physically impossible for your files to reach a Lumogis server, because there is no Lumogis server. The core is open source. Anyone can verify it.
 
+*Built in direct response to OpenClaw's failure — same vision, safe by architecture.*
+
+---
+
+## What CORE does and doesn't do
+
+**lumogis-core monitors sources and scores signals. It processes, stores, and serves all data locally.** Every document you ingest, every entity extracted, every signal scored — it happens on your machine, in your containers, under your control.
+
+What CORE does:
+
+- Ingests and indexes your documents (PDF, DOCX, text, images via OCR)
+- Runs semantic search with two-stage retrieval (vector + reranker)
+- Maintains session memory across conversations
+- Extracts and stores entities (people, organisations, projects, concepts)
+- Monitors signal sources (RSS feeds, web pages, calendars)
+- Scores and stores signals by relevance
+- Executes actions with full audit logging and Ask/Do safety enforcement
+- Routes queries to any LLM — local via Ollama, or cloud via API key
+
+What CORE does not do:
+
+- Generate morning briefings or digests (that's lumogis-app)
+- Proactively push insights or notifications to you (that's lumogis-app)
+- Intelligent filtering of what matters vs. what doesn't (that's lumogis-app)
+
+**For intelligent notification filtering, morning briefings, and proactive insights, see [lumogis-app](https://github.com/lumogis/lumogis-app).** CORE is the foundation. APP is the intelligence layer on top.
+
 ---
 
 ## What it does
 
-**Private semantic search.** Your documents are chunked, embedded, and stored in a local Qdrant vector database using Nomic Embed via Ollama. Search runs entirely on your machine. No outbound calls, no external embedding APIs.
+**Private semantic search.** Documents are chunked, embedded, and stored in a local Qdrant vector database using Nomic Embed via Ollama. Search runs entirely on your machine. No outbound calls, no external embedding APIs.
 
-**Context enrichment.** Before your message reaches any model, Lumogis retrieves the relevant context from your local index and enriches your prompt automatically and invisibly. The model receives not just your question — but the accumulated intelligence of everything you have indexed that bears on it. Enterprise RAG, running on your hardware, for personal use.
+**Two-stage retrieval.** Vector search narrows the candidate set. A local BGE reranker re-scores by relevance before context is assembled. The answer reflects the best match, not just the nearest neighbour.
 
-**Two-stage retrieval.** Vector search narrows the candidate set. A local BGE reranker re-scores by relevance before context is assembled. The answer you get reflects the best match, not just the nearest neighbour.
+**Session memory.** Conversation summaries are embedded and stored locally. Context from past sessions is retrieved and injected into future ones. A question you asked three months ago, and the conclusion you reached, can inform the answer you get today.
 
-**Session memory.** Conversation summaries are embedded and stored locally. Context from past sessions is retrieved and injected into future ones. A question you asked three months ago, and the conclusion you reached, can inform the answer you get today — without you having to remember to include it.
+**Entity extraction.** People, organisations, projects, and concepts mentioned across conversations and documents are extracted and stored in a local knowledge base.
 
-**Entity extraction.** People, organisations, projects, and concepts mentioned across your conversations and documents are extracted and stored in a local knowledge base. Ask what Lumogis knows about a person or topic and it draws from every session and document where they appeared.
+**Signal monitoring.** RSS feeds, web pages, and calendar events are polled on a schedule. Each signal is scored and stored. Plugins and adapters decide what happens next.
 
-**Model routing.** Route queries to Claude, GPT-4, a local Llama model, or any LiteLLM-compatible endpoint. You choose what travels and to which brain. Sensitive queries can stay entirely local.
+**Action execution.** Actions are defined, registered, and executed with a full audit trail. The Ask/Do safety model controls what runs automatically and what requires your approval.
 
-**File ingestion.** Plain text, Markdown, PDF, DOCX, and scanned images (via OCR) are all supported out of the box. Drop a file in your indexed folder and it is searchable in seconds.
+**Model routing.** Route queries to Claude, GPT-4, a local Llama or Qwen model, or any OpenAI-compatible endpoint. Adding a provider is a config entry in `config/models.yaml` — zero code changes.
 
-**LibreChat frontend.** A full, polished chat interface included and pre-connected. No configuration needed.
+**File ingestion.** Plain text, Markdown, PDF, DOCX, and scanned images (via OCR) are supported out of the box. Drop a file in your indexed folder and it is searchable in seconds.
+
+---
+
+## Security model: Ask and Do
+
+Every action in lumogis-core belongs to one of two modes:
+
+| Mode | Behaviour |
+|---|---|
+| **Ask** | Proposed to you for approval before execution. Used for anything that writes, deletes, or sends. |
+| **Do** | Executed immediately without confirmation. Used for reads and reversible, low-risk operations. |
+
+Actions that accumulate a clean approval record are eligible for routine elevation — they move from Ask to Do automatically after a configurable threshold. You can always demote an action back to Ask. This is not a capability system. Trust is earned, recorded, and revocable.
 
 ---
 
 ## Architecture
 
+Five concepts. Everything in the codebase maps to one of them.
+
 ```
-                         ┌─────────────────────────────────┐
-                         │           your machine           │
-                         │                                  │
-  LibreChat :3080 ───────┤  orchestrator (FastAPI :8000)    │
-                         │    │                             │
-                         │    ├── services/                 │
-                         │    │     ingest · search         │
-                         │    │     memory · entities       │
-                         │    │                             │
-                         │    ├── adapters/                 │
-                         │    │     qdrant · postgres       │
-                         │    │     ollama · bge · ocr      │
-                         │    │     pdf · docx · text       │
-                         │    │                             │
-                         │    └── plugins/ (optional)       │
-                         │                                  │
-                         │  Qdrant    ── vector store       │
-                         │  Postgres  ── metadata + index   │
-                         │  Ollama    ── embedder + LLM     │
-                         │  FalkorDB  ── graph store        │
-                         └──────────────┬──────────────────┘
-                                        │ composed prompt only
-                                        ▼
-                             Claude · GPT-4 · local model
+╔══════════════════════════════════════════════════════════════════╗
+║                        your machine                              ║
+║                                                                  ║
+║  LibreChat :3080 ──────▶  orchestrator (FastAPI)                 ║
+║                               │                                  ║
+║                ┌──────────────┼──────────────────┐               ║
+║                │              │                  │               ║
+║           services/      signals/           actions/             ║
+║         ingest · search  feed · page        executor             ║
+║         memory · entities calendar         registry              ║
+║         tools · routines system            audit log             ║
+║                │                                                  ║
+║           adapters/                                               ║
+║         qdrant · postgres · ollama                               ║
+║         bge · pdf · docx · ocr                                   ║
+║         rss · ntfy · calendar                                    ║
+║                │                                                  ║
+║            plugins/    (optional extensions)                     ║
+║                                                                  ║
+║  Qdrant     ── vector store (documents, entities, memory)        ║
+║  Postgres   ── metadata + file index + audit log                 ║
+║  Ollama     ── local embedder + LLM                              ║
+║  FalkorDB   ── graph store (graph plugin)                        ║
+║  Redis      ── signal cache + FalkorDB protocol                  ║
+╚══════════════════════════════════════════════════════╤═══════════╝
+                                                       │ composed
+                                                       │ prompt only
+                                                       ▼
+                                          Claude · GPT-4 · local
 ```
 
-Three contributor-facing layers:
-
-| Layer | What lives here |
-|---|---|
-| `services/` | Business logic — ingest, search, memory, entity extraction. Where behaviour lives. |
-| `adapters/` | One file per external system. Swap a backend = write one adapter + change one `.env` value. |
-| `plugins/` | Optional extensions. Core works without them. |
-
-Internal `Protocol` interfaces in `ports/` keep services decoupled from specific adapters. `config.py` wires everything together from `.env`. Services never import concrete adapters directly.
+| Concept | Lives in | Purpose |
+|---|---|---|
+| **Services** | `services/` | Business logic — ingest, search, memory, entity extraction, routines |
+| **Adapters** | `adapters/` | One file per external system. Swap a backend by writing one adapter. |
+| **Plugins** | `plugins/<name>/` | Optional, self-contained extensions. Core works without any. |
+| **Signals** | `signals/` | Source monitors that detect and score incoming signals |
+| **Actions** | `actions/` | Executable operations with audit logging and Ask/Do enforcement |
 
 ---
 
-## Stack
+## Hardware requirements
 
-| Component | Role |
-|---|---|
-| `python:3.12-slim` | Orchestrator — FastAPI, tool loop, all services |
-| `qdrant/qdrant` | Vector store for documents, conversations, entities |
-| `postgres:16` | Metadata store — file index, entities, relations, review queue |
-| `ollama/ollama` | Local embedding (Nomic) and LLM (Llama 3.2) |
-| `ghcr.io/berriai/litellm` | Model routing proxy — Claude, GPT-4, local, any OpenAI-compatible endpoint |
-| `falkordb/falkordb` | Graph store for the graph plugin |
-| `ghcr.io/danny-avila/librechat` | Chat UI |
-| `mongo:7` | LibreChat persistence |
+`make setup` detects your hardware and selects the appropriate model tier automatically.
+
+| Tier | GPU VRAM | RAM | Recommended for |
+|---|---|---|---|
+| **minimal** | No GPU / < 4 GB | 8 GB | Testing and evaluation. CPU inference only. Slow but functional. |
+| **standard** | 4–8 GB | 16 GB | Daily use on mid-range hardware (GTX 1070, RTX 3060, etc.) |
+| **recommended** | 8–16 GB | 32 GB | Comfortable everyday use (RTX 3080, RTX 4070, etc.) |
+| **power** | 16 GB+ | 64 GB | Large context, parallel inference (RTX 4090, A100, etc.) |
+
+Minimum to run: 8 GB RAM, 20 GB free disk. No API keys required — all models run locally via Ollama. Add `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` to `.env` to enable cloud model routing.
 
 ---
 
 ## Getting started
 
-### Prerequisites
-
-- Docker and Docker Compose
-- An NVIDIA GPU (recommended for Ollama; CPU works but is slow)
-- An Anthropic or OpenAI API key if you want cloud model routing
-
-### 1. Clone and configure
+### Step 1: Clone and configure
 
 ```bash
-git clone https://github.com/Thoko14/lumogis.git
-cd lumogis
+git clone https://github.com/lumogis/lumogis-core.git
+cd lumogis-core
 cp .env.example .env
 ```
 
-Open `.env` and set at minimum:
+Open `.env` and set your file path and secrets:
 
 ```bash
-FILESYSTEM_ROOT=/path/to/your/files   # indexed read-only
+FILESYSTEM_ROOT=/path/to/your/files   # the folder CORE will index (read-only)
 JWT_SECRET=something-long-and-random
 JWT_REFRESH_SECRET=something-else-long-and-random
 
-# Optional — for cloud model routing
-ANTHROPIC_API_KEY=sk-ant-...
+# Optional — CORE works fully without these
+# ANTHROPIC_API_KEY=sk-ant-...
+# OPENAI_API_KEY=sk-...
 ```
 
-### 2. Start
+### Step 2: Run setup (detects hardware, pulls models)
+
+```bash
+make setup
+```
+
+This detects your GPU, selects the appropriate model tier, and pulls the right Ollama models. Run this once before starting the stack. On a machine with no GPU, it selects CPU-only mode without errors.
+
+### Step 3: Start the stack
 
 ```bash
 docker compose up -d
 ```
 
-### 3. Pull the embedding model
+### Step 4: Verify
 
 ```bash
-docker compose exec ollama ollama pull nomic-embed-text
+curl -s http://localhost:8000/health | python3 -m json.tool
 ```
 
-### 4. Open LibreChat
+You should see all services healthy with empty collections ready to fill.
 
-[http://localhost:3080](http://localhost:3080) — create an account and start.
+### Step 5: Index your files
 
-### 5. Index your files
+```bash
+make ingest
+```
+
+Or directly:
 
 ```bash
 curl -s -X POST http://localhost:8000/ingest \
@@ -141,7 +193,11 @@ curl -s -X POST http://localhost:8000/ingest \
   -d '{"path": "/data"}'
 ```
 
-Your files are now searchable. Every conversation you have from this point enriches the local index.
+Your files are now searchable. Every conversation enriches the local index.
+
+### Step 6 (optional): Open LibreChat
+
+[http://localhost:3080](http://localhost:3080) — create an account and start chatting. LibreChat is pre-connected to the orchestrator.
 
 ---
 
@@ -151,11 +207,11 @@ All backend selection is driven by `.env`. The defaults work out of the box.
 
 ```bash
 # Backend selection — swap by changing one value
-VECTOR_STORE_BACKEND=qdrant       # alternatives: chroma, milvus, weaviate
-METADATA_STORE_BACKEND=postgres   # alternative: sqlite (for dev/testing)
-EMBEDDER_BACKEND=ollama           # alternative: sentence-transformers
-RERANKER_BACKEND=bge              # set to "none" to disable reranking
-EXTRACTOR_OCR_ENABLED=true        # set to "false" to skip OCR
+VECTOR_STORE_BACKEND=qdrant       # qdrant (default), chroma, milvus
+METADATA_STORE_BACKEND=postgres   # postgres (default), sqlite
+EMBEDDER_BACKEND=ollama           # ollama (default), sentence-transformers
+RERANKER_BACKEND=bge              # bge (default), none
+EXTRACTOR_OCR_ENABLED=true        # true (default), false
 
 # Connection details — defaults match docker-compose service names
 QDRANT_URL=http://qdrant:6333
@@ -167,10 +223,13 @@ POSTGRES_DB=lumogis
 OLLAMA_URL=http://ollama:11434
 EMBEDDING_MODEL=nomic-embed-text
 RERANKER_MODEL=BAAI/bge-reranker-base
-LITELLM_URL=http://litellm:4000
 
-# Graph plugin — ignored if plugins/graph/ is absent
+# Graph plugin — only used if plugins/graph/ is present
 FALKORDB_URL=redis://falkordb:6379
+
+# Safety model
+DEFAULT_ACTION_MODE=ask           # ask (default) or do
+ROUTINE_ELEVATION_THRESHOLD=10    # clean approvals before auto-elevation
 ```
 
 ---
@@ -179,82 +238,115 @@ FALKORDB_URL=redis://falkordb:6379
 
 ```
 orchestrator/
-  main.py              # FastAPI app, endpoints, startup health checks
-  loop.py              # Tool-calling loop
+  main.py              # FastAPI app, startup health checks, plugin loading
+  loop.py              # Tool-calling loop (LLM ↔ tools)
   config.py            # Reads .env, returns cached adapter singletons
-  hooks.py             # Event system: fire() sync and fire_background() threaded
+  hooks.py             # Event dispatch: fire() sync, fire_background() threaded
+  events.py            # Event name constants (Event class)
+  auth.py              # Authentication
+  permissions.py       # Permission enforcement
 
-  ports/               # Internal Protocol interfaces — rarely touched by contributors
-    vector_store.py    # upsert, search, delete, count, ping
-    metadata_store.py  # execute, fetch_one, fetch_all, ping
-    embedder.py        # embed, embed_batch, vector_size, ping
-    reranker.py        # rerank(query, candidates, limit)
-    graph_store.py     # create_node, create_edge, query, ping
-
-  adapters/            # One file per external system
-    qdrant_store.py
-    postgres_store.py
-    ollama_embedder.py
-    bge_reranker.py
-    text_extractor.py
-    pdf_extractor.py
-    docx_extractor.py
-    ocr_extractor.py
-
-  clients/
-    litellm.py         # Thin LiteLLM wrapper used by loop.py
-
-  services/            # Business logic
+  services/            # Business logic (five concepts: services)
     ingest.py          # Document ingest pipeline
     search.py          # Semantic search + reranking
     memory.py          # Session memory
     entities.py        # Entity extraction and resolution
     tools.py           # Tool definitions and dispatcher
+    signal_processor.py
+    routines.py
+    feedback.py
 
-  plugins/             # Optional extensions — core works without them
-    graph/             # Graph intelligence — NOT in lumogis-core
+  adapters/            # One file per external system (five concepts: adapters)
+    anthropic_llm.py   # Claude (Anthropic SDK)
+    openai_llm.py      # OpenAI-compatible (Ollama, ChatGPT, Perplexity, …)
+    qdrant_store.py
+    postgres_store.py
+    ollama_embedder.py
+    bge_reranker.py
+    text_extractor.py  # Auto-discovered by file extension
+    pdf_extractor.py
+    docx_extractor.py
+    ocr_extractor.py
+    rss_source.py
+    ntfy_notifier.py
+
+  signals/             # Source monitors (five concepts: signals)
+    feed_monitor.py    # RSS and Atom feeds
+    page_monitor.py    # Web page change detection
+    calendar_monitor.py
+    system_monitor.py
+
+  actions/             # Executable operations (five concepts: actions)
+    registry.py        # Action registration
+    executor.py        # Ask/Do enforcement + execution
+    audit.py           # Immutable audit log
+    reversibility.py   # Reversibility metadata
+    handlers/          # One file per action domain
+
+  plugins/             # Optional extensions (five concepts: plugins)
+    # plugins/graph/   # NOT in lumogis-core — see lumogis-app
+
+  models/              # Pydantic request/response models
+  routes/              # FastAPI routers (chat, data, signals, actions, admin)
+  ports/               # Protocol interfaces (internal — rarely touched)
+  tests/               # Unit tests (no Docker needed)
+
+config/
+  models.yaml          # Model registry — adapters, capabilities, endpoints
 
 postgres/
   init.sql             # Schema: file_index, entities, entity_relations, review_queue
 
-config/
-  litellm.yaml         # Model routing
-  librechat.yaml       # LibreChat config
+scripts/
+  setup.sh             # Hardware detection + model pulls
+  detect-hardware.sh   # Standalone hardware detection (used by setup.sh)
+
+docs/
+  decisions/           # Architecture Decision Records (ADRs)
+  examples/            # Example plugin template
+  graph-schema.md      # FalkorDB schema reference
+
+tests/
+  integration/         # Full-stack integration tests (requires Docker stack)
 ```
-
----
-
-## What is and isn't in this repo
-
-`lumogis` (this repo) contains everything needed for private local RAG, semantic search, session memory, and entity extraction. The graph intelligence plugin (`plugins/graph/`) adds knowledge graph construction and traversal on top — it is proprietary and not included here.
-
-Everything in this repo is open source under AGPL-3.0.
 
 ---
 
 ## Contributing
 
-The architecture makes contribution straightforward. Find the right layer and follow the pattern already there.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
 
-**Add a new file type:**
-Write an `extract_xyz(path: str) -> str` function in `adapters/`, add one entry to the registry in `config.get_extractors()`. No Protocol, no port, no factory method needed.
+The short version: find the right layer, follow the existing pattern.
 
-**Add a new vector store:**
-Implement the `VectorStore` Protocol from `ports/vector_store.py`, add a factory branch in `config.get_vector_store()`, add the backend name to the docs.
+- **New file type extractor:** one new file in `adapters/`, auto-discovered
+- **New signal source:** implement `SignalSource` from `ports/signal_source.py`
+- **New action handler:** one new file in `actions/handlers/`
+- **New vector store:** implement `VectorStore` from `ports/vector_store.py`
+- **New plugin:** one directory in `plugins/`, any hooks and routes you need
 
-**Add a new embedder or reranker:**
-Same pattern — implement the Protocol, add a factory branch, update `.env.example`.
+All PRs must pass `make lint` and `make test`. Include tests for new functionality.
 
-**Fix a bug or improve a service:**
-Open an issue for anything non-trivial before writing code. Services live in `services/` and call into `config.get_*()` — never into concrete adapters directly.
+**The one rule:** services never import concrete adapters. Always go through `config.get_*()`.
 
-**The one rule:** services never import concrete adapters. Always go through `config.get_*()`. This is what makes backend swaps possible without touching business logic.
+---
+
+## Community plugins
+
+See [COMMUNITY-PLUGINS.md](COMMUNITY-PLUGINS.md) for community-contributed adapters and plugins.
+
+---
+
+## Code of conduct
+
+This project follows the [Contributor Covenant v2.1](CODE_OF_CONDUCT.md).
 
 ---
 
 ## License
 
-AGPL-3.0. See `LICENSE`.
+[AGPL-3.0](LICENSE). The core is open source and always will be.
+
+Commercial licence available for embedding lumogis-core in proprietary products without AGPL obligations — contact [hello@lumogis.com](mailto:hello@lumogis.com).
 
 ---
 

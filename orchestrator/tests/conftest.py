@@ -26,9 +26,21 @@ class MockVectorStore:
         )
 
     def search(
-        self, collection: str, vector: list[float], limit: int, threshold: float
+        self,
+        collection: str,
+        vector: list[float],
+        limit: int,
+        threshold: float,
+        filter: dict | None = None,
+        sparse_query: str | None = None,
     ) -> list[dict]:
-        return self._collections.get(collection, [])[:limit]
+        items = self._collections.get(collection, [])
+        if filter:
+            for clause in filter.get("must", []):
+                key = clause["key"]
+                val = clause["match"]["value"]
+                items = [i for i in items if i.get("payload", {}).get(key) == val]
+        return items[:limit]
 
     def delete(self, collection: str, id: str) -> None:
         items = self._collections.get(collection, [])
@@ -89,10 +101,27 @@ def mock_embedder():
 
 
 @pytest.fixture(autouse=True)
-def _override_config(mock_vector_store, mock_metadata_store, mock_embedder):
-    """Replace config singletons with mocks for every test."""
+def _override_config(mock_vector_store, mock_metadata_store, mock_embedder, monkeypatch):
+    """Replace config singletons with mocks for every test.
+
+    Also sets RERANKER_BACKEND=none so the lifespan never tries to import
+    sentence_transformers (which is only available inside the Docker image).
+    """
+    monkeypatch.setenv("RERANKER_BACKEND", "none")
     _config._instances["vector_store"] = mock_vector_store
     _config._instances["metadata_store"] = mock_metadata_store
     _config._instances["embedder"] = mock_embedder
+    _config._instances["reranker"] = None
     yield
     _config._instances.clear()
+
+
+@pytest.fixture(autouse=True)
+def _mock_watcher(monkeypatch):
+    """Prevent the filesystem watcher from starting during tests.
+
+    start_watcher uses watchdog to monitor a real path; that path does not
+    exist in the local test environment (it lives inside Docker).
+    """
+    monkeypatch.setattr("services.ingest.start_watcher", lambda path: None)
+    monkeypatch.setattr("services.ingest.stop_watcher", lambda: None)

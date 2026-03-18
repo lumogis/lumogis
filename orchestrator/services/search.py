@@ -11,13 +11,24 @@ import config
 _log = logging.getLogger(__name__)
 
 
-def semantic_search(query: str, limit: int = 5) -> list[SearchResult]:
+def _user_filter(user_id: str) -> dict:
+    return {"must": [{"key": "user_id", "match": {"value": user_id}}]}
+
+
+def semantic_search(query: str, limit: int = 5, user_id: str = "default") -> list[SearchResult]:
     embedder = config.get_embedder()
     vs = config.get_vector_store()
     reranker = config.get_reranker()
 
     query_vec = embedder.embed(query)
-    raw = vs.search(collection="documents", vector=query_vec, limit=20, threshold=0.50)
+    raw = vs.search(
+        collection="documents",
+        vector=query_vec,
+        limit=20,
+        threshold=0.40,
+        filter=_user_filter(user_id),
+        sparse_query=query,
+    )
 
     if not raw:
         _log.debug("No Qdrant results for '%s', trying filename fallback", query)

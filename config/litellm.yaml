@@ -4,19 +4,22 @@ model_list:
       model: anthropic/claude-sonnet-4-20250514
       api_key: os.environ/ANTHROPIC_API_KEY
 
-  - model_name: local
+  - model_name: qwen
+    litellm_params:
+      model: ollama/qwen2.5:7b
+      api_base: http://ollama:11434
+  - model_name: qwen-coder
+    litellm_params:
+      model: ollama/qwen2.5-coder:7b
+      api_base: http://ollama:11434
+  - model_name: llama
     litellm_params:
       model: ollama/llama3.2:3b
       api_base: http://ollama:11434
-
-  - model_name: lumogis-1
-    litellm_params:
-      model: anthropic/claude-sonnet-4-20250514
-      api_key: os.environ/ANTHROPIC_API_KEY
 
 router_settings:
   routing_strategy: simple-shuffle
 
 litellm_settings:
   drop_params: true
-  timeout: 60
+  timeout: 120

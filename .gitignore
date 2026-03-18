@@ -1,5 +1,22 @@
 .env
+.env.local
+.env.*.local
+!.env.example
 __pycache__/
 *.pyc
 venv/
 .venv/
+PLAN-APP.md
+.cursor/plans/PLAN-APP.md
+
+# Proprietary plugins (lumogis-app only — never commit to core)
+orchestrator/plugins/graph/
+orchestrator/plugins/ambient/
+orchestrator/plugins/voice/
+orchestrator/plugins/context/
+orchestrator/plugins/mesh/
+
+# IDE / OS
+.idea/
+*.swp
+.DS_Store

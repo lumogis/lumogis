@@ -1,95 +1,22 @@
 # Lumogis Architecture
 
-This document explains how the Lumogis orchestrator is structured and how the pieces fit together. Read this before contributing code.
+This document explains how the lumogis-core orchestrator is structured and how the pieces fit together. Read this before contributing code. For decisions on *why* specific technologies were chosen, see `docs/decisions/`.
 
-## Three concepts
+---
 
-| Concept    | Lives in            | Purpose                                                |
-| ---------- | ------------------- | ------------------------------------------------------ |
-| **Service** | `services/`         | Business logic — ingest, search, entity extraction     |
-| **Adapter** | `adapters/`         | Concrete backend implementation (Qdrant, Postgres, …)  |
-| **Plugin**  | `plugins/<name>/`   | Optional, self-contained extension (graph, future MCP) |
+## Five concepts
 
-Services call adapters **only via ports** (Protocol interfaces in `ports/`). A service never imports a concrete adapter directly.
+Everything in the codebase maps to exactly one of five concepts:
 
-## Port / Adapter pattern
+| Concept | Lives in | Purpose |
+|---|---|---|
+| **Services** | `orchestrator/services/` | Business logic — ingest, search, memory, entity extraction, routines |
+| **Adapters** | `orchestrator/adapters/` | One file per external system. Swap a backend by writing one adapter. |
+| **Plugins** | `orchestrator/plugins/` | Optional, self-contained extensions. Core works without any. |
+| **Signals** | `orchestrator/signals/` | Source monitors that detect and score incoming events |
+| **Actions** | `orchestrator/actions/` | Executable operations with audit logging and Ask/Do enforcement |
 
-```
-services/ingest.py
-    ↓ calls
-ports/vector_store.py  (Protocol)
-    ↑ implements
-adapters/qdrant_store.py
-```
-
-`config.py` reads environment variables and returns cached singleton adapters. Every `get_*()` call returns the same object after first construction:
-
-```python
-from config import get_vector_store
-vs = get_vector_store()  # QdrantStore or future alternative
-vs.upsert(...)
-```
-
-Swapping a backend means writing a new adapter that satisfies the Protocol, adding a branch in `config.py`, and setting the env var. No service code changes.
-
-### Ports with ping()
-
-Every port representing a running service includes `ping() -> bool` for startup health checks. Exception: `Reranker` has no `ping()` — it is a loaded model, not a network service.
-
-## Event constants and hooks
-
-`events.py` defines string constants for all hook events:
-
-```python
-class Event:
-    DOCUMENT_INGESTED = "on_document_ingested"
-    ENTITY_CREATED    = "on_entity_created"
-    SESSION_ENDED     = "on_session_ended"
-    TOOL_REGISTERED   = "on_tool_registered"
-```
-
-`hooks.py` provides the dispatch mechanism:
-
-- `hooks.register(event, callback)` — attach a listener
-- `hooks.fire(event, *args)` — call all listeners synchronously (use for lightweight, in-request work)
-- `hooks.fire_background(event, *args)` — call listeners in a thread pool (use for slow, non-blocking work like graph updates)
-
-Plugins and services use `Event` constants for all hook calls. Never use raw strings.
-
-## Route file structure
-
-| File            | Endpoints                                          |
-| --------------- | -------------------------------------------------- |
-| `routes/chat.py`  | `/ask`, `/v1/chat/completions`                    |
-| `routes/admin.py` | `/health`, `/permissions`, `/review-queue`         |
-| `routes/data.py`  | `/ingest`, `/search`, `/session/end`, `/entities` |
-
-`main.py` only does app creation, lifespan (health checks, collection init, plugin loading, shutdown), and `app.include_router()` calls.
-
-## Typed models
-
-`models/` contains Pydantic models for API/service contracts and the `ToolSpec` dataclass:
-
-- **Pydantic models** at route boundaries and stable service contracts (request/response shapes)
-- **Plain dataclasses or dicts** for lightweight internal data passing within a single service
-- **`ToolSpec`** (frozen dataclass) — mandatory metadata for every tool, used by `run_tool()` for structural permission enforcement
-
-## Plugin system
-
-Plugins live in `plugins/<name>/` with an `__init__.py`. The plugin loader in `plugins/__init__.py` scans subdirectories on startup and imports each one.
-
-Plugins interact with core via hooks:
-1. Register event listeners: `hooks.register(Event.DOCUMENT_INGESTED, my_callback)`
-2. Register tools: `hooks.fire(Event.TOOL_REGISTERED, ToolSpec(...))`
-
-Plugins may import from `ports/`, `models/`, `events.py`, and `hooks.py`. They must **never** import from `services/` or `adapters/` directly.
-
-## Open-core boundary
-
-| Repository       | Contains                                                    |
-| ---------------- | ----------------------------------------------------------- |
-| **lumogis-core** | `orchestrator/` (ports, adapters, services, config, routes, models, hooks, events, tests), `docker-compose.yml`, `Makefile`, `pyproject.toml`, CI |
-| **lumogis-app**  | `plugins/graph/`, `config/librechat.yaml`, LibreChat customizations |
+---
 
 ## Dependency direction
 
@@ -99,15 +26,239 @@ routes → services → ports ← adapters
                config
                   ↑
                plugins (via hooks only)
+               signals (fire hooks on receipt)
+               actions (registered via hooks, executed by executor)
 ```
 
-Arrows point in the direction of imports. Plugins never import services; they interact via hooks.
+Arrows point in the direction of imports. The rule: **nothing imports inward past its layer boundary**.
+
+- Routes import services (never adapters or ports directly)
+- Services import ports (never concrete adapters)
+- Adapters implement ports
+- Plugins, signals, and actions import from `ports/`, `models/`, `events.py`, and `hooks.py` — never from `services/` or `adapters/`
+- `config.py` is the only place that instantiates concrete adapters
+
+---
+
+## Ports and the config factory
+
+`ports/` contains Protocol interfaces — Python structural typing contracts. Every swappable backend has a corresponding port:
+
+| Port | Methods |
+|---|---|
+| `VectorStore` | `upsert`, `search`, `delete`, `count`, `ping` |
+| `MetadataStore` | `execute`, `fetch_one`, `fetch_all`, `ping` |
+| `Embedder` | `embed`, `embed_batch`, `vector_size`, `ping` |
+| `Reranker` | `rerank(query, candidates, limit)` |
+| `LLMProvider` | `chat`, `chat_stream` |
+| `GraphStore` | `create_node`, `create_edge`, `query`, `ping` |
+| `SignalSource` | `poll() -> list[Signal]`, `source_id: str` |
+| `ActionHandler` | `handle(action: Action) -> ActionResult` |
+| `Notifier` | `send(subject, body, tags)`, `ping` |
+
+`config.py` reads environment variables, constructs the appropriate concrete adapter, and returns it. Subsequent calls return the same cached instance (singleton pattern):
+
+```python
+from config import get_vector_store
+
+vs = get_vector_store()   # QdrantStore, or any future alternative
+vs.upsert(...)
+```
+
+Swapping a backend: write a new adapter satisfying the Protocol, add a factory branch in `config.py`, set the env var. Zero service-layer changes.
+
+### Singleton caching
+
+`config.py` uses module-level `_cache` dict to store constructed adapters. The pattern is identical for every `get_*()` function:
+
+```python
+_cache: dict[str, Any] = {}
+
+def get_vector_store() -> VectorStore:
+    if "vector_store" not in _cache:
+        backend = os.getenv("VECTOR_STORE_BACKEND", "qdrant")
+        if backend == "qdrant":
+            _cache["vector_store"] = QdrantStore(url=os.getenv("QDRANT_URL"))
+        else:
+            raise ValueError(f"Unknown VECTOR_STORE_BACKEND: {backend}")
+    return _cache["vector_store"]
+```
+
+### Startup health checks
+
+`main.py` calls `ping()` on every service-backed adapter during the FastAPI lifespan startup. A failed `ping()` raises `RuntimeError` and prevents startup. `Reranker` has no `ping()` — it is a loaded model, not a network service.
+
+### VectorStore hybrid search
+
+`VectorStore.search()` accepts an optional `sparse_query: str | None = None` parameter. The `QdrantStore` adapter uses it to perform BM25 + dense hybrid search on the `documents` collection with Reciprocal Rank Fusion (RRF). Community adapters must include the parameter in their `search()` signature; they may safely ignore it if their backend does not support sparse vectors.
+
+---
+
+## Extractor auto-discovery
+
+File type extractors in `adapters/` are auto-discovered by `config.get_extractors()`. The pattern: any function in `adapters/` that matches `extract_<extension>(path: str) -> str` is automatically registered. No factory branches, no port, no Protocol — just a function with the right signature.
+
+```python
+# adapters/epub_extractor.py
+def extract_epub(path: str) -> str:
+    ...
+```
+
+This is deliberately minimal. Extractors are pure functions with no dependencies on the rest of the system.
+
+---
+
+## Event constants and hook dispatch
+
+`events.py` defines all hook event names as string constants on the `Event` class. Never use raw strings for hook events — always use `Event.*`:
+
+```python
+class Event:
+    DOCUMENT_INGESTED      = "on_document_ingested"
+    ENTITY_CREATED         = "on_entity_created"
+    SESSION_ENDED          = "on_session_ended"
+    TOOL_REGISTERED        = "on_tool_registered"
+    CONTEXT_BUILDING       = "on_context_building"
+    SIGNAL_RECEIVED        = "on_signal_received"
+    FEEDBACK_RECEIVED      = "on_feedback_received"
+    ACTION_EXECUTED        = "on_action_executed"
+    ACTION_REGISTERED      = "on_action_registered"
+    ROUTINE_ELEVATION_READY = "on_routine_elevation_ready"
+```
+
+`hooks.py` provides two dispatch modes — the choice matters:
+
+| Function | Behaviour | When to use |
+|---|---|---|
+| `hooks.fire(event, *args)` | Calls all listeners **synchronously** in the request thread | Lightweight, in-request work where the caller needs completion before continuing |
+| `hooks.fire_background(event, *args)` | Submits all listeners to a **ThreadPoolExecutor** | Slow or non-critical work (graph updates, signal scoring, telemetry) |
+
+Using `fire_background` for slow work (like graph construction) prevents the ingest endpoint from blocking on plugin processing. Using `fire` for tool registration ensures tools are available before the first request is served.
+
+---
+
+## Route file structure
+
+| File | Prefix | Key endpoints |
+|---|---|---|
+| `routes/chat.py` | — | `POST /ask`, `POST /v1/chat/completions` |
+| `routes/data.py` | — | `POST /ingest`, `POST /search`, `POST /session/end`, `POST /entities/extract`, `GET /entities` |
+| `routes/signals.py` | `/signals` | `GET /signals`, `POST /signals/sources`, `DELETE /signals/sources/{id}`, `POST /signals/poll` |
+| `routes/actions.py` | `/actions` | `GET /actions`, `POST /actions/execute`, `GET /actions/audit`, `POST /actions/{id}/approve` |
+| `routes/events.py` | — | `GET /events` (SSE stream) |
+| `routes/admin.py` | — | `GET /`, `GET /health`, `GET /permissions`, `GET /review-queue`, `POST /backup`, `POST /restore`, `GET /export` |
+
+`main.py` does only four things: create the FastAPI app, define the lifespan (startup health checks, collection init, plugin loading, executor shutdown), call `app.include_router()` for each route file, and call `plugins.load_plugins()`.
+
+---
+
+## Typed models
+
+`models/` contains Pydantic models for API and service contracts:
+
+- **Pydantic models** at route boundaries and stable service contracts (request/response shapes, serialisation)
+- **Plain dataclasses or dicts** for lightweight internal data passing within a single service
+- **`ToolSpec`** (frozen dataclass) — mandatory metadata for every tool registered via hooks, used by `run_tool()` for structural permission enforcement
+
+New routes must define Pydantic request and response models. Services pass plain dicts internally.
+
+---
+
+## Signal infrastructure
+
+`signals/` contains source monitors — classes that implement `SignalSource` and poll external systems for new events:
+
+| Monitor | Source |
+|---|---|
+| `feed_monitor.py` | RSS and Atom feeds |
+| `page_monitor.py` | Web page change detection (hash-based) |
+| `calendar_monitor.py` | Calendar event stream |
+| `system_monitor.py` | Local filesystem and system events |
+
+The signal processing pipeline:
+
+1. `SignalSource.poll()` returns a list of `Signal` objects
+2. `signal_processor.py` scores each signal and stores it via `MetadataStore`
+3. `hooks.fire(Event.SIGNAL_RECEIVED, signal)` notifies plugins
+4. Plugins decide what to do — store, surface, route to an action
+
+Signal sources are registered at startup via `config.get_signal_sources()`. Adding a new source: implement `SignalSource`, add a factory branch.
+
+---
+
+## Actions foundation
+
+`actions/` implements the Ask/Do safety model:
+
+| Component | Purpose |
+|---|---|
+| `registry.py` | Stores registered action definitions |
+| `executor.py` | Enforces Ask/Do mode, calls handlers, records results |
+| `audit.py` | Immutable append-only audit log (stored in Postgres) |
+| `reversibility.py` | Metadata about whether an action can be undone |
+| `handlers/` | One file per action domain (filesystem, calendar, etc.) |
+
+**Ask/Do enforcement:**
+- `mode=ask` → executor writes the action to the review queue and returns a pending result. Execution waits for approval.
+- `mode=do` → executor runs the handler immediately and logs the result.
+- **Routine elevation:** actions that accumulate `ROUTINE_ELEVATION_THRESHOLD` clean approvals are promoted from `ask` to `do` automatically. Demotion is manual.
+
+Every action execution (success, failure, approval, rejection) is logged to `audit_log` in Postgres. The log is append-only — no updates, no deletes.
+
+---
+
+## Plugin system
+
+Plugins live in `plugins/<name>/` with an `__init__.py`. The plugin loader scans subdirectories on startup and imports each one.
+
+Plugin interaction points:
+
+```python
+# Listen for events
+hooks.register(Event.DOCUMENT_INGESTED, my_callback)
+
+# Register a tool
+hooks.fire(Event.TOOL_REGISTERED, ToolSpec(
+    name="my_tool",
+    description="...",
+    input_schema={...},
+    mode="ask",
+))
+
+# Register an action handler
+hooks.fire(Event.ACTION_REGISTERED, MyActionHandler())
+
+# Expose an API route
+router = APIRouter(prefix="/my-plugin")
+
+@router.get("/status")
+def status(): ...
+```
+
+Plugins may import from: `ports/`, `models/`, `events.py`, `hooks.py`.
+Plugins must **never** import from: `services/`, `adapters/`, `config.py`.
+
+The plugin directory is the open-core boundary. Plugins in `plugins/graph/`, `plugins/ambient/`, `plugins/voice/`, `plugins/context/`, and `plugins/mesh/` are proprietary and live in the separate `lumogis-app` repository. The boundary is structural — not a comment or a convention. See [ADR-005](docs/decisions/005-open-core-boundary.md).
+
+---
+
+## Open-core boundary
+
+| Repository | Contains |
+|---|---|
+| **lumogis-core** (this repo) | `orchestrator/` (all five concepts), `docker-compose.yml`, `Makefile`, `pyproject.toml`, CI, docs |
+| **lumogis-app** (proprietary) | `plugins/graph/`, `plugins/ambient/`, `plugins/voice/`, `plugins/context/`, `plugins/mesh/`, LibreChat customisations |
+
+The boundary is enforced by `.gitignore` excluding `plugins/graph/` and other proprietary plugin directories. Even if someone mounts lumogis-app plugins into lumogis-core at runtime, the open-core orchestrator continues to work — plugins are additive, not required.
+
+---
 
 ## Running tests and linting
 
 ```bash
-make test   # runs pytest inside orchestrator/tests/
-make lint   # runs ruff check + ruff format --check
+make test               # unit tests — no Docker needed (mock adapters in conftest.py)
+make lint               # ruff check + ruff format --check
+make test-integration   # full-stack integration tests — requires docker compose up -d
 ```
 
-Tests use mock adapters from `tests/conftest.py` — no running Docker services needed for the unit test suite.
+Unit tests use mock adapters from `tests/conftest.py`. No running Docker services are needed for the unit suite. Integration tests in `tests/integration/` run against the live stack via `httpx`.
