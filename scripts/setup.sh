@@ -26,8 +26,14 @@ err()    { echo -e "  ${RED}✗${NC} $1"; }
 header() { echo -e "\n${BOLD}$1${NC}"; }
 
 DRY_RUN=false
-for arg in "$@"; do
-    [[ "$arg" == "--dry-run" ]] && DRY_RUN=true
+ROOT_ARG=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --dry-run) DRY_RUN=true ;;
+        --root)    ROOT_ARG="$2"; shift ;;
+        --root=*)  ROOT_ARG="${1#--root=}" ;;
+    esac
+    shift
 done
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -133,6 +139,55 @@ fi
 if grep -q "^JWT_REFRESH_SECRET=change-me-in-production" "$PROJECT_DIR/.env" 2>/dev/null; then
     sed -i "s|^JWT_REFRESH_SECRET=change-me-in-production|JWT_REFRESH_SECRET=$(_gen_secret)|" "$PROJECT_DIR/.env"
     info "Generated JWT_REFRESH_SECRET"
+fi
+
+# --- FILESYSTEM_ROOT ---
+if ! grep -q "^FILESYSTEM_ROOT=." "$PROJECT_DIR/.env" 2>/dev/null; then
+    if [[ -n "$ROOT_ARG" ]]; then
+        # Passed via --root or make setup ROOT=...
+        FS_ROOT="$ROOT_ARG"
+    else
+        # Auto-detect a sensible default
+        _detect_default_root() {
+            # Try XDG documents dir (Linux standard)
+            if command -v xdg-user-dir &>/dev/null; then
+                local xdg_docs
+                xdg_docs="$(xdg-user-dir DOCUMENTS 2>/dev/null)"
+                if [[ -n "$xdg_docs" && "$xdg_docs" != "$HOME" && -d "$xdg_docs" ]]; then
+                    echo "$xdg_docs"
+                    return
+                fi
+            fi
+            # Fall back to ~/Documents if it exists
+            if [[ -d "$HOME/Documents" ]]; then
+                echo "$HOME/Documents"
+                return
+            fi
+            # Otherwise propose creating ~/lumogis-data
+            echo "$HOME/lumogis-data"
+        }
+        DEFAULT_ROOT="$(_detect_default_root)"
+        echo ""
+        echo -e "  ${BOLD}Where are the files you want Lumogis to index?${NC}"
+        echo -e "  Press Enter to accept the default, or type a path."
+        echo -n "  [$DEFAULT_ROOT]: "
+        read -r FS_ROOT
+        [[ -z "$FS_ROOT" ]] && FS_ROOT="$DEFAULT_ROOT"
+    fi
+
+    # Expand ~ manually in case user typed it
+    FS_ROOT="${FS_ROOT/#\~/$HOME}"
+
+    # Create the folder if it doesn't exist
+    if [[ ! -d "$FS_ROOT" ]]; then
+        mkdir -p "$FS_ROOT"
+        info "Created $FS_ROOT"
+    fi
+
+    sed -i "s|^FILESYSTEM_ROOT=.*|FILESYSTEM_ROOT=$FS_ROOT|" "$PROJECT_DIR/.env"
+    info "FILESYSTEM_ROOT=$FS_ROOT"
+else
+    info "FILESYSTEM_ROOT already set"
 fi
 
 # Set COMPOSE_FILE in .env
@@ -454,7 +509,4 @@ echo -e "  Open ${BOLD}http://localhost:3080${NC} to start using Lumogis."
 echo ""
 if ! grep -q "^ANTHROPIC_API_KEY=." "$PROJECT_DIR/.env" 2>/dev/null; then
     warn "Set ANTHROPIC_API_KEY in .env to enable Claude (cloud model)."
-fi
-if ! grep -q "^FILESYSTEM_ROOT=." "$PROJECT_DIR/.env" 2>/dev/null; then
-    warn "Set FILESYSTEM_ROOT in .env to the folder you want Lumogis to index."
 fi

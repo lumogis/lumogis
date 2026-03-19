@@ -136,17 +136,19 @@ cd lumogis
 cp .env.example .env
 ```
 
-Open `.env` and set your file path:
+Optionally add API keys to `.env` for cloud models:
 
 ```bash
-FILESYSTEM_ROOT=/path/to/your/files   # the folder lumogis will index (read-only)
-
 # Optional — lumogis works fully without these
 # ANTHROPIC_API_KEY=sk-ant-...
 # OPENAI_API_KEY=sk-...
 ```
 
-`JWT_SECRET` and `JWT_REFRESH_SECRET` are generated automatically by `make setup`.
+`JWT_SECRET`, `JWT_REFRESH_SECRET`, and `FILESYSTEM_ROOT` are set automatically by `make setup`. To skip the folder prompt, pass the path directly:
+
+```bash
+make setup ROOT=/path/to/your/files
+```
 
 ### Step 2: Run setup
 

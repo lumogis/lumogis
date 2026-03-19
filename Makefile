@@ -1,7 +1,7 @@
 .PHONY: setup dev build test test-integration test-integration-full lint ingest health logs
 
 setup:
-	@bash scripts/setup.sh
+	@bash scripts/setup.sh $(if $(ROOT),--root "$(ROOT)",)
 
 dev:
 	docker compose -f docker-compose.yml -f docker-compose.gpu.yml -f docker-compose.dev.yml up
