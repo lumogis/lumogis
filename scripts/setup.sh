@@ -25,6 +25,15 @@ warn()   { echo -e "  ${YELLOW}!${NC} $1"; }
 err()    { echo -e "  ${RED}✗${NC} $1"; }
 header() { echo -e "\n${BOLD}$1${NC}"; }
 
+# Portable sed -i: macOS (BSD sed) requires an explicit empty backup suffix.
+sed_i() {
+    if sed --version &>/dev/null 2>&1; then
+        sed -i "$@"       # GNU sed (Linux)
+    else
+        sed -i '' "$@"    # BSD sed (macOS)
+    fi
+}
+
 DRY_RUN=false
 ROOT_ARG=""
 while [[ $# -gt 0 ]]; do
@@ -133,11 +142,11 @@ _gen_secret() {
     fi
 }
 if grep -q "^JWT_SECRET=change-me-in-production" "$PROJECT_DIR/.env" 2>/dev/null; then
-    sed -i "s|^JWT_SECRET=change-me-in-production|JWT_SECRET=$(_gen_secret)|" "$PROJECT_DIR/.env"
+    sed_i "s|^JWT_SECRET=change-me-in-production|JWT_SECRET=$(_gen_secret)|" "$PROJECT_DIR/.env"
     info "Generated JWT_SECRET"
 fi
 if grep -q "^JWT_REFRESH_SECRET=change-me-in-production" "$PROJECT_DIR/.env" 2>/dev/null; then
-    sed -i "s|^JWT_REFRESH_SECRET=change-me-in-production|JWT_REFRESH_SECRET=$(_gen_secret)|" "$PROJECT_DIR/.env"
+    sed_i "s|^JWT_REFRESH_SECRET=change-me-in-production|JWT_REFRESH_SECRET=$(_gen_secret)|" "$PROJECT_DIR/.env"
     info "Generated JWT_REFRESH_SECRET"
 fi
 
@@ -184,7 +193,7 @@ if ! grep -q "^FILESYSTEM_ROOT=." "$PROJECT_DIR/.env" 2>/dev/null; then
         info "Created $FS_ROOT"
     fi
 
-    sed -i "s|^FILESYSTEM_ROOT=.*|FILESYSTEM_ROOT=$FS_ROOT|" "$PROJECT_DIR/.env"
+    sed_i "s|^FILESYSTEM_ROOT=.*|FILESYSTEM_ROOT=$FS_ROOT|" "$PROJECT_DIR/.env"
     info "FILESYSTEM_ROOT=$FS_ROOT"
 else
     info "FILESYSTEM_ROOT already set"
@@ -199,7 +208,7 @@ else
 fi
 
 if grep -q "^COMPOSE_FILE=" "$PROJECT_DIR/.env" 2>/dev/null; then
-    sed -i "s|^COMPOSE_FILE=.*|COMPOSE_FILE=$COMPOSE_VALUE|" "$PROJECT_DIR/.env"
+    sed_i "s|^COMPOSE_FILE=.*|COMPOSE_FILE=$COMPOSE_VALUE|" "$PROJECT_DIR/.env"
 else
     echo "" >> "$PROJECT_DIR/.env"
     echo "# Docker Compose file selection (set by make setup)" >> "$PROJECT_DIR/.env"
