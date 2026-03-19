@@ -1,4 +1,4 @@
-# Security Audit #1 — lumogis-core v0.3.0-rc
+# Security Audit #1 — lumogis v0.3.0-rc
 
 **Date:** 2026-03-18
 **Auditor:** Automated (AI-assisted) + manual review

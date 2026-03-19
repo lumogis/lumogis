@@ -2,7 +2,7 @@
 
 ## Context
 
-lumogis-core needs a vector database for document chunks, session summaries, entity embeddings, and signal deduplication. Candidates included Chroma, Milvus, Weaviate, and Qdrant.
+lumogis needs a vector database for document chunks, session summaries, entity embeddings, and signal deduplication. Candidates included Chroma, Milvus, Weaviate, and Qdrant.
 
 ## Decision
 

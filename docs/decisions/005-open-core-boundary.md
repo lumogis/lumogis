@@ -2,7 +2,7 @@
 
 ## Context
 
-lumogis-core needs a plugin boundary that is structurally enforced, not policy-enforced. Plugins are optional extensions: core must work completely without them, and dropping a plugin in must re-enable its functionality automatically with no changes to core code.
+lumogis needs a plugin boundary that is structurally enforced, not policy-enforced. Plugins are optional extensions: core must work completely without them, and dropping a plugin in must re-enable its functionality automatically with no changes to core code.
 
 ## Decision
 

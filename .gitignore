@@ -27,7 +27,7 @@ ai-workspace/review/*
 !ai-workspace/review/.gitkeep
 ai-workspace/backups/*.zip
 
-# Internal documents — private to lumogis-app, never pushed to lumogis-core
+# Internal documents — private to lumogis-app, never pushed to lumogis
 AUDIT-REPORT.md
 REMEDIATION-PLAN.md
 

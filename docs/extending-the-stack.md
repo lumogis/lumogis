@@ -1,6 +1,6 @@
 # Extending the stack
 
-lumogis-core is built to be extended at every layer. This document covers two kinds of extension:
+lumogis is built to be extended at every layer. This document covers two kinds of extension:
 
 - **Stack add-ons** — optional Docker Compose overlays that activate additional capability
 - **Code extensions** — adapters, plugins, signal sources, and action handlers written in Python

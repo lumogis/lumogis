@@ -1,6 +1,6 @@
 # Example plugin template
 
-Minimal plugin for lumogis-core: subscribes to `Event.DOCUMENT_INGESTED`, logs each ingest, and exposes `GET /example/stats`.
+Minimal plugin for lumogis: subscribes to `Event.DOCUMENT_INGESTED`, logs each ingest, and exposes `GET /example/stats`.
 
 ## Use as a template
 

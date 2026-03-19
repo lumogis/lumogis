@@ -1,4 +1,4 @@
-# Contributing to lumogis-core
+# Contributing to lumogis
 
 Thank you for your interest in contributing. This document covers everything you need to get started.
 
@@ -12,7 +12,7 @@ All participants must follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 **All contributors must sign the CLA before a PR can be merged.**
 
-lumogis-core is AGPL-3.0. The CLA grants Lumogis the right to relicence your contribution for distribution outside AGPL terms while you retain full copyright.
+lumogis is AGPL-3.0. The CLA grants Lumogis the right to relicence your contribution for distribution outside AGPL terms while you retain full copyright.
 
 **Sign the CLA here:** [cla.lumogis.com](https://cla.lumogis.com)
 
@@ -39,8 +39,8 @@ If you have questions about the CLA, open a Discussion before submitting code.
 ### First-time setup
 
 ```bash
-git clone https://github.com/lumogis/lumogis-core.git
-cd lumogis-core
+git clone https://github.com/lumogis/lumogis.git
+cd lumogis
 cp .env.example .env
 make setup      # detects hardware, pulls models
 make dev        # starts the stack with hot reload
@@ -292,14 +292,14 @@ To add your plugin to [COMMUNITY-PLUGINS.md](COMMUNITY-PLUGINS.md):
 
 1. Publish your plugin to a public GitHub repository
 2. Ensure it has a README explaining installation and usage
-3. Open a PR to lumogis-core that adds one entry to `COMMUNITY-PLUGINS.md` in the appropriate section
+3. Open a PR to lumogis that adds one entry to `COMMUNITY-PLUGINS.md` in the appropriate section
 4. The entry format:
 
 ```markdown
 | [Plugin Name](https://github.com/you/your-plugin) | One-sentence description | @yourhandle |
 ```
 
-No code changes to lumogis-core are required. The PR modifies only `COMMUNITY-PLUGINS.md`.
+No code changes to lumogis are required. The PR modifies only `COMMUNITY-PLUGINS.md`.
 
 ---
 

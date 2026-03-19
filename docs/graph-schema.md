@@ -1,6 +1,6 @@
 # Lumogis Graph Schema
 
-This schema defines the graph structure for knowledge graph plugins. lumogis-core does not write to the graph — it ships this schema so community implementations can target a consistent structure. See `ports/graph_store.py` for the protocol interface.
+This schema defines the graph structure for knowledge graph plugins. lumogis does not write to the graph — it ships this schema so community implementations can target a consistent structure. See `ports/graph_store.py` for the protocol interface.
 
 ---
 
@@ -156,5 +156,5 @@ RETURN d.file_path, d.ingested_at
 
 - **Language preservation**: entity names are stored in the original language of the source material. A German document mentioning "Bundesamt für Statistik" creates a node named "Bundesamt für Statistik", not "Federal Statistical Office".
 - **`lumogis_id` links Postgres ↔ graph**: for entities, use `entities.entity_id`; for documents, use the `file_path`.
-- **Graph writes are plugin responsibility**: lumogis-core fires `Event.ENTITY_CREATED` and `Event.DOCUMENT_INGESTED` hooks. A graph plugin subscribes to these and writes nodes/edges. Core never imports a graph adapter.
+- **Graph writes are plugin responsibility**: lumogis fires `Event.ENTITY_CREATED` and `Event.DOCUMENT_INGESTED` hooks. A graph plugin subscribes to these and writes nodes/edges. Core never imports a graph adapter.
 - **FalkorDB graph name**: always `lumogis`. Multi-tenancy is handled via the `user_id` property, not separate graph instances.

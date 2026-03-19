@@ -1,6 +1,6 @@
 # Community Plugins
 
-Curated list of community-contributed plugins and adapters for lumogis-core.
+Curated list of community-contributed plugins and adapters for lumogis.
 
 This is the discovery mechanism until a plugin registry exists. To submit your plugin, open a PR to this file — see [CONTRIBUTING.md](CONTRIBUTING.md#submitting-a-community-plugin) for the format.
 
@@ -17,8 +17,8 @@ Adapters that implement `SignalSource` and poll external systems for new signals
 | *No entries yet — be the first.* | | |
 
 **Good first issues in this category:**
-- [Add Hacker News signal source](https://github.com/lumogis/lumogis-core/issues/1) — poll HN top stories
-- [Add Reddit signal source](https://github.com/lumogis/lumogis-core/issues/2) — poll subreddit feeds
+- [Add Hacker News signal source](https://github.com/lumogis/lumogis/issues/1) — poll HN top stories
+- [Add Reddit signal source](https://github.com/lumogis/lumogis/issues/2) — poll subreddit feeds
 
 ---
 
@@ -31,9 +31,9 @@ Adapters that implement `ActionHandler` and execute operations in response to si
 | *No entries yet — be the first.* | | |
 
 **Good first issues in this category:**
-- [Add Notion action handler](https://github.com/lumogis/lumogis-core/issues/3) — create/update Notion pages
-- [Add Slack action handler](https://github.com/lumogis/lumogis-core/issues/4) — send messages to Slack
-- [Add email digest Notifier](https://github.com/lumogis/lumogis-core/issues/5) — send signal digests via email
+- [Add Notion action handler](https://github.com/lumogis/lumogis/issues/3) — create/update Notion pages
+- [Add Slack action handler](https://github.com/lumogis/lumogis/issues/4) — send messages to Slack
+- [Add email digest Notifier](https://github.com/lumogis/lumogis/issues/5) — send signal digests via email
 
 ---
 
@@ -46,8 +46,8 @@ Adapters that implement `VectorStore` or `MetadataStore` with alternative backen
 | *No entries yet — be the first.* | | |
 
 **Good first issues in this category:**
-- [Add Chroma vector store adapter](https://github.com/lumogis/lumogis-core/issues/6) — drop-in Qdrant alternative
-- [Add SQLite MetadataStore adapter](https://github.com/lumogis/lumogis-core/issues/7) — zero-dependency dev backend
+- [Add Chroma vector store adapter](https://github.com/lumogis/lumogis/issues/6) — drop-in Qdrant alternative
+- [Add SQLite MetadataStore adapter](https://github.com/lumogis/lumogis/issues/7) — zero-dependency dev backend
 
 ---
 
@@ -60,9 +60,9 @@ Single-function adapters that extract text from additional file types (auto-disc
 | *No entries yet — be the first.* | | | |
 
 **Good first issues in this category:**
-- [Add .epub extractor](https://github.com/lumogis/lumogis-core/issues/8) — extract text from EPUB files
-- [Add .html extractor](https://github.com/lumogis/lumogis-core/issues/9) — extract text from saved HTML
-- [Add .csv/.xlsx extractor](https://github.com/lumogis/lumogis-core/issues/10) — extract tabular data as text
+- [Add .epub extractor](https://github.com/lumogis/lumogis/issues/8) — extract text from EPUB files
+- [Add .html extractor](https://github.com/lumogis/lumogis/issues/9) — extract text from saved HTML
+- [Add .csv/.xlsx extractor](https://github.com/lumogis/lumogis/issues/10) — extract tabular data as text
 
 ---
 
@@ -80,9 +80,9 @@ Full plugins that register hooks, tools, and routes.
 
 1. Publish your plugin to a public GitHub repository
 2. Make sure it has a README explaining installation, configuration, and usage
-3. Open a PR to lumogis-core that adds one row to the appropriate table above
+3. Open a PR to lumogis that adds one row to the appropriate table above
 4. Format: `| [Plugin Name](url) | One sentence description. | @handle |`
 
-Your PR changes only this file — no code changes to lumogis-core required.
+Your PR changes only this file — no code changes to lumogis required.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md#submitting-a-community-plugin) for full details.

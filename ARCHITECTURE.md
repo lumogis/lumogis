@@ -1,6 +1,6 @@
 # Lumogis Architecture
 
-This document explains how the lumogis-core orchestrator is structured and how the pieces fit together. Read this before contributing code. For decisions on *why* specific technologies were chosen, see `docs/decisions/`.
+This document explains how the lumogis orchestrator is structured and how the pieces fit together. Read this before contributing code. For decisions on *why* specific technologies were chosen, see `docs/decisions/`.
 
 ---
 

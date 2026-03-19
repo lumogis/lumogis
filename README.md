@@ -1,4 +1,4 @@
-# lumogis-core
+# lumogis
 
 **The AI comes to your data. Not the other way around.**
 
@@ -18,7 +18,7 @@ This is not a privacy policy. It is not a setting. It is physically impossible f
 
 ## What it does (summary)
 
-**lumogis-core processes, stores, and serves all data locally.** Every document you ingest, every entity extracted, every signal scored — it happens on your machine, in your containers, under your control.
+**lumogis processes, stores, and serves all data locally.** Every document you ingest, every entity extracted, every signal scored — it happens on your machine, in your containers, under your control.
 
 - Ingests and indexes your documents (PDF, DOCX, text, images via OCR)
 - Runs semantic search with two-stage retrieval (vector + reranker)
@@ -54,7 +54,7 @@ This is not a privacy policy. It is not a setting. It is physically impossible f
 
 ## Security model: Ask and Do
 
-Every action in lumogis-core belongs to one of two modes:
+Every action in lumogis belongs to one of two modes:
 
 | Mode | Behaviour |
 |---|---|
@@ -131,8 +131,8 @@ Minimum to run: 8 GB RAM, 20 GB free disk. No API keys required — all models r
 ### Step 1: Clone and configure
 
 ```bash
-git clone https://github.com/lumogis/lumogis-core.git
-cd lumogis-core
+git clone https://github.com/lumogis/lumogis.git
+cd lumogis
 cp .env.example .env
 ```
 
