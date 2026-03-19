@@ -11,7 +11,7 @@
 
 **Do not open a public GitHub issue for security bugs.** Public disclosure before a fix is available puts all users at risk.
 
-Instead, email **security@lumogis.com** with:
+Instead, email **lumogis@pm.me** with:
 
 - A description of the vulnerability
 - Reproduction steps (as minimal as possible)

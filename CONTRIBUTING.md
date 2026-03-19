@@ -319,7 +319,7 @@ Thomas reviews all PRs. Target review time: 48 hours.
 
 **For bug reports:** open an Issue with reproduction steps and your hardware tier (`scripts/detect-hardware.sh` output).
 
-**For security issues:** do not open a public Issue. Email [security@lumogis.com](mailto:security@lumogis.com).
+**For security issues:** do not open a public Issue. Email [lumogis@pm.me](mailto:lumogis@pm.me).
 
 ---
 
