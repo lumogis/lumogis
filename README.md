@@ -159,9 +159,9 @@ To add cloud model support, set API keys in `.env` before running setup:
 
 Safe to re-run after a hardware change or to add a new model tier.
 
-### Step 3: Open LibreChat
+### Step 3: Start using Lumogis
 
-[http://localhost:3080](http://localhost:3080) — create an account and start chatting. LibreChat is pre-connected to the orchestrator.
+[http://localhost:3080](http://localhost:3080) — create an account and start chatting.
 
 **Optional:** explore the API at [http://localhost:8000/docs](http://localhost:8000/docs) — interactive Swagger UI for all endpoints.
 
