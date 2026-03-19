@@ -1,0 +1,14 @@
+.env
+.env.local
+.env.*.local
+.git/
+.cursor/
+venv/
+.venv/
+__pycache__/
+*.pyc
+ai-workspace/inbox/*
+ai-workspace/outbox/*
+ai-workspace/backups/
+.pytest_cache/
+.ruff_cache/

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Lumogis
 """Canonical LLM response types shared across all providers."""
 
 from dataclasses import dataclass, field

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Lumogis
 """
 Tool registry and executor for the Lumogis orchestrator.
 
@@ -139,7 +141,20 @@ def _fallback_search(query: str) -> str:
 
 
 def _read_file(input_: dict) -> str:
+    import os
+    from pathlib import Path
+
     path = input_.get("path", "")
+    fs_root = os.environ.get("FILESYSTEM_ROOT", "")
+    if fs_root:
+        resolved = str(Path(path).resolve())
+        allowed = str(Path(fs_root).resolve())
+        if not resolved.startswith(allowed + "/") and resolved != allowed:
+            return json.dumps({
+                "error": f"Access denied: path is outside FILESYSTEM_ROOT ({allowed})",
+                "path": path,
+            })
+
     try:
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
             content = f.read(3000)

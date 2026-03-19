@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Lumogis
 """Audit log — append-only record of action executions.
 
 audit_log is distinct from action_log:

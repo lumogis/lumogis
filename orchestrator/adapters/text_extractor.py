@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Lumogis
 """Plain text extractor for .txt and .md files."""
 
 from config import extractor

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Lumogis
 """Tests for hooks.py: register, fire, fire_background, Event constants."""
 
 import time

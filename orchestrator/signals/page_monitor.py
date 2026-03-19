@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Lumogis
 """Page monitor: detects content changes on static web pages.
 
 Stores a SHA-256 content hash per URL in memory (keyed by source_id).

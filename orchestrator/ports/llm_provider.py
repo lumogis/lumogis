@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Lumogis
 """Port: LLM provider protocol.
 
 Any adapter that implements chat() and chat_stream() with the canonical

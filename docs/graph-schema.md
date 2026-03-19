@@ -92,8 +92,6 @@ Represents an abstract idea, domain term, or recurring theme.
 
 All edges carry a `timestamp` (ISO 8601 string) and a `user_id` scoping the provenance.
 
-### Phase 2 Edges (implemented in Chunk 10)
-
 #### MENTIONS
 
 Source: `Document` or `Session` node → Target: `Person | Organisation | Project | Concept`
@@ -133,27 +131,6 @@ Meaning: a person was involved in a project, inferred from session or document m
 
 ---
 
-### Phase 3+ Edges (schema locked now, not yet populated)
-
-These edge types are defined here to prevent breaking schema changes later. No adapter writes them until Phase 3 is scoped.
-
-| Edge | Source → Target | Meaning |
-|---|---|---|
-| `CAUSED_CHANGE` | Event → Any | Causal provenance |
-| `CONTRADICTS` | Any → Any | Conflicting positions across sessions |
-| `DEPENDS_ON` | Project → Project/Concept | Dependency relationship |
-| `SENT` | Person → Person | Communication direction |
-| `RECEIVED` | Person → Person | Communication receipt |
-| `FOLLOWED_BY` | Any → Any | Temporal sequence |
-| `HAD_STATUS` | Project/Any → Concept | Status transitions over time |
-| `INTRODUCED_BY` | Concept → Person | Concept first introduced by a person |
-| `COMMITTED_TO` | Person → Project/Concept | A stated commitment |
-| `REVISED_TO` | Any → Any | A documented revision of position or content |
-
-All Phase 3+ edges carry `timestamp` and `user_id` at minimum. Additional properties are defined per edge when Phase 3 is scoped.
-
----
-
 ## Cypher Examples (FalkorDB)
 
 ```cypher
@@ -179,5 +156,5 @@ RETURN d.file_path, d.ingested_at
 
 - **Language preservation**: entity names are stored in the original language of the source material. A German document mentioning "Bundesamt für Statistik" creates a node named "Bundesamt für Statistik", not "Federal Statistical Office".
 - **`lumogis_id` links Postgres ↔ graph**: for entities, use `entities.entity_id`; for documents, use the `file_path`.
-- **Graph writes are plugin responsibility**: `lumogis-core` fires `Event.ENTITY_CREATED` and `Event.DOCUMENT_INGESTED` hooks. The graph writer plugin (Chunk 10) subscribes to these and writes nodes/edges. Core never imports a graph adapter.
+- **Graph writes are plugin responsibility**: lumogis-core fires `Event.ENTITY_CREATED` and `Event.DOCUMENT_INGESTED` hooks. A graph plugin subscribes to these and writes nodes/edges. Core never imports a graph adapter.
 - **FalkorDB graph name**: always `lumogis`. Multi-tenancy is handled via the `user_id` property, not separate graph instances.

@@ -1,4 +1,6 @@
-"""Actions foundation models (Chunk 12b).
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Lumogis
+"""Actions foundation models.
 
 ActionSpec    — registered action descriptor (name, connector, handler, etc.)
 ActionResult  — return value from executor.execute()

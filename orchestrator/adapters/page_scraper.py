@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Lumogis
 """Static HTML page scraper adapter.
 
 Uses trafilatura to extract readable text content from static web pages.

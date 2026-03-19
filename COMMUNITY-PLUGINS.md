@@ -17,8 +17,8 @@ Adapters that implement `SignalSource` and poll external systems for new signals
 | *No entries yet — be the first.* | | |
 
 **Good first issues in this category:**
-- [Add Hacker News signal source](https://github.com/lumogis/lumogis-core/issues) — poll HN top stories
-- [Add Reddit signal source](https://github.com/lumogis/lumogis-core/issues) — poll subreddit feeds
+- [Add Hacker News signal source](https://github.com/lumogis/lumogis-core/issues/1) — poll HN top stories
+- [Add Reddit signal source](https://github.com/lumogis/lumogis-core/issues/2) — poll subreddit feeds
 
 ---
 
@@ -31,9 +31,9 @@ Adapters that implement `ActionHandler` and execute operations in response to si
 | *No entries yet — be the first.* | | |
 
 **Good first issues in this category:**
-- [Add Notion action handler](https://github.com/lumogis/lumogis-core/issues) — create/update Notion pages
-- [Add Slack action handler](https://github.com/lumogis/lumogis-core/issues) — send messages to Slack
-- [Add email digest Notifier](https://github.com/lumogis/lumogis-core/issues) — send signal digests via email
+- [Add Notion action handler](https://github.com/lumogis/lumogis-core/issues/3) — create/update Notion pages
+- [Add Slack action handler](https://github.com/lumogis/lumogis-core/issues/4) — send messages to Slack
+- [Add email digest Notifier](https://github.com/lumogis/lumogis-core/issues/5) — send signal digests via email
 
 ---
 
@@ -46,8 +46,8 @@ Adapters that implement `VectorStore` or `MetadataStore` with alternative backen
 | *No entries yet — be the first.* | | |
 
 **Good first issues in this category:**
-- [Add Chroma vector store adapter](https://github.com/lumogis/lumogis-core/issues) — drop-in Qdrant alternative
-- [Add SQLite MetadataStore adapter](https://github.com/lumogis/lumogis-core/issues) — zero-dependency dev backend
+- [Add Chroma vector store adapter](https://github.com/lumogis/lumogis-core/issues/6) — drop-in Qdrant alternative
+- [Add SQLite MetadataStore adapter](https://github.com/lumogis/lumogis-core/issues/7) — zero-dependency dev backend
 
 ---
 
@@ -60,9 +60,9 @@ Single-function adapters that extract text from additional file types (auto-disc
 | *No entries yet — be the first.* | | | |
 
 **Good first issues in this category:**
-- [Add .epub extractor](https://github.com/lumogis/lumogis-core/issues) — extract text from EPUB files
-- [Add .html extractor](https://github.com/lumogis/lumogis-core/issues) — extract text from saved HTML
-- [Add .csv/.xlsx extractor](https://github.com/lumogis/lumogis-core/issues) — extract tabular data as text
+- [Add .epub extractor](https://github.com/lumogis/lumogis-core/issues/8) — extract text from EPUB files
+- [Add .html extractor](https://github.com/lumogis/lumogis-core/issues/9) — extract text from saved HTML
+- [Add .csv/.xlsx extractor](https://github.com/lumogis/lumogis-core/issues/10) — extract tabular data as text
 
 ---
 

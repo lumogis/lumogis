@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Lumogis
 """Context window budget management.
 
 Provides model-aware token budgets so LLM calls never exceed the

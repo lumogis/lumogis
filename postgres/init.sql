@@ -18,9 +18,9 @@ CREATE TABLE IF NOT EXISTS file_index (
 );
 
 -- Extracted entities: people, organisations, projects, concepts.
--- context_tags drive entity resolution (Chunk 9): overlap >= 2 tags -> merge.
+-- context_tags drive entity resolution: overlap >= 2 tags -> merge.
 -- aliases accumulates alternative names seen across sessions/documents.
--- Note: user_id was added in Chunk 12b. Existing installations can apply:
+-- Note: if upgrading from an earlier schema, apply:
 --   ALTER TABLE entities ADD COLUMN IF NOT EXISTS user_id TEXT NOT NULL DEFAULT 'default';
 CREATE TABLE IF NOT EXISTS entities (
     entity_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -48,8 +48,8 @@ CREATE TABLE IF NOT EXISTS entity_relations (
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Ambiguous entity merge candidates flagged for manual review (Chunk 9).
--- Resolved via psql directly until a review UI is built (Phase 4+).
+-- Ambiguous entity merge candidates flagged for manual review.
+-- Inspect and resolve via GET /review-queue.
 CREATE TABLE IF NOT EXISTS review_queue (
     id              SERIAL PRIMARY KEY,
     candidate_a_id  UUID REFERENCES entities(entity_id) ON DELETE CASCADE,
@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS connector_permissions (
 -- Ask/Do++ routine automation: tracks per-action-type approval history.
 -- When approval_count reaches threshold (default 15) without edits,
 -- Lumogis can prompt the user to auto-approve that action type.
--- Phase 2: table created. Phase 4: routine Do automation uses it.
+-- Used by routine elevation automation when approval threshold is reached.
 CREATE TABLE IF NOT EXISTS routine_do_tracking (
     id              SERIAL PRIMARY KEY,
     connector       TEXT NOT NULL,
@@ -105,7 +105,7 @@ CREATE TABLE IF NOT EXISTS action_log (
 );
 
 -- ==========================================================================
--- Signal infrastructure (Chunk 12a)
+-- Signal infrastructure
 -- ==========================================================================
 
 -- Source registry: RSS feeds, monitored pages, CalDAV calendars.
@@ -209,8 +209,16 @@ CREATE INDEX IF NOT EXISTS idx_feedback_item ON feedback_log (item_type, item_id
 --   ('TechCrunch',                         'rss',  'https://techcrunch.com/feed/',                            'tech',       3600,  'feedparser'),
 --   ('The Verge',                          'rss',  'https://www.theverge.com/rss/index.xml',                  'tech',       3600,  'feedparser');
 
+-- ---- US / Global (5 sources) ------------------------------------------------
+-- INSERT INTO sources (name, source_type, url, category, poll_interval, extraction_method) VALUES
+--   ('WSJ World News',                     'rss',  'https://feeds.a.dj.com/rss/RSSWorldNews.xml',             'news',       3600,  'feedparser'),
+--   ('NPR News',                           'rss',  'https://feeds.npr.org/1001/rss.xml',                      'news',       3600,  'feedparser'),
+--   ('SEC EDGAR Filings',                  'rss',  'https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-K&dateb=&owner=include&count=40&output=atom', 'finance', 3600, 'feedparser'),
+--   ('GitHub Blog',                        'rss',  'https://github.blog/feed/',                               'tech',       7200,  'feedparser'),
+--   ('arXiv AI',                           'rss',  'https://rss.arxiv.org/rss/cs.AI',                         'research',   14400, 'feedparser');
+
 -- ==========================================================================
--- Actions foundation (Chunk 12b)
+-- Actions foundation
 -- ==========================================================================
 
 -- Audit log for action executions. Distinct from action_log (permission checks).
@@ -250,17 +258,3 @@ CREATE TABLE IF NOT EXISTS routines (
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(name, user_id)
 );
-
--- Tracks how positions on topics evolve over time (Phase 3 activation).
--- Populated by richer entity extraction when it can reliably detect
--- position changes across sessions. Schema created now to avoid migration.
--- CREATE TABLE IF NOT EXISTS position_changes (
---     id              SERIAL PRIMARY KEY,
---     entity_id       UUID REFERENCES entities(entity_id) ON DELETE CASCADE,
---     topic           TEXT NOT NULL,
---     old_position    TEXT,
---     new_position    TEXT NOT NULL,
---     evidence_id     TEXT NOT NULL,       -- session UUID or file_path
---     evidence_type   TEXT NOT NULL,       -- SESSION | DOCUMENT
---     detected_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
--- );

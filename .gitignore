@@ -6,15 +6,30 @@ __pycache__/
 *.pyc
 venv/
 .venv/
-PLAN-APP.md
-.cursor/plans/PLAN-APP.md
 
-# Proprietary plugins (lumogis-app only — never commit to core)
-orchestrator/plugins/graph/
-orchestrator/plugins/ambient/
-orchestrator/plugins/voice/
-orchestrator/plugins/context/
-orchestrator/plugins/mesh/
+# Cursor IDE
+.cursor/
+
+# Plugin packages mounted at deploy time — not tracked in core.
+# Any directory under orchestrator/plugins/ that is not part of core
+# should be added here or kept outside this repository entirely.
+orchestrator/plugins/*/
+!orchestrator/plugins/__init__.py
+
+# ai-workspace runtime content — keep directory structure, not runtime data
+ai-workspace/inbox/*
+!ai-workspace/inbox/.gitkeep
+ai-workspace/outbox/*
+!ai-workspace/outbox/.gitkeep
+ai-workspace/approved/*
+!ai-workspace/approved/.gitkeep
+ai-workspace/review/*
+!ai-workspace/review/.gitkeep
+ai-workspace/backups/*.zip
+
+# Internal documents — private to lumogis-app, never pushed to lumogis-core
+AUDIT-REPORT.md
+REMEDIATION-PLAN.md
 
 # IDE / OS
 .idea/

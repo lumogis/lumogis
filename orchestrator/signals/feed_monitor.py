@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Lumogis
 """Feed monitor: polls RSS/Atom/JSON feeds and static pages on a schedule.
 
 On start():

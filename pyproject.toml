@@ -1,6 +1,6 @@
 [project]
 name = "lumogis"
-version = "0.1.0"
+version = "0.3.0rc1"
 requires-python = ">=3.12"
 
 [tool.pytest.ini_options]

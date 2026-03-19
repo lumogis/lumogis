@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Lumogis
 """Semantic search: embed query, Qdrant retrieval, BGE reranking."""
 
 import logging

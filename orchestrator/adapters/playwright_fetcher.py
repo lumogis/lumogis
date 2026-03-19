@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Lumogis
 """Playwright-based JS-rendered page fetcher (optional adapter).
 
 Active only when:

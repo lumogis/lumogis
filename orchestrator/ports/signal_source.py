@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Lumogis
 """Port: signal source protocol.
 
 Implemented by rss_source, page_scraper, playwright_fetcher, calendar_adapter.

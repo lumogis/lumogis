@@ -12,7 +12,10 @@
   --border:   #30363d;
   --txt:      #e6edf3;
   --txt2:     #8b949e;
-  --accent:   #58a6ff;
+  /* Copper highlight (warm metallic, not blue) */
+  --accent:           #d9a878;
+  --accent-muted:     rgba(217, 168, 120, 0.22);
+  --accent-btn-fg:    #14110e;
   --green:    #3fb950;
   --yellow:   #d29922;
   --red:      #f85149;
@@ -25,7 +28,9 @@
   --border:   #d0d7de;
   --txt:      #1f2328;
   --txt2:     #656d76;
-  --accent:   #0969da;
+  --accent:           #a85c32;
+  --accent-muted:     rgba(168, 92, 50, 0.14);
+  --accent-btn-fg:    #faf7f4;
   --green:    #1a7f37;
   --yellow:   #9a6700;
   --red:      #cf222e;
@@ -63,8 +68,7 @@ tr:hover td { background: var(--surface); }
   height: 52px; border-bottom: 1px solid var(--border); position: sticky; top: 0;
   background: var(--bg); z-index: 100;
 }
-.logo { font-weight: 700; font-size: 16px; letter-spacing: -.3px; }
-.logo span { color: var(--accent); }
+.logo { font-weight: 700; font-size: 16px; letter-spacing: -.3px; color: var(--txt); }
 .spacer { flex: 1; }
 .sse-badge {
   display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--txt2);
@@ -142,9 +146,9 @@ tr:hover td { background: var(--surface); }
 .toolbar input { max-width: 280px; }
 .toolbar select { max-width: 160px; }
 .btn-primary {
-  background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600;
+  background: var(--accent); color: var(--accent-btn-fg); border-color: var(--accent); font-weight: 600;
 }
-.btn-primary:hover { opacity: .88; border-color: var(--accent); }
+.btn-primary:hover { filter: brightness(1.06); border-color: var(--accent); }
 .btn-danger { border-color: var(--red); color: var(--red); }
 .btn-danger:hover { background: rgba(248,81,73,.12); border-color: var(--red); }
 .btn-undo { font-size: 11px; padding: 2px 8px; }
@@ -170,7 +174,7 @@ tr:hover td { background: var(--surface); }
 .live-badge {
   display: inline-block; padding: 1px 6px; border-radius: 10px;
   font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px;
-  background: rgba(63, 185, 80, .18); color: var(--green); margin-left: 6px;
+  background: var(--accent-muted); color: var(--accent); margin-left: 6px;
 }
 .refresh-btn { font-size: 12px; padding: 3px 10px; }
 </style>
@@ -180,7 +184,7 @@ tr:hover td { background: var(--surface); }
 
   <!-- Header -->
   <header class="header">
-    <div class="logo">lumo<span>gis</span></div>
+    <div class="logo">lumogis</div>
     <div class="sse-badge">
       <div class="sse-dot" id="sseDot"></div>
       <span id="sseLabel">connecting…</span>
@@ -297,7 +301,6 @@ tr:hover td { background: var(--surface); }
           <option value="">All connectors</option>
           <option value="filesystem">filesystem</option>
           <option value="calendar">calendar</option>
-          <option value="email">email</option>
           <option value="web">web</option>
         </select>
         <select id="activityType" onchange="loadActivity()">
@@ -305,7 +308,6 @@ tr:hover td { background: var(--surface); }
           <option value="read_file">read_file</option>
           <option value="write_file">write_file</option>
           <option value="delete_file">delete_file</option>
-          <option value="send_email">send_email</option>
         </select>
       </div>
       <div class="card">

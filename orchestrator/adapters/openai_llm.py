@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Lumogis
 """OpenAI-compatible LLM adapter.
 
 Works with any backend that speaks the OpenAI chat completions API:

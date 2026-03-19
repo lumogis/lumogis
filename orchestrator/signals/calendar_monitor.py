@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Lumogis
 """Calendar monitor: polls CalDAV for upcoming events.
 
 Only active when CALENDAR_CALDAV_URL is set. Polls on a configurable interval

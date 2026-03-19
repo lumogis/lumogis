@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Lumogis
 """Entity extraction, resolution, and storage.
 
 Extracts structured entities from session/document text using the local LLM,
@@ -5,7 +7,7 @@ resolves them against existing entities using name + context_tag overlap,
 persists to Postgres (entities + entity_relations + review_queue tables) and
 Qdrant (entities collection), and fires Event.ENTITY_CREATED hooks.
 
-Resolution rules (Chunk 9):
+Resolution rules:
   overlap >= 2 context_tags  → merge (append aliases, increment mention_count)
   overlap == 1 context_tag   → ambiguous (log to review_queue, create separate)
   overlap == 0 context_tags  → create separate entity

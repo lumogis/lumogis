@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Lumogis
 """Anthropic LLM adapter — talks directly to the Anthropic API.
 
 Translates canonical (OpenAI-style) messages and tools into Anthropic's

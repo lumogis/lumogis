@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Lumogis
 """Ask/Do permission enforcement.
 
 Every tool call passes through check_permission() before execution.

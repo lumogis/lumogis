@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Lumogis
 """System monitor: emits internal Signal objects for health conditions.
 
 Checks every 30 minutes via APScheduler. Conditions monitored:

@@ -12,36 +12,27 @@ Lumogis fixes the thing that causes the hesitation. Your files, documents, and c
 
 This is not a privacy policy. It is not a setting. It is physically impossible for your files to reach a Lumogis server, because there is no Lumogis server. The core is open source. Anyone can verify it.
 
-*Built in direct response to OpenClaw's failure — same vision, safe by architecture.*
+*Privacy is not a setting here. It is the architecture.*
 
 ---
 
-## What CORE does and doesn't do
+## What it does (summary)
 
-**lumogis-core monitors sources and scores signals. It processes, stores, and serves all data locally.** Every document you ingest, every entity extracted, every signal scored — it happens on your machine, in your containers, under your control.
-
-What CORE does:
+**lumogis-core processes, stores, and serves all data locally.** Every document you ingest, every entity extracted, every signal scored — it happens on your machine, in your containers, under your control.
 
 - Ingests and indexes your documents (PDF, DOCX, text, images via OCR)
 - Runs semantic search with two-stage retrieval (vector + reranker)
 - Maintains session memory across conversations
 - Extracts and stores entities (people, organisations, projects, concepts)
 - Monitors signal sources (RSS feeds, web pages, calendars)
-- Scores and stores signals by relevance
+- Scores signals by relevance and sends a daily digest via ntfy
 - Executes actions with full audit logging and Ask/Do safety enforcement
 - Routes queries to any LLM — local via Ollama, or cloud via API key
-
-What CORE does not do:
-
-- Generate morning briefings or digests (that's lumogis-app)
-- Proactively push insights or notifications to you (that's lumogis-app)
-- Intelligent filtering of what matters vs. what doesn't (that's lumogis-app)
-
-**For intelligent notification filtering, morning briefings, and proactive insights, see [lumogis-app](https://github.com/lumogis/lumogis-app).** CORE is the foundation. APP is the intelligence layer on top.
+- Loads plugins automatically from `plugins/` — drop one in and it activates
 
 ---
 
-## What it does
+## How it works
 
 **Private semantic search.** Documents are chunked, embedded, and stored in a local Qdrant vector database using Nomic Embed via Ollama. Search runs entirely on your machine. No outbound calls, no external embedding APIs.
 
@@ -51,7 +42,7 @@ What CORE does not do:
 
 **Entity extraction.** People, organisations, projects, and concepts mentioned across conversations and documents are extracted and stored in a local knowledge base.
 
-**Signal monitoring.** RSS feeds, web pages, and calendar events are polled on a schedule. Each signal is scored and stored. Plugins and adapters decide what happens next.
+**Signal monitoring and digest.** RSS feeds, web pages, and calendar events are polled on a schedule. Each signal is scored for importance and relevance. A configurable daily digest sends the top signals via ntfy. Plugins extend what happens with signals beyond the built-in digest.
 
 **Action execution.** Actions are defined, registered, and executed with a full audit trail. The Ask/Do safety model controls what runs automatically and what requires your approval.
 
@@ -157,35 +148,23 @@ JWT_REFRESH_SECRET=something-else-long-and-random
 # OPENAI_API_KEY=sk-...
 ```
 
-### Step 2: Run setup (detects hardware, pulls models)
+### Step 2: Run setup
 
 ```bash
 make setup
 ```
 
-This detects your GPU, selects the appropriate model tier, and pulls the right Ollama models. Run this once before starting the stack. On a machine with no GPU, it selects CPU-only mode without errors.
+Detects your GPU, selects the right model tier, generates configs, starts all services, and pulls Ollama models. On a machine with no GPU it selects CPU-only mode automatically. Run once; safe to re-run after a hardware change.
 
-### Step 3: Start the stack
-
-```bash
-docker compose up -d
-```
-
-### Step 4: Verify
+### Step 3: Verify
 
 ```bash
 curl -s http://localhost:8000/health | python3 -m json.tool
 ```
 
-You should see all services healthy with empty collections ready to fill.
+All services should report healthy with empty collections ready to fill.
 
-### Step 5: Index your files
-
-```bash
-make ingest
-```
-
-Or directly:
+### Step 4: Index your files
 
 ```bash
 curl -s -X POST http://localhost:8000/ingest \
@@ -195,9 +174,13 @@ curl -s -X POST http://localhost:8000/ingest \
 
 Your files are now searchable. Every conversation enriches the local index.
 
-### Step 6 (optional): Open LibreChat
+### Step 5: Open LibreChat
 
 [http://localhost:3080](http://localhost:3080) — create an account and start chatting. LibreChat is pre-connected to the orchestrator.
+
+### Step 6 (optional): Explore the API
+
+[http://localhost:8000/docs](http://localhost:8000/docs) — interactive Swagger UI for all endpoints. Useful for building integrations or testing ingest, search, signals, and actions directly.
 
 ---
 
@@ -231,6 +214,14 @@ FALKORDB_URL=redis://falkordb:6379
 DEFAULT_ACTION_MODE=ask           # ask (default) or do
 ROUTINE_ELEVATION_THRESHOLD=10    # clean approvals before auto-elevation
 ```
+
+---
+
+## Extending the stack
+
+Add optional infrastructure (push notifications, automation UI, LiteLLM proxy, JS rendering) or extend the orchestrator with new adapters, signal sources, action handlers, and plugins.
+
+See [docs/extending-the-stack.md](docs/extending-the-stack.md) for the full guide.
 
 ---
 
@@ -275,6 +266,7 @@ orchestrator/
     page_monitor.py    # Web page change detection
     calendar_monitor.py
     system_monitor.py
+    digest.py          # Periodic top-signals digest via notifier
 
   actions/             # Executable operations (five concepts: actions)
     registry.py        # Action registration
@@ -283,8 +275,8 @@ orchestrator/
     reversibility.py   # Reversibility metadata
     handlers/          # One file per action domain
 
-  plugins/             # Optional extensions (five concepts: plugins)
-    # plugins/graph/   # NOT in lumogis-core — see lumogis-app
+  plugins/             # Optional extensions — drop a package here and it loads automatically
+    # Start from the template in docs/examples/example_plugin/
 
   models/              # Pydantic request/response models
   routes/              # FastAPI routers (chat, data, signals, actions, admin)
@@ -336,6 +328,14 @@ See [COMMUNITY-PLUGINS.md](COMMUNITY-PLUGINS.md) for community-contributed adapt
 
 ---
 
+## Security
+
+To report a vulnerability, see [SECURITY.md](SECURITY.md). Do not open a public issue.
+
+The initial security audit (SQL injection, path traversal, MCP boundary, Ask/Do enforcement) is documented in [`docs/SECURITY-AUDIT-001.md`](docs/SECURITY-AUDIT-001.md).
+
+---
+
 ## Code of conduct
 
 This project follows the [Contributor Covenant v2.1](CODE_OF_CONDUCT.md).
@@ -345,8 +345,6 @@ This project follows the [Contributor Covenant v2.1](CODE_OF_CONDUCT.md).
 ## License
 
 [AGPL-3.0](LICENSE). The core is open source and always will be.
-
-Commercial licence available for embedding lumogis-core in proprietary products without AGPL obligations — contact [hello@lumogis.com](mailto:hello@lumogis.com).
 
 ---
 

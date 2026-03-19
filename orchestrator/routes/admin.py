@@ -1,9 +1,12 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Lumogis
 """Admin endpoints: /, /health, /dashboard, /permissions, /review-queue, /backup, /restore, /export."""
 
 import datetime
 import json
 import logging
 import os
+import re
 import zipfile
 from pathlib import Path
 
@@ -114,22 +117,27 @@ def status_page():
 
     all_ok = all(s == "ok" for s in services.values())
 
+    links: dict = {"api_docs": "http://localhost:8000/docs"}
+    extra_links_raw = os.environ.get("STATUS_LINKS", "")
+    for pair in extra_links_raw.split(","):
+        pair = pair.strip()
+        if "=" in pair:
+            k, _, v = pair.partition("=")
+            links[k.strip()] = v.strip()
+
     return {
         "status": "healthy" if all_ok else "degraded",
         "documents_indexed": docs_indexed,
         "sessions_stored": sessions_stored,
         "entities_known": entities_known,
         "services": services,
-        "links": {
-            "librechat": "http://localhost:3080",
-            "api_docs": "http://localhost:8000/docs",
-        },
+        "links": links,
     }
 
 
 @router.get("/health")
 def health():
-    """Detailed health check used by Activepieces monitoring flows.
+    """Detailed health check for all services and data stores.
 
     Returns accurate doc/entity/file counts so the caller can detect drift
     (e.g. Qdrant doc count vs file_index row count mismatch > 5 %).
@@ -326,7 +334,13 @@ def restore(body: RestoreRequest):
     WARNING: this is additive.  Existing rows are kept; duplicate keys are
     silently skipped via ON CONFLICT DO NOTHING.
     """
-    zip_path = Path(body.zip_path)
+    zip_path = Path(body.zip_path).resolve()
+    allowed_dir = _BACKUP_DIR.resolve()
+    if not str(zip_path).startswith(str(allowed_dir) + "/") and zip_path != allowed_dir:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Access denied: restore only reads from {allowed_dir}",
+        )
     if not zip_path.exists():
         raise HTTPException(status_code=404, detail=f"Backup file not found: {zip_path}")
 
@@ -347,8 +361,12 @@ def restore(body: RestoreRequest):
             try:
                 rows: list[dict] = json.loads(zf.read(fname))
                 count = 0
+                _COL_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
                 for row in rows:
                     columns = list(row.keys())
+                    if not all(_COL_RE.match(c) for c in columns):
+                        _log.warning("Restore: skipping row with invalid column names in %s", table)
+                        continue
                     placeholders = ", ".join(["%s"] * len(columns))
                     col_list = ", ".join(columns)
                     values = tuple(row[c] for c in columns)

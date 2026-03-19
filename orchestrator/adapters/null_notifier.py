@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Lumogis
 """Null notifier — no-op implementation of the Notifier port.
 
 Used when NOTIFIER_BACKEND=none (the default). Keeps the factory pattern

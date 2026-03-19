@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Lumogis
 """Data endpoints: /ingest, /search, /session/end, /entities/extract, /entities."""
 
 from typing import List, Optional
@@ -106,7 +108,7 @@ def list_entities(
     """Return known entities, optionally filtered by type.
 
     Ordered by mention_count descending. Paginated via limit/offset.
-    Used by the Chunk 13 dashboard Entities panel.
+    Used by the dashboard Entities panel.
     """
     user_id = get_user(request).user_id
     ms = config.get_metadata_store()

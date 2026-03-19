@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Lumogis
 """Session memory: summarize conversations and retrieve past context.
 
 After a session ends, the conversation is summarized using the small

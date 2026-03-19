@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Lumogis
 """VectorStore adapter for Qdrant.
 
 Hybrid search: the ``documents`` collection stores both a dense vector (cosine

@@ -238,18 +238,7 @@ def status(): ...
 Plugins may import from: `ports/`, `models/`, `events.py`, `hooks.py`.
 Plugins must **never** import from: `services/`, `adapters/`, `config.py`.
 
-The plugin directory is the open-core boundary. Plugins in `plugins/graph/`, `plugins/ambient/`, `plugins/voice/`, `plugins/context/`, and `plugins/mesh/` are proprietary and live in the separate `lumogis-app` repository. The boundary is structural — not a comment or a convention. See [ADR-005](docs/decisions/005-open-core-boundary.md).
-
----
-
-## Open-core boundary
-
-| Repository | Contains |
-|---|---|
-| **lumogis-core** (this repo) | `orchestrator/` (all five concepts), `docker-compose.yml`, `Makefile`, `pyproject.toml`, CI, docs |
-| **lumogis-app** (proprietary) | `plugins/graph/`, `plugins/ambient/`, `plugins/voice/`, `plugins/context/`, `plugins/mesh/`, LibreChat customisations |
-
-The boundary is enforced by `.gitignore` excluding `plugins/graph/` and other proprietary plugin directories. Even if someone mounts lumogis-app plugins into lumogis-core at runtime, the open-core orchestrator continues to work — plugins are additive, not required.
+Named plugin directories are listed in `.gitignore` so that plugin packages developed outside this repository can be mounted at deploy time without being tracked here. The orchestrator loads whatever is present — plugins are additive, never required. See [ADR-005](docs/decisions/005-open-core-boundary.md).
 
 ---
 

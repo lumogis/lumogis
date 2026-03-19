@@ -1,15 +1,18 @@
-# ADR-005: Open-core boundary at the plugin directory
+# ADR-005: Plugin boundary at the plugins/ directory
 
 ## Context
 
-lumogis-core is AGPL; lumogis-app ships proprietary intelligence (graph, ambient, voice, context, mesh). The boundary must be enforceable in repo layout, not only policy.
+lumogis-core needs a plugin boundary that is structurally enforced, not policy-enforced. Plugins are optional extensions: core must work completely without them, and dropping a plugin in must re-enable its functionality automatically with no changes to core code.
 
 ## Decision
 
-Proprietary plugins live **only** under named directories (`plugins/graph/`, `plugins/ambient/`, etc.) in **lumogis-app**. **lumogis-core** `.gitignore` excludes those paths so they cannot be committed to the public tree. The open orchestrator loads whatever plugin packages exist; absence of proprietary plugins is a valid, supported configuration.
+Plugins live **only** under named directories in `plugins/` (e.g. `plugins/my-plugin/`). The orchestrator's plugin loader discovers and mounts whatever packages exist at startup. Absence of any plugin is a valid, fully-supported configuration — hooks fire, nothing listens, no errors.
+
+Named plugin directories are listed in `.gitignore` so that out-of-tree plugin packages can be mounted at deploy time without being tracked in the core repository.
 
 ## Consequences
 
-- **Structural enforcement:** Not an honour system — the public repo literally cannot contain those trees.
-- **Clear upgrade path:** Users add lumogis-app plugins by mounting or merging repos at deploy time.
-- **CI:** Core tests and releases never depend on proprietary code.
+- **Structural enforcement:** The boundary is in the filesystem layout, not documentation or convention.
+- **Zero coupling:** Core services never import plugin code. All extension points go through `hooks.py`.
+- **Composable deployments:** Any combination of plugins can be mounted independently.
+- **CI:** Core tests run without any plugins present.

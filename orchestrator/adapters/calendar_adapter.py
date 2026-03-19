@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Lumogis
 """CalDAV calendar adapter (optional).
 
 Active only when CALENDAR_CALDAV_URL is set. Uses the `caldav` library

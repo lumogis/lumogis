@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Lumogis
 """Ingest pipeline: extract, chunk, embed, store.
 
 Includes performance guardrails (rate limiting, CPU monitoring) and a

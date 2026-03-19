@@ -1,0 +1,42 @@
+# Optional: Activepieces automation UI — http://localhost:8080
+#
+# Enable by adding to COMPOSE_FILE in .env:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml:docker-compose.activepieces.yml
+#
+# Generate secrets and add to .env:
+#   AP_ENCRYPTION_KEY=$(openssl rand -hex 16)
+#   AP_JWT_SECRET=$(openssl rand -hex 32)
+
+services:
+  postgres:
+    volumes:
+      - ./postgres/00-create-ap-db.sh:/docker-entrypoint-initdb.d/00-create-ap-db.sh:ro
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+
+  activepieces:
+    image: activepieces/activepieces:latest
+    ports:
+      - "8080:80"
+    environment:
+      AP_ENGINE_EXECUTABLE_PATH: dist/packages/engine/main.js
+      AP_POSTGRES_HOST: postgres
+      AP_POSTGRES_PORT: 5432
+      AP_POSTGRES_DATABASE: activepieces
+      AP_POSTGRES_USERNAME: ${POSTGRES_USER:-lumogis}
+      AP_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lumogis-dev}
+      AP_REDIS_HOST: redis
+      AP_REDIS_PORT: 6379
+      AP_ENCRYPTION_KEY: ${AP_ENCRYPTION_KEY}
+      AP_JWT_SECRET: ${AP_JWT_SECRET}
+      AP_FRONTEND_URL: http://localhost:8080
+      AP_EXECUTION_MODE: UNSANDBOXED
+    depends_on:
+      - postgres
+      - redis
+
+volumes:
+  redis_data:

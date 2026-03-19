@@ -12,7 +12,7 @@ All participants must follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 **All contributors must sign the CLA before a PR can be merged.**
 
-lumogis-core is dual-licensed: AGPL-3.0 for the open-source release, and a commercial licence for embedding in proprietary products (including lumogis-app). The CLA grants Lumogis the right to use your contribution under both licences while you retain full copyright.
+lumogis-core is AGPL-3.0. The CLA grants Lumogis the right to relicence your contribution for distribution outside AGPL terms while you retain full copyright.
 
 **Sign the CLA here:** [cla.lumogis.com](https://cla.lumogis.com)
 
@@ -20,7 +20,7 @@ The CLA Assistant bot will comment on your PR if your CLA is not yet signed. You
 
 What the CLA says:
 - You retain copyright over your contribution
-- You grant Lumogis a perpetual, irrevocable licence to use, modify, and relicence your contribution (including in commercial products)
+- You grant Lumogis a perpetual, irrevocable licence to use, modify, and relicence your contribution
 - You grant a patent licence covering your contribution
 - You confirm you have the right to submit the work
 

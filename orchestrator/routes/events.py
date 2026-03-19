@@ -1,10 +1,11 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Lumogis
 """Server-Sent Events endpoint — real-time updates to connected clients.
 
 GET /events — SSE stream. Events pushed via hooks on every:
   SIGNAL_RECEIVED         → new signal summary
   ACTION_EXECUTED         → action result
   ROUTINE_ELEVATION_READY → approval prompt
-  BRIEFING_READY          → briefing assembled
 
 Architecture:
   - One asyncio.Queue per connected client.
@@ -121,20 +122,11 @@ def on_routine_elevation_ready(**kwargs) -> None:
     )
 
 
-def on_briefing_ready(**kwargs) -> None:
-    _push_to_connections(
-        "briefing_ready",
-        {"message": kwargs.get("message", "Briefing is ready")},
-        user_id=kwargs.get("user_id", "default"),
-    )
-
-
 def register_hooks() -> None:
     """Register SSE push callbacks on all relevant events. Call from main.py."""
     hooks.register(Event.SIGNAL_RECEIVED, on_signal_received)
     hooks.register(Event.ACTION_EXECUTED, on_action_executed)
     hooks.register(Event.ROUTINE_ELEVATION_READY, on_routine_elevation_ready)
-    hooks.register(Event.BRIEFING_READY, on_briefing_ready)
     _log.info("SSE hooks registered")
 
 

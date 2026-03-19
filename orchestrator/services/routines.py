@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Lumogis
 """Routine scheduling and execution service.
 
 register_routine(spec): saves to routines table, schedules via APScheduler if approved.
@@ -9,7 +11,7 @@ Built-in routines:
     Requires approval. Optionally appends LLM prose summary.
     Context budget: top 10 signals (relevance DESC), top 10 entities (mention_count DESC),
     5 session summaries (recency DESC). Truncated if it still exceeds llama budget - 600.
-  inbox_digest — daily at BRIEFING_TIME - 30min, lists new inbox files with metadata.
+  inbox_digest — daily at DIGEST_TIME - 30min, lists new inbox files with metadata.
     Auto-approved.
 """
 
@@ -398,7 +400,7 @@ def _ensure_weekly_review() -> None:
 
 
 def _ensure_inbox_digest() -> None:
-    briefing_time = os.environ.get("BRIEFING_TIME", "08:00")
+    briefing_time = os.environ.get("DIGEST_TIME", "08:00")
     try:
         h_str, m_str = briefing_time.split(":")
         h, m = int(h_str), int(m_str)
@@ -412,7 +414,7 @@ def _ensure_inbox_digest() -> None:
     spec = RoutineSpec(
         name="inbox_digest",
         description="Daily listing of new inbox files with metadata, saved to ai-workspace/outbox/.",
-        schedule_cron=f"{m} {h} * * *",  # daily at BRIEFING_TIME - 30min
+        schedule_cron=f"{m} {h} * * *",  # daily at DIGEST_TIME - 30min
         steps=[{"action_name": "__builtin__inbox_digest"}],
         requires_approval=False,
         approved_at=datetime.now(timezone.utc),  # auto-approved

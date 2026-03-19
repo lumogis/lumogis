@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Lumogis
 """Shared test fixtures: mock adapters, test config, test client."""
 
 import os
@@ -40,7 +42,7 @@ class MockVectorStore:
                 key = clause["key"]
                 val = clause["match"]["value"]
                 items = [i for i in items if i.get("payload", {}).get(key) == val]
-        return items[:limit]
+        return [{"id": i["id"], "score": 1.0, "payload": i["payload"]} for i in items[:limit]]
 
     def delete(self, collection: str, id: str) -> None:
         items = self._collections.get(collection, [])

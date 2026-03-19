@@ -6,6 +6,7 @@ content-aware file retrieval instead of pure filename matching.
 """
 
 import os
+from pathlib import Path
 
 import httpx
 from mcp.server.fastmcp import FastMCP
@@ -16,6 +17,7 @@ mcp = FastMCP(
 )
 
 ORCHESTRATOR_URL = os.environ.get("ORCHESTRATOR_URL", "http://orchestrator:8000")
+FILESYSTEM_ROOT = Path(os.environ.get("FILESYSTEM_ROOT", "/data")).resolve()
 
 
 @mcp.tool()
@@ -35,9 +37,12 @@ def search_files(query: str, limit: int = 5) -> str:
 
 @mcp.tool()
 def read_file(path: str) -> str:
-    """Read the first 3000 characters of a file."""
+    """Read the first 3000 characters of a file within FILESYSTEM_ROOT."""
     try:
-        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        resolved = Path(path).resolve()
+        if not str(resolved).startswith(str(FILESYSTEM_ROOT)):
+            return f"Error: path is outside the allowed root ({FILESYSTEM_ROOT})"
+        with open(resolved, "r", encoding="utf-8", errors="ignore") as f:
             content = f.read(3000)
         truncated = len(content) >= 3000
         return f"{'[truncated] ' if truncated else ''}{content}"

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Lumogis
 """Signal infrastructure routes.
 
 POST /sources       — Two-step stateless source addition:

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Lumogis
 """
 Lumogis orchestrator – FastAPI app.
 
@@ -30,9 +32,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname
 _log = logging.getLogger(__name__)
 
 # Qdrant collections created on startup.
-# "signals" stores embedded content summaries for semantic dedup (Chunk 12a).
+# "signals" stores embedded content summaries for semantic dedup.
 # Vector size 768 matches Nomic Embed. Changing later requires drop + re-index.
-_COLLECTIONS = ["documents", "conversations", "entities", "email", "signals"]
+_COLLECTIONS = ["documents", "conversations", "entities", "signals"]
 
 
 @asynccontextmanager

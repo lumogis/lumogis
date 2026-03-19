@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Lumogis
 """Adapter smoke tests: basic operations succeed with mocks."""
 
 from tests.conftest import MockEmbedder
