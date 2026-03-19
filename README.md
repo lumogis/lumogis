@@ -161,7 +161,7 @@ Detects your GPU, selects the right model tier, generates configs, starts all se
 ### Step 3: Verify
 
 ```bash
-curl -s http://localhost:8000/health | python3 -m json.tool
+make health
 ```
 
 All services should report healthy with empty collections ready to fill.
