@@ -136,17 +136,17 @@ cd lumogis
 cp .env.example .env
 ```
 
-Open `.env` and set your file path and secrets:
+Open `.env` and set your file path:
 
 ```bash
 FILESYSTEM_ROOT=/path/to/your/files   # the folder lumogis will index (read-only)
-JWT_SECRET=something-long-and-random
-JWT_REFRESH_SECRET=something-else-long-and-random
 
 # Optional — lumogis works fully without these
 # ANTHROPIC_API_KEY=sk-ant-...
 # OPENAI_API_KEY=sk-...
 ```
+
+`JWT_SECRET` and `JWT_REFRESH_SECRET` are generated automatically by `make setup`.
 
 ### Step 2: Run setup
 

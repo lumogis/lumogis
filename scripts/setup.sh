@@ -118,6 +118,23 @@ else
     info ".env already exists"
 fi
 
+# Auto-generate JWT secrets if still set to the placeholder value
+_gen_secret() {
+    if command -v openssl &>/dev/null; then
+        openssl rand -hex 32
+    else
+        python3 -c "import secrets; print(secrets.token_hex(32))"
+    fi
+}
+if grep -q "^JWT_SECRET=change-me-in-production" "$PROJECT_DIR/.env" 2>/dev/null; then
+    sed -i "s|^JWT_SECRET=change-me-in-production|JWT_SECRET=$(_gen_secret)|" "$PROJECT_DIR/.env"
+    info "Generated JWT_SECRET"
+fi
+if grep -q "^JWT_REFRESH_SECRET=change-me-in-production" "$PROJECT_DIR/.env" 2>/dev/null; then
+    sed -i "s|^JWT_REFRESH_SECRET=change-me-in-production|JWT_REFRESH_SECRET=$(_gen_secret)|" "$PROJECT_DIR/.env"
+    info "Generated JWT_REFRESH_SECRET"
+fi
+
 # Set COMPOSE_FILE in .env
 if [[ "$LG_GPU" == "true" ]]; then
     COMPOSE_VALUE="docker-compose.yml:docker-compose.gpu.yml"
