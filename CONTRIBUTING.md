@@ -14,15 +14,18 @@ All participants must follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 lumogis is AGPL-3.0. The CLA grants Lumogis the right to relicence your contribution for distribution outside AGPL terms while you retain full copyright.
 
-**Sign the CLA here:** [cla.lumogis.com](https://cla.lumogis.com)
+**Sign the CLA here:** [cla-assistant.io/lumogis/lumogis](https://cla-assistant.io/lumogis/lumogis)
 
 The CLA Assistant bot will comment on your PR if your CLA is not yet signed. You only sign once — all future PRs are covered.
 
 What the CLA says:
-- You retain copyright over your contribution
+- You retain full copyright over your contribution
 - You grant Lumogis a perpetual, irrevocable licence to use, modify, and relicence your contribution
 - You grant a patent licence covering your contribution
 - You confirm you have the right to submit the work
+- Contributions are provided as-is, with no warranty
+
+Read the full CLA: [gist.github.com/Thoko14/433708c1599f7e1068b7de6af7c7cf6f](https://gist.github.com/Thoko14/433708c1599f7e1068b7de6af7c7cf6f)
 
 If you have questions about the CLA, open a Discussion before submitting code.
 

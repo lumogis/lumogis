@@ -18,4 +18,4 @@ What does this PR do and why?
 - [ ] `make test` passes
 - [ ] Tests included for new behaviour
 - [ ] Tested against a live stack (`docker compose up`)
-- [ ] CLA signed (see [cla.lumogis.com](https://cla.lumogis.com))
+- [ ] CLA signed (see [cla-assistant.io/lumogis/lumogis](https://cla-assistant.io/lumogis/lumogis))
