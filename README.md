@@ -169,9 +169,7 @@ All services should report healthy with empty collections ready to fill.
 ### Step 4: Index your files
 
 ```bash
-curl -s -X POST http://localhost:8000/ingest \
-  -H "Content-Type: application/json" \
-  -d '{"path": "/data"}'
+make ingest
 ```
 
 Your files are now searchable. Every conversation enriches the local index.
