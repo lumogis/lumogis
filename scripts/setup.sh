@@ -486,6 +486,44 @@ docker compose restart orchestrator librechat &>/dev/null
 info "Restarted orchestrator + librechat with new configs"
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Health check
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+header "Verifying services..."
+
+echo -n "  Waiting for orchestrator"
+for i in $(seq 1 20); do
+    if curl -sf http://localhost:8000/health &>/dev/null; then
+        echo ""
+        break
+    fi
+    echo -n "."
+    sleep 2
+done
+
+HEALTH=$(curl -sf http://localhost:8000/health 2>/dev/null)
+if [[ -n "$HEALTH" ]]; then
+    info "Orchestrator healthy"
+else
+    warn "Orchestrator did not respond — check: docker compose logs orchestrator"
+fi
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Initial ingest
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+if grep -q "^FILESYSTEM_ROOT=." "$PROJECT_DIR/.env" 2>/dev/null && [[ -n "$HEALTH" ]]; then
+    header "Indexing your files..."
+    INGEST=$(curl -sf -X POST http://localhost:8000/ingest \
+        -H "Content-Type: application/json" \
+        -d '{"path": "/data"}' 2>/dev/null)
+    if [[ -n "$INGEST" ]]; then
+        info "Ingest started — your files are being indexed"
+    else
+        warn "Ingest request failed — run 'make ingest' once services are fully up"
+    fi
+fi
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Summary
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 header "Setup complete!"

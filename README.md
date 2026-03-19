@@ -128,26 +128,12 @@ Minimum to run: 8 GB RAM, 20 GB free disk. No API keys required — all models r
 
 ## Getting started
 
-### Step 1: Clone and configure
+### Step 1: Clone
 
 ```bash
 git clone https://github.com/lumogis/lumogis.git
 cd lumogis
 cp .env.example .env
-```
-
-Optionally add API keys to `.env` for cloud models:
-
-```bash
-# Optional — lumogis works fully without these
-# ANTHROPIC_API_KEY=sk-ant-...
-# OPENAI_API_KEY=sk-...
-```
-
-`JWT_SECRET`, `JWT_REFRESH_SECRET`, and `FILESYSTEM_ROOT` are set automatically by `make setup`. To skip the folder prompt, pass the path directly:
-
-```bash
-make setup ROOT=/path/to/your/files
 ```
 
 ### Step 2: Run setup
@@ -156,31 +142,28 @@ make setup ROOT=/path/to/your/files
 make setup
 ```
 
-Detects your GPU, selects the right model tier, generates configs, starts all services, and pulls Ollama models. On a machine with no GPU it selects CPU-only mode automatically. Run once; safe to re-run after a hardware change.
+Detects your GPU, selects the right model tier, prompts for the folder to index, generates configs, starts all services, pulls models, runs a health check, and triggers the initial ingest — all in one command.
 
-### Step 3: Verify
-
-```bash
-make health
-```
-
-All services should report healthy with empty collections ready to fill.
-
-### Step 4: Index your files
+To skip the folder prompt:
 
 ```bash
-make ingest
+make setup ROOT=/path/to/your/files
 ```
 
-Your files are now searchable. Every conversation enriches the local index.
+To add cloud model support, set API keys in `.env` before running setup:
 
-### Step 5: Open LibreChat
+```bash
+# ANTHROPIC_API_KEY=sk-ant-...
+# OPENAI_API_KEY=sk-...
+```
+
+Safe to re-run after a hardware change or to add a new model tier.
+
+### Step 3: Open LibreChat
 
 [http://localhost:3080](http://localhost:3080) — create an account and start chatting. LibreChat is pre-connected to the orchestrator.
 
-### Step 6 (optional): Explore the API
-
-[http://localhost:8000/docs](http://localhost:8000/docs) — interactive Swagger UI for all endpoints. Useful for building integrations or testing ingest, search, signals, and actions directly.
+**Optional:** explore the API at [http://localhost:8000/docs](http://localhost:8000/docs) — interactive Swagger UI for all endpoints.
 
 ---
 
