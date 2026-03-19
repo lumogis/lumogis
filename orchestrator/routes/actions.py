@@ -14,7 +14,9 @@ POST /permissions/{connector}/elevate — explicit routine Do elevation
 
 import logging
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter
+from fastapi import HTTPException
+from fastapi import Query
 from pydantic import BaseModel
 
 _log = logging.getLogger(__name__)
@@ -112,7 +114,9 @@ def approve_routine(name: str):
 
     ok = _approve(name)
     if not ok:
-        raise HTTPException(status_code=404, detail=f"Routine {name!r} not found or approval failed")
+        raise HTTPException(
+            status_code=404, detail=f"Routine {name!r} not found or approval failed"
+        )
     return {"status": "approved", "routine": name}
 
 

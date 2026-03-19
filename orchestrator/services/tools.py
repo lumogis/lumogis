@@ -150,10 +150,12 @@ def _read_file(input_: dict) -> str:
         resolved = str(Path(path).resolve())
         allowed = str(Path(fs_root).resolve())
         if not resolved.startswith(allowed + "/") and resolved != allowed:
-            return json.dumps({
-                "error": f"Access denied: path is outside FILESYSTEM_ROOT ({allowed})",
-                "path": path,
-            })
+            return json.dumps(
+                {
+                    "error": f"Access denied: path is outside FILESYSTEM_ROOT ({allowed})",
+                    "path": path,
+                }
+            )
 
     try:
         with open(path, "r", encoding="utf-8", errors="ignore") as f:

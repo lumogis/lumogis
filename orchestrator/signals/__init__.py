@@ -13,11 +13,11 @@ _log = logging.getLogger(__name__)
 
 def start_all() -> None:
     """Start all signal monitors and the digest scheduler."""
+    from signals.calendar_monitor import start as start_calendar
+    from signals.digest import start as start_digest
     from signals.feed_monitor import start as start_feeds
     from signals.page_monitor import start as start_pages
-    from signals.calendar_monitor import start as start_calendar
     from signals.system_monitor import start as start_system
-    from signals.digest import start as start_digest
 
     start_feeds()
     start_pages()
@@ -29,11 +29,11 @@ def start_all() -> None:
 
 def stop_all() -> None:
     """Stop all signal monitors and the digest scheduler."""
+    from signals.calendar_monitor import stop as stop_calendar
+    from signals.digest import stop as stop_digest
     from signals.feed_monitor import stop as stop_feeds
     from signals.page_monitor import stop as stop_pages
-    from signals.calendar_monitor import stop as stop_calendar
     from signals.system_monitor import stop as stop_system
-    from signals.digest import stop as stop_digest
 
     stop_feeds()
     stop_pages()

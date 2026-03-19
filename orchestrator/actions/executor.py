@@ -21,14 +21,16 @@ Permission bypass is not possible — every call goes through check_permission()
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
+from datetime import timezone
 from typing import Any
 
 import hooks
 from actions.audit import write_audit
 from actions.registry import get_action
 from events import Event
-from models.actions import ActionResult, AuditEntry
+from models.actions import ActionResult
+from models.actions import AuditEntry
 
 _log = logging.getLogger(__name__)
 
@@ -56,7 +58,8 @@ def execute(
         return ActionResult(success=False, output="", error=f"Unknown action: {name!r}")
 
     # Permission check via permissions module.
-    from permissions import check_permission, routine_check
+    from permissions import check_permission
+    from permissions import routine_check
 
     allowed = check_permission(spec.connector, spec.action_type, spec.is_write)
     if not allowed:

@@ -29,7 +29,9 @@ def register_action(spec: ActionSpec) -> None:
         action_type=spec.action_type,
         is_write=spec.is_write,
     )
-    _log.info("Action registered: %s (connector=%s, write=%s)", spec.name, spec.connector, spec.is_write)
+    _log.info(
+        "Action registered: %s (connector=%s, write=%s)", spec.name, spec.connector, spec.is_write
+    )
 
 
 def get_action(name: str) -> ActionSpec | None:

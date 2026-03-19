@@ -8,7 +8,8 @@ has a context_budget field; models without it fall back to 2048.
 """
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from dataclasses import field
 
 import config
 
@@ -67,7 +68,11 @@ def estimate_tokens(text: str) -> int:
     if not text:
         return 0
     sample = text[:200]
-    cjk_count = sum(1 for c in sample if "\u4e00" <= c <= "\u9fff" or "\u3040" <= c <= "\u30ff" or "\uac00" <= c <= "\ud7af")
+    cjk_count = sum(
+        1
+        for c in sample
+        if "\u4e00" <= c <= "\u9fff" or "\u3040" <= c <= "\u30ff" or "\uac00" <= c <= "\ud7af"
+    )
     cjk_ratio = cjk_count / max(len(sample), 1)
     divisor = 3 if cjk_ratio > 0.3 else 4
     return max(1, len(text) // divisor)
@@ -94,7 +99,9 @@ def truncate_messages(messages: list[dict], max_tokens: int) -> list[dict]:
     keep_first = result[:1]
     rest = result[1:]
 
-    while rest and sum(estimate_tokens(m.get("content", "")) for m in keep_first + rest) > max_tokens:
+    while (
+        rest and sum(estimate_tokens(m.get("content", "")) for m in keep_first + rest) > max_tokens
+    ):
         if len(rest) <= 2:
             break
         rest.pop(0)

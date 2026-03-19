@@ -13,11 +13,13 @@ immediately without a restart.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
+from datetime import timezone
 
-import config
 from models.signals import SourceConfig
 from services.signal_processor import process_signal
+
+import config
 
 _log = logging.getLogger(__name__)
 
@@ -115,15 +117,19 @@ def _build_adapter(source: SourceConfig):
     try:
         if source.source_type == "rss":
             from adapters.rss_source import RSSSource
+
             return RSSSource(source)
         if source.source_type == "page":
             from adapters.page_scraper import PageScraper
+
             return PageScraper(source)
         if source.source_type == "playwright":
             from adapters.playwright_fetcher import PlaywrightFetcher
+
             return PlaywrightFetcher(source)
         if source.source_type == "caldav":
             from adapters.calendar_adapter import CalendarAdapter
+
             return CalendarAdapter(source)
         _log.warning("Unknown source_type %r for source %s", source.source_type, source.id)
     except Exception as exc:

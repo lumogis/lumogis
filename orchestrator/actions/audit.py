@@ -11,11 +11,13 @@ No UPDATE or DELETE methods are provided intentionally.
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
+from datetime import timezone
 from typing import Optional
 
-import config
 from models.actions import AuditEntry
+
+import config
 
 _log = logging.getLogger(__name__)
 

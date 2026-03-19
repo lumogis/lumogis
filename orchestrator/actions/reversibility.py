@@ -13,9 +13,10 @@ attempt_reverse(reverse_token):
 
 import logging
 
-import config
-from actions.audit import get_audit, mark_reversed
+from actions.audit import mark_reversed
 from models.actions import ActionResult
+
+import config
 
 _log = logging.getLogger(__name__)
 

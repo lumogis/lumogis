@@ -13,10 +13,11 @@ when the event summary contains a known entity name.
 import logging
 import os
 
-import config
 from adapters.calendar_adapter import CalendarAdapter
 from models.signals import SourceConfig
 from services.signal_processor import process_signal
+
+import config
 
 _log = logging.getLogger(__name__)
 

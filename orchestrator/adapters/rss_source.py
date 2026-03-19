@@ -14,13 +14,15 @@ import logging
 import re
 import time
 import uuid
-from datetime import datetime, timezone
-from urllib.parse import urljoin, urlparse
+from datetime import datetime
+from datetime import timezone
+from urllib.parse import urljoin
+from urllib.parse import urlparse
 
 import feedparser
 import httpx
-
-from models.signals import Signal, SourceConfig
+from models.signals import Signal
+from models.signals import SourceConfig
 
 _log = logging.getLogger(__name__)
 
@@ -76,9 +78,7 @@ class RSSSource:
         signals: list[Signal] = []
         for entry in feed.entries[:20]:
             raw = (
-                entry.get("summary", "")
-                or (entry.get("content") or [{}])[0].get("value", "")
-                or ""
+                entry.get("summary", "") or (entry.get("content") or [{}])[0].get("value", "") or ""
             )
             signals.append(
                 Signal(

@@ -14,10 +14,12 @@ Exports:
 import logging
 from typing import Generator
 
-import config
-from models.llm import LLMEvent, LLMResponse
+from models.llm import LLMResponse
 from models.stream import StreamEvent
-from services.tools import TOOLS, run_tool
+from services.tools import TOOLS
+from services.tools import run_tool
+
+import config
 
 _log = logging.getLogger(__name__)
 
@@ -62,7 +64,10 @@ def ask(
 
     for _round in range(MAX_TOOL_ROUNDS + 1):
         response: LLMResponse = provider.chat(
-            messages, tools=tools, system=system, max_tokens=4096,
+            messages,
+            tools=tools,
+            system=system,
+            max_tokens=4096,
         )
 
         assistant_msg: dict = {"role": "assistant", "content": response.text}
@@ -78,11 +83,13 @@ def ask(
 
         for tc in response.tool_calls:
             result = run_tool(tc.name, tc.arguments)
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tc.id,
-                "content": result,
-            })
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": result,
+                }
+            )
 
     _log.warning("Tool loop hit MAX_TOOL_ROUNDS=%d, forcing final answer", MAX_TOOL_ROUNDS)
     final = provider.chat(messages, system=system, max_tokens=4096)
@@ -114,10 +121,7 @@ def _friendly_error(exc: Exception) -> str:
     """Turn raw API exceptions into short, user-facing messages."""
     msg = str(exc).lower()
     if "rate_limit" in msg or "429" in msg:
-        return (
-            "The AI provider's rate limit was reached. "
-            "Please wait a minute and try again."
-        )
+        return "The AI provider's rate limit was reached. Please wait a minute and try again."
     if "401" in msg or "auth" in msg:
         return "Authentication failed. Check your API key in .env."
     if "timeout" in msg:
@@ -137,17 +141,22 @@ def _stream_loop(
         tool_calls: list[dict] = []
 
         for event in provider.chat_stream(
-            messages, tools=tools, system=system, max_tokens=4096,
+            messages,
+            tools=tools,
+            system=system,
+            max_tokens=4096,
         ):
             if event.type == "text":
                 text_parts.append(event.content)
                 yield StreamEvent(type="text", content=event.content)
             elif event.type == "tool_call" and event.tool_call:
-                tool_calls.append({
-                    "id": event.tool_call.id,
-                    "name": event.tool_call.name,
-                    "arguments": event.tool_call.arguments,
-                })
+                tool_calls.append(
+                    {
+                        "id": event.tool_call.id,
+                        "name": event.tool_call.name,
+                        "arguments": event.tool_call.arguments,
+                    }
+                )
             elif event.type == "end":
                 break
 
@@ -161,11 +170,13 @@ def _stream_loop(
 
         for tc in tool_calls:
             result = run_tool(tc["name"], tc["arguments"])
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tc["id"],
-                "content": result,
-            })
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tc["id"],
+                    "content": result,
+                }
+            )
         yield StreamEvent(type="text", content="\n\n")
 
     _log.warning(
@@ -173,7 +184,9 @@ def _stream_loop(
         MAX_TOOL_ROUNDS,
     )
     for event in provider.chat_stream(
-        messages, system=system, max_tokens=4096,
+        messages,
+        system=system,
+        max_tokens=4096,
     ):
         if event.type == "text":
             yield StreamEvent(type="text", content=event.content)

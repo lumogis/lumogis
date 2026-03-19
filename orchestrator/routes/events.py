@@ -21,13 +21,13 @@ import json
 import logging
 import time
 from collections import deque
-from datetime import timezone
-from typing import AsyncGenerator, Optional
+from typing import AsyncGenerator
 
 import hooks
 from auth import get_user
 from events import Event
-from fastapi import APIRouter, Request
+from fastapi import APIRouter
+from fastapi import Request
 from fastapi.responses import StreamingResponse
 
 _log = logging.getLogger(__name__)
@@ -53,6 +53,7 @@ _event_counter = 0
 # ---------------------------------------------------------------------------
 # Hook callbacks (wired in main.py)
 # ---------------------------------------------------------------------------
+
 
 def _make_sse_event(event_type: str, data: dict, user_id: str = "default") -> str:
     """Build an SSE message string."""
@@ -133,6 +134,7 @@ def register_hooks() -> None:
 # ---------------------------------------------------------------------------
 # SSE endpoint
 # ---------------------------------------------------------------------------
+
 
 @router.get("/events")
 async def sse_stream(request: Request):

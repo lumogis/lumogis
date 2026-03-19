@@ -9,12 +9,13 @@ change detection and as the fallback when playwright_fetcher is unavailable.
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
+from datetime import timezone
 
 import httpx
 import trafilatura
-
-from models.signals import Signal, SourceConfig
+from models.signals import Signal
+from models.signals import SourceConfig
 
 _log = logging.getLogger(__name__)
 

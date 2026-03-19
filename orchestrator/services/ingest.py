@@ -206,7 +206,8 @@ def ingest_file(file_path: str, user_id: str = "default") -> IngestResult:
     # Runs synchronously here because ingest_file is already called from a background
     # thread (FastAPI BackgroundTask or the watcher thread).
     try:
-        from services.entities import extract_entities, store_entities
+        from services.entities import extract_entities
+        from services.entities import store_entities
 
         entities = extract_entities(text)
         if entities:
@@ -216,9 +217,7 @@ def ingest_file(file_path: str, user_id: str = "default") -> IngestResult:
                 evidence_type="DOCUMENT",
                 user_id=user_id,
             )
-            _log.info(
-                "Stored %d entities from document %s", len(entities), file_path
-            )
+            _log.info("Stored %d entities from document %s", len(entities), file_path)
     except Exception:
         _log.exception("Entity extraction failed for document %s", file_path)
 

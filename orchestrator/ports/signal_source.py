@@ -5,7 +5,8 @@
 Implemented by rss_source, page_scraper, playwright_fetcher, calendar_adapter.
 """
 
-from typing import Protocol, runtime_checkable
+from typing import Protocol
+from typing import runtime_checkable
 
 from models.signals import Signal
 

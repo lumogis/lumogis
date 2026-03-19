@@ -6,7 +6,8 @@ Signal.raw_content is transient: populated by adapters for LLM processing,
 cleared (set to "") after process_signal() runs. Never persisted to Postgres.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from dataclasses import field
 from datetime import datetime
 from typing import Optional
 

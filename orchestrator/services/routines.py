@@ -18,12 +18,14 @@ Built-in routines:
 import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime
+from datetime import timezone
 from pathlib import Path
 from typing import Optional
 
-import config
 from models.actions import RoutineSpec
+
+import config
 
 _log = logging.getLogger(__name__)
 
@@ -163,7 +165,8 @@ def list_routines(user_id: str = "default") -> list[dict]:
 
 def _run_weekly_review(user_id: str = "default") -> str:
     """Collect week's signals, entities, sessions → JSON + optional LLM prose."""
-    from services.context_budget import get_budget, truncate_text
+    from services.context_budget import get_budget
+    from services.context_budget import truncate_text
 
     ms = config.get_metadata_store()
     vs = config.get_vector_store()
@@ -189,7 +192,9 @@ def _run_weekly_review(user_id: str = "default") -> str:
         scroll = getattr(vs, "scroll_collection", None)
         if scroll:
             pts = scroll("conversations", with_vectors=False)
-            pts_sorted = sorted(pts, key=lambda p: p.get("payload", {}).get("created_at", ""), reverse=True)
+            pts_sorted = sorted(
+                pts, key=lambda p: p.get("payload", {}).get("created_at", ""), reverse=True
+            )
             for pt in pts_sorted[:5]:
                 payload = pt.get("payload", {})
                 sessions.append(
@@ -387,7 +392,11 @@ def _job_callback(name: str) -> None:
 def _ensure_weekly_review() -> None:
     spec = RoutineSpec(
         name="weekly_review",
-        description="Collects the week's signals, entities, and session summaries into a structured JSON report saved to ai-workspace/outbox/.",
+        description=(
+            "Collects the week's signals, entities, and session "
+            "summaries into a structured JSON report "
+            "saved to ai-workspace/outbox/."
+        ),
         schedule_cron="0 18 * * 0",  # Sunday 18:00
         steps=[{"action_name": "__builtin__weekly_review"}],
         requires_approval=True,
@@ -413,7 +422,9 @@ def _ensure_inbox_digest() -> None:
 
     spec = RoutineSpec(
         name="inbox_digest",
-        description="Daily listing of new inbox files with metadata, saved to ai-workspace/outbox/.",
+        description=(
+            "Daily listing of new inbox files with metadata, saved to ai-workspace/outbox/."
+        ),
         schedule_cron=f"{m} {h} * * *",  # daily at DIGEST_TIME - 30min
         steps=[{"action_name": "__builtin__inbox_digest"}],
         requires_approval=False,
@@ -443,6 +454,7 @@ def _row_to_spec(row: dict) -> RoutineSpec:
     steps = row.get("steps") or []
     if isinstance(steps, str):
         import json as _json
+
         steps = _json.loads(steps)
     return RoutineSpec(
         name=row["name"],

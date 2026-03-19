@@ -19,10 +19,11 @@ import json
 import logging
 import uuid
 
-import config
 import hooks
 from events import Event
 from models.entities import ExtractedEntity
+
+import config
 
 _log = logging.getLogger(__name__)
 
@@ -31,15 +32,17 @@ Extract all named entities from the text below. For each entity, identify:
 - name: the exact name as it appears in the text (do NOT translate — preserve the original language)
 - entity_type: one of PERSON, ORG, PROJECT, CONCEPT
 - aliases: alternative names for this entity found in the text (empty list if none)
-- context_tags: 2-5 short lowercase tags describing the domain or topic (e.g. ["finance", "engineering"])
+- context_tags: 2-5 short lowercase tags for domain/topic (e.g. ["finance", "engineering"])
 
-Return a JSON array of objects. Each object must have exactly these keys: name, entity_type, aliases, context_tags.
+Return a JSON array of objects with keys: name, entity_type, aliases, context_tags.
 If no entities are found, return an empty array [].
 
 Example output:
 [
-  {"name": "Ada Lovelace", "entity_type": "PERSON", "aliases": ["Ada"], "context_tags": ["computing", "mathematics"]},
-  {"name": "Bundesamt für Statistik", "entity_type": "ORG", "aliases": ["BFS"], "context_tags": ["government", "statistics"]}
+  {"name": "Ada Lovelace", "entity_type": "PERSON",
+   "aliases": ["Ada"], "context_tags": ["computing", "mathematics"]},
+  {"name": "Bundesamt für Statistik", "entity_type": "ORG",
+   "aliases": ["BFS"], "context_tags": ["government", "statistics"]}
 ]
 
 Text to analyse:
@@ -71,9 +74,7 @@ def extract_entities(session_text: str) -> list[ExtractedEntity]:
         # Strip markdown code fences if the model wrapped the JSON
         if raw.startswith("```"):
             lines = raw.splitlines()
-            raw = "\n".join(
-                line for line in lines if not line.startswith("```")
-            )
+            raw = "\n".join(line for line in lines if not line.startswith("```"))
 
         data = json.loads(raw)
         if not isinstance(data, list):
@@ -209,13 +210,9 @@ def _upsert_entity(
 
     if decision == "merge" and existing:
         entity_id = existing["entity_id"]
-        merged_aliases = list(
-            {*existing["aliases"], *entity.aliases} - {entity.name.lower()}
-        )
+        merged_aliases = list({*existing["aliases"], *entity.aliases} - {entity.name.lower()})
         # Re-add any alias that is NOT the canonical name (case-insensitive check)
-        merged_aliases = [
-            a for a in merged_aliases if a.lower() != existing["name"].lower()
-        ]
+        merged_aliases = [a for a in merged_aliases if a.lower() != existing["name"].lower()]
         merged_tags = list({*existing["context_tags"], *entity.context_tags})
         ms.execute(
             "UPDATE entities "
@@ -241,8 +238,7 @@ def _upsert_entity(
         )
         entity_id = _insert_new_entity(entity, user_id, ms)
         reason = (
-            f"Name match with only 1 context_tag overlap: "
-            f"'{existing['name']}' vs '{entity.name}'"
+            f"Name match with only 1 context_tag overlap: '{existing['name']}' vs '{entity.name}'"
         )
         ms.execute(
             "INSERT INTO review_queue "

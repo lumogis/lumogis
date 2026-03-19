@@ -95,7 +95,12 @@ class QdrantStore:
             vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE),
             sparse_vectors_config=sparse_cfg,
         )
-        _log.info("Created Qdrant collection '%s' (dim=%d, sparse=%s)", name, vector_size, sparse_cfg is not None)
+        _log.info(
+            "Created Qdrant collection '%s' (dim=%d, sparse=%s)",
+            name,
+            vector_size,
+            sparse_cfg is not None,
+        )
 
     def _ensure_sparse_config(self, collection_name: str) -> None:
         """Add BM25 sparse vector config to an existing collection if absent.
@@ -116,9 +121,14 @@ class QdrantStore:
                         )
                     },
                 )
-                _log.info("Upgraded '%s' collection with BM25 sparse vector config", collection_name)
+                _log.info(
+                    "Upgraded '%s' collection with BM25 sparse vector config", collection_name
+                )
         except Exception:
-            _log.exception("Failed to ensure sparse config for '%s' — hybrid search will be unavailable", collection_name)
+            _log.exception(
+                "Failed to ensure sparse config for '%s' — hybrid search will be unavailable",
+                collection_name,
+            )
 
     def upsert(self, collection: str, id: str, vector: list[float], payload: dict) -> None:
         if collection == _SPARSE_COLLECTION:
@@ -134,7 +144,9 @@ class QdrantStore:
                                 id=id,
                                 vector={
                                     "": vector,
-                                    _SPARSE_VECTOR_NAME: SparseVector(indices=indices, values=values),
+                                    _SPARSE_VECTOR_NAME: SparseVector(
+                                        indices=indices, values=values
+                                    ),
                                 },
                                 payload=payload,
                             )
@@ -206,10 +218,7 @@ class QdrantStore:
             score_threshold=threshold,
             query_filter=query_filter,
         )
-        return [
-            {"id": str(r.id), "score": r.score, "payload": r.payload}
-            for r in results.points
-        ]
+        return [{"id": str(r.id), "score": r.score, "payload": r.payload} for r in results.points]
 
     def delete(self, collection: str, id: str) -> None:
         self._client.delete(

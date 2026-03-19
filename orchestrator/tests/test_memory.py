@@ -10,15 +10,16 @@ No Docker or network required.
 import json
 from unittest.mock import MagicMock
 
-import pytest
+from services.memory import retrieve_context
+from services.memory import store_session
+from services.memory import summarize_session
 
 import config as _config
-from services.memory import retrieve_context, store_session, summarize_session
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _mock_llm(response_text: str):
     mock_resp = MagicMock()
@@ -37,6 +38,7 @@ MESSAGES = [
 # ---------------------------------------------------------------------------
 # summarize_session
 # ---------------------------------------------------------------------------
+
 
 class TestSummarizeSession:
     def _patch_budget(self, monkeypatch):
@@ -95,6 +97,7 @@ class TestSummarizeSession:
 # store_session
 # ---------------------------------------------------------------------------
 
+
 class TestStoreSession:
     def test_upserts_to_conversations_collection(
         self, mock_embedder, mock_vector_store, monkeypatch
@@ -126,6 +129,7 @@ class TestStoreSession:
         mock_embedder.embed = capturing_embed
 
         from models.memory import SessionSummary
+
         summary = SessionSummary(
             session_id="sess-embed-1",
             summary="Rate decision.",
@@ -140,6 +144,7 @@ class TestStoreSession:
 # ---------------------------------------------------------------------------
 # retrieve_context
 # ---------------------------------------------------------------------------
+
 
 class TestRetrieveContext:
     def test_returns_matching_context_hits(self, mock_embedder, mock_vector_store):

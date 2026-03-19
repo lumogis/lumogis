@@ -15,14 +15,15 @@ POST /feedback      — Record explicit or implicit feedback
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter
+from fastapi import HTTPException
+from fastapi import Query
+from models.signals import SourceConfig
 from pydantic import BaseModel
 
 import config
-from models.signals import RelevanceProfile, SourceConfig
 
 _log = logging.getLogger(__name__)
 
@@ -52,7 +53,7 @@ class ProfileRequest(BaseModel):
 class FeedbackRequest(BaseModel):
     item_type: str
     item_id: str
-    positive: Optional[bool] = None   # explicit feedback
+    positive: Optional[bool] = None  # explicit feedback
     event_type: Optional[str] = None  # implicit feedback
 
 
@@ -168,8 +169,12 @@ def list_sources():
                 "category": row["category"],
                 "active": row["active"],
                 "poll_interval": row["poll_interval"],
-                "last_polled_at": row["last_polled_at"].isoformat() if row["last_polled_at"] else None,
-                "last_signal_at": row["last_signal_at"].isoformat() if row["last_signal_at"] else None,
+                "last_polled_at": row["last_polled_at"].isoformat()
+                if row["last_polled_at"]
+                else None,
+                "last_signal_at": row["last_signal_at"].isoformat()
+                if row["last_signal_at"]
+                else None,
                 "polling_active": job_id in scheduled_ids,
             }
         )
@@ -273,7 +278,8 @@ def upsert_profile(body: ProfileRequest):
             profile_id = str(uuid.uuid4())
             ms.execute(
                 "INSERT INTO relevance_profiles "
-                "(id, user_id, tracked_locations, tracked_topics, tracked_entities, tracked_keywords) "
+                "(id, user_id, tracked_locations, tracked_topics, "
+                "tracked_entities, tracked_keywords) "
                 "VALUES (%s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb)",
                 (
                     profile_id,
@@ -344,7 +350,8 @@ def get_profile():
 @router.post("/feedback")
 def record_feedback(body: FeedbackRequest):
     """Record explicit (positive=true/false) or implicit (event_type=...) feedback."""
-    from services.feedback import record_explicit, record_implicit
+    from services.feedback import record_explicit
+    from services.feedback import record_implicit
 
     if body.positive is not None:
         record_explicit(
@@ -364,7 +371,10 @@ def record_feedback(body: FeedbackRequest):
 
     raise HTTPException(
         status_code=422,
-        detail="Provide either 'positive' (bool) for explicit feedback or 'event_type' (str) for implicit.",
+        detail=(
+            "Provide either 'positive' (bool) for explicit feedback "
+            "or 'event_type' (str) for implicit."
+        ),
     )
 
 

@@ -6,9 +6,11 @@ Any adapter that implements chat() and chat_stream() with the canonical
 message/tool format can be plugged in via config.get_llm_provider().
 """
 
-from typing import Generator, Protocol
+from typing import Generator
+from typing import Protocol
 
-from models.llm import LLMEvent, LLMResponse
+from models.llm import LLMEvent
+from models.llm import LLMResponse
 
 
 class LLMProvider(Protocol):

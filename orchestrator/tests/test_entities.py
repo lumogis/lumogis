@@ -4,20 +4,23 @@
 
 import json
 import uuid
-from dataclasses import dataclass, field
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import patch
 
-import config as _config
-import pytest
 from models.entities import ExtractedEntity
 from models.llm import LLMResponse
-from services.entities import extract_entities, resolve_entity, store_entities
-from tests.conftest import MockEmbedder, MockMetadataStore, MockVectorStore
+from services.entities import extract_entities
+from services.entities import resolve_entity
+from services.entities import store_entities
+from tests.conftest import MockEmbedder
+from tests.conftest import MockMetadataStore
+from tests.conftest import MockVectorStore
 
+import config as _config
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _llm_response(text: str) -> LLMResponse:
     return LLMResponse(text=text, tool_calls=[], stop_reason="stop")
@@ -124,7 +127,7 @@ class TestExtractEntities:
     @patch("services.entities.config.get_llm_provider")
     def test_malformed_items_skipped_valid_items_kept(self, mock_get_llm):
         payload = [
-            {"entity_type": "PERSON"},         # missing 'name'
+            {"entity_type": "PERSON"},  # missing 'name'
             _entity_json("Charlie", "CONCEPT"),
         ]
         mock_get_llm.return_value.chat.return_value = _llm_response(json.dumps(payload))
@@ -325,8 +328,8 @@ class TestEntitiesExtractRoute:
         from fastapi.testclient import TestClient
 
         with (
-            patch("services.entities.extract_entities", return_value=[]) as mock_extract,
-            patch("services.entities.store_entities") as mock_store,
+            patch("services.entities.extract_entities", return_value=[]) as _mock_extract,
+            patch("services.entities.store_entities") as _mock_store,
             TestClient(main.app) as client,
         ):
             resp = client.post(
@@ -484,9 +487,7 @@ class TestResolveEntity:
         assert resolve_entity(entity, existing) == "ambiguous"
 
     def test_zero_tag_overlap_returns_new(self):
-        entity = ExtractedEntity(
-            name="Alice", entity_type="PERSON", context_tags=["finance"]
-        )
+        entity = ExtractedEntity(name="Alice", entity_type="PERSON", context_tags=["finance"])
         existing = self._existing(["engineering", "strategy"])
         assert resolve_entity(entity, existing) == "new"
 
@@ -496,9 +497,7 @@ class TestResolveEntity:
         assert resolve_entity(entity, existing) == "new"
 
     def test_empty_existing_tags_always_returns_new(self):
-        entity = ExtractedEntity(
-            name="Alice", entity_type="PERSON", context_tags=["leadership"]
-        )
+        entity = ExtractedEntity(name="Alice", entity_type="PERSON", context_tags=["leadership"])
         existing = self._existing([])
         assert resolve_entity(entity, existing) == "new"
 
@@ -581,8 +580,8 @@ class TestIngestEntityExtraction:
     @patch("services.entities.extract_entities", return_value=[])
     def test_ingest_file_triggers_entity_extraction(self, mock_extract, mock_store):
         """ingest_file() must call extract_entities with the document text."""
-        import tempfile
         import os
+        import tempfile
 
         # Create a temp .txt file
         with tempfile.NamedTemporaryFile(
@@ -620,8 +619,9 @@ class TestIngestEntityExtraction:
     @patch("services.entities.extract_entities")
     def test_ingest_file_stores_with_document_evidence_type(self, mock_extract, mock_store):
         """Entities from ingest must be stored with evidence_type=DOCUMENT."""
-        import tempfile
         import os
+        import tempfile
+
         from models.entities import ExtractedEntity
 
         fake_entity = ExtractedEntity(name="Alice", entity_type="PERSON")

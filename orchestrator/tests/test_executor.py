@@ -7,17 +7,15 @@ hard-limit enforcement, audit log write, and reverse_token assignment.
 No Docker or network required.
 """
 
-from unittest.mock import MagicMock, patch
-
-import pytest
-
-from actions.executor import execute, is_hard_limited
-from models.actions import ActionResult, ActionSpec
-
+from actions.executor import execute
+from actions.executor import is_hard_limited
+from models.actions import ActionResult
+from models.actions import ActionSpec
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_spec(
     name="test_action",
@@ -29,7 +27,10 @@ def _make_spec(
     reverse_action_name=None,
 ) -> ActionSpec:
     if handler is None:
-        handler = lambda inp: ActionResult(success=True, output="ok")
+
+        def handler(inp):
+            return ActionResult(success=True, output="ok")
+
     return ActionSpec(
         name=name,
         connector=connector,
@@ -44,6 +45,7 @@ def _make_spec(
 # ---------------------------------------------------------------------------
 # is_hard_limited
 # ---------------------------------------------------------------------------
+
 
 class TestIsHardLimited:
     def test_hard_limited_types(self):
@@ -65,6 +67,7 @@ class TestIsHardLimited:
 # execute — unknown action
 # ---------------------------------------------------------------------------
 
+
 class TestExecuteUnknownAction:
     def test_returns_error_for_unknown_action(self, monkeypatch):
         monkeypatch.setattr("actions.executor.get_action", lambda name: None)
@@ -78,6 +81,7 @@ class TestExecuteUnknownAction:
 # ---------------------------------------------------------------------------
 # execute — permission denied (ASK mode blocks write)
 # ---------------------------------------------------------------------------
+
 
 class TestExecutePermissionDenied:
     def test_write_blocked_in_ask_mode(self, monkeypatch):
@@ -111,6 +115,7 @@ class TestExecutePermissionDenied:
 # ---------------------------------------------------------------------------
 # execute — successful execution
 # ---------------------------------------------------------------------------
+
 
 class TestExecuteSuccess:
     def _run(self, monkeypatch, spec):

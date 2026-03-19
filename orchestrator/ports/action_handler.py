@@ -7,7 +7,9 @@ Core code never imports from the handlers directory directly — it
 calls them via actions/executor.py which dispatches through ActionSpec.handler.
 """
 
-from typing import Any, Protocol, runtime_checkable
+from typing import Any
+from typing import Protocol
+from typing import runtime_checkable
 
 from models.actions import ActionResult
 

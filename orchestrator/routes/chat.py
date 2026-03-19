@@ -10,22 +10,22 @@ from typing import Generator
 from typing import List
 from typing import Optional
 
-import config
 import hooks
 from auth import get_user
 from events import Event
-from fastapi import APIRouter, Request
+from fastapi import APIRouter
+from fastapi import Request
 from fastapi.responses import StreamingResponse
 from loop import ask
 from loop import ask_stream
 from models.stream import StreamEvent
 from pydantic import BaseModel
-from services.context_budget import (
-    allocate,
-    get_budget,
-    truncate_messages,
-    truncate_text,
-)
+from services.context_budget import allocate
+from services.context_budget import get_budget
+from services.context_budget import truncate_messages
+from services.context_budget import truncate_text
+
+import config
 
 router = APIRouter()
 _log = logging.getLogger(__name__)
@@ -87,9 +87,7 @@ def _sse_chunk(
     return f"data: {json.dumps(payload)}\n\n"
 
 
-LOCAL_MODEL_LOADING_NOTE = (
-    "*Loading model on your machine — first time may take 1–2 minutes…*\n\n"
-)
+LOCAL_MODEL_LOADING_NOTE = "*Loading model on your machine — first time may take 1–2 minutes…*\n\n"
 
 
 def stream_completion(
@@ -115,21 +113,22 @@ def _inject_context(question: str, history: list[dict], model: str, user_id: str
     from services.memory import retrieve_context
 
     budget = get_budget(model)
-    budget_plan = allocate(budget, {
-        "system": 0.10,
-        "session_context": 0.075,
-        "plugin_context": 0.05,
-        "history": 0.65,
-        "response": 0.125,
-    })
+    budget_plan = allocate(
+        budget,
+        {
+            "system": 0.10,
+            "session_context": 0.075,
+            "plugin_context": 0.05,
+            "history": 0.65,
+            "response": 0.125,
+        },
+    )
 
     context_parts: list[str] = []
 
     hits = retrieve_context(question, limit=3, user_id=user_id)
     if hits:
-        session_texts = [
-            f"[Previous session] {h.summary}" for h in hits
-        ]
+        session_texts = [f"[Previous session] {h.summary}" for h in hits]
         session_block = "\n".join(session_texts)
         session_block = truncate_text(session_block, budget_plan.get("session_context"))
         context_parts.append(session_block)
@@ -138,7 +137,7 @@ def _inject_context(question: str, history: list[dict], model: str, user_id: str
     hooks.fire(Event.CONTEXT_BUILDING, query=question, context_fragments=fragments)
 
     if len(fragments) > len(context_parts):
-        plugin_text = "\n".join(fragments[len(context_parts):])
+        plugin_text = "\n".join(fragments[len(context_parts) :])
         plugin_text = truncate_text(plugin_text, budget_plan.get("plugin_context"))
         context_parts.append(plugin_text)
 
@@ -149,7 +148,11 @@ def _inject_context(question: str, history: list[dict], model: str, user_id: str
         context_block = "\n\n".join(context_parts)
         context_msg = {
             "role": "user",
-            "content": f"[Context from previous sessions — use this to inform your answer]\n{context_block}",
+            "content": (
+                "[Context from previous sessions "
+                "— use this to inform your answer]"
+                f"\n{context_block}"
+            ),
         }
         ack_msg = {
             "role": "assistant",
@@ -196,7 +199,10 @@ def chat_completions(body: ChatCompletionsRequest, request: Request) -> Any:
 
     if body.stream:
         events = ask_stream(
-            question, history=history, model=body.model, use_tools=use_tools,
+            question,
+            history=history,
+            model=body.model,
+            use_tools=use_tools,
         )
         return StreamingResponse(
             stream_completion(

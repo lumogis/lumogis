@@ -12,9 +12,10 @@ Both fire Event.FEEDBACK_RECEIVED via hooks.fire_background() after writing.
 import logging
 from typing import Optional
 
-import config
 import hooks
 from events import Event
+
+import config
 
 _log = logging.getLogger(__name__)
 
@@ -26,7 +27,9 @@ def record_explicit(
     user_id: str = "default",
 ) -> None:
     """Record an explicit thumbs-up/down feedback signal."""
-    _write(item_type=item_type, item_id=item_id, positive=positive, event_type=None, user_id=user_id)
+    _write(
+        item_type=item_type, item_id=item_id, positive=positive, event_type=None, user_id=user_id
+    )
     hooks.fire_background(
         Event.FEEDBACK_RECEIVED,
         item_type=item_type,
@@ -46,7 +49,9 @@ def record_implicit(
 
     event_type examples: item_opened, signal_dismissed, briefing_item_expanded.
     """
-    _write(item_type=item_type, item_id=item_id, positive=None, event_type=event_type, user_id=user_id)
+    _write(
+        item_type=item_type, item_id=item_id, positive=None, event_type=event_type, user_id=user_id
+    )
     hooks.fire_background(
         Event.FEEDBACK_RECEIVED,
         item_type=item_type,

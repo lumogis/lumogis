@@ -16,12 +16,15 @@ import hashlib
 import logging
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
+from datetime import timezone
+
+from adapters.page_scraper import PageScraper
+from models.signals import Signal
+from models.signals import SourceConfig
+from services.signal_processor import process_signal
 
 import config
-from adapters.page_scraper import PageScraper
-from models.signals import Signal, SourceConfig
-from services.signal_processor import process_signal
 
 _log = logging.getLogger(__name__)
 

@@ -2,14 +2,19 @@
 # Copyright (C) 2026 Lumogis
 """Data endpoints: /ingest, /search, /session/end, /entities/extract, /entities."""
 
-from typing import List, Optional
+from typing import List
+from typing import Optional
 
-import config
 from auth import get_user
-from fastapi import APIRouter, BackgroundTasks, Query, Request
+from fastapi import APIRouter
+from fastapi import BackgroundTasks
+from fastapi import Query
+from fastapi import Request
 from pydantic import BaseModel
 from services.ingest import ingest_folder
 from services.search import semantic_search
+
+import config
 
 router = APIRouter()
 
@@ -46,16 +51,16 @@ def session_end(body: SessionEndRequest, bg: BackgroundTasks, request: Request):
     user_id = get_user(request).user_id
 
     def _process_session():
-        from services.entities import extract_entities, store_entities
-        from services.memory import store_session, summarize_session
+        from services.entities import extract_entities
+        from services.entities import store_entities
+        from services.memory import store_session
+        from services.memory import summarize_session
 
         msg_dicts = [{"role": m.role, "content": m.content} for m in body.messages]
         summary = summarize_session(msg_dicts, session_id=body.session_id)
         store_session(summary, user_id=user_id)
 
-        session_text = "\n".join(
-            f"{m['role']}: {m['content']}" for m in msg_dicts
-        )
+        session_text = "\n".join(f"{m['role']}: {m['content']}" for m in msg_dicts)
         entities = extract_entities(session_text)
         store_entities(
             entities,
@@ -84,7 +89,8 @@ def entities_extract(body: EntityExtractRequest, bg: BackgroundTasks, request: R
     user_id = get_user(request).user_id
 
     def _run():
-        from services.entities import extract_entities, store_entities
+        from services.entities import extract_entities
+        from services.entities import store_entities
 
         entities = extract_entities(body.text)
         store_entities(
@@ -101,7 +107,9 @@ def entities_extract(body: EntityExtractRequest, bg: BackgroundTasks, request: R
 @router.get("/entities")
 def list_entities(
     request: Request,
-    type: Optional[str] = Query(default=None, description="Filter by entity_type (e.g. Person, ORG)"),
+    type: Optional[str] = Query(
+        default=None, description="Filter by entity_type (e.g. Person, ORG)"
+    ),
     limit: int = Query(default=20, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ):

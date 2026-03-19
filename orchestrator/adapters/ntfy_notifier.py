@@ -57,4 +57,4 @@ class NtfyNotifier:
             return 4  # high
         if score >= 0.3:
             return 3  # default
-        return 1      # low
+        return 1  # low

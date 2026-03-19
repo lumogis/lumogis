@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Lumogis
-"""Admin endpoints: /, /health, /dashboard, /permissions, /review-queue, /backup, /restore, /export."""
+"""Admin endpoints: health, dashboard, permissions, review-queue, backup, restore, export."""
 
 import datetime
 import json
@@ -10,12 +10,17 @@ import re
 import zipfile
 from pathlib import Path
 
-import config
 from auth import get_user
-from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import FileResponse, StreamingResponse
-from permissions import get_all_permissions, set_connector_mode
+from fastapi import APIRouter
+from fastapi import HTTPException
+from fastapi import Request
+from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
+from permissions import get_all_permissions
+from permissions import set_connector_mode
 from pydantic import BaseModel
+
+import config
 
 _DASHBOARD_HTML = Path(__file__).parent.parent / "dashboard" / "index.html"
 
@@ -69,7 +74,10 @@ def update_permission(connector: str, body: PermissionUpdate):
 def dashboard():
     """Serve the read-only admin dashboard SPA."""
     if not _DASHBOARD_HTML.exists():
-        raise HTTPException(status_code=404, detail="Dashboard not found. Check that orchestrator/dashboard/index.html exists.")
+        raise HTTPException(
+            status_code=404,
+            detail="Dashboard not found. Check that orchestrator/dashboard/index.html exists.",
+        )
     return FileResponse(_DASHBOARD_HTML, media_type="text/html")
 
 

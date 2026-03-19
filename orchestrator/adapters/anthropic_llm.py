@@ -12,7 +12,9 @@ import logging
 from typing import Generator
 
 from anthropic import Anthropic
-from models.llm import LLMEvent, LLMResponse, LLMToolCall
+from models.llm import LLMEvent
+from models.llm import LLMResponse
+from models.llm import LLMToolCall
 
 _log = logging.getLogger(__name__)
 
@@ -56,7 +58,9 @@ class AnthropicLLM:
                         yield LLMEvent(
                             type="tool_call",
                             tool_call=LLMToolCall(
-                                id=block.id, name=block.name, arguments=block.input,
+                                id=block.id,
+                                name=block.name,
+                                arguments=block.input,
                             ),
                         )
             final = stream.get_final_message()
@@ -111,12 +115,14 @@ class AnthropicLLM:
             if content:
                 blocks.append({"type": "text", "text": content})
             for tc in tool_calls:
-                blocks.append({
-                    "type": "tool_use",
-                    "id": tc["id"],
-                    "name": tc["name"],
-                    "input": tc["arguments"],
-                })
+                blocks.append(
+                    {
+                        "type": "tool_use",
+                        "id": tc["id"],
+                        "name": tc["name"],
+                        "input": tc["arguments"],
+                    }
+                )
             return {"role": "assistant", "content": blocks}
 
         return {"role": role, "content": msg.get("content", "")}
@@ -139,11 +145,11 @@ class AnthropicLLM:
             if block.type == "text":
                 text_parts.append(block.text)
             elif block.type == "tool_use":
-                tool_calls.append(
-                    LLMToolCall(id=block.id, name=block.name, arguments=block.input)
-                )
+                tool_calls.append(LLMToolCall(id=block.id, name=block.name, arguments=block.input))
 
         stop = "tool_calls" if response.stop_reason == "tool_use" else "stop"
         return LLMResponse(
-            text="".join(text_parts), tool_calls=tool_calls, stop_reason=stop,
+            text="".join(text_parts),
+            tool_calls=tool_calls,
+            stop_reason=stop,
         )

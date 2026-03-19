@@ -27,7 +27,8 @@ def _load_models_yaml() -> dict:
     global _models_config
     if _models_config is None:
         config_path = os.environ.get(
-            "MODELS_CONFIG", str(Path(__file__).resolve().parent / "models.yaml"),
+            "MODELS_CONFIG",
+            str(Path(__file__).resolve().parent / "models.yaml"),
         )
         with open(config_path) as f:
             _models_config = yaml.safe_load(f).get("models", {})
@@ -81,7 +82,12 @@ def get_llm_provider(model_name: str) -> LLMProvider:
         else:
             raise ValueError(f"Unknown adapter type '{adapter_type}' for model '{model_name}'")
 
-        _log.info("LLM provider created: %s (adapter=%s, model=%s)", model_name, adapter_type, cfg["model"])
+        _log.info(
+            "LLM provider created: %s (adapter=%s, model=%s)",
+            model_name,
+            adapter_type,
+            cfg["model"],
+        )
     return _instances[key]  # type: ignore[return-value]
 
 

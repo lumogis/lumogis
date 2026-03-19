@@ -8,19 +8,23 @@ No Docker or network required.
 """
 
 import uuid
-from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from datetime import datetime
+from datetime import timezone
+from unittest.mock import MagicMock
 
 import pytest
+from models.signals import RelevanceProfile
+from models.signals import Signal
+from services.signal_processor import match_relevance
+from services.signal_processor import process_signal
+from services.signal_processor import score_importance
 
 import config as _config
-from models.signals import RelevanceProfile, Signal
-from services.signal_processor import match_relevance, process_signal, score_importance
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_signal(**kwargs) -> Signal:
     defaults = dict(
@@ -57,6 +61,7 @@ def _make_profile(**kwargs) -> RelevanceProfile:
 def _mock_llm_response(data: dict):
     """Return a mock LLM provider whose .chat() yields a JSON-serialisable response."""
     import json
+
     mock_response = MagicMock()
     mock_response.text = json.dumps(data)
     mock_provider = MagicMock()
@@ -67,6 +72,7 @@ def _mock_llm_response(data: dict):
 # ---------------------------------------------------------------------------
 # match_relevance — pure function, no mocks needed
 # ---------------------------------------------------------------------------
+
 
 class TestMatchRelevance:
     def test_full_topic_match(self):
@@ -150,11 +156,14 @@ class TestMatchRelevance:
 # score_importance — cache behaviour
 # ---------------------------------------------------------------------------
 
+
 class TestScoreImportance:
     def test_returns_cached_value(self, monkeypatch):
         from services import signal_processor
+
         signal = _make_signal(url="https://example.com/cached")
         import hashlib
+
         key = hashlib.md5(signal.url.encode()).hexdigest()
         signal_processor._score_cache[key] = 0.77
 
@@ -184,6 +193,7 @@ class TestScoreImportance:
 # process_signal — pipeline with mocked LLM and persistence
 # ---------------------------------------------------------------------------
 
+
 class TestProcessSignal:
     def _setup(self, monkeypatch, llm_data: dict, relevance_threshold: str = "0.0"):
         monkeypatch.setenv("SIGNAL_RELEVANCE_THRESHOLD", relevance_threshold)
@@ -196,12 +206,8 @@ class TestProcessSignal:
         mock_notifier.notify.return_value = True
         monkeypatch.setattr(_config, "get_notifier", lambda: mock_notifier)
 
-        monkeypatch.setattr(
-            "services.signal_processor._load_profile", lambda uid: None
-        )
-        monkeypatch.setattr(
-            "services.signal_processor._persist", lambda sig: None
-        )
+        monkeypatch.setattr("services.signal_processor._load_profile", lambda uid: None)
+        monkeypatch.setattr("services.signal_processor._persist", lambda sig: None)
         return mock_notifier
 
     def test_returns_signal_with_llm_fields(self, monkeypatch):
@@ -221,7 +227,12 @@ class TestProcessSignal:
         assert result.raw_content == ""  # cleared after processing
 
     def test_notifier_called_when_above_threshold(self, monkeypatch):
-        llm_data = {"importance_score": 0.9, "content_summary": "Big news.", "topics": [], "entities": []}
+        llm_data = {
+            "importance_score": 0.9,
+            "content_summary": "Big news.",
+            "topics": [],
+            "entities": [],
+        }
         notifier = self._setup(monkeypatch, llm_data, relevance_threshold="0.0")
         raw = _make_signal()
         result = process_signal(raw)
@@ -229,7 +240,12 @@ class TestProcessSignal:
         assert result.notified is True
 
     def test_notifier_not_called_below_threshold(self, monkeypatch):
-        llm_data = {"importance_score": 0.1, "content_summary": "Minor note.", "topics": [], "entities": []}
+        llm_data = {
+            "importance_score": 0.1,
+            "content_summary": "Minor note.",
+            "topics": [],
+            "entities": [],
+        }
         notifier = self._setup(monkeypatch, llm_data, relevance_threshold="0.9")
         raw = _make_signal()
         result = process_signal(raw)
@@ -250,9 +266,7 @@ class TestProcessSignal:
             tracked_entities=[],
             tracked_keywords=[],
         )
-        monkeypatch.setattr(
-            "services.signal_processor._load_profile", lambda uid: profile
-        )
+        monkeypatch.setattr("services.signal_processor._load_profile", lambda uid: profile)
         raw = _make_signal()
         result = process_signal(raw)
         assert result.relevance_score > 0.0

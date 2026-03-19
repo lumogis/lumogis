@@ -8,9 +8,12 @@ AuditEntry    — what gets written to audit_log on every execution
 RoutineSpec   — scheduled multi-step workflow descriptor
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from dataclasses import field
 from datetime import datetime
-from typing import Any, Callable, Optional
+from typing import Any
+from typing import Callable
+from typing import Optional
 
 
 @dataclass
@@ -51,7 +54,7 @@ class AuditEntry:
 class RoutineSpec:
     name: str
     description: str
-    schedule_cron: str               # APScheduler CronTrigger expression: "min hour dom mon dow"
+    schedule_cron: str  # APScheduler CronTrigger expression: "min hour dom mon dow"
     steps: list[dict] = field(default_factory=list)  # [{action_name, input}]
     requires_approval: bool = True
     approved_at: Optional[datetime] = None

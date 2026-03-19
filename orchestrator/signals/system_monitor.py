@@ -17,14 +17,15 @@ notification.
 import logging
 import os
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
+from datetime import timezone
 from pathlib import Path
 
 import psutil
-
-import config
 from models.signals import Signal
 from services.signal_processor import process_signal
+
+import config
 
 _log = logging.getLogger(__name__)
 
@@ -87,14 +88,16 @@ def _check_disk() -> list[dict]:
         usage = psutil.disk_usage("/")
         pct = usage.percent
         if pct > _DISK_THRESHOLD:
-            alerts.append({
-                "title": f"Disk usage critical: {pct:.1f}%",
-                "body": (
-                    f"Disk at {pct:.1f}% ({usage.used // 1_073_741_824}GB used of "
-                    f"{usage.total // 1_073_741_824}GB). Consider removing old data."
-                ),
-                "importance": 0.85 if pct > 95 else 0.65,
-            })
+            alerts.append(
+                {
+                    "title": f"Disk usage critical: {pct:.1f}%",
+                    "body": (
+                        f"Disk at {pct:.1f}% ({usage.used // 1_073_741_824}GB used of "
+                        f"{usage.total // 1_073_741_824}GB). Consider removing old data."
+                    ),
+                    "importance": 0.85 if pct > 95 else 0.65,
+                }
+            )
     except Exception as exc:
         _log.debug("system_monitor: disk check error: %s", exc)
     return alerts
@@ -108,20 +111,29 @@ def _check_backup_age() -> list[dict]:
             return []
         backups = sorted(backup_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True)
         if not backups:
-            alerts.append({
-                "title": "No backups found",
-                "body": "No backup files in ai-workspace/backups/. Run POST /backup to create one.",
-                "importance": 0.75,
-            })
+            alerts.append(
+                {
+                    "title": "No backups found",
+                    "body": (
+                        "No backup files in ai-workspace/backups/. Run POST /backup to create one."
+                    ),
+                    "importance": 0.75,
+                }
+            )
         else:
             newest = backups[0]
             age_days = (datetime.now().timestamp() - newest.stat().st_mtime) / 86400
             if age_days > _BACKUP_MAX_AGE_DAYS:
-                alerts.append({
-                    "title": f"Backup overdue: {age_days:.0f} days old",
-                    "body": f"Newest backup ({newest.name}) is {age_days:.0f} days old. Run POST /backup.",
-                    "importance": 0.60,
-                })
+                alerts.append(
+                    {
+                        "title": f"Backup overdue: {age_days:.0f} days old",
+                        "body": (
+                            f"Newest backup ({newest.name}) is "
+                            f"{age_days:.0f} days old. Run POST /backup."
+                        ),
+                        "importance": 0.60,
+                    }
+                )
     except Exception as exc:
         _log.debug("system_monitor: backup check error: %s", exc)
     return alerts
@@ -135,14 +147,16 @@ def _check_inbox_depth() -> list[dict]:
             return []
         count = sum(1 for _ in inbox.iterdir())
         if count > _INBOX_MAX_DEPTH:
-            alerts.append({
-                "title": f"Inbox overflowing: {count} files",
-                "body": (
-                    f"ai-workspace/inbox/ has {count} files (threshold: {_INBOX_MAX_DEPTH}). "
-                    "Processing may be falling behind."
-                ),
-                "importance": 0.55,
-            })
+            alerts.append(
+                {
+                    "title": f"Inbox overflowing: {count} files",
+                    "body": (
+                        f"ai-workspace/inbox/ has {count} files (threshold: {_INBOX_MAX_DEPTH}). "
+                        "Processing may be falling behind."
+                    ),
+                    "importance": 0.55,
+                }
+            )
     except Exception as exc:
         _log.debug("system_monitor: inbox check error: %s", exc)
     return alerts
@@ -155,14 +169,16 @@ def _check_review_queue() -> list[dict]:
         row = ms.fetch_one("SELECT COUNT(*) as cnt FROM review_queue")
         count = int(row["cnt"]) if row else 0
         if count > 0:
-            alerts.append({
-                "title": f"Review queue: {count} item(s) awaiting resolution",
-                "body": (
-                    f"{count} ambiguous entity merge candidate(s) need your input. "
-                    "Check GET /review-queue to resolve them."
-                ),
-                "importance": 0.50,
-            })
+            alerts.append(
+                {
+                    "title": f"Review queue: {count} item(s) awaiting resolution",
+                    "body": (
+                        f"{count} ambiguous entity merge candidate(s) need your input. "
+                        "Check GET /review-queue to resolve them."
+                    ),
+                    "importance": 0.50,
+                }
+            )
     except Exception as exc:
         _log.debug("system_monitor: review_queue check error: %s", exc)
     return alerts

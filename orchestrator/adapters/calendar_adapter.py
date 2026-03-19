@@ -12,10 +12,13 @@ Returns Signal objects for upcoming events within a configurable window
 import logging
 import os
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
+from datetime import timedelta
+from datetime import timezone
 from typing import Optional
 
-from models.signals import Signal, SourceConfig
+from models.signals import Signal
+from models.signals import SourceConfig
 
 _log = logging.getLogger(__name__)
 
@@ -89,7 +92,9 @@ class CalendarAdapter:
             except Exception as exc:
                 _log.error("CalDAV event fetch error: %s", exc)
 
-        _log.info("CalendarAdapter: %d upcoming events in next %dh", len(signals), self._lookahead_hours)
+        _log.info(
+            "CalendarAdapter: %d upcoming events in next %dh", len(signals), self._lookahead_hours
+        )
         return signals
 
     # ------------------------------------------------------------------
@@ -101,7 +106,7 @@ class CalendarAdapter:
             vevent = event.vobject_instance.vevent
             summary = str(getattr(vevent, "summary", None) or "Calendar Event")
             dtstart = getattr(vevent, "dtstart", None)
-            dtend = getattr(vevent, "dtend", None)
+            _dtend = getattr(vevent, "dtend", None)
             description = str(getattr(vevent, "description", None) or "")
             location = str(getattr(vevent, "location", None) or "")
             uid = str(getattr(vevent, "uid", None) or uuid.uuid4())

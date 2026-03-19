@@ -18,13 +18,15 @@ import hashlib
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
 
-import config
 import hooks
 from events import Event
-from models.signals import RelevanceProfile, Signal
-from services.context_budget import get_budget, truncate_text
+from models.signals import RelevanceProfile
+from models.signals import Signal
+from services.context_budget import get_budget
+from services.context_budget import truncate_text
+
+import config
 
 _log = logging.getLogger(__name__)
 
@@ -33,7 +35,7 @@ _score_cache: dict[str, float] = {}
 _RELEVANCE_THRESHOLD_DEFAULT = 0.4
 
 _PROCESS_PROMPT_TEMPLATE = """\
-Analyse the following content item and respond with a single JSON object — no markdown, no explanation.
+Analyse the following content item. Respond with a single JSON object — no markdown.
 
 Title: {title}
 Content: {content}
@@ -60,7 +62,9 @@ def process_signal(raw_signal: Signal, user_id: str = "default") -> Signal:
     """
     import os
 
-    threshold = float(os.environ.get("SIGNAL_RELEVANCE_THRESHOLD", str(_RELEVANCE_THRESHOLD_DEFAULT)))
+    threshold = float(
+        os.environ.get("SIGNAL_RELEVANCE_THRESHOLD", str(_RELEVANCE_THRESHOLD_DEFAULT))
+    )
 
     budget = get_budget("llama") - 500
     content = truncate_text(raw_signal.raw_content, budget)
@@ -146,6 +150,7 @@ def match_relevance(signal: Signal, profile: RelevanceProfile) -> float:
 # Private helpers
 # ---------------------------------------------------------------------------
 
+
 def _call_llm(title: str, content: str) -> dict:
     """Run the combined summarise+score LLM call. Returns parsed dict or {}."""
     prompt = _PROCESS_PROMPT_TEMPLATE.format(title=title, content=content)
@@ -159,9 +164,7 @@ def _call_llm(title: str, content: str) -> dict:
         raw = response.text.strip()
         # Strip markdown code fences if present.
         if raw.startswith("```"):
-            raw = "\n".join(
-                line for line in raw.splitlines() if not line.startswith("```")
-            )
+            raw = "\n".join(line for line in raw.splitlines() if not line.startswith("```"))
         return json.loads(raw)
     except json.JSONDecodeError as exc:
         _log.warning("LLM returned non-JSON for signal %r: %s", title[:60], exc)

@@ -15,7 +15,9 @@ import json
 import logging
 from typing import Generator
 
-from models.llm import LLMEvent, LLMResponse, LLMToolCall
+from models.llm import LLMEvent
+from models.llm import LLMResponse
+from models.llm import LLMToolCall
 from openai import OpenAI
 
 _log = logging.getLogger(__name__)
@@ -101,7 +103,9 @@ class OpenAILLM:
                     yield LLMEvent(
                         type="tool_call",
                         tool_call=LLMToolCall(
-                            id=acc["id"], name=acc["name"], arguments=args,
+                            id=acc["id"],
+                            name=acc["name"],
+                            arguments=args,
                         ),
                     )
                 stop = "tool_calls" if choice.finish_reason == "tool_calls" else "stop"
@@ -203,9 +207,7 @@ class OpenAILLM:
                     args = json.loads(tc.function.arguments) if tc.function.arguments else {}
                 except json.JSONDecodeError:
                     args = {}
-                tool_calls.append(
-                    LLMToolCall(id=tc.id, name=tc.function.name, arguments=args)
-                )
+                tool_calls.append(LLMToolCall(id=tc.id, name=tc.function.name, arguments=args))
 
         stop = "tool_calls" if choice.finish_reason == "tool_calls" else "stop"
         return LLMResponse(text=text, tool_calls=tool_calls, stop_reason=stop)

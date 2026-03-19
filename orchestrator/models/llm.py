@@ -2,7 +2,8 @@
 # Copyright (C) 2026 Lumogis
 """Canonical LLM response types shared across all providers."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from dataclasses import field
 
 
 @dataclass

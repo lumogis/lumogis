@@ -14,9 +14,11 @@ Playwright itself is NOT in base requirements.txt; import is guarded.
 import logging
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
+from datetime import timezone
 
-from models.signals import Signal, SourceConfig
+from models.signals import Signal
+from models.signals import SourceConfig
 
 _log = logging.getLogger(__name__)
 
