@@ -92,8 +92,8 @@ Five concepts. Everything in the codebase maps to one of them.
 ║  Qdrant     ── vector store (documents, entities, memory)        ║
 ║  Postgres   ── metadata + file index + audit log                 ║
 ║  Ollama     ── local embedder + LLM                              ║
-║  FalkorDB   ── graph store (graph plugin)                        ║
-║  Redis      ── signal cache + FalkorDB protocol                  ║
+║  FalkorDB   ── graph store (optional graph plugin)               ║
+║  Redis      ── FalkorDB protocol layer (optional graph plugin)   ║
 ╚══════════════════════════════════════════════════════╤═══════════╝
                                                        │ composed
                                                        │ prompt only
@@ -139,11 +139,11 @@ cp .env.example .env
 Open `.env` and set your file path and secrets:
 
 ```bash
-FILESYSTEM_ROOT=/path/to/your/files   # the folder CORE will index (read-only)
+FILESYSTEM_ROOT=/path/to/your/files   # the folder lumogis will index (read-only)
 JWT_SECRET=something-long-and-random
 JWT_REFRESH_SECRET=something-else-long-and-random
 
-# Optional — CORE works fully without these
+# Optional — lumogis works fully without these
 # ANTHROPIC_API_KEY=sk-ant-...
 # OPENAI_API_KEY=sk-...
 ```
