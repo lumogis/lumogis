@@ -134,7 +134,18 @@ Minimum to run: 8 GB RAM, 20 GB free disk. No API keys required — all models r
 | **Docker Desktop** | [docs.docker.com](https://docs.docker.com/desktop/install/linux/) | [docs.docker.com](https://docs.docker.com/desktop/install/mac/) | [docs.docker.com](https://docs.docker.com/desktop/setup/install/windows-install/) |
 | **make** | usually pre-installed | `xcode-select --install` | via WSL2 (see below) |
 
-**Windows inside a VM:** WSL2 requires nested virtualisation, which is disabled by default in most hypervisors. Enable it in your VM settings before proceeding (VMware: *Processors → Virtualize Intel VT-x* | VirtualBox: *System → Enable Nested VT-x/AMD-V* | Hyper-V: enable via PowerShell `Set-VMProcessor -VMName "YourVM" -ExposeVirtualizationExtensions $true`). Without this, WSL2 will silently fall back to WSL1, which does not support Docker.
+<details>
+<summary><strong>Windows inside a VM</strong> — nested virtualisation required</summary>
+
+WSL2 requires nested virtualisation, which is disabled by default in most hypervisors. Enable it in your VM settings before proceeding:
+
+- **VMware:** Processors → Virtualize Intel VT-x
+- **VirtualBox:** System → Enable Nested VT-x/AMD-V
+- **Hyper-V:** `Set-VMProcessor -VMName "YourVM" -ExposeVirtualizationExtensions $true`
+
+Without this, WSL2 will silently fall back to WSL1, which does not support Docker.
+
+</details>
 
 **Windows — WSL2 setup (one-time):**
 1. Open PowerShell as Administrator and run:
