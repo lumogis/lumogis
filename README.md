@@ -104,6 +104,9 @@ flowchart TB
     style stores fill:#e9ecef,stroke:#ced4da
     style core fill:#e9ecef,stroke:#ced4da
     style EXT fill:#fff3cd,stroke:#ffc107
+
+    classDef concept font-weight:bold,font-size:15px
+    class SVC,SIG,ACT,ADP,PLG concept
 ```
 
 _† FalkorDB and Redis are only started when the graph plugin is present._
