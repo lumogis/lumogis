@@ -139,8 +139,9 @@ Minimum to run: 8 GB RAM, 20 GB free disk. No API keys required — all models r
    ```powershell
    wsl --install -d Ubuntu
    ```
+   If Ubuntu is already installed this will just open it — safe to run either way.
 2. Restart your machine when prompted
-3. After restart, Ubuntu will open automatically and ask you to create a username and password
+3. After restart, Ubuntu will open and ask you to create a Linux username and password — these can be anything (e.g. `user` / `lumogis`), they are only used inside WSL and do not need to match your Windows account
 4. If Ubuntu does not open automatically, find it in the Start menu or run `ubuntu` in PowerShell
 5. Install Docker Desktop with the WSL2 backend enabled
 6. Run all Lumogis commands from the Ubuntu terminal, not PowerShell
