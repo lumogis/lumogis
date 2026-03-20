@@ -135,6 +135,22 @@ Minimum to run: 8 GB RAM, 20 GB free disk. No API keys required — all models r
 | **make** | usually pre-installed | `xcode-select --install` | via WSL2 (see below) |
 
 <details>
+<summary><strong>Windows — WSL2 setup (one-time)</strong></summary>
+
+1. Open PowerShell as Administrator and run:
+   ```powershell
+   wsl --install -d Ubuntu
+   ```
+   If Ubuntu is already installed this will just open it — safe to run either way.
+2. Restart your machine when prompted
+3. After restart, Ubuntu will open and ask you to create a Linux username and password — these can be anything (e.g. `user` / `lumogis`), they are only used inside WSL and do not need to match your Windows account
+4. If Ubuntu does not open automatically, find it in the Start menu or run `ubuntu` in PowerShell
+5. Install Docker Desktop with the WSL2 backend enabled
+6. Run all Lumogis commands from the Ubuntu terminal, not PowerShell
+
+</details>
+
+<details>
 <summary><strong>Windows inside a VM</strong> — nested virtualisation required</summary>
 
 WSL2 requires nested virtualisation, which is disabled by default in most hypervisors. Enable it in your VM settings before proceeding:
@@ -146,18 +162,6 @@ WSL2 requires nested virtualisation, which is disabled by default in most hyperv
 Without this, WSL2 will silently fall back to WSL1, which does not support Docker.
 
 </details>
-
-**Windows — WSL2 setup (one-time):**
-1. Open PowerShell as Administrator and run:
-   ```powershell
-   wsl --install -d Ubuntu
-   ```
-   If Ubuntu is already installed this will just open it — safe to run either way.
-2. Restart your machine when prompted
-3. After restart, Ubuntu will open and ask you to create a Linux username and password — these can be anything (e.g. `user` / `lumogis`), they are only used inside WSL and do not need to match your Windows account
-4. If Ubuntu does not open automatically, find it in the Start menu or run `ubuntu` in PowerShell
-5. Install Docker Desktop with the WSL2 backend enabled
-6. Run all Lumogis commands from the Ubuntu terminal, not PowerShell
 
 ---
 
