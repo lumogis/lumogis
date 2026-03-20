@@ -353,7 +353,6 @@ scripts/
 docs/
   decisions/           # Architecture Decision Records (ADRs)
   examples/            # Example plugin template
-  graph-schema.md      # FalkorDB schema reference
 
 tests/
   integration/         # Full-stack integration tests (requires Docker stack)

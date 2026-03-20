@@ -14,8 +14,8 @@ also implicitly commits us to one backend, discouraging alternatives.
 ## Decision
 
 Graph capability is exposed through a Protocol (`ports/graph_store.py`) that
-any backend can implement. Core defines the schema contract (`docs/graph-schema.md`)
-but ships no graph adapter and no graph database in the default stack.
+any backend can implement. Core ships no graph adapter, no graph schema, and
+no graph database in the default stack. Graph plugins define their own schemas.
 
 FalkorDB is provided as the **reference backend** via an optional overlay
 (`docker-compose.falkordb.yml`). Contributors who want to develop or use a
@@ -33,7 +33,7 @@ adapter in `adapters/`, and an optional Docker Compose overlay. See
 | Concern | FalkorDB |
 |---|---|
 | Licence | MIT — permissive for downstream plugin authors |
-| Query language | Cypher — widely known, schema documented in `docs/graph-schema.md` |
+| Query language | Cypher — widely known, well-documented |
 | Transport | Redis protocol — minimal operational overhead, familiar tooling |
 | Footprint | Single container, low memory — suitable for self-hosters and edge |
 

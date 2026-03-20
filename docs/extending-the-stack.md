@@ -35,7 +35,7 @@ These are containers that specific adapters in the orchestrator connect to — t
 ### FalkorDB — graph store for graph plugins
 
 **File:** `docker-compose.falkordb.yml`  
-**Why it is included:** The `GraphStore` port (`ports/graph_store.py`) and schema (`docs/graph-schema.md`) define what any conforming graph plugin must implement. FalkorDB is the reference backend — a lightweight, MIT-licensed property graph store that uses the Redis protocol. The orchestrator fires `Event.ENTITY_CREATED` and `Event.DOCUMENT_INGESTED` hooks; a graph plugin subscribes to these and writes nodes and edges. Core itself never imports or connects to FalkorDB — it is entirely the plugin's concern.
+**Why it is included:** The `GraphStore` port (`ports/graph_store.py`) defines the interface any graph backend must implement. FalkorDB is the reference backend — a lightweight, MIT-licensed property graph store that uses the Redis protocol. The orchestrator fires `Event.ENTITY_CREATED` and `Event.DOCUMENT_INGESTED` hooks; a graph plugin subscribes to these and writes nodes and edges. Graph plugins define their own schemas. Core itself never imports or connects to FalkorDB — it is entirely the plugin's concern.
 
 Enable this overlay when you are building or running a graph plugin.
 

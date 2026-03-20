@@ -22,9 +22,9 @@ as a node property and is the cross-store link to Postgres/Qdrant.
 
 Query language
 --------------
-Cypher is the expected query language. See docs/graph-schema.md for the
-canonical node types (Person, Organisation, Document, Project, Concept),
-edge types (MENTIONS, RELATES_TO, WORKED_ON), and required properties.
+Cypher is the expected query language. Graph plugins define their own
+node types, edge types, and required properties. See the plugin's own
+schema documentation for details.
 
 Reference backend
 -----------------

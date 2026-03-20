@@ -6,9 +6,9 @@
 # Then set in .env:
 #   FALKORDB_URL=redis://falkordb:6379
 #
-# The GraphStore port (ports/graph_store.py) and schema (docs/graph-schema.md)
-# define what any conforming graph plugin must implement. FalkorDB is the
-# reference backend. See docs/extending-the-stack.md for details.
+# The GraphStore port (ports/graph_store.py) defines the interface any graph
+# backend must implement. FalkorDB is the reference backend.
+# See docs/extending-the-stack.md for details.
 
 services:
   falkordb:
