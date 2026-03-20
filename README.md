@@ -131,7 +131,7 @@ Minimum to run: 8 GB RAM, 20 GB free disk. No API keys required — all models r
 | Requirement | Linux | macOS | Windows |
 |---|---|---|---|
 | **Git** | usually pre-installed | usually pre-installed | [git-scm.com](https://git-scm.com) |
-| **Docker Desktop** | [docs.docker.com](https://docs.docker.com/desktop/install/linux/) | [docs.docker.com](https://docs.docker.com/desktop/install/mac/) | [docs.docker.com](https://docs.docker.com/desktop/install/windows/) |
+| **Docker Desktop** | [docs.docker.com](https://docs.docker.com/desktop/install/linux/) | [docs.docker.com](https://docs.docker.com/desktop/install/mac/) | [docs.docker.com](https://docs.docker.com/desktop/setup/install/windows-install/) |
 | **make** | usually pre-installed | `xcode-select --install` | via WSL2 (see below) |
 
 **Windows:** Lumogis requires a Unix shell. Install [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) (`wsl --install` in PowerShell), then install Docker Desktop with the WSL2 backend enabled. Everything else runs inside WSL2 identically to Linux.

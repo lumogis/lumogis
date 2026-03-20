@@ -1,13 +1,19 @@
 .PHONY: setup dev build test test-integration test-integration-full lint ingest health logs
 
+# Compose working directory: use path in .compose-root if present (e.g. /home/thomas/lumogis),
+# so the same stack is used when coding in Cursor from a different repo path.
+COMPOSE_ROOT := $(shell cat .compose-root 2>/dev/null || echo ".")
+COMPOSE_BASE := -f $(COMPOSE_ROOT)/docker-compose.yml -f $(COMPOSE_ROOT)/docker-compose.gpu.yml
+COMPOSE := docker compose --project-directory $(COMPOSE_ROOT) $(COMPOSE_BASE)
+
 setup:
 	@bash scripts/setup.sh $(if $(ROOT),--root "$(ROOT)",)
 
 dev:
-	docker compose -f docker-compose.yml -f docker-compose.gpu.yml -f docker-compose.dev.yml up
+	$(COMPOSE) -f $(COMPOSE_ROOT)/docker-compose.dev.yml up
 
 build:
-	docker compose up --build -d
+	$(COMPOSE) up --build -d
 
 test:
 	cd orchestrator && python -m pytest -x -q
@@ -33,4 +39,4 @@ health:
 	curl -s http://localhost:8000/health | python3 -m json.tool
 
 logs:
-	docker compose logs orchestrator -f --tail 50
+	$(COMPOSE) logs orchestrator -f --tail 50
