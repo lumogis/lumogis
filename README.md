@@ -134,16 +134,29 @@ Minimum to run: 8 GB RAM, 20 GB free disk. No API keys required — all models r
 | **Docker Desktop** | [docs.docker.com](https://docs.docker.com/desktop/install/linux/) | [docs.docker.com](https://docs.docker.com/desktop/install/mac/) | [docs.docker.com](https://docs.docker.com/desktop/setup/install/windows-install/) |
 | **make** | usually pre-installed | `xcode-select --install` | via WSL2 (see below) |
 
-**Windows:** Lumogis requires a Unix shell. Install [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) (`wsl --install` in PowerShell), then install Docker Desktop with the WSL2 backend enabled. Everything else runs inside WSL2 identically to Linux.
+**Windows — WSL2 setup (one-time):**
+1. Open PowerShell as Administrator and run: `wsl --install`
+2. Restart your machine when prompted
+3. Open the **Ubuntu** app from the Start menu — this is your WSL2 terminal
+4. Install Docker Desktop with the WSL2 backend enabled
+5. Run all Lumogis commands from the Ubuntu/WSL2 terminal, not PowerShell
 
 ---
 
 ## Getting started
 
-### One-line install
+### Install
+
+Paste this into your terminal (Linux/macOS) or WSL2 (Windows):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lumogis/lumogis/main/scripts/install.sh | bash
+bash <(curl -fsSL https://raw.githubusercontent.com/lumogis/lumogis/main/scripts/install.sh)
+```
+
+If you don't have `curl`, use `wget`:
+
+```bash
+bash <(wget -qO- https://raw.githubusercontent.com/lumogis/lumogis/main/scripts/install.sh)
 ```
 
 This will:
@@ -152,12 +165,10 @@ This will:
 3. Clone the repo into that directory
 4. Run the full setup — hardware detection, model selection, folder prompt, config generation, service startup, health check, and initial ingest
 
-**Windows:** run this inside WSL2, not PowerShell.
-
 To specify the install path without being prompted:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lumogis/lumogis/main/scripts/install.sh | bash -s -- --dir ~/mypath
+bash <(curl -fsSL https://raw.githubusercontent.com/lumogis/lumogis/main/scripts/install.sh) --dir ~/mypath
 ```
 
 ---
