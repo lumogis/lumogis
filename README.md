@@ -140,27 +140,46 @@ Minimum to run: 8 GB RAM, 20 GB free disk. No API keys required — all models r
 
 ## Getting started
 
-### Step 1: Clone
+### One-line install
 
 ```bash
-git clone https://github.com/lumogis/lumogis.git
-cd lumogis
-cp .env.example .env
+curl -fsSL https://raw.githubusercontent.com/lumogis/lumogis/main/scripts/install.sh | bash
 ```
 
-### Step 2: Run setup
+This will:
+1. Check that git, Docker, and make are installed
+2. Ask where you want to install Lumogis (default: `~/lumogis`)
+3. Clone the repo into that directory
+4. Run the full setup — hardware detection, model selection, folder prompt, config generation, service startup, health check, and initial ingest
+
+**Windows:** run this inside WSL2, not PowerShell.
+
+To specify the install path without being prompted:
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/lumogis/lumogis/main/scripts/install.sh | bash -s -- --dir ~/mypath
+```
+
+---
+
+### Manual install (alternative)
+
+If you prefer to clone manually:
+
+```bash
+git clone https://github.com/lumogis/lumogis.git ~/lumogis
+cd ~/lumogis
+cp .env.example .env
 make setup
 ```
 
-Detects your GPU, selects the right model tier, prompts for the folder to index, generates configs, starts all services, pulls models, runs a health check, and triggers the initial ingest — all in one command.
-
-To skip the folder prompt:
+To skip the folder prompt in setup:
 
 ```bash
 make setup ROOT=/path/to/your/files
 ```
+
+---
 
 To add cloud model support, set API keys in `.env` before running setup:
 
@@ -169,9 +188,9 @@ To add cloud model support, set API keys in `.env` before running setup:
 # OPENAI_API_KEY=sk-...
 ```
 
-Safe to re-run after a hardware change or to add a new model tier.
+`make setup` is safe to re-run after a hardware change or to add a new model tier.
 
-### Step 3: Start using Lumogis
+### Open Lumogis
 
 [http://localhost:3080](http://localhost:3080) — create an account and start chatting.
 
