@@ -135,11 +135,15 @@ Minimum to run: 8 GB RAM, 20 GB free disk. No API keys required — all models r
 | **make** | usually pre-installed | `xcode-select --install` | via WSL2 (see below) |
 
 **Windows — WSL2 setup (one-time):**
-1. Open PowerShell as Administrator and run: `wsl --install`
+1. Open PowerShell as Administrator and run:
+   ```powershell
+   wsl --install -d Ubuntu
+   ```
 2. Restart your machine when prompted
-3. Open the **Ubuntu** app from the Start menu — this is your WSL2 terminal
-4. Install Docker Desktop with the WSL2 backend enabled
-5. Run all Lumogis commands from the Ubuntu/WSL2 terminal, not PowerShell
+3. After restart, Ubuntu will open automatically and ask you to create a username and password
+4. If Ubuntu does not open automatically, find it in the Start menu or run `ubuntu` in PowerShell
+5. Install Docker Desktop with the WSL2 backend enabled
+6. Run all Lumogis commands from the Ubuntu terminal, not PowerShell
 
 ---
 
