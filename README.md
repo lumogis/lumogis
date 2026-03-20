@@ -69,37 +69,44 @@ Actions that accumulate a clean approval record are eligible for routine elevati
 
 Five concepts. Everything in the codebase maps to one of them.
 
+```mermaid
+flowchart TB
+    LC["LibreChat · :3080"] --> ORC
+
+    subgraph machine["🖥️ your machine"]
+        ORC["Orchestrator · FastAPI"]
+
+        subgraph layer[""]
+            SVC["**services/**\ningest · search · memory\nentities · tools · routines"]
+            SIG["**signals/**\nfeed · page · calendar\nsystem · digest"]
+            ACT["**actions/**\nexecutor · registry\naudit log"]
+        end
+
+        ADP["**adapters/**\nqdrant · postgres · ollama · bge\npdf · docx · ocr · rss · ntfy · calendar"]
+        PLG["**plugins/**\n_(optional extensions)_"]
+
+        subgraph stores["infrastructure"]
+            QDR[("Qdrant\nvector store")]
+            PG[("Postgres\nmetadata · audit")]
+            OLL[("Ollama\nembedder · LLM")]
+            FLK[("FalkorDB + Redis\ngraph store †")]
+        end
+
+        ORC --> SVC & SIG & ACT
+        SVC & SIG & ACT --> ADP
+        ADP --> PLG
+        ADP --> QDR & PG & OLL & FLK
+    end
+
+    ORC -. "composed prompt only" .-> EXT["Claude · GPT-4 · local"]
+
+    style machine fill:#f8f9fa,stroke:#dee2e6
+    style stores fill:#e9ecef,stroke:#ced4da
+    style layer fill:#e9ecef,stroke:#ced4da
+    style EXT fill:#fff3cd,stroke:#ffc107
 ```
-╔══════════════════════════════════════════════════════════════════╗
-║                        your machine                              ║
-║                                                                  ║
-║  LibreChat :3080 ──────▶  orchestrator (FastAPI)                 ║
-║                               │                                  ║
-║                ┌──────────────┼──────────────────┐               ║
-║                │              │                  │               ║
-║           services/      signals/           actions/             ║
-║         ingest · search  feed · page        executor             ║
-║         memory · entities calendar         registry              ║
-║         tools · routines system            audit log             ║
-║                │                                                  ║
-║           adapters/                                               ║
-║         qdrant · postgres · ollama                               ║
-║         bge · pdf · docx · ocr                                   ║
-║         rss · ntfy · calendar                                    ║
-║                │                                                  ║
-║            plugins/    (optional extensions)                     ║
-║                                                                  ║
-║  Qdrant     ── vector store (documents, entities, memory)        ║
-║  Postgres   ── metadata + file index + audit log                 ║
-║  Ollama     ── local embedder + LLM                              ║
-║  FalkorDB   ── graph store (optional graph plugin)               ║
-║  Redis      ── FalkorDB protocol layer (optional graph plugin)   ║
-╚══════════════════════════════════════════════════════╤═══════════╝
-                                                       │ composed
-                                                       │ prompt only
-                                                       ▼
-                                          Claude · GPT-4 · local
-```
+
+_† FalkorDB and Redis are only started when the graph plugin is present._
 
 | Concept | Lives in | Purpose |
 |---|---|---|
