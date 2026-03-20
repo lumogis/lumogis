@@ -73,17 +73,17 @@ Five concepts. Everything in the codebase maps to one of them.
 flowchart TB
     LC["LibreChat · :3080"] --> ORC
 
-    subgraph machine["🖥️ your machine"]
+    subgraph machine["your machine"]
         ORC["Orchestrator · FastAPI"]
 
-        subgraph layer[""]
-            SVC["**services/**\ningest · search · memory\nentities · tools · routines"]
-            SIG["**signals/**\nfeed · page · calendar\nsystem · digest"]
-            ACT["**actions/**\nexecutor · registry\naudit log"]
+        subgraph core["core"]
+            SVC["services/\ningest · search · memory\nentities · tools · routines"]
+            SIG["signals/\nfeed · page · calendar\nsystem · digest"]
+            ACT["actions/\nexecutor · registry\naudit log"]
         end
 
-        ADP["**adapters/**\nqdrant · postgres · ollama · bge\npdf · docx · ocr · rss · ntfy · calendar"]
-        PLG["**plugins/**\n_(optional extensions)_"]
+        ADP["adapters/\nqdrant · postgres · ollama · bge\npdf · docx · ocr · rss · ntfy · calendar"]
+        PLG["plugins/\noptional extensions"]
 
         subgraph stores["infrastructure"]
             QDR[("Qdrant\nvector store")]
@@ -102,7 +102,7 @@ flowchart TB
 
     style machine fill:#f8f9fa,stroke:#dee2e6
     style stores fill:#e9ecef,stroke:#ced4da
-    style layer fill:#e9ecef,stroke:#ced4da
+    style core fill:#e9ecef,stroke:#ced4da
     style EXT fill:#fff3cd,stroke:#ffc107
 ```
 
