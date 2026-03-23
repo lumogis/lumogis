@@ -8,6 +8,26 @@ This is the discovery mechanism until a plugin registry exists. To submit your p
 
 ---
 
+## Wanted integrations
+
+Nothing here is implemented or endorsed by Lumogis yet — these are **gaps worth filling**. If you build one, publish the plugin and open a PR to add a row under the right section above (you can remove or narrow the matching row below).
+
+### Privacy-forward storage
+
+| Connector | Type | Difficulty | Notes |
+|---|---|---|---|
+| Proton Drive | Storage adapter | Medium | Privacy-first cloud; strong alignment with local-first values |
+| Synology NAS | Storage adapter | Medium | DSM API; large self-hosted community |
+
+### Messaging
+
+| Connector | Type | Difficulty | Notes |
+|---|---|---|---|
+| WhatsApp | Signal source + action handler | Medium | Often via a `whatsapp-web.js`-style bridge; **unofficial** — check provider ToS and your jurisdiction |
+| Telegram | Signal source + action handler | Low | Bot API; widely documented |
+
+---
+
 ## Signal Sources
 
 Adapters that implement `SignalSource` and poll external systems for new signals.
