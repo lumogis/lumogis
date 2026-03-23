@@ -1,3 +1,5 @@
+![Lumogis](branding/readme-banner.svg)
+
 # lumogis
 
 **The AI comes to your data. Not the other way around.**
@@ -235,7 +237,7 @@ To add cloud model support, set API keys in `.env` before running setup:
 
 ### Open Lumogis
 
-[http://localhost:3080](http://localhost:3080) — create an account and start chatting.
+[http://localhost:3080](http://localhost:3080) — create an account and start chatting. The LibreChat footer includes a **Dashboard** link to [http://localhost:8000/dashboard](http://localhost:8000/dashboard) (customize via `CUSTOM_FOOTER` in `.env`). The dashboard has a **Settings** tab to change the indexed files root (restart required to apply), API keys for cloud providers, and the default model.
 
 **Optional:** explore the API at [http://localhost:8000/docs](http://localhost:8000/docs) — interactive Swagger UI for all endpoints.
 
