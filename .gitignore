@@ -28,11 +28,14 @@ ai-workspace/review/*
 !ai-workspace/review/.gitkeep
 ai-workspace/backups/*.zip
 
-# Internal documents — private to lumogis-app, never pushed to lumogis
+# Internal maintainer-only notes — not part of the distributed source tree
 AUDIT-REPORT.md
 REMEDIATION-PLAN.md
+# Untracked local notes (optional per clone)
+docs/private/
 
 # IDE / OS
 .idea/
 *.swp
 .DS_Store
+docker-compose.override.yml
