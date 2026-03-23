@@ -25,5 +25,5 @@
     <circle cx="50" cy="50" r="20" fill="url(#central)"/>
   </g>
   <text x="320" y="148" font-family="Syne, system-ui, sans-serif" font-size="72" font-weight="800" fill="#0D0D0F" letter-spacing="-0.02em">Lumogis</text>
-  <text x="320" y="212" font-family="&quot;DM Mono&quot;, ui-monospace, monospace" font-size="20" font-weight="400" fill="#888888" letter-spacing="0.01em">The AI comes to your data. Not the other way around.</text>
+  <text x="320" y="212" font-family="&quot;DM Mono&quot;, ui-monospace, monospace" font-size="20" font-weight="600" fill="#888888" letter-spacing="0.01em">The AI comes to your data. Not the other way around.</text>
 </svg>
