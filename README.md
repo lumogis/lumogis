@@ -1,9 +1,5 @@
 ![Lumogis](branding/readme-banner.svg)
 
-# Lumogis
-
-**The AI comes to your data. Not the other way around.**
-
 ---
 
 You know the moment. You are about to paste something private into ChatGPT — a draft contract, a medical question, a business plan you have been building for months — and you feel it. A half-second of hesitation. A small voice that says: *should I be doing this?*
