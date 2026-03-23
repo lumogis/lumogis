@@ -1,6 +1,6 @@
 ![Lumogis](branding/readme-banner.svg)
 
-# lumogis
+# Lumogis
 
 **The AI comes to your data. Not the other way around.**
 
