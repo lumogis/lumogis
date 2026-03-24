@@ -1,4 +1,7 @@
 ![Lumogis](branding/readme-banner.svg)
+
+**[Quickstart](#getting-started) · [Architecture](#architecture) · [Extending Lumogis](#contributing) · [Community Plugins](COMMUNITY-PLUGINS.md) · [Security](SECURITY.md)**
+
 ---
 
 You know the moment. You are about to paste something private into ChatGPT — a draft contract, a medical question, a business plan you have been building for months — and you feel it. A half-second of hesitation. A small voice that says: *should I be doing this?*
@@ -58,6 +61,20 @@ Every action in lumogis belongs to one of two modes:
 | **Ask** | Proposed to you for approval before execution. Used for anything that writes, deletes, or sends. |
 | **Do** | Executed immediately without confirmation. Used for reads and reversible, low-risk operations. |
 
+**Examples:**
+
+| Action | Mode | Reason |
+|---|---|---|
+| Read file contents | Do | Non-destructive, no side effects |
+| Search documents | Do | Read-only, no side effects |
+| Refresh RSS feed cache | Do | Scoped, reversible |
+| Draft an email reply | Ask | Proposes output — nothing sent until you confirm |
+| Create a calendar event | Ask | Writes to external system — requires confirmation |
+| Send a message | Ask | External consequence — always requires explicit approval |
+| Move a file | Ask | Filesystem write — proposed before execution |
+| Delete a file | Ask | Irreversible — always Ask, cannot be elevated to Do |
+| Tag a photo (Immich) | Do | Trusted scope, explicitly configured, reversible |
+
 Actions that accumulate a clean approval record are eligible for routine elevation — they move from Ask to Do automatically after a configurable threshold. You can always demote an action back to Ask. This is not a capability system. Trust is earned, recorded, and revocable.
 
 ---
@@ -115,6 +132,38 @@ _† FalkorDB and Redis are only started when the graph plugin is present._
 | **Plugins** | `plugins/<name>/` | Optional, self-contained extensions. Core works without any. |
 | **Signals** | `signals/` | Source monitors that detect and score incoming signals |
 | **Actions** | `actions/` | Executable operations with audit logging and Ask/Do enforcement |
+
+---
+
+## Why not X?
+
+The self-hosted AI space is crowded. Here is how Lumogis differs from the projects you have probably heard of.
+
+| | Jan.ai | AnythingLLM | OpenClaw | Lumogis |
+|---|---|---|---|---|
+| **Privacy model** | Policy — cloud MCP connectors send data out | Policy | No safety model by design | Architecture — structurally impossible to exfiltrate |
+| **Personal data** | Gmail, Drive, Notion via cloud MCP | Documents only | Files, messaging, email | Files, documents, sessions, entities — all local |
+| **Session memory** | None | None | Partial | Full — past sessions retrieved and injected automatically |
+| **Agent safety** | No approval loop | No approval loop | None | Ask/Do — every action proposed before execution, full audit log |
+| **Automation** | Reactive only | Reactive only | Background agents | Proactive signals + scheduled digests + reactive chat |
+| **Architecture** | Chat app with connectors bolted on | RAG tool | Monolithic | Ports and adapters — swap any backend with one `.env` change |
+
+**Jan.ai** is a polished local chat app with 5.3M downloads. If you want a better private ChatGPT with connectors to your cloud accounts, Jan is excellent. Lumogis is a different product — it indexes your data locally and builds memory over time. Jan's MCP connectors send data to cloud services. Lumogis's architecture makes that structurally impossible.
+
+**AnythingLLM** is the best document RAG tool in the self-hosted space. It answers questions about your files well. It has no session memory, no proactive signals, and no human-in-the-loop safety model. If chat-with-documents is all you need, AnythingLLM is the right choice. Lumogis adds the layers that turn a RAG tool into a persistent personal AI.
+
+**OpenClaw** proved the demand for personal AI agents is enormous — it became one of the fastest-growing open source projects in history. It also proved what happens without a safety model. A 1-click remote code execution vulnerability (CVE-2026-25253, CVSS 8.8) was publicly disclosed in February 2026, allowing any malicious website to silently take full control of a locally running instance with no user interaction required. Security researchers independently identified over 40,000 publicly exposed instances. A coordinated supply-chain campaign (ClawHavoc) planted 341 malicious skills in the ClawHub marketplace — nearly 12% of the entire registry — delivering credential-stealing malware. Lumogis was built in direct response to that failure. Same vision. Safe by architecture.
+
+<details>
+<summary>Sources for OpenClaw security claims</summary>
+
+- CVE-2026-25253 (CVSS 8.8): [NVD — National Vulnerability Database](https://nvd.nist.gov/vuln/detail/CVE-2026-25253)
+- GitHub Security Advisory GHSA-g8p2-7wf7-98mq: [openclaw/openclaw](https://github.com/openclaw/openclaw/security/advisories/GHSA-g8p2-7wf7-98mq)
+- 40,000+ exposed instances: [Infosecurity Magazine](https://www.infosecurity-magazine.com/news/researchers-40000-exposed-openclaw/) · [runZero exposure analysis](https://www.runzero.com/blog/openclaw/)
+- ClawHavoc campaign — 341 malicious skills: [Snyk ToxicSkills research](https://snyk.io/blog/toxicskills-malicious-ai-agent-skills-clawhub/)
+- Full technical breakdown: [The Hacker News](https://thehackernews.com/2026/02/openclaw-bug-enables-one-click-remote.html)
+
+</details>
 
 ---
 
@@ -271,6 +320,43 @@ ROUTINE_ELEVATION_THRESHOLD=10    # clean approvals before auto-elevation
 
 ---
 
+## What is required vs optional
+
+`make setup` starts the minimal required stack automatically. Everything else is opt-in.
+
+| Component | Status | Purpose |
+|---|---|---|
+| Orchestrator (FastAPI) | Required | Core runtime — ingest, search, memory, actions |
+| Qdrant | Required | Vector store for documents, sessions, entities |
+| Postgres | Required | Metadata, file index, audit log, entity relations |
+| Ollama | Required | Local embeddings (Nomic Embed) and local LLM inference |
+| BGE Reranker | Required | Two-stage retrieval — re-scores candidates by relevance |
+| LibreChat | Required | Chat interface at localhost:3080 |
+| FalkorDB + Redis | Optional | Graph store — only started when the graph plugin is present |
+| LiteLLM | Optional | Unified model proxy — enables multi-provider routing in one endpoint |
+| Activepieces | Optional | Automation UI — nightly ingest, session triggers, scheduled digests |
+| Playwright | Optional | JS rendering for web page signal sources |
+
+To start optional components, use the corresponding compose override:
+```bash
+# Graph layer
+docker compose -f docker-compose.yml -f docker-compose.falkordb.yml up -d
+
+# LiteLLM proxy
+docker compose -f docker-compose.yml -f docker-compose.litellm.yml up -d
+
+# Automation UI (Activepieces)
+docker compose -f docker-compose.yml -f docker-compose.activepieces.yml up -d
+
+# GPU acceleration
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+
+# JS-rendered web sources
+docker compose -f docker-compose.yml -f docker-compose.playwright.yml up -d
+```
+
+---
+
 ## Extending the stack
 
 Add optional infrastructure (push notifications, automation UI, LiteLLM proxy, JS rendering) or extend the orchestrator with new adapters, signal sources, action handlers, and plugins.
@@ -354,6 +440,28 @@ docs/
 tests/
   integration/         # Full-stack integration tests (requires Docker stack)
 ```
+
+---
+
+## FAQ
+
+**Does Lumogis require cloud models?**
+No. The default setup runs entirely locally via Ollama. Cloud models (Claude, GPT-4, etc.) are optional — add an API key to `.env` to enable them. Without an API key, everything runs on your hardware.
+
+**What actually leaves my machine?**
+Only composed prompts — your question plus the relevant context assembled from your local index. Your files, documents, and conversation history never leave. If you use a local model only, nothing leaves at all.
+
+**Where is my data stored?**
+Everything stays on your machine in Docker volumes: documents and embeddings in Qdrant, metadata and entities in Postgres, raw files in your indexed folder. There is no Lumogis server.
+
+**What is the difference between Ask and Do?**
+Ask means Lumogis proposes an action and waits for your approval before executing. Do means it executes immediately within a declared, low-risk scope. Everything starts in Ask mode. Do must be explicitly enabled per connector. See the security model section above.
+
+**Is this production-ready?**
+It is a solid developer preview. The core pipeline — ingest, search, memory, entity extraction, signals, actions — is built and tested. It is not yet a polished consumer product. Run it, extend it, break it, contribute back.
+
+**Is this the full Lumogis product?**
+This is the open core — the orchestration, retrieval, memory, and action architecture under AGPL. It is fully functional as a self-hosted personal AI system. Future application layers (desktop app, installer wizard, mobile) will be built on top of this foundation.
 
 ---
 
