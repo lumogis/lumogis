@@ -4,7 +4,7 @@
 
 ---
 
-![Lumogis demo](branding/demo_final.gif)
+![Lumogis demo](branding/demo2.gif)
 
 ---
 
