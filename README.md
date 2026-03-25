@@ -5,6 +5,7 @@
 ---
 
 ![Lumogis demo](branding/demo2.gif)
+
 *Ask about a decision from your meeting notes. Ask what you settled on in a previous conversation. Lumogis finds it — locally, privately, without being told where to look.*
 
 ---
