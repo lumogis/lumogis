@@ -116,4 +116,4 @@ Recommended: open the SVG in a browser, screenshot at 1280×640, save as PNG.
 
 ---
 
-*Lumogis · Brand Guidelines · Confidential*
+*Lumogis · Brand Guidelines*
