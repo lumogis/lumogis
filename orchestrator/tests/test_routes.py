@@ -20,8 +20,9 @@ def test_ask_returns_200(mock_ask):
 
 @patch("routes.chat._inject_context", side_effect=lambda q, h, m, u: h)
 @patch("routes.chat.config.get_model_config", return_value={"tools": True})
+@patch("routes.chat.config.is_model_enabled", return_value=True)
 @patch("routes.chat.ask", return_value="mock chat")
-def test_chat_completions_returns_200(mock_ask, mock_cfg, mock_ctx):
+def test_chat_completions_returns_200(mock_ask, mock_enabled, mock_cfg, mock_ctx):
     with TestClient(main.app) as client:
         resp = client.post(
             "/v1/chat/completions",
@@ -42,8 +43,9 @@ def _mock_stream(*args, **kwargs):
 
 @patch("routes.chat._inject_context", side_effect=lambda q, h, m, u: h)
 @patch("routes.chat.config.get_model_config", return_value={"tools": True})
+@patch("routes.chat.config.is_model_enabled", return_value=True)
 @patch("routes.chat.ask_stream", side_effect=_mock_stream)
-def test_chat_completions_stream(mock_stream, mock_cfg, mock_ctx):
+def test_chat_completions_stream(mock_stream, mock_enabled, mock_cfg, mock_ctx):
     with TestClient(main.app) as client:
         resp = client.post(
             "/v1/chat/completions",
@@ -56,3 +58,36 @@ def test_chat_completions_stream(mock_stream, mock_cfg, mock_ctx):
     assert resp.status_code == 200
     assert "text/event-stream" in resp.headers["content-type"]
     assert "streamed" in resp.text
+
+
+@patch("routes.chat.config.is_model_enabled", return_value=False)
+def test_chat_completions_disabled_model_returns_404(mock_enabled):
+    with TestClient(main.app) as client:
+        resp = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "chatgpt",
+                "stream": False,
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+        )
+    assert resp.status_code == 404
+    assert "not available" in resp.json()["detail"]
+
+
+@patch("routes.chat.config.get_all_models_config", return_value={
+    "claude": {"adapter": "anthropic", "api_key_env": "ANTHROPIC_API_KEY"},
+    "qwen": {"adapter": "openai", "base_url": "http://ollama:11434/v1"},
+    "chatgpt": {"adapter": "openai", "optional": True, "api_key_env": "OPENAI_API_KEY"},
+})
+@patch("routes.chat.config.is_model_enabled", side_effect=lambda n: n in ("claude", "qwen"))
+def test_list_models_returns_only_enabled(mock_enabled, mock_all):
+    with TestClient(main.app) as client:
+        resp = client.get("/v1/models")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["object"] == "list"
+    names = [m["id"] for m in data["data"]]
+    assert "claude" in names
+    assert "qwen" in names
+    assert "chatgpt" not in names

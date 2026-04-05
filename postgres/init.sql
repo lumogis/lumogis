@@ -258,3 +258,10 @@ CREATE TABLE IF NOT EXISTS routines (
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(name, user_id)
 );
+
+-- Dashboard settings overrides (filesystem_root, API key env vars, default_model)
+CREATE TABLE IF NOT EXISTS app_settings (
+    key         TEXT PRIMARY KEY,
+    value       TEXT NOT NULL,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

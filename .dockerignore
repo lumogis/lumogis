@@ -7,8 +7,20 @@ venv/
 .venv/
 __pycache__/
 *.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Large / irrelevant directories excluded from the orchestrator build context
+# (build context is repo root so config/ can be COPY'd into the image).
+lumogis-data/
 ai-workspace/inbox/*
 ai-workspace/outbox/*
 ai-workspace/backups/
-.pytest_cache/
-.ruff_cache/
+branding/
+docs/
+docker/
+mcp-servers/
+postgres/
+scripts/
+stack-control/
+tests/

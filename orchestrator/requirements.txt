@@ -1,3 +1,5 @@
+# Runtime dependencies — installed in the Docker image.
+# Dev/test tools live in requirements-dev.txt and are NOT installed in Docker.
 fastapi>=0.115.0
 uvicorn[standard]>=0.32.0
 anthropic>=0.80.0
@@ -17,8 +19,6 @@ pdf2image>=1.17.0
 watchdog>=5.0.0
 psutil>=6.0.0
 pyjwt>=2.8.0
-pytest>=8.0.0
-pytest-asyncio>=1.0.0
 feedparser>=6.0.0
 trafilatura>=2.0.0
 apscheduler>=3.10.0

@@ -1,0 +1,11 @@
+# Dev/test tools — NOT installed in the Docker image.
+# These packages are for local development and CI only.
+#
+# Install with (from repo root):
+#   pip install -r orchestrator/requirements-dev.txt
+# Run tests with:
+#   cd orchestrator && python -m pytest tests/ -q
+-r requirements-test.txt
+ruff>=0.4.0
+pytest>=8.0.0
+pytest-asyncio>=0.24.0

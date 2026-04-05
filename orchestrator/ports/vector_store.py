@@ -83,6 +83,14 @@ class VectorStore(Protocol):
         """Delete a single vector by ID. No-op if the ID does not exist."""
         ...
 
+    def delete_where(self, collection: str, filter: dict) -> None:
+        """Delete all points matching a payload filter dict.
+
+        filter format: {"must": [{"key": "field", "match": {"value": "x"}}]}
+        No-op if no points match.
+        """
+        ...
+
     def count(self, collection: str) -> int:
         """Return the number of vectors in the collection."""
         ...

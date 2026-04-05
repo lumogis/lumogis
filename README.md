@@ -2,6 +2,10 @@
 
 **[Quickstart](#getting-started) · [Architecture](#architecture) · [Extending Lumogis](#contributing) · [Community Plugins](COMMUNITY-PLUGINS.md) · [Security](SECURITY.md)**
 
+# lumogis
+
+**The AI comes to your data. Not the other way around.**
+
 ---
 
 ![Lumogis demo](branding/demo2.gif)
@@ -16,7 +20,9 @@ And then you do it anyway. Because the alternative is worse.
 
 Lumogis fixes the thing that causes the hesitation. Your files, documents, and conversations are indexed and stored entirely on your own machine. When you ask a question, Lumogis assembles the relevant context from your local index and sends a composed prompt — your question plus the pieces of your thinking that bear on it — to whichever model is best suited. Claude for deep reasoning. GPT-4 for breadth. A local model for anything you want to keep completely offline. Your archive never travels. What travels is a question.
 
-This is not a privacy policy. It is not a setting. It is physically impossible for your files to reach a Lumogis server, because there is no Lumogis server. The core is open source. Anyone can verify it.
+This is not a privacy policy. It is not a setting. It is physically impossible for your files to reach a Lumogis server, because there is no Lumogis server. The source is public under the AGPL — anyone can verify it.
+
+When using a local model, nothing leaves your machine at all. When using a cloud model, only the composed prompt — your question plus the retrieved excerpts — travels to the model provider. Your raw files, full document corpus, embeddings, and conversation history never move.
 
 *Privacy is not a setting here. It is the architecture.*
 
@@ -42,7 +48,7 @@ This is not a privacy policy. It is not a setting. It is physically impossible f
 
 **Private semantic search.** Documents are chunked, embedded, and stored in a local Qdrant vector database using Nomic Embed via Ollama. Search runs entirely on your machine. No outbound calls, no external embedding APIs.
 
-**Two-stage retrieval.** Vector search narrows the candidate set. A local BGE reranker re-scores by relevance before context is assembled. The answer reflects the best match, not just the nearest neighbour.
+**Two-stage retrieval.** Vector search narrows the candidate set. When enabled, a local BGE reranker re-scores candidates by relevance before context is assembled. Enable with `RERANKER_BACKEND=bge` in `.env`.
 
 **Session memory.** Conversation summaries are embedded and stored locally. Context from past sessions is retrieved and injected into future ones. A question you asked three months ago, and the conclusion you reached, can inform the answer you get today.
 
@@ -147,7 +153,7 @@ The self-hosted AI space is crowded. Here is how Lumogis differs from the projec
 
 | | Jan.ai | AnythingLLM | OpenClaw | Lumogis |
 |---|---|---|---|---|
-| **Privacy model** | Policy — cloud MCP connectors send data out | Policy | No safety model by design | Architecture — structurally impossible to exfiltrate |
+| **Privacy model** | Policy — cloud MCP connectors send data out | Policy | No safety model by design | Architecture — files never leave. Local model: nothing leaves. Cloud model: composed prompt only. |
 | **Personal data** | Gmail, Drive, Notion via cloud MCP | Documents only | Files, messaging, email | Files, documents, sessions, entities — all local |
 | **Session memory** | None | None | Partial | Full — past sessions retrieved and injected automatically |
 | **Agent safety** | No approval loop | No approval loop | None | Ask/Do — every action proposed before execution, full audit log |
@@ -175,8 +181,6 @@ The self-hosted AI space is crowded. Here is how Lumogis differs from the projec
 
 ## Hardware requirements
 
-`make setup` detects your hardware and selects the appropriate model tier automatically.
-
 | Tier | GPU VRAM | RAM | Recommended for |
 |---|---|---|---|
 | **minimal** | No GPU / < 4 GB | 8 GB | Testing and evaluation. CPU inference only. Slow but functional. |
@@ -194,102 +198,69 @@ Minimum to run: 8 GB RAM, 20 GB free disk. No API keys required — all models r
 |---|---|---|---|
 | **Git** | usually pre-installed | usually pre-installed | [git-scm.com](https://git-scm.com) |
 | **Docker Desktop** | [docs.docker.com](https://docs.docker.com/desktop/install/linux/) | [docs.docker.com](https://docs.docker.com/desktop/install/mac/) | [docs.docker.com](https://docs.docker.com/desktop/setup/install/windows-install/) |
-| **make** | usually pre-installed | `xcode-select --install` | via WSL2 (see below) |
 
-<details>
-<summary><strong>Windows — WSL2 setup (one-time)</strong></summary>
-
-1. Open PowerShell as Administrator and run:
-   ```powershell
-   wsl --install -d Ubuntu
-   ```
-   If Ubuntu is already installed this will just open it — safe to run either way.
-2. Restart your machine when prompted
-3. After restart, Ubuntu will open and ask you to create a Linux username and password — these can be anything (e.g. `user` / `lumogis`), they are only used inside WSL and do not need to match your Windows account
-4. If Ubuntu does not open automatically, find it in the Start menu or run `ubuntu` in PowerShell
-5. Install Docker Desktop with the WSL2 backend enabled
-6. Run all Lumogis commands from the Ubuntu terminal, not PowerShell
-
-</details>
-
-<details>
-<summary><strong>Windows inside a VM</strong> — nested virtualisation required</summary>
-
-WSL2 requires nested virtualisation, which is disabled by default in most hypervisors. Enable it in your VM settings before proceeding:
-
-- **VMware:** Processors → Virtualize Intel VT-x
-- **VirtualBox:** System → Enable Nested VT-x/AMD-V
-- **Hyper-V:** `Set-VMProcessor -VMName "YourVM" -ExposeVirtualizationExtensions $true`
-
-Without this, WSL2 will silently fall back to WSL1, which does not support Docker.
-
-</details>
+That is the complete list. No `make`, no WSL2, no Python required.
 
 ---
 
 ## Getting started
 
-### Install
-
-Paste this into your terminal (Linux/macOS) or WSL2 (Windows):
-
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/lumogis/lumogis/main/scripts/install.sh)
-```
-
-If you don't have `curl`, use `wget`:
-
-```bash
-bash <(wget -qO- https://raw.githubusercontent.com/lumogis/lumogis/main/scripts/install.sh)
-```
-
-This will:
-1. Check that git, Docker, and make are installed
-2. Ask where you want to install Lumogis (default: `~/lumogis`)
-3. Clone the repo into that directory
-4. Run the full setup — hardware detection, model selection, folder prompt, config generation, service startup, health check, and initial ingest
-
-To specify the install path without being prompted:
-
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/lumogis/lumogis/main/scripts/install.sh) --dir ~/mypath
-```
-
----
-
-### Manual install (alternative)
-
-If you prefer to clone manually:
-
+**Linux / macOS:**
 ```bash
 git clone https://github.com/lumogis/lumogis.git ~/lumogis
-cd ~/lumogis
-cp .env.example .env
-make setup
+cd ~/lumogis && cp .env.example .env && docker compose up -d
 ```
 
-To skip the folder prompt in setup:
+**Windows (PowerShell):**
+```powershell
+git clone https://github.com/lumogis/lumogis.git $HOME\lumogis
+cd "$HOME\lumogis"; Copy-Item .env.example .env; docker compose up -d
+```
+
+Open **[http://localhost:8000/dashboard](http://localhost:8000/dashboard)** — the setup wizard guides you through adding an API key or pulling a local model.
+
+- **Chat:** [http://localhost:3080](http://localhost:3080)
+- **Dashboard:** [http://localhost:8000/dashboard](http://localhost:8000/dashboard)
+
+The embedding model (~300 MB) pulls automatically on first start. Secrets are generated automatically. All services healthy within 5 minutes.
+
+<details>
+<summary>Optional: folder browser, GPU, advanced</summary>
+
+**Folder browser** — browse your host filesystem from the dashboard. Copy the override for your OS before starting:
 
 ```bash
-make setup ROOT=/path/to/your/files
+# Linux
+cp docker-compose.override.yml.linux docker-compose.override.yml
+
+# macOS
+cp docker-compose.override.yml.macos docker-compose.override.yml
 ```
+
+```powershell
+# Windows
+Copy-Item docker-compose.override.yml.windows docker-compose.override.yml
+```
+
+Skip this if you only need the default indexed folder (`./lumogis-data` inside the project).
+
+**GPU acceleration** — add to `.env`:
+
+```bash
+COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml
+```
+
+Then restart: `docker compose up -d`. Requires NVIDIA Container Toolkit on Linux. See [docs/gpu-setup.md](docs/gpu-setup.md).
+
+**API explorer** — [http://localhost:8000/docs](http://localhost:8000/docs) (Swagger UI).
+
+</details>
 
 ---
 
-To add cloud model support, set API keys in `.env` before running setup:
+### Contributing
 
-```bash
-# ANTHROPIC_API_KEY=sk-ant-...
-# OPENAI_API_KEY=sk-...
-```
-
-`make setup` is safe to re-run after a hardware change or to add a new model tier.
-
-### Open Lumogis
-
-[http://localhost:3080](http://localhost:3080) — create an account and start chatting. The LibreChat footer includes a **Dashboard** link to [http://localhost:8000/dashboard](http://localhost:8000/dashboard) (customize via `CUSTOM_FOOTER` in `.env`). The dashboard has a **Settings** tab to change the indexed files root (restart required to apply), API keys for cloud providers, and the default model.
-
-**Optional:** explore the API at [http://localhost:8000/docs](http://localhost:8000/docs) — interactive Swagger UI for all endpoints.
+Clone the repo, run `docker compose up -d`, and use `make compose-test` / `make compose-lint` for CI inside the container. See `Makefile` for all available targets.
 
 ---
 
@@ -302,7 +273,7 @@ All backend selection is driven by `.env`. The defaults work out of the box.
 VECTOR_STORE_BACKEND=qdrant       # qdrant (default), chroma, milvus
 METADATA_STORE_BACKEND=postgres   # postgres (default), sqlite
 EMBEDDER_BACKEND=ollama           # ollama (default), sentence-transformers
-RERANKER_BACKEND=bge              # bge (default), none
+RERANKER_BACKEND=none             # none (default), bge (downloads ~400 MB from HuggingFace)
 EXTRACTOR_OCR_ENABLED=true        # true (default), false
 
 # Connection details — defaults match docker-compose service names
@@ -328,7 +299,7 @@ ROUTINE_ELEVATION_THRESHOLD=10    # clean approvals before auto-elevation
 
 ## What is required vs optional
 
-`make setup` starts the minimal required stack automatically. Everything else is opt-in.
+`docker compose up -d` starts the minimal required stack. Everything else is opt-in.
 
 | Component | Status | Purpose |
 |---|---|---|
@@ -336,7 +307,7 @@ ROUTINE_ELEVATION_THRESHOLD=10    # clean approvals before auto-elevation
 | Qdrant | Required | Vector store for documents, sessions, entities |
 | Postgres | Required | Metadata, file index, audit log, entity relations |
 | Ollama | Required | Local embeddings (Nomic Embed) and local LLM inference |
-| BGE Reranker | Required | Two-stage retrieval — re-scores candidates by relevance |
+| BGE Reranker | Optional | Two-stage retrieval — re-scores candidates by relevance. Enable with `RERANKER_BACKEND=bge` in `.env`. |
 | LibreChat | Required | Chat interface at localhost:3080 |
 | FalkorDB + Redis | Optional | Graph store — only started when the graph plugin is present |
 | LiteLLM | Optional | Unified model proxy — enables multi-provider routing in one endpoint |
@@ -435,9 +406,11 @@ config/
 postgres/
   init.sql             # Schema: file_index, entities, entity_relations, review_queue
 
+docker/
+  qdrant/Dockerfile    # Qdrant + curl (official image has no HTTP client for healthchecks)
+
 scripts/
-  setup.sh             # Hardware detection + model pulls
-  detect-hardware.sh   # Standalone hardware detection (used by setup.sh)
+  init-env.sh          # Re-generate secrets manually (optional — entrypoint does this automatically)
 
 docs/
   decisions/           # Architecture Decision Records (ADRs)
@@ -455,7 +428,13 @@ tests/
 No. The default setup runs entirely locally via Ollama. Cloud models (Claude, GPT-4, etc.) are optional — add an API key to `.env` to enable them. Without an API key, everything runs on your hardware.
 
 **What actually leaves my machine?**
-Only composed prompts — your question plus the relevant context assembled from your local index. Your files, documents, and conversation history never leave. If you use a local model only, nothing leaves at all.
+It depends on which model you use.
+
+**Local model only (Ollama):** Nothing leaves your machine. Ever. The embedding, retrieval, and answer generation all happen locally. This is the strongest privacy guarantee — architecturally impossible for any content to reach an external server. Response quality is lower than cloud models but fully capable for retrieval-grounded queries like recalling decisions, summarising notes, and finding context.
+
+**Cloud model (Claude, GPT-4, etc.):** The retrieval still happens locally. What leaves is a composed prompt — your question plus the specific excerpts Lumogis retrieved as relevant. Your raw files, full document corpus, embeddings, and conversation history never leave. Only the assembled context for that query travels. This is meaningfully different from pasting a document into ChatGPT, but it is not zero-disclosure. For genuinely sensitive material — contracts, medical records, legal documents — use a local model.
+
+Cloud model usage is always opt-in. No API key means no data leaves. The default setup with no API keys configured runs entirely locally.
 
 **Where is my data stored?**
 Everything stays on your machine in Docker volumes: documents and embeddings in Qdrant, metadata and entities in Postgres, raw files in your indexed folder. There is no Lumogis server.
@@ -464,10 +443,7 @@ Everything stays on your machine in Docker volumes: documents and embeddings in 
 Ask means Lumogis proposes an action and waits for your approval before executing. Do means it executes immediately within a declared, low-risk scope. Everything starts in Ask mode. Do must be explicitly enabled per connector. See the security model section above.
 
 **Is this production-ready?**
-It is a solid developer preview. The core pipeline — ingest, search, memory, entity extraction, signals, actions — is built and tested. It is not yet a polished consumer product. Run it, extend it, break it, contribute back.
-
-**Is this the full Lumogis product?**
-This is the open core — the orchestration, retrieval, memory, and action architecture under AGPL. It is fully functional as a self-hosted personal AI system. Future application layers (desktop app, installer wizard, mobile) will be built on top of this foundation.
+It is a solid developer preview. Ingest, search, memory, entity extraction, signals, and actions are built and tested. It is not yet a polished consumer product. Run it, extend it, break it, contribute back.
 
 ---
 
@@ -511,7 +487,7 @@ This project follows the [Contributor Covenant v2.1](CODE_OF_CONDUCT.md).
 
 ## License
 
-[AGPL-3.0](LICENSE). The core is open source and always will be.
+[Lumogis is licensed under AGPL-3.0](LICENSE).
 
 ---
 

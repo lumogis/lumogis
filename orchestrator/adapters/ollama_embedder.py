@@ -16,9 +16,17 @@ class OllamaEmbedder:
         self._vector_size: int | None = None
 
     def ping(self) -> bool:
+        """Return True if Ollama is running AND the configured embedding model is present."""
         try:
             r = httpx.get(f"{self._url}/api/tags", timeout=5.0)
-            return r.status_code == 200
+            if r.status_code != 200:
+                return False
+            r2 = httpx.post(
+                f"{self._url}/api/show",
+                json={"name": self._model},
+                timeout=5.0,
+            )
+            return r2.status_code == 200
         except Exception:
             return False
 

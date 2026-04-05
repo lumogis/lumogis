@@ -5,6 +5,7 @@
 .compose-root
 __pycache__/
 *.pyc
+.pytest_cache/
 venv/
 .venv/
 
@@ -39,3 +40,4 @@ docs/private/
 *.swp
 .DS_Store
 docker-compose.override.yml
+lumogis-data/

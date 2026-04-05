@@ -1,0 +1,13 @@
+# Windows host filesystem mounts for the folder browser.
+# Copy this file to docker-compose.override.yml and run: docker compose up -d
+#
+# Docker Desktop on Windows maps drives as /c/, /d/, etc. in the compose context.
+# Add additional drives if needed (e.g., /d/:/host/d:ro).
+# Use forward slashes — Docker Desktop handles Windows paths correctly.
+services:
+  orchestrator:
+    environment:
+      HOST_OS: windows
+    volumes:
+      - /c/:/host/c:ro
+      - /d/:/host/d:ro

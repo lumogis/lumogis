@@ -44,6 +44,8 @@ If you have questions about the CLA, open a Discussion before submitting code.
 ```bash
 git clone https://github.com/lumogis/lumogis.git
 cd lumogis
+python3 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
 cp .env.example .env
 make setup      # detects hardware, pulls models
 make dev        # starts the stack with hot reload
@@ -51,14 +53,33 @@ make dev        # starts the stack with hot reload
 
 `make dev` uses `docker-compose.dev.yml` which mounts the orchestrator source and reloads on file changes. You do not need to rebuild the Docker image during development.
 
+### Python dependencies for tests and lint
+
+Production images install only each service’s `requirements.txt`. For **local** pytest and ruff, install the dev extras (not used in Docker builds):
+
+| Component | Runtime | Dev/test (local + CI) |
+|-----------|---------|------------------------|
+| **Orchestrator** | `pip install -r orchestrator/requirements.txt` | `pip install -r orchestrator/requirements-dev.txt` |
+| **stack-control** | `pip install -r stack-control/requirements.txt` | `pip install -r stack-control/requirements-dev.txt` |
+
+For a full local dev venv that runs `make test` and `make lint`:
+
+```bash
+pip install -r orchestrator/requirements.txt
+pip install -r orchestrator/requirements-dev.txt
+pip install -r stack-control/requirements-dev.txt
+```
+
+Orchestrator unit tests alone only need `orchestrator/requirements.txt` + `orchestrator/requirements-dev.txt`. stack-control unit tests live in `stack-control/test_main.py` and need `stack-control/requirements-dev.txt`.
+
 ### Running tests
 
 ```bash
-make test       # unit tests — no Docker needed
+make test       # orchestrator + stack-control unit tests — no Docker needed
 make lint       # ruff check + format check
 ```
 
-Unit tests use mock adapters (`tests/conftest.py`) — no running services required.
+Unit tests use mock adapters (`orchestrator/tests/conftest.py`) — no running services required.
 
 ```bash
 make test-integration   # full-stack tests — requires docker compose up -d
@@ -320,7 +341,7 @@ Thomas reviews all PRs. Target review time: 48 hours.
 
 **For design decisions:** open a Discussion first — not every idea needs a PR. If you are proposing a new port, changing a Protocol signature, or adding a dependency, start a Discussion so the approach can be agreed before you write code. This saves everyone time.
 
-**For bug reports:** open an Issue with reproduction steps and your hardware tier (`scripts/detect-hardware.sh` output).
+**For bug reports:** open an Issue with reproduction steps, your OS, and Docker version.
 
 **For security issues:** do not open a public Issue. Email [lumogis@pm.me](mailto:lumogis@pm.me).
 

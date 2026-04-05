@@ -17,13 +17,18 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r orchestrator/requirements.txt
-          pip install ruff
+          pip install -r orchestrator/requirements-dev.txt
+          pip install -r stack-control/requirements-dev.txt
 
       - name: Lint
         run: |
           ruff check orchestrator/
           ruff format --check orchestrator/
 
-      - name: Test
+      - name: Test orchestrator
         run: |
           cd orchestrator && python -m pytest tests/ -x -q
+
+      - name: Test stack-control
+        run: |
+          cd stack-control && python -m pytest test_main.py -q

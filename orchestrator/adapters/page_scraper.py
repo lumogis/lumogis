@@ -13,7 +13,6 @@ from datetime import datetime
 from datetime import timezone
 
 import httpx
-import trafilatura
 from models.signals import Signal
 from models.signals import SourceConfig
 
@@ -37,6 +36,8 @@ class PageScraper:
 
     def poll(self) -> list[Signal]:
         """Fetch page, extract text, return a single Signal."""
+        import trafilatura  # Docker-only dep; lazy to keep local tests dependency-free
+
         html = self._fetch_html(self._config.url)
         if not html:
             return []

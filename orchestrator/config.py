@@ -22,25 +22,103 @@ _instances: dict[str, object] = {}
 _models_config: dict | None = None
 
 
+def _resolve_config_file(name: str) -> str:
+    """Return a readable file path for a config file.
+
+    Tries the bind-mounted location (/app/config/) first, then the
+    image-baked fallback (/opt/lumogis/config/).  Docker bind mounts
+    can create empty directories instead of files on some host
+    configurations, so we verify the path is a regular file.
+    """
+    candidates = [
+        Path(__file__).resolve().parent / "config" / name,   # /app/config/<name>
+        Path("/opt/lumogis/config") / name,                  # baked into image
+    ]
+    for p in candidates:
+        if p.is_file():
+            return str(p)
+    return str(candidates[0])
+
+
 def _load_models_yaml() -> dict:
     """Load and cache config/models.yaml."""
     global _models_config
     if _models_config is None:
-        config_path = os.environ.get(
-            "MODELS_CONFIG",
-            str(Path(__file__).resolve().parent / "models.yaml"),
-        )
+        config_path = os.environ.get("MODELS_CONFIG", _resolve_config_file("models.yaml"))
         with open(config_path) as f:
             _models_config = yaml.safe_load(f).get("models", {})
     return _models_config
 
 
+_OLLAMA_BASE_URL = os.environ.get("OLLAMA_URL", "http://ollama:11434").rstrip("/") + "/v1"
+
+
+def _dynamic_ollama_models() -> dict:
+    """Return synthetic config entries for Ollama models not in models.yaml.
+
+    Queries Ollama for installed models and creates entries for any that
+    aren't already defined in the YAML. This lets users pull models via
+    the dashboard and immediately use them in LibreChat.
+    """
+    try:
+        import ollama_client
+        local = ollama_client.list_local_models()
+    except Exception:
+        return {}
+
+    yaml_models = _load_models_yaml()
+    yaml_ollama_names = set()
+    for cfg in yaml_models.values():
+        if "ollama" in (cfg.get("base_url") or "").lower():
+            yaml_ollama_names.add(cfg.get("model", ""))
+
+    embedding_model = os.environ.get("EMBEDDING_MODEL", "nomic-embed-text")
+    dynamic: dict = {}
+    for m in local:
+        full_name = m.get("name", "")
+        base_name = full_name.split(":")[0]
+        if full_name in yaml_ollama_names or base_name in yaml_ollama_names:
+            continue
+        if base_name == embedding_model or full_name == embedding_model:
+            continue
+        alias = base_name
+        if alias in yaml_models or alias in dynamic:
+            alias = full_name.replace(":", "-")
+        dynamic[alias] = {
+            "adapter": "openai",
+            "model": full_name,
+            "base_url": _OLLAMA_BASE_URL,
+            "tools": False,
+            "dynamic_ollama": True,
+        }
+    return dynamic
+
+
+def get_all_models_config() -> dict:
+    """Return models from YAML merged with dynamically pulled Ollama models."""
+    merged = dict(_load_models_yaml())
+    merged.update(_dynamic_ollama_models())
+    return merged
+
+
 def get_model_config(model_name: str) -> dict:
-    """Return a single model's config entry from models.yaml."""
+    """Return a single model's config entry (YAML or dynamic Ollama)."""
     models = _load_models_yaml()
-    if model_name not in models:
-        raise ValueError(f"Unknown model '{model_name}'. Available: {list(models.keys())}")
-    return models[model_name]
+    if model_name in models:
+        return models[model_name]
+    dynamic = _dynamic_ollama_models()
+    if model_name in dynamic:
+        return dynamic[model_name]
+    raise ValueError(f"Unknown model '{model_name}'. Available: {list(models.keys())}")
+
+
+def invalidate_llm_cache() -> None:
+    """Remove cached LLM provider instances so next request uses fresh API keys."""
+    to_drop = [k for k in _instances if k.startswith("llm_")]
+    for k in to_drop:
+        del _instances[k]
+    if to_drop:
+        _log.info("LLM cache invalidated: %s", to_drop)
 
 
 def is_local_model(model_name: str) -> bool:
@@ -53,6 +131,41 @@ def is_local_model(model_name: str) -> bool:
         return False
 
 
+def is_model_enabled(model_name: str) -> bool:
+    """True if the model is available for use.
+
+    Rules:
+    - Unknown model (not in YAML): always False.
+    - Models without api_key_env (local Ollama models): always enabled.
+    - Optional models (optional: true): require an explicit user toggle stored
+      as app_setting key "optional_{model_name}" = "true" in addition to a key.
+    - Non-optional models with api_key_env: enabled iff the key is non-empty
+      (checked in app_settings DB first, then environment variable).
+    """
+    try:
+        cfg = get_model_config(model_name)
+    except ValueError:
+        return False
+
+    api_key_env = cfg.get("api_key_env", "")
+    if not api_key_env:
+        return True
+
+    from settings_store import get_setting
+    store = get_metadata_store()
+
+    # Optional models require the user to explicitly enable them in the dashboard
+    # (stored as optional_{alias} = "true") regardless of whether a key is present.
+    if cfg.get("optional"):
+        toggled = get_setting(f"optional_{model_name}", store)
+        if not (toggled and toggled.lower() in ("true", "1", "yes")):
+            return False
+
+    stored_key = get_setting(api_key_env, store)
+    effective_key = (stored_key or os.environ.get(api_key_env, "") or "").strip()
+    return bool(effective_key)
+
+
 def get_llm_provider(model_name: str) -> LLMProvider:
     """Return a cached LLMProvider adapter for the given model name."""
     key = f"llm_{model_name}"
@@ -60,14 +173,21 @@ def get_llm_provider(model_name: str) -> LLMProvider:
         cfg = get_model_config(model_name)
         proxy = cfg.get("proxy_url")
         adapter_type = cfg["adapter"]
+        api_key_env = cfg.get("api_key_env", "")
+        effective_key = ""
+        if api_key_env:
+            from settings_store import get_setting
+
+            store = get_metadata_store()
+            stored = get_setting(api_key_env, store)
+            effective_key = (stored or os.environ.get(api_key_env, "") or "").strip()
 
         if adapter_type == "anthropic":
             from adapters.anthropic_llm import AnthropicLLM
 
-            api_key = os.environ.get(cfg.get("api_key_env", ""), "")
             _instances[key] = AnthropicLLM(
                 model=cfg["model"],
-                api_key=api_key,
+                api_key=effective_key or "",
                 base_url=proxy,
             )
         elif adapter_type == "openai":
@@ -76,7 +196,7 @@ def get_llm_provider(model_name: str) -> LLMProvider:
             _instances[key] = OpenAILLM(
                 model=cfg["model"],
                 base_url=proxy or cfg.get("base_url"),
-                api_key=os.environ.get(cfg.get("api_key_env", ""), None),
+                api_key=effective_key or None,
                 context_budget=cfg.get("context_budget"),
             )
         else:
@@ -140,7 +260,7 @@ def get_embedder() -> Embedder:
 
 def get_reranker():
     if "reranker" not in _instances:
-        backend = os.environ.get("RERANKER_BACKEND", "bge")
+        backend = os.environ.get("RERANKER_BACKEND", "none")
         if backend == "none":
             _instances["reranker"] = None
         elif backend == "bge":

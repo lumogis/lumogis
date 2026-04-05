@@ -1,3 +1,7 @@
+# Lumogis model registry — static default.
+# This is the cold-start default. The dashboard (Settings → Models) manages
+# Ollama model pulls and enables/disables optional providers at runtime.
+
 models:
   claude:
     adapter: anthropic
@@ -6,35 +10,73 @@ models:
     tools: true
     # proxy_url: http://litellm:4000  # uncomment to route through LiteLLM
 
-  qwen:
-    adapter: openai
-    model: qwen2.5:7b
-    base_url: http://ollama:11434/v1
-    tools: true
-    # proxy_url: http://litellm:4000
-
-  qwen-coder:
-    adapter: openai
-    model: qwen2.5-coder:7b
-    base_url: http://ollama:11434/v1
-    tools: false
-
-  llama:
-    adapter: openai
-    model: llama3.2:3b
-    base_url: http://ollama:11434/v1
-    tools: false
-
-  # --- Examples: uncomment and set API keys in .env ---
-  # chatgpt:
+  # --- Local models via Ollama ---
+  # NOTE: You do NOT need to uncomment these manually.
+  # Any model pulled via the dashboard (Settings → Models) or via
+  #   docker exec lumogis-ollama-1 ollama pull llama3.2:3b
+  # is automatically discovered by _dynamic_ollama_models() in config.py
+  # and immediately appears in /v1/models and LibreChat after the next
+  # librechat.yaml regeneration (triggered on orchestrator restart).
+  # These commented entries are reference examples only — define them
+  # explicitly if you need non-default settings (tools, context_budget).
+  #
+  # llama:
   #   adapter: openai
-  #   model: gpt-4o
-  #   api_key_env: OPENAI_API_KEY
+  #   model: llama3.2:3b
+  #   base_url: http://ollama:11434/v1
+  #   tools: false
+  #
+  # qwen:
+  #   adapter: openai
+  #   model: qwen2.5:7b
+  #   base_url: http://ollama:11434/v1
   #   tools: true
   #
-  # perplexity:
+  # qwen-coder:
   #   adapter: openai
-  #   model: sonar-pro
-  #   api_key_env: PERPLEXITY_API_KEY
-  #   base_url: https://api.perplexity.ai
+  #   model: qwen2.5-coder:7b
+  #   base_url: http://ollama:11434/v1
   #   tools: false
+
+  # --- Optional cloud providers ---
+  # Enable in Settings → Optional cloud providers, then add the API key.
+
+  chatgpt:
+    adapter: openai
+    model: gpt-4o
+    base_url: https://api.openai.com/v1
+    api_key_env: OPENAI_API_KEY
+    tools: true
+    optional: true
+
+  grok:
+    adapter: openai
+    model: grok-2-latest
+    base_url: https://api.x.ai/v1
+    api_key_env: XAI_API_KEY
+    tools: false
+    optional: true
+
+  perplexity:
+    adapter: openai
+    model: sonar-pro
+    base_url: https://api.perplexity.ai
+    api_key_env: PERPLEXITY_API_KEY
+    tools: false
+    optional: true
+
+  gemini:
+    adapter: openai
+    model: gemini-2.0-flash
+    base_url: https://generativelanguage.googleapis.com/v1beta/openai/
+    api_key_env: GEMINI_API_KEY
+    tools: false
+    optional: true
+
+  mistral:
+    adapter: openai
+    model: mistral-large-latest
+    base_url: https://api.mistral.ai/v1
+    api_key_env: MISTRAL_API_KEY
+    tools: false
+    optional: true

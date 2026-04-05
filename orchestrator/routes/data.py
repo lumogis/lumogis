@@ -118,27 +118,34 @@ def list_entities(
     Ordered by mention_count descending. Paginated via limit/offset.
     Used by the dashboard Entities panel.
     """
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+
     user_id = get_user(request).user_id
     ms = config.get_metadata_store()
 
-    if type:
-        rows = ms.fetch_all(
-            "SELECT name, entity_type, mention_count, aliases, context_tags "
-            "FROM entities "
-            "WHERE user_id = %s AND upper(entity_type) = upper(%s) "
-            "ORDER BY mention_count DESC "
-            "LIMIT %s OFFSET %s",
-            (user_id, type, limit, offset),
-        )
-    else:
-        rows = ms.fetch_all(
-            "SELECT name, entity_type, mention_count, aliases, context_tags "
-            "FROM entities "
-            "WHERE user_id = %s "
-            "ORDER BY mention_count DESC "
-            "LIMIT %s OFFSET %s",
-            (user_id, limit, offset),
-        )
+    try:
+        if type:
+            rows = ms.fetch_all(
+                "SELECT name, entity_type, mention_count, aliases, context_tags "
+                "FROM entities "
+                "WHERE user_id = %s AND upper(entity_type) = upper(%s) "
+                "ORDER BY mention_count DESC "
+                "LIMIT %s OFFSET %s",
+                (user_id, type, limit, offset),
+            )
+        else:
+            rows = ms.fetch_all(
+                "SELECT name, entity_type, mention_count, aliases, context_tags "
+                "FROM entities "
+                "WHERE user_id = %s "
+                "ORDER BY mention_count DESC "
+                "LIMIT %s OFFSET %s",
+                (user_id, limit, offset),
+            )
+    except Exception as exc:
+        _log.warning("list_entities: DB query failed — %s", exc)
+        return []
 
     return [
         {

@@ -8,7 +8,10 @@
 
 services:
   litellm:
-    image: ghcr.io/berriai/litellm:main-latest
+    # Pinned to v1.82.3-stable.patch.2 — the last confirmed-safe stable release
+    # before the March 24 2026 supply chain incident (CVE litellm v1.82.7/v1.82.8).
+    # Update this pin once LiteLLM resumes releases after their security review.
+    image: ghcr.io/berriai/litellm:main-v1.82.3-stable.patch.2
     ports:
       - "4000:4000"
     volumes:

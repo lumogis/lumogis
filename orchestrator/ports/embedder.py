@@ -25,7 +25,14 @@ from typing import Protocol
 
 class Embedder(Protocol):
     def ping(self) -> bool:
-        """Return True if the embedding service is reachable. Does not raise."""
+        """Return True if the embedding service is reachable AND the configured model is available.
+
+        For Ollama-based embedders: must verify both that the Ollama API is responding
+        (/api/tags 200) AND that the specific embedding model is present (/api/show 200).
+        For API-based embedders (e.g. OpenAI): True if the API endpoint is reachable
+        and the API key is valid (liveness only — model availability assumed for cloud APIs).
+        Does not raise. Returns False on any failure.
+        """
         ...
 
     @property

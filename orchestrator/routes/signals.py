@@ -152,7 +152,8 @@ def list_sources():
             "last_polled_at, last_signal_at FROM sources ORDER BY name"
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        _log.warning("list_sources: DB query failed — %s", exc)
+        return {"sources": [], "total": 0}
 
     scheduler = config.get_scheduler()
     scheduled_ids = {job.id for job in scheduler.get_jobs()}
@@ -223,7 +224,8 @@ def list_signals(
             tuple(params),
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        _log.warning("list_signals: DB query failed — %s", exc)
+        return {"signals": [], "total": 0}
 
     result = []
     for row in rows:

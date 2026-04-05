@@ -31,6 +31,18 @@ router = APIRouter()
 _log = logging.getLogger(__name__)
 
 
+@router.get("/v1/models")
+def list_models():
+    """OpenAI-compatible model list — only returns enabled models."""
+    all_models = config.get_all_models_config()
+    data = [
+        {"id": name, "object": "model", "owned_by": "lumogis"}
+        for name in all_models
+        if config.is_model_enabled(name)
+    ]
+    return {"object": "list", "data": data}
+
+
 class AskRequest(BaseModel):
     text: str
 
@@ -184,6 +196,14 @@ def chat_completions(body: ChatCompletionsRequest, request: Request) -> Any:
             ],
             "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
         }
+
+    if not config.is_model_enabled(body.model):
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=404,
+            detail=f"Model '{body.model}' is not available. "
+                   "Enable it in Settings and provide an API key, or choose another model.",
+        )
 
     user_id = get_user(request).user_id
 

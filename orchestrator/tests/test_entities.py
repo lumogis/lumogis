@@ -667,7 +667,14 @@ class TestIngestEntityExtraction:
 class TestGetEntitiesEndpoint:
     def _setup_ms(self, rows: list[dict]):
         ms = MockMetadataStore()
-        ms.fetch_all = lambda q, p=None: rows
+        def _fetch_all(q, p=None):
+            # Return entity rows only for entity queries.  Other queries fired
+            # during lifespan startup (e.g. feed_monitor loading FROM sources)
+            # must receive an empty list to avoid KeyError on missing columns.
+            if "FROM entities" in q:
+                return rows
+            return []
+        ms.fetch_all = _fetch_all
         _config._instances["metadata_store"] = ms
         return ms
 

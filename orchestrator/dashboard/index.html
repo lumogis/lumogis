@@ -3,7 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Lumogis</title>
+<title>Lumogis Dashboard</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48' fill='none'%3E%3Ccircle cx='24' cy='24' r='11' fill='%23E8632A' opacity='0.12'/%3E%3Ccircle cx='24' cy='24' r='8.5' fill='%23FDE8D8' opacity='0.55'/%3E%3Cline x1='24' y1='24' x2='10' y2='10' stroke='%23D9D4CE' stroke-width='1.25' stroke-linecap='round'/%3E%3Cline x1='24' y1='24' x2='38' y2='10' stroke='%23D9D4CE' stroke-width='1.25' stroke-linecap='round'/%3E%3Cline x1='24' y1='24' x2='10' y2='38' stroke='%23D9D4CE' stroke-width='1.25' stroke-linecap='round'/%3E%3Cline x1='24' y1='24' x2='38' y2='38' stroke='%23D9D4CE' stroke-width='1.25' stroke-linecap='round'/%3E%3Cline x1='38' y1='10' x2='38' y2='38' stroke='%23D9D4CE' stroke-width='1.25' stroke-linecap='round'/%3E%3Ccircle cx='10' cy='10' r='2.5' fill='%237A726A'/%3E%3Ccircle cx='38' cy='10' r='2.5' fill='%237A726A'/%3E%3Ccircle cx='10' cy='38' r='2.5' fill='%237A726A'/%3E%3Ccircle cx='38' cy='38' r='2.5' fill='%237A726A'/%3E%3Ccircle cx='24' cy='24' r='5.5' fill='%23E8632A'/%3E%3Ccircle cx='24' cy='24' r='2.6' fill='%23FDE8D8'/%3E%3C/svg%3E">
 <style>
 /* ── Variables ─────────────────────────────────────────────────── */
 :root {
@@ -21,6 +22,19 @@
   --red:      #f85149;
   --radius:   6px;
   --mono:     ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* Capability badge palette */
+  --cap-code-bg:         rgba(88,  166, 255, 0.12);
+  --cap-code-fg:         #58a6ff;
+  --cap-reasoning-bg:    rgba(210, 153,  34, 0.15);
+  --cap-reasoning-fg:    #d29922;
+  --cap-multilingual-bg: rgba(63,  185,  80, 0.12);
+  --cap-multilingual-fg: #3fb950;
+  --cap-tools-bg:        rgba(188, 140, 255, 0.14);
+  --cap-tools-fg:        #bc8cff;
+  --cap-fast-bg:         rgba(217, 168, 120, 0.16);
+  --cap-fast-fg:         #d9a878;
+  --cap-vision-bg:       rgba(248,  81,  73, 0.12);
+  --cap-vision-fg:       #f85149;
 }
 [data-theme="light"] {
   --bg:       #ffffff;
@@ -34,6 +48,18 @@
   --green:    #1a7f37;
   --yellow:   #9a6700;
   --red:      #cf222e;
+  --cap-code-bg:         rgba(9,  105, 218, 0.10);
+  --cap-code-fg:         #0969da;
+  --cap-reasoning-bg:    rgba(154, 103,   0, 0.10);
+  --cap-reasoning-fg:    #7d4e00;
+  --cap-multilingual-bg: rgba(26, 127,  55, 0.10);
+  --cap-multilingual-fg: #1a7f37;
+  --cap-tools-bg:        rgba(130,  80, 223, 0.10);
+  --cap-tools-fg:        #6638c2;
+  --cap-fast-bg:         rgba(168,  92,  50, 0.10);
+  --cap-fast-fg:         #7a4020;
+  --cap-vision-bg:       rgba(207,  34,  46, 0.10);
+  --cap-vision-fg:       #cf222e;
 }
 
 /* ── Reset ─────────────────────────────────────────────────────── */
@@ -112,6 +138,47 @@ tr:hover td { background: var(--surface); }
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 8px 14px; font-size: 13px;
 }
+/* ── Ollama pull progress ──────────────────────────────────────── */
+@keyframes pull-sweep {
+  0%   { left: -40%; width: 40%; }
+  50%  { left: 30%;  width: 50%; }
+  100% { left: 110%; width: 40%; }
+}
+.pull-banner {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; margin-bottom: 12px;
+  background: var(--accent-muted); border: 1px solid var(--accent);
+  border-radius: var(--radius); font-size: 13px;
+}
+.pull-bar-wrap {
+  position: relative; height: 3px; background: var(--border);
+  border-radius: 2px; overflow: hidden; margin-top: 6px;
+}
+.pull-bar-fill {
+  position: absolute; top: 0; height: 100%;
+  background: var(--accent); border-radius: 2px;
+  animation: pull-sweep 1.6s ease-in-out infinite;
+}
+/* Ollama "Other models" disclosure — keep marker inside padding (outside sits on border) */
+.ollama-other-models {
+  margin-top: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 12px 12px;
+  background: var(--surface);
+}
+.ollama-other-models > summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+  user-select: none;
+  color: var(--txt);
+  list-style-position: inside;
+  padding: 10px 8px 8px 10px;
+}
+.ollama-other-models > summary::-webkit-details-marker {
+  margin-right: 0.45em;
+}
 .badge-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--txt2); }
 .badge-dot.ok { background: var(--green); }
 .badge-dot.unreachable { background: var(--red); }
@@ -151,6 +218,49 @@ tr:hover td { background: var(--surface); }
 .btn-primary:hover { filter: brightness(1.06); border-color: var(--accent); }
 .btn-danger { border-color: var(--red); color: var(--red); }
 .btn-danger:hover { background: rgba(248,81,73,.12); border-color: var(--red); }
+.toggle-switch { position:relative; display:inline-block; width:40px; height:22px; flex-shrink:0; }
+.toggle-switch input { opacity:0; width:0; height:0; }
+.toggle-slider { position:absolute; inset:0; background:var(--border); border-radius:22px; cursor:pointer; transition:background .2s; }
+.toggle-slider::before { content:''; position:absolute; left:3px; top:3px; width:16px; height:16px; background:#fff; border-radius:50%; transition:transform .2s; }
+.toggle-switch input:checked + .toggle-slider { background:var(--accent); }
+.toggle-switch input:checked + .toggle-slider::before { transform:translateX(18px); }
+/* Directory picker modal */
+.dir-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 1000;
+  display: flex; align-items: center; justify-content: center;
+}
+.dir-modal {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  width: min(540px, 96vw); height: 520px; display: flex; flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0,0,0,.5);
+}
+.dir-modal-header {
+  padding: 12px 16px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 13px;
+  flex-shrink: 0;
+}
+.dir-breadcrumb {
+  flex: 1; font-size: 12px; color: var(--txt2); font-family: var(--mono);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  direction: rtl; text-align: left;
+}
+.dir-list {
+  flex: 1; overflow-y: scroll; padding: 6px 0; min-height: 0;
+}
+.dir-item {
+  display: flex; align-items: center; gap: 8px; padding: 7px 16px;
+  cursor: pointer; font-size: 13px; user-select: none;
+}
+.dir-item:hover { background: var(--accent-muted); }
+.dir-item-icon { color: var(--accent); font-size: 14px; flex-shrink: 0; }
+.dir-modal-mkdir {
+  padding: 10px 16px; border-top: 1px solid var(--border); flex-shrink: 0;
+  display: flex; gap: 8px; align-items: center;
+}
+.dir-modal-footer {
+  padding: 10px 16px; border-top: 1px solid var(--border); flex-shrink: 0;
+  display: flex; gap: 8px; align-items: center;
+}
 .btn-undo { font-size: 11px; padding: 2px 8px; }
 .reversed { opacity: .5; font-style: italic; }
 .source-preview-box {
@@ -184,7 +294,24 @@ tr:hover td { background: var(--surface); }
 
   <!-- Header -->
   <header class="header">
-    <div class="logo">lumogis</div>
+    <div class="logo" style="display:flex;align-items:center;gap:9px">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none" width="26" height="26" aria-hidden="true">
+        <circle cx="24" cy="24" r="11" fill="#E8632A" opacity="0.12"/>
+        <circle cx="24" cy="24" r="8.5" fill="#FDE8D8" opacity="0.55"/>
+        <line x1="24" y1="24" x2="10" y2="10" stroke="#D9D4CE" stroke-width="1.25" stroke-linecap="round"/>
+        <line x1="24" y1="24" x2="38" y2="10" stroke="#D9D4CE" stroke-width="1.25" stroke-linecap="round"/>
+        <line x1="24" y1="24" x2="10" y2="38" stroke="#D9D4CE" stroke-width="1.25" stroke-linecap="round"/>
+        <line x1="24" y1="24" x2="38" y2="38" stroke="#D9D4CE" stroke-width="1.25" stroke-linecap="round"/>
+        <line x1="38" y1="10" x2="38" y2="38" stroke="#D9D4CE" stroke-width="1.25" stroke-linecap="round"/>
+        <circle cx="10" cy="10" r="2.5" fill="#7A726A"/>
+        <circle cx="38" cy="10" r="2.5" fill="#7A726A"/>
+        <circle cx="10" cy="38" r="2.5" fill="#7A726A"/>
+        <circle cx="38" cy="38" r="2.5" fill="#7A726A"/>
+        <circle cx="24" cy="24" r="5.5" fill="#E8632A"/>
+        <circle cx="24" cy="24" r="2.6" fill="#FDE8D8"/>
+      </svg>
+      <span>lumogis</span>
+    </div>
     <div class="sse-badge">
       <div class="sse-dot" id="sseDot"></div>
       <span id="sseLabel">connecting…</span>
@@ -201,6 +328,7 @@ tr:hover td { background: var(--surface); }
     <button class="nav-tab" role="tab" onclick="switchTab('entities')">Entities</button>
     <button class="nav-tab" role="tab" onclick="switchTab('activity')">Activity</button>
     <button class="nav-tab" role="tab" onclick="switchTab('export')">Export</button>
+    <button class="nav-tab" role="tab" onclick="switchTab('settings')">Settings</button>
   </nav>
 
   <main class="content">
@@ -331,6 +459,30 @@ tr:hover td { background: var(--surface); }
       </div>
     </section>
 
+    <!-- ── Settings ─────────────────────────────────────────── -->
+    <section class="panel" id="panel-settings">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+        <div class="panel-title">Settings</div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="refresh-btn" onclick="window.location.href='http://localhost:3080'">← Back to Chat</button>
+          <button class="refresh-btn" onclick="loadSettings()">↺ Refresh</button>
+        </div>
+      </div>
+      <div id="setupBanner" style="display:none;background:var(--accent);color:#fff;border-radius:8px;padding:14px 18px;margin-bottom:20px;display:none">
+        <strong>Welcome to Lumogis!</strong> &nbsp;Complete the steps below to finish setup.
+        Add an API key to enable cloud models, or pull a local model to get started with Ollama.
+        <button onclick="document.getElementById('setupBanner').style.display='none'"
+          style="float:right;background:none;border:none;color:#fff;cursor:pointer;font-size:16px;line-height:1">✕</button>
+      </div>
+      <div id="settingsFlash" class="flash"></div>
+      <div id="settingsRoot" class="card section-gap"></div>
+      <div id="settingsModels" class="card section-gap"></div>
+      <div id="settingsCloud" class="card section-gap"></div>
+      <div id="settingsOllama" class="card section-gap"></div>
+      <div id="settingsReranker" class="card section-gap"></div>
+      <div id="settingsRestart" class="card section-gap"></div>
+    </section>
+
   </main>
 </div>
 
@@ -340,8 +492,10 @@ tr:hover td { background: var(--surface); }
 // ── State ─────────────────────────────────────────────────────────
 const state = {
   tab: 'health',
-  entities: [],        // cached for client-side filter
+  entities: [],         // cached for client-side filter
   sourcePreview: null, // pending preview data
+  settings: null,      // last GET /settings response
+  health: null,        // last GET / response
 };
 
 // ── Helpers ───────────────────────────────────────────────────────
@@ -397,11 +551,11 @@ function toggleTheme() {
 })();
 
 // ── Tab routing ───────────────────────────────────────────────────
-const LOADERS = { health: loadHealth, signals: loadSignals, sources: loadSources, entities: loadEntities, activity: loadActivity };
+const LOADERS = { health: loadHealth, signals: loadSignals, sources: loadSources, entities: loadEntities, activity: loadActivity, settings: loadSettings };
 function switchTab(name) {
   state.tab = name;
   document.querySelectorAll('.nav-tab').forEach((b, i) => {
-    const tabs = ['health','signals','sources','entities','activity','export'];
+    const tabs = ['health','signals','sources','entities','activity','export','settings'];
     b.classList.toggle('active', tabs[i] === name);
   });
   document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === `panel-${name}`));
@@ -449,10 +603,850 @@ function showToast(msg) {
   setTimeout(() => t.remove(), 5000);
 }
 
+// ── Settings panel ───────────────────────────────────────────────
+const PROVIDER_KEY_URLS = {
+  ANTHROPIC_API_KEY:  'https://console.anthropic.com/settings/keys',
+  OPENAI_API_KEY:     'https://platform.openai.com/api-keys',
+  XAI_API_KEY:        'https://console.x.ai/',
+  PERPLEXITY_API_KEY: 'https://www.perplexity.ai/settings/api',
+  GEMINI_API_KEY:     'https://aistudio.google.com/app/apikey',
+  MISTRAL_API_KEY:    'https://console.mistral.ai/api-keys/',
+};
+
+const PROVIDER_DISPLAY = {
+  claude:      { name: 'Anthropic (Claude)',   icon: '☁' },
+  chatgpt:     { name: 'OpenAI (ChatGPT)',      icon: '☁' },
+  grok:        { name: 'xAI (Grok)',            icon: '☁' },
+  perplexity:  { name: 'Perplexity',            icon: '☁' },
+  gemini:      { name: 'Google (Gemini)',        icon: '☁' },
+  mistral:     { name: 'Mistral',               icon: '☁' },
+};
+
+async function loadSettings() {
+  const flash = $('settingsFlash');
+  flash.textContent = '';
+  flash.classList.remove('err');
+  try {
+    const d = await api('/settings');
+    state.settings = d;
+
+    // ── Indexed files root ────────────────────────────────────────
+    const effectiveRoot = d.filesystem_root || '(not set)';
+    const pendingRoot = d.pending_filesystem_root;
+    const showRestart = pendingRoot != null && pendingRoot !== '' && pendingRoot !== d.filesystem_root;
+    setHtml('settingsRoot', `
+      <div class="card-header">Document source folder</div>
+      <div class="card-body" style="padding:16px">
+        <p style="color:var(--txt2);font-size:13px;margin-bottom:12px">
+          The folder on your machine whose files are indexed for search and AI context.
+          Changing this path triggers a full re-index: the existing index is cleared and all files under the new path are re-ingested.
+        </p>
+        <div class="form-row" style="margin-bottom:12px">
+          <label style="min-width:120px">Current path</label>
+          <span class="mono" style="color:var(--txt2)">${esc(effectiveRoot)}</span>
+        </div>
+        ${showRestart ? `<p class="flash" style="margin-bottom:12px">A new path has been set. Save &amp; restart to apply it.</p>` : ''}
+        <div class="form-row" style="align-items:center;gap:8px">
+          <input type="text" id="settingsRootInput" placeholder="e.g. /home/user/Documents" value="${esc(pendingRoot || d.filesystem_root || '')}" style="max-width:380px">
+          <button onclick="openDirPicker()" title="Browse folders">&#128193; Browse…</button>
+        </div>
+        <p id="rootPreviewMsg" style="color:var(--orange,#e67e22);font-size:12px;margin-top:8px;min-height:1em"></p>
+      </div>
+    `);
+
+    // Debounced root-preview: show stale file count when root changes
+    const _rootInput = $('settingsRootInput');
+    if (_rootInput) {
+      let _rootPreviewTimer = null;
+      _rootInput.addEventListener('input', () => {
+        clearTimeout(_rootPreviewTimer);
+        _rootPreviewTimer = setTimeout(() => fetchRootPreview(_rootInput.value.trim()), 600);
+      });
+    }
+
+    // ── Cloud providers ───────────────────────────────────────────
+    // One unified section for all models with an API key (required + optional).
+    const models = d.models || [];
+    // optional_models toggle removed — visibility is determined solely by key presence
+    const cloudModels = models.filter(m => m.api_key_env);
+
+    if (cloudModels.length > 0) {
+      const rows = cloudModels.map(m => {
+        const display = PROVIDER_DISPLAY[m.name] || {};
+        const label = display.name || m.label;
+        const keyUrl = PROVIDER_KEY_URLS[m.api_key_env] || '#';
+        const keySet = (d.api_key_status || {})[m.api_key_env] === 'set';
+        const statusBadge = keySet
+          ? `<span style="color:var(--green);font-size:12px;white-space:nowrap">✓ Active</span>`
+          : `<span style="color:var(--txt2);font-size:12px;white-space:nowrap">No key — not shown in chat</span>`;
+
+        return `<tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:10px 16px 10px 0;font-weight:500;white-space:nowrap;width:1px">${esc(label)}</td>
+          <td style="padding:10px 16px 10px 0;white-space:nowrap;width:1px">${statusBadge}</td>
+          <td style="padding:10px 16px 10px 0;width:auto">
+            <input type="password" id="apiKey_${esc(m.api_key_env)}" placeholder="${keySet ? 'Replace key…' : 'Paste API key…'}"
+              style="width:100%" autocomplete="off">
+          </td>
+          <td style="padding:10px 0 10px 16px;white-space:nowrap;width:1px">
+            <a href="${keyUrl}" target="_blank" rel="noopener" style="font-size:12px">Get key ↗</a>
+          </td>
+        </tr>`;
+      }).join('');
+
+      setHtml('settingsCloud', `
+        <div class="card-header">External cloud models</div>
+        <div class="card-body" style="padding:16px">
+          <p style="color:var(--txt2);font-size:13px;margin-bottom:16px">
+            API keys are stored in the database and take effect immediately — never included in API responses.
+            A provider appears in LibreChat automatically as soon as its key is set.
+          </p>
+          <table style="width:100%;border-collapse:collapse">
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      `);
+    } else {
+      setHtml('settingsCloud', '');
+    }
+
+    // ── Default model ─────────────────────────────────────────────
+    const enabledModels = models.filter(m => m.enabled || !m.optional);
+    const defaultModel = d.default_model || (enabledModels[0] && enabledModels[0].name) || '';
+    const options = enabledModels.map(m => `<option value="${esc(m.name)}" ${m.name === defaultModel ? 'selected' : ''}>${esc(m.label)}${m.is_local ? ' (local)' : ''}</option>`).join('');
+    setHtml('settingsModels', `
+      <div class="card-header">Models</div>
+      <div class="card-body" style="padding:16px">
+        <p style="color:var(--txt2);font-size:13px;margin-bottom:12px">Default model used in the dashboard when no model is specified.</p>
+        <div class="form-row" style="align-items:center;gap:12px">
+          <label style="min-width:100px">Default model</label>
+          <select id="settingsDefaultModel" style="max-width:220px">${options}</select>
+        </div>
+      </div>
+    `);
+
+    // Ollama section loads asynchronously
+    setHtml('settingsOllama', `
+      <div class="card-header">Ollama models</div>
+      <div class="card-body" style="padding:16px;color:var(--txt2);font-size:13px">Loading…</div>
+    `);
+    loadOllamaDiscovery();
+
+    // ── Reranker toggle ──────────────────────────────────────────
+    const rerankerOn = !!d.reranker_enabled;
+    setHtml('settingsReranker', `
+      <div class="card-header">Search quality — BGE reranker</div>
+      <div class="card-body" style="padding:16px">
+        <p style="color:var(--txt2);font-size:13px;margin-bottom:12px">
+          Two-stage retrieval: after vector search finds candidates, a cross-encoder re-scores them for higher precision.
+          Downloads ~400 MB from HuggingFace on first enable. Requires restart.
+        </p>
+        <div class="form-row" style="align-items:center;gap:12px">
+          <label class="toggle-switch">
+            <input type="checkbox" id="rerankerToggle" ${rerankerOn ? 'checked' : ''}>
+            <span class="toggle-slider"></span>
+          </label>
+          <span style="font-size:13px" id="rerankerLabel">${rerankerOn ? 'Enabled — better search precision' : 'Disabled — faster cold start'}</span>
+        </div>
+      </div>
+    `);
+    const _rerankerToggle = $('rerankerToggle');
+    if (_rerankerToggle) {
+      _rerankerToggle.addEventListener('change', () => {
+        const label = $('rerankerLabel');
+        if (label) label.textContent = _rerankerToggle.checked
+          ? 'Enabled — better search precision'
+          : 'Disabled — faster cold start';
+      });
+    }
+
+    // Restart
+    setHtml('settingsRestart', `
+      <div class="card-header">Save and restart</div>
+      <div class="card-body" style="padding:16px">
+        <p style="color:var(--txt2);font-size:13px;margin-bottom:16px">
+          Saves all changes above — indexed root, default model, API keys — then restarts the stack.
+          The page will reconnect automatically.
+        </p>
+        <div style="display:flex;gap:10px;align-items:center">
+          <button class="btn-danger" onclick="applyAndRestart()">Save changes &amp; restart stack</button>
+          <button onclick="cancelSettings()">Cancel</button>
+          <span id="restartStatus" style="font-size:12px;color:var(--txt2)"></span>
+        </div>
+      </div>
+    `);
+
+  } catch (e) {
+    flash.textContent = 'Could not load settings: ' + e.message;
+    flash.classList.add('err');
+    setHtml('settingsRoot', '<div class="card-body empty">Load failed</div>');
+    setHtml('settingsCloud', '');
+    setHtml('settingsModels', '');
+    setHtml('settingsOllama', '');
+    setHtml('settingsReranker', '');
+    setHtml('settingsRestart', '');
+  }
+}
+
+async function saveSettings(payload) {
+  const flash = $('settingsFlash');
+  flash.textContent = '';
+  flash.classList.remove('err');
+  try {
+    const res = await fetch('/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || res.statusText);
+    }
+    await loadSettings();
+    showToast('Settings saved');
+  } catch (e) {
+    flash.textContent = 'Save failed: ' + e.message;
+    flash.classList.add('err');
+  }
+}
+
+function saveSettingsRoot() {
+  const val = $('settingsRootInput').value.trim();
+  if (!val) {
+    showToast('Enter a folder path first');
+    return;
+  }
+  saveSettings({ filesystem_root: val });
+}
+
+function saveCloudKeys() {
+  if (!state.settings) return;
+  const api_keys = {};
+  for (const m of (state.settings.models || [])) {
+    if (!m.api_key_env) continue;
+    const input = $(`apiKey_${m.api_key_env}`);
+    if (input && input.value.trim() !== '') api_keys[m.api_key_env] = input.value.trim();
+  }
+  if (Object.keys(api_keys).length === 0) { showToast('No keys entered'); return; }
+  saveSettings({ api_keys });
+}
+
+function saveSettingsDefaultModel() {
+  const sel = $('settingsDefaultModel');
+  if (!sel) return;
+  saveSettings({ default_model: sel.value });
+}
+
+// saveOptionalToggle removed — key presence is now the sole gate for LibreChat visibility
+
+// ── Directory picker ─────────────────────────────────────────────
+
+let _dirPickerCurrentPath = '/';
+
+function _renderDirPicker(data) {
+  _dirPickerCurrentPath = data.path;
+
+  // Breadcrumb — truncates from the left via direction:rtl on the container
+  const segments = data.path.split('/').filter(Boolean);
+  const crumbParts = [`<span onclick="openDirPicker('/')" style="cursor:pointer;color:var(--accent)">/</span>`];
+  let built = '';
+  for (const seg of segments) {
+    built += '/' + seg;
+    const p = built;
+    crumbParts.push(`<span onclick="openDirPicker('${esc(p)}')" style="cursor:pointer;color:var(--accent)">${esc(seg)}</span>`);
+  }
+  const breadcrumb = crumbParts.join('<span style="color:var(--border);margin:0 3px">›</span>');
+
+  const parentLink = data.parent
+    ? `<div class="dir-item" onclick="openDirPicker('${esc(data.parent)}')">
+        <span class="dir-item-icon">↑</span><span style="color:var(--txt2)">.. up</span>
+      </div>`
+    : '';
+
+  const childItems = data.children.length
+    ? data.children.map(c => {
+        const childPath = (data.path === '/' ? '' : data.path) + '/' + c;
+        return `<div class="dir-item" onclick="openDirPicker('${esc(childPath)}')">
+          <span class="dir-item-icon">&#128193;</span>${esc(c)}
+        </div>`;
+      }).join('')
+    : '<div style="padding:14px 16px;color:var(--txt2);font-size:13px;font-style:italic">No subfolders here.</div>';
+
+  // Update existing modal if already open, otherwise create it
+  let overlay = document.getElementById('dirPickerOverlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.className = 'dir-overlay';
+    overlay.id = 'dirPickerOverlay';
+    overlay.addEventListener('click', closeDirPicker);
+    document.body.appendChild(overlay);
+    document.body.style.overflow = 'hidden';
+  }
+
+  overlay.innerHTML = `
+    <div class="dir-modal" onclick="event.stopPropagation()">
+      <div class="dir-modal-header">
+        <span style="flex-shrink:0">&#128193;</span>
+        <span class="dir-breadcrumb">${breadcrumb}</span>
+        <button onclick="closeDirPicker()" style="padding:2px 8px;font-size:12px;flex-shrink:0">✕</button>
+      </div>
+      <div class="dir-list" id="dirList">${parentLink}${childItems}</div>
+      <div class="dir-modal-mkdir" style="flex-wrap:wrap;gap:6px">
+        <span style="font-size:13px;color:var(--txt2);white-space:nowrap">New folder</span>
+        <input type="text" id="newFolderName" placeholder="folder name" style="flex:1;min-width:120px"
+          onkeydown="if(event.key==='Enter') createFolder()">
+        <button onclick="createFolder()" style="white-space:nowrap">Create</button>
+        <span id="mkdirStatus" style="width:100%;font-size:12px;padding-left:2px"></span>
+      </div>
+      <div class="dir-modal-footer">
+        <span style="font-size:12px;color:var(--txt2);flex:1;font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+          title="${esc(data.path)}">${esc(data.path)}</span>
+        <button onclick="closeDirPicker()">Cancel</button>
+        <button class="btn-primary" onclick="selectDirPath()">Select</button>
+      </div>
+    </div>`;
+}
+
+async function openDirPicker(path) {
+  if (path === undefined) path = _dirPickerCurrentPath;
+  let data;
+  try {
+    const r = await fetch('/browse?' + new URLSearchParams({ path: path || '/' }));
+    if (!r.ok) throw new Error(await r.text());
+    data = await r.json();
+  } catch (e) {
+    showToast('Could not browse: ' + e.message);
+    return;
+  }
+  _renderDirPicker(data);
+  if (data.platform_note) showToast(data.platform_note);
+}
+
+async function createFolder() {
+  const nameInput = document.getElementById('newFolderName');
+  const name = (nameInput ? nameInput.value.trim() : '');
+  if (!name || name.includes('/')) { showToast('Enter a valid folder name'); return; }
+  const fullPath = (_dirPickerCurrentPath === '/' ? '' : _dirPickerCurrentPath) + '/' + name;
+  const mkdirStatus = document.getElementById('mkdirStatus');
+  if (mkdirStatus) mkdirStatus.textContent = '';
+  try {
+    const r = await fetch('/browse/mkdir', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: fullPath }),
+    });
+    if (!r.ok) {
+      const e = await r.json().catch(() => ({}));
+      throw new Error(e.detail || r.statusText);
+    }
+    if (nameInput) nameInput.value = '';
+    openDirPicker(_dirPickerCurrentPath);
+  } catch (e) {
+    if (mkdirStatus) { mkdirStatus.textContent = e.message; mkdirStatus.style.color = 'var(--red)'; }
+    else showToast('Could not create folder: ' + e.message);
+  }
+}
+
+function closeDirPicker() {
+  const el = document.getElementById('dirPickerOverlay');
+  if (el) el.remove();
+  document.body.style.overflow = '';
+}
+
+function selectDirPath() {
+  const input = $('settingsRootInput');
+  if (input) {
+    input.value = _dirPickerCurrentPath;
+    fetchRootPreview(_dirPickerCurrentPath);
+  }
+  closeDirPicker();
+}
+
+async function fetchRootPreview(newRoot) {
+  const el = $('rootPreviewMsg');
+  if (!el) return;
+  if (!newRoot) { el.textContent = ''; return; }
+  try {
+    const p = await api(`/settings/root-preview?new_root=${encodeURIComponent(newRoot)}`);
+    if (p.root_changing && p.stale_files > 0) {
+      el.textContent = `All ${p.stale_files} currently indexed file(s) will be cleared and re-indexed from the new path.`;
+    } else if (p.root_changing) {
+      el.textContent = 'Index is empty \u2014 no cleanup needed.';
+    } else {
+      el.textContent = '';
+    }
+  } catch (_) {
+    el.textContent = '';
+  }
+}
+
+// ── Ollama discovery ──────────────────────────────────────────────
+
+function _ollamaParamCount(tags) {
+  const counts = (tags || [])
+    .filter(t => !/^latest$/i.test(String(t)))
+    .map(t => {
+      const m = String(t).match(/(\d+(?:\.\d+)?)\s*([bt])/i);
+      if (!m) return null;
+      const val = parseFloat(m[1]);
+      return /t$/i.test(m[2]) ? val * 1000 : val;
+    }).filter(n => n !== null);
+  return counts.length ? Math.min(...counts) : Infinity;
+}
+
+function ollamaRamHint(tags) {
+  function ram(b) {
+    if (b <= 3)   return '4 GB';
+    if (b <= 7)   return '8 GB';
+    if (b <= 9)   return '12 GB';
+    if (b <= 14)  return '16 GB';
+    if (b <= 34)  return '32 GB';
+    if (b <= 72)  return '64 GB';
+    if (b <= 200) return '80+ GB';
+    return '80+ GB (multi-GPU)';
+  }
+  const allCounts = (tags || [])
+    .filter(t => !/^latest$/i.test(String(t)))
+    .map(t => {
+      const m = String(t).match(/(\d+(?:\.\d+)?)\s*([bt])/i);
+      if (!m) return null;
+      const val = parseFloat(m[1]);
+      return /t$/i.test(m[2]) ? val * 1000 : val;
+    }).filter(n => n !== null);
+  if (!allCounts.length) return null;
+  const min = Math.min(...allCounts);
+  const max = Math.max(...allCounts);
+  return min === max ? ram(min) : `${ram(min)} – ${ram(max)}`;
+}
+
+async function removeOllamaModel(name) {
+  if (!confirm(`Remove "${name}" from Ollama? This frees disk space.`)) return;
+  const status = $('ollamaPullStatus');
+  if (status) status.textContent = `Removing ${name}…`;
+  try {
+    const res = await fetch('/settings/ollama-delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || res.statusText);
+    }
+    if (status) status.textContent = `${name} removed.`;
+    showToast(`${name} removed. It will no longer appear in Chat.`);
+    loadOllamaDiscovery();
+    loadSettings();
+  } catch (e) {
+    if (status) status.textContent = `Error: ${e.message}`;
+  }
+}
+
+async function loadOllamaDiscovery() {
+  try {
+    const d = await api('/settings/ollama-discovery');
+    const local = d.local || [];
+    const catalog = d.catalog || [];
+    const aliasMap = d.alias_map || {};
+
+    // Build a map: base model name → list of installed variants
+    const installedByBase = {};
+    for (const m of local) {
+      const full = m.name || '';
+      const colon = full.indexOf(':');
+      const base    = colon >= 0 ? full.slice(0, colon) : full;
+      const variant = colon >= 0 ? full.slice(colon + 1) : 'latest';
+      const paramSize = (m.details && m.details.parameter_size) || '';
+      const chatAlias = aliasMap[full] || aliasMap[base] || '';
+      if (!installedByBase[base]) installedByBase[base] = [];
+      installedByBase[base].push({ variant, size: m.size, paramSize, chatAlias, full, display_name: m.display_name || '' });
+    }
+
+    // Catalog sorted smallest RAM first; unknown RAM at bottom
+    const sorted = [...catalog].sort((a, b) => _ollamaParamCount(a.tags) - _ollamaParamCount(b.tags));
+    const catalogBases = new Set(sorted.map(m => m.name));
+
+    function hasOllamaCatalogDetails(m) {
+      const d = ((m.description || '') + '').trim();
+      const sizeTags = (m.tags || []).filter(t => !/^latest$/i.test(String(t)));
+      return d.length > 0 || sizeTags.length > 0;
+    }
+
+    // Match a `:latest` variant's parameter_size to a catalog tag.
+    // Ollama returns precise counts like "8.2B"; catalog uses rounded tags like "8b".
+    // We match by finding the tag whose numeric value is closest, as long as they
+    // round to the same integer (e.g. 8.2 and 8 both round to 8).
+    function _matchParamToTag(paramSize, tags) {
+      if (!paramSize || !tags.length) return null;
+      const pNum = parseFloat(paramSize);
+      if (isNaN(pNum) || pNum === 0) return null;
+      const pLow = paramSize.toLowerCase().replace(/\s/g,'');
+      for (const t of tags) {
+        if (t.toLowerCase().replace(/\s/g,'') === pLow) return t;
+      }
+      let best = null, bestDiff = Infinity;
+      for (const t of tags) {
+        const tNum = parseFloat(t);
+        if (isNaN(tNum) || tNum === 0) continue;
+        if (Math.round(tNum) === Math.round(pNum) || Math.abs(tNum - pNum) / pNum < 0.15) {
+          const diff = Math.abs(tNum - pNum);
+          if (diff < bestDiff) { best = t; bestDiff = diff; }
+        }
+      }
+      return best;
+    }
+
+    // Installed bases not in the catalog (no library description/tags)
+    const uncataloguedRowHtmls = Object.keys(installedByBase)
+      .filter(base => !catalogBases.has(base))
+      .map(base => {
+        const variants = installedByBase[base];
+        const label = variants.map(v => v.paramSize || v.variant).join(', ');
+        const aliasTxt = variants[0].chatAlias ? ` → ${variants[0].chatAlias}` : '';
+        const buttons = variants.map(v =>
+          `<button onclick="removeOllamaModel('${esc(v.full)}')" style="font-size:11px;padding:2px 8px;min-width:68px;color:var(--red);border-color:var(--red)" title="Remove ${v.full}">${esc(v.paramSize || v.variant)} ✕</button>`
+        ).join(' ');
+        const extraDisplayName = variants[0] && variants[0].display_name ? variants[0].display_name : base;
+        return `<tr>
+          <td>
+            <div style="font-weight:600;font-size:13px">${esc(extraDisplayName)}</div>
+            <div style="font-size:11px;color:var(--txt2)" class="mono">${esc(base)}</div>
+            <div style="font-size:11px;color:var(--txt2);margin-top:4px;font-style:italic">No description available</div>
+          </td>
+          <td style="font-size:12px;color:var(--txt2)">—</td>
+          <td style="font-size:12px;white-space:nowrap">
+            <span style="color:var(--green)">${esc(label)}</span>
+            ${aliasTxt ? `<div style="color:var(--accent);font-size:11px;font-weight:600;margin-top:2px">${esc(aliasTxt)}</div>` : ''}
+          </td>
+          <td style="white-space:nowrap"><div style="display:flex;gap:4px;flex-wrap:wrap">${buttons}</div></td>
+        </tr>`;
+      });
+
+    function renderOllamaCatalogRow(m) {
+      const desc = (m.description || '').trim();
+      const allTags = (m.tags || []);
+      const sizeTags = allTags.filter(t => !/^latest$/i.test(String(t)));
+      const ram  = ollamaRamHint(m.tags);
+      const variants = installedByBase[m.name] || [];
+      const installedVariants = new Set(variants.map(v => v.variant));
+      const hasLatest = installedVariants.has('latest');
+
+      // If `:latest` is installed, figure out which catalog tag it corresponds to
+      let latestMatchedTag = null;
+      const latestV = hasLatest ? variants.find(v => v.variant === 'latest') : null;
+      if (latestV && sizeTags.length) {
+        latestMatchedTag = _matchParamToTag(latestV.paramSize, sizeTags);
+      }
+
+      const variantButtons = [];
+
+      if (sizeTags.length) {
+        for (const tag of sizeTags) {
+          const fullName = `${m.name}:${tag}`;
+          const isInstalled = installedVariants.has(tag) || tag === latestMatchedTag;
+          const removeName = tag === latestMatchedTag ? `${m.name}:latest` : fullName;
+          if (isInstalled) {
+            variantButtons.push(`<button onclick="removeOllamaModel('${esc(removeName)}')" style="font-size:11px;padding:2px 8px;min-width:68px;color:var(--red);border-color:var(--red)" title="Remove ${removeName}">${esc(tag)} ✕</button>`);
+          } else {
+            variantButtons.push(`<button onclick="pullOllamaModel('${esc(fullName)}', this)" style="font-size:11px;padding:2px 8px;min-width:68px" title="Pull ${fullName}">${esc(tag)}</button>`);
+          }
+        }
+        // `:latest` installed but didn't match any catalog tag — show as separate button
+        if (hasLatest && !latestMatchedTag) {
+          const lbl = (latestV && latestV.paramSize) ? latestV.paramSize : 'installed';
+          variantButtons.push(`<button onclick="removeOllamaModel('${esc(m.name)}:latest')" style="font-size:11px;padding:2px 8px;min-width:68px;color:var(--red);border-color:var(--red)" title="Remove ${m.name}:latest">${esc(lbl)} ✕</button>`);
+        }
+      } else {
+        if (variants.length) {
+          const removeName = variants[0].full;
+          variantButtons.push(`<button onclick="removeOllamaModel('${esc(removeName)}')" style="font-size:11px;padding:2px 8px;min-width:68px;color:var(--red);border-color:var(--red)" title="Remove ${removeName}">Remove</button>`);
+        } else {
+          variantButtons.push(`<button onclick="pullOllamaModel('${esc(m.name)}', this)" style="font-size:11px;padding:2px 8px;min-width:68px" title="Pull ${m.name}">Pull</button>`);
+        }
+      }
+
+      // Installed variants not in catalog tags and not "latest" (e.g. custom tag)
+      for (const v of variants) {
+        if (v.variant !== 'latest' && !sizeTags.includes(v.variant)) {
+          variantButtons.push(`<button onclick="removeOllamaModel('${esc(v.full)}')" style="font-size:11px;padding:2px 8px;min-width:68px;color:var(--red);border-color:var(--red)" title="Remove ${v.full}">${esc(v.variant)} ✕</button>`);
+        }
+      }
+
+      const statusParts = [];
+      for (const v of variants) {
+        if (v.variant !== 'latest') { statusParts.push(v.variant); }
+        else if (latestMatchedTag) { statusParts.push(latestMatchedTag); }
+        else { statusParts.push(v.paramSize || 'installed'); }
+      }
+      const statusLabel = statusParts.length ? statusParts.join(', ') : 'Not installed';
+      const chatAlias = variants.length && variants[0].chatAlias ? variants[0].chatAlias : '';
+      const statusColor = variants.length ? 'var(--green)' : 'var(--txt2)';
+
+      const displayName = m.display_name || m.name;
+      const caps = Array.isArray(m.capabilities) ? m.capabilities : [];
+      const cutoff = m.training_cutoff || '';
+      const capLabels = { code: 'Code', reasoning: 'Reasoning', multilingual: 'Multilingual', tools: 'Tools', fast: 'Fast', vision: 'Vision' };
+      const capBadges = caps.map(c =>
+        `<span style="display:inline-block;padding:1px 6px;border-radius:9px;font-size:10px;font-weight:600;background:var(--cap-${c}-bg,var(--border));color:var(--cap-${c}-fg,var(--txt2));margin:1px 2px 1px 0">${capLabels[c] || c}</span>`
+      ).join('');
+
+      return `<tr>
+        <td>
+          <div style="font-weight:600;font-size:13px">${esc(displayName)}</div>
+          <div style="font-size:11px;color:var(--txt2);margin-top:1px" class="mono">${esc(m.name)}</div>
+          ${desc ? `<div style="font-size:11px;color:var(--txt2);margin-top:4px;max-width:360px;line-height:1.4">${esc(desc)}</div>` : ''}
+          ${capBadges ? `<div style="margin-top:5px">${capBadges}</div>` : ''}
+          ${cutoff ? `<div style="font-size:10px;color:var(--txt2);margin-top:3px">Knowledge cutoff: ${esc(cutoff)}</div>` : ''}
+        </td>
+        <td style="font-size:12px;color:var(--txt2);white-space:nowrap">${ram ? `≥ ${ram} RAM` : '—'}</td>
+        <td style="font-size:12px;white-space:nowrap">
+          <span style="color:${statusColor}">${esc(statusLabel)}</span>
+          ${chatAlias ? `<div style="color:var(--accent);font-size:11px;font-weight:600;margin-top:2px">→ ${esc(chatAlias)}</div>` : ''}
+        </td>
+        <td style="white-space:nowrap"><div style="display:flex;gap:4px;flex-wrap:wrap">${variantButtons.join('')}</div></td>
+      </tr>`;
+    }
+
+    const catalogSparse = sorted.filter(m => !hasOllamaCatalogDetails(m));
+    const catalogMainHtml = sorted.filter(hasOllamaCatalogDetails).map(renderOllamaCatalogRow).join('');
+    const catalogOtherHtml = catalogSparse.map(renderOllamaCatalogRow).join('');
+    const otherModelCount = uncataloguedRowHtmls.length + catalogSparse.length;
+    const ollamaTableThead = '<thead><tr><th>Model</th><th>Min RAM</th><th>Status</th><th>Variants</th></tr></thead>';
+    const mainTableBody = catalogMainHtml
+      ? catalogMainHtml
+      : (otherModelCount > 0
+          ? `<tr><td colspan="4" style="padding:12px;color:var(--txt2);font-size:13px">No catalog models with a description or size tag. Expand <strong>Other models</strong> below.</td></tr>`
+          : `<tr><td colspan="4" style="padding:12px;color:var(--txt2);font-size:13px">No models listed. Use <strong>Pull by name</strong> or check your Ollama installation.</td></tr>`);
+
+    const otherModelsBlock = otherModelCount
+      ? `<details class="ollama-other-models">
+          <summary>Other models (${otherModelCount})</summary>
+          <p style="color:var(--txt2);font-size:12px;margin:10px 0 8px;line-height:1.4">Installed models not in the catalog, or catalog entries without a description or size tag.</p>
+          <div style="overflow-x:auto">
+            <table style="width:100%;border-collapse:collapse;min-width:520px">${ollamaTableThead}<tbody>${uncataloguedRowHtmls.join('')}${catalogOtherHtml}</tbody></table>
+          </div>
+        </details>`
+      : '';
+
+    setHtml('settingsOllama', `
+      <div class="card-header">Local Ollama models</div>
+      <div class="card-body" style="padding:16px">
+        <p style="color:var(--txt2);font-size:13px;margin-bottom:16px">
+          Manage locally-running models. RAM requirements are minimums for q4-quantised weights — more RAM means faster inference.
+        </p>
+        <div style="margin-bottom:14px;display:flex;gap:8px;align-items:center">
+          <input type="text" id="ollamaPullInput" placeholder="e.g. qwen2.5:14b" style="max-width:200px">
+          <button onclick="pullOllamaModel($('ollamaPullInput').value, this)">Pull by name</button>
+        </div>
+        <div style="font-weight:600;margin-bottom:8px;font-size:13px">Available models</div>
+        <div style="overflow-x:auto">
+          <table style="width:100%;border-collapse:collapse;min-width:520px">
+            ${ollamaTableThead}
+            <tbody>${mainTableBody}</tbody>
+          </table>
+        </div>
+        ${otherModelsBlock}
+        <div id="ollamaPullStatus" style="margin-top:12px;font-size:12px;color:var(--txt2)"></div>
+      </div>
+    `);
+    // If a pull is in progress, restore the banner (re-render wipes it).
+    if (_ollamaPulling) {
+      const s = $('ollamaPullStatus');
+      if (s) s.innerHTML = `
+        <div class="pull-banner">
+          <span>Downloading <strong>${esc(_ollamaPulling)}</strong> — this may take several minutes on first pull</span>
+        </div>
+        <div class="pull-bar-wrap"><div class="pull-bar-fill"></div></div>`;
+    }
+  } catch (e) {
+    setHtml('settingsOllama', `
+      <div class="card-header">Local Ollama models</div>
+      <div class="card-body" style="padding:16px;color:var(--txt2);font-size:13px">
+        Could not reach Ollama: ${esc(e.message)}
+      </div>`);
+  }
+}
+
+let _ollamaPulling = null;
+
+async function pullOllamaModel(name, btn) {
+  name = (name || '').trim();
+  if (!name || _ollamaPulling) return;
+  _ollamaPulling = name;
+
+  // Immediately disable the clicked button so the user sees something happened.
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '↓ …';
+  }
+
+  // Show animated banner + indeterminate progress bar above the table.
+  const status = $('ollamaPullStatus');
+  if (status) {
+    status.innerHTML = `
+      <div class="pull-banner">
+        <span>Downloading <strong>${esc(name)}</strong> — this may take several minutes on first pull</span>
+      </div>
+      <div class="pull-bar-wrap"><div class="pull-bar-fill"></div></div>`;
+  }
+
+  try {
+    const res = await fetch('/settings/ollama-pull', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || res.statusText);
+    }
+    _ollamaPulling = null;
+    showToast(`${name} downloaded and ready in Chat.`);
+    loadOllamaDiscovery();
+    loadSettings();
+  } catch (e) {
+    _ollamaPulling = null;
+    // Re-render table first (re-enables buttons), then inject the error message.
+    await loadOllamaDiscovery();
+    const s = $('ollamaPullStatus');
+    if (s) s.innerHTML = `<span style="color:var(--red);font-size:12px">Pull failed: ${esc(e.message)}</span>`;
+  }
+}
+
+// ── Save all + restart ────────────────────────────────────────────
+
+async function applyAndRestart() {
+  const newRoot = $('settingsRootInput')?.value.trim() ?? '';
+  let staleMsg = '';
+  try {
+    const p = await api(`/settings/root-preview?new_root=${encodeURIComponent(newRoot)}`);
+    if (p.root_changing && p.stale_files > 0)
+      staleMsg = ` This will clear ${p.stale_files} indexed file(s) and re-index.`;
+  } catch (_) {}
+
+  if (!confirm(`Save all changes and restart the Lumogis stack?${staleMsg}`)) return;
+
+  const statusEl = $('restartStatus');
+  if (statusEl) statusEl.textContent = 'Saving settings\u2026';
+
+  const payload = {};
+  const rootInput = $('settingsRootInput');
+  if (rootInput) {
+    const rt = rootInput.value.trim();
+    if (rt) payload.filesystem_root = rt;
+  }
+
+  const modelSelect = $('settingsDefaultModel');
+  if (modelSelect && modelSelect.value) payload.default_model = modelSelect.value;
+
+  const api_keys = {};
+  for (const m of (state.settings && state.settings.models || [])) {
+    if (!m.api_key_env) continue;
+    const input = $(`apiKey_${m.api_key_env}`);
+    if (input && input.value.trim()) api_keys[m.api_key_env] = input.value.trim();
+  }
+  if (Object.keys(api_keys).length) payload.api_keys = api_keys;
+
+  const rerankerToggle = $('rerankerToggle');
+  if (rerankerToggle) {
+    // Always send current checkbox state — not only when it differs from
+    // state.settings, which can be stale and would skip the PUT entirely.
+    payload.reranker_enabled = rerankerToggle.checked;
+  }
+
+  // 1. Save settings (writes to DB + host .env)
+  if (Object.keys(payload).length) {
+    try {
+      const r = await fetch('/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        let detail = err.detail ?? r.statusText;
+        if (Array.isArray(detail)) {
+          detail = detail.map((x) => (x && x.msg) || JSON.stringify(x)).join('; ');
+        } else if (detail && typeof detail === 'object') {
+          detail = JSON.stringify(detail);
+        }
+        if (statusEl) statusEl.textContent = `Save failed: ${detail}`;
+        return;
+      }
+    } catch (e) {
+      if (statusEl) statusEl.textContent = `Save failed: ${e.message}`;
+      return;
+    }
+  }
+
+  // 2. Trigger restart (response may never arrive if root changed — self-restart race)
+  if (statusEl) statusEl.textContent = 'Restarting stack\u2026';
+  try {
+    const rr = await fetch('/settings/restart', { method: 'POST' });
+    if (rr.ok) {
+      showToast('Restart triggered.');
+    } else {
+      const err = await rr.json().catch(() => ({}));
+      if (statusEl) statusEl.textContent = `Restart failed: ${err.detail || rr.statusText}`;
+      return;
+    }
+  } catch (_) {
+    // Network error expected when root changes (container killed during recreate)
+  }
+
+  // 3. Poll health until the stack comes back (max 90 s)
+  if (statusEl) statusEl.textContent = 'Waiting for stack to come back up\u2026';
+  const deadline = Date.now() + 90_000;
+  let connected = false;
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 2000));
+    try {
+      const h = await fetch('/health');
+      if (h.ok) { connected = true; break; }
+    } catch (_) {}
+  }
+  if (!connected) {
+    if (statusEl) statusEl.textContent = 'Stack did not come back up within 90 s. Check docker compose logs.';
+    return;
+  }
+
+  // 4. Check pending_prune flag from the (possibly new) container
+  let needsPrune = false;
+  try {
+    const s = await api('/settings');
+    needsPrune = s.pending_prune === true;
+  } catch (_) {}
+
+  // 5. Prune stale entries + re-index if the root changed
+  if (needsPrune) {
+    if (statusEl) statusEl.textContent = 'Pruning stale index entries\u2026';
+    try {
+      const pr = await api('/settings/prune', { method: 'POST' });
+      if (pr.pruned_files > 0) showToast(`Removed ${pr.pruned_files} stale file(s) from index.`);
+    } catch (e) {
+      showToast(`Prune error: ${e.message}`);
+    }
+
+    if (statusEl) statusEl.textContent = 'Indexing files under new root\u2026';
+    try {
+      await fetch('/ingest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: '/data' }),
+      });
+    } catch (_) {}
+  }
+
+  if (statusEl) statusEl.textContent = needsPrune ? 'Root changed \u2014 re-indexing in background.' : 'Done.';
+  showToast('Stack restarted successfully.');
+  loadSettings();
+}
+
+function cancelSettings() {
+  loadSettings();
+  showToast('Changes discarded');
+}
+
 // ── Health panel ──────────────────────────────────────────────────
 async function loadHealth() {
   try {
     const d = await api('/');
+    state.health = d;
     const services = d.services || {};
     setHtml('healthServices', Object.entries(services).map(([k, v]) =>
       `<div class="service-badge"><div class="badge-dot ${v}"></div><span>${esc(k)}</span><span style="color:var(--txt2);font-size:11px">${esc(v)}</span></div>`
@@ -689,7 +1683,16 @@ async function triggerExport() {
 
 // ── Init ──────────────────────────────────────────────────────────
 initSSE();
-loadHealth();
+loadHealth().then(() => {
+  // On first run (no data + no API keys) auto-open Settings so the user
+  // is immediately guided to finish setup rather than landing on an empty
+  // Health dashboard.
+  if (state.health && state.health.setup_needed && !sessionStorage.getItem('setup_dismissed')) {
+    switchTab('settings');
+    const banner = document.getElementById('setupBanner');
+    if (banner) banner.style.display = 'block';
+  }
+});
 </script>
 </body>
 </html>

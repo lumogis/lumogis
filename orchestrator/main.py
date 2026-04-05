@@ -8,6 +8,7 @@ and router includes. All endpoint logic lives in routes/.
 """
 
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -40,12 +41,13 @@ _COLLECTIONS = ["documents", "conversations", "entities", "signals"]
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _log.info("Startup: pinging backends...")
-    backends = {
-        "vector_store": config.get_vector_store(),
-        "metadata_store": config.get_metadata_store(),
-        "embedder": config.get_embedder(),
-    }
-    for name, backend in backends.items():
+
+    # Qdrant and Postgres are hard requirements — crash if unavailable.
+    for name, getter in [
+        ("vector_store", config.get_vector_store),
+        ("metadata_store", config.get_metadata_store),
+    ]:
+        backend = getter()
         if not backend.ping():
             raise RuntimeError(
                 f"STARTUP FAILED: {name} ({type(backend).__name__}) is unreachable. "
@@ -53,16 +55,53 @@ async def lifespan(app: FastAPI):
             )
         _log.info("  %s (%s): OK", name, type(backend).__name__)
 
-    embedder = backends["embedder"]
-    vs = backends["vector_store"]
-    dim = embedder.vector_size
-    _log.info("Embedder vector size: %d", dim)
-    for coll in _COLLECTIONS:
-        vs.create_collection(coll, dim)
+    # Embedder is a soft requirement — start in degraded mode if model unavailable.
+    # ping() checks both Ollama liveness AND model presence (via /api/show).
+    # False means "Ollama is down" OR "model not yet pulled" — log covers both.
+    embedder = config.get_embedder()
+    _embedding_ready = False
+    if not embedder.ping():
+        _log.warning(
+            "Embedding model not ready at startup (Ollama unreachable or %s not pulled). "
+            "Search and ingest will be unavailable. "
+            "Open http://localhost:8000/dashboard → Settings → Models to pull the model, "
+            "or check that the Ollama service is running.",
+            os.environ.get("EMBEDDING_MODEL", "nomic-embed-text"),
+        )
+    else:
+        try:
+            vs = config.get_vector_store()
+            dim = embedder.vector_size
+            for coll in _COLLECTIONS:
+                vs.create_collection(coll, dim)
+            _embedding_ready = True
+            _log.info("Embedder vector size: %d — collections ready", dim)
+        except Exception as exc:
+            _log.warning(
+                "Embedding model not ready (%s). "
+                "Qdrant collections will be created when the model becomes available. "
+                "Pull %s via http://localhost:8000/dashboard → Settings → Models.",
+                exc,
+                os.environ.get("EMBEDDING_MODEL", "nomic-embed-text"),
+            )
 
-    reranker = config.get_reranker()
-    if reranker is not None:
-        reranker.warmup()
+    app.state.embedding_ready = _embedding_ready
+
+    try:
+        reranker = config.get_reranker()
+    except Exception as exc:
+        _log.warning("Reranker failed to load (%s) — search will proceed without reranking", exc)
+        config._instances["reranker"] = None
+        reranker = None
+
+    if reranker is not None and _embedding_ready:
+        try:
+            reranker.warmup()
+        except Exception as exc:
+            _log.warning("Reranker warmup failed (%s) — search will proceed without reranking", exc)
+            config._instances["reranker"] = None
+    elif reranker is not None:
+        _log.info("Reranker warmup skipped — embedding not ready")
     else:
         _log.info("Reranker disabled (RERANKER_BACKEND=none)")
 
@@ -93,6 +132,24 @@ async def lifespan(app: FastAPI):
     from services.routines import register_all as register_routines
 
     register_routines()
+
+    from librechat_config import generate_librechat_yaml
+
+    if generate_librechat_yaml():
+        import httpx as _httpx
+        from routes.admin import _current_restart_secret
+
+        _sc_url = os.environ.get("STACK_CONTROL_URL", "http://stack-control:9000")
+        try:
+            _httpx.post(
+                f"{_sc_url}/restart",
+                json={"services": ["librechat"]},
+                headers={"X-Lumogis-Restart-Token": _current_restart_secret()},
+                timeout=30,
+            )
+            _log.info("LibreChat restarted with generated config")
+        except Exception as exc:
+            _log.warning("Could not restart LibreChat: %s", exc)
 
     _log.info("Startup complete")
     yield

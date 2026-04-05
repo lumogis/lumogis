@@ -19,7 +19,6 @@ from datetime import timezone
 from urllib.parse import urljoin
 from urllib.parse import urlparse
 
-import feedparser
 import httpx
 from models.signals import Signal
 from models.signals import SourceConfig
@@ -64,6 +63,8 @@ class RSSSource:
 
     def poll(self) -> list[Signal]:
         """Fetch and normalise the feed. Returns up to 20 most-recent signals."""
+        import feedparser  # Docker-only dep; lazy to keep local tests dependency-free
+
         url = self._get_feed_url()
         try:
             feed = feedparser.parse(url)
@@ -111,6 +112,8 @@ class RSSSource:
         return self._feed_url
 
     def _detect_feed_url(self) -> str:
+        import feedparser  # Docker-only dep; lazy to keep local tests dependency-free
+
         base = self._config.url
 
         # 1. Check if the base URL is already a valid feed.
@@ -206,6 +209,8 @@ class RSSSource:
             last_polled_at=None,
             last_signal_at=None,
         )
+        import feedparser  # Docker-only dep; lazy to keep local tests dependency-free
+
         instance = cls(dummy)
         feed_url = instance._detect_feed_url()
         try:

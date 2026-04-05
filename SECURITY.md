@@ -15,7 +15,6 @@ Instead, email **lumogis@pm.me** with:
 
 - A description of the vulnerability
 - Reproduction steps (as minimal as possible)
-- The output of `scripts/detect-hardware.sh` if relevant
 - Your OS and Docker version
 - Whether you believe it is already being exploited
 

@@ -1,0 +1,177 @@
+[
+  {
+    "name": "llama3.2",
+    "description": "Meta's Llama 3.2 is a fast, compact multilingual model well-suited to everyday chat, summaries, and translation. It runs comfortably on a single consumer GPU and is the best starting point for most new users.",
+    "capabilities": ["multilingual", "fast"],
+    "training_cutoff": "~Early 2024",
+    "tags": ["1b", "3b"]
+  },
+  {
+    "name": "llama3.1",
+    "description": "Meta's Llama 3.1 offers stronger reasoning and instruction-following than 3.2, making it a solid mid-range choice when accuracy matters more than raw speed. Supports function calling for agentic use cases.",
+    "capabilities": ["reasoning", "tools", "multilingual"],
+    "training_cutoff": "~Early 2024",
+    "tags": ["8b", "70b"]
+  },
+  {
+    "name": "qwen2.5",
+    "description": "Alibaba's Qwen 2.5 is a general-purpose model with exceptional multilingual coverage spanning 29 languages and strong analytical reasoning. It scales from 7 B to 72 B parameters, offering a size for every GPU budget.",
+    "capabilities": ["multilingual", "reasoning", "tools"],
+    "training_cutoff": "~Mid 2024",
+    "tags": ["7b", "14b", "32b", "72b"]
+  },
+  {
+    "name": "qwen2.5-coder",
+    "description": "A specialised code model from Alibaba's Qwen 2.5 family, optimised for code generation, debugging, and code review across 92 programming languages. It supports repo-level context and is a strong alternative to GitHub Copilot for local use.",
+    "capabilities": ["code", "tools"],
+    "training_cutoff": "~Mid 2024",
+    "tags": ["7b", "14b", "32b"]
+  },
+  {
+    "name": "qwen3",
+    "description": "Alibaba's third-generation Qwen model with a hybrid thinking mode that can toggle between fast answers and deep step-by-step reasoning. It delivers top-tier quality across coding, maths, and multilingual tasks.",
+    "capabilities": ["reasoning", "code", "multilingual", "tools"],
+    "training_cutoff": "~Early 2025",
+    "tags": ["4b", "8b", "14b", "32b"]
+  },
+  {
+    "name": "qwen3-coder",
+    "description": "Alibaba's flagship coding model combining Qwen 3's hybrid reasoning with deep software engineering capability. Designed for autonomous coding agents that can plan, write, and debug entire projects.",
+    "capabilities": ["code", "reasoning", "tools"],
+    "training_cutoff": "~Early 2025",
+    "tags": ["480b"]
+  },
+  {
+    "name": "qwen3.5",
+    "description": "An updated mid-size Qwen model from Alibaba that improves on Qwen 3 in instruction-following and nuanced reasoning. Available in a very large MoE configuration offering frontier-level quality.",
+    "capabilities": ["reasoning", "multilingual", "tools"],
+    "training_cutoff": "~Mid 2025",
+    "tags": ["397b"]
+  },
+  {
+    "name": "phi4",
+    "description": "Microsoft's Phi-4 is a 14 B model that punches well above its weight for structured reasoning and STEM tasks. Its small footprint makes it easy to run locally while still competing with models several times larger.",
+    "capabilities": ["reasoning", "code"],
+    "training_cutoff": "~Mid 2024",
+    "tags": ["14b"]
+  },
+  {
+    "name": "phi4-mini",
+    "description": "Microsoft's Phi-4 Mini is a compact 3.8 B model that fits on nearly any hardware with 4 GB of VRAM. Surprisingly capable for everyday questions, short writing tasks, and simple code.",
+    "capabilities": ["fast", "reasoning"],
+    "training_cutoff": "~Mid 2024",
+    "tags": ["3.8b"]
+  },
+  {
+    "name": "gemma3",
+    "description": "Google's Gemma 3 is a lightweight open model series released under a permissive licence. It performs well on coding and instruction tasks and supports a 128 K context window in the larger variants.",
+    "capabilities": ["code", "multilingual", "vision"],
+    "training_cutoff": "~Early 2025",
+    "tags": ["4b", "12b", "27b"]
+  },
+  {
+    "name": "mistral",
+    "description": "Mistral 7B is a fast, efficient open-weight model from Mistral AI. It's a great all-rounder for modest hardware and excels at concise answers, classification, and structured extraction.",
+    "capabilities": ["fast", "tools"],
+    "training_cutoff": "~Early 2024",
+    "tags": ["7b"]
+  },
+  {
+    "name": "ministral-3",
+    "description": "Mistral's compact model — at 3 B parameters it runs on almost any laptop and still handles simple Q&A, drafting, and classification tasks reliably. The 8 B variant adds noticeably stronger reasoning.",
+    "capabilities": ["fast"],
+    "training_cutoff": "~Mid 2024",
+    "tags": ["3b", "8b"]
+  },
+  {
+    "name": "devstral-2",
+    "description": "Mistral's Devstral 2 is a 24 B model purpose-built for software engineering agents that browse code repositories, execute tools, and iterate autonomously. Strong on complex multi-file edits.",
+    "capabilities": ["code", "tools", "reasoning"],
+    "training_cutoff": "~Mid 2025",
+    "tags": ["24b"]
+  },
+  {
+    "name": "devstral-small-2",
+    "description": "A smaller, faster variant of Mistral's Devstral 2 designed to run on consumer-grade GPUs while retaining strong coding and tool-use capabilities.",
+    "capabilities": ["code", "tools"],
+    "training_cutoff": "~Mid 2025",
+    "tags": ["24b"]
+  },
+  {
+    "name": "deepseek-r1",
+    "description": "DeepSeek R1 is a reasoning-focused model that externalises its chain-of-thought before answering. It shines on maths, logic puzzles, and complex multi-step problems where showing the working matters.",
+    "capabilities": ["reasoning", "code"],
+    "training_cutoff": "~Mid 2024",
+    "tags": ["7b", "14b", "32b"]
+  },
+  {
+    "name": "deepseek-v3.1",
+    "description": "DeepSeek V3.1 is a 671 B mixture-of-experts model competitive with frontier closed-source models. It combines strong code generation, multilingual fluency, and long-context understanding.",
+    "capabilities": ["reasoning", "code", "multilingual", "tools"],
+    "training_cutoff": "~Early 2025",
+    "tags": ["671b"]
+  },
+  {
+    "name": "deepseek-v3.2",
+    "description": "An updated release of DeepSeek's flagship MoE model with improvements to instruction-following, function calling, and coding accuracy. Still runs as a single MoE deployment at 671 B total parameters.",
+    "capabilities": ["reasoning", "code", "multilingual", "tools"],
+    "training_cutoff": "~Mid 2025",
+    "tags": ["671b"]
+  },
+  {
+    "name": "gpt-oss",
+    "description": "OpenAI's open-weight models distributed through Ollama. Useful for experimenting with OpenAI-trained architectures fully offline.",
+    "capabilities": ["reasoning", "multilingual"],
+    "training_cutoff": "~Mid 2025",
+    "tags": ["20b", "120b"]
+  },
+  {
+    "name": "cogito",
+    "description": "Deep Cogito's large reasoning model with strong chain-of-thought performance on complex analytical tasks. Available at frontier scale for demanding workloads.",
+    "capabilities": ["reasoning"],
+    "training_cutoff": "~Early 2025",
+    "tags": ["671b"]
+  },
+  {
+    "name": "glm-4",
+    "description": "Zhipu AI's GLM-4 is a bilingual model with particularly strong Chinese and English fluency. It handles long documents, structured extraction, and code well at 9 B parameters.",
+    "capabilities": ["multilingual", "code", "tools"],
+    "training_cutoff": "~Mid 2024",
+    "tags": ["9b"]
+  },
+  {
+    "name": "glm-4.5",
+    "description": "An updated generation of Zhipu AI's GLM family with improved reasoning and instruction-following over GLM-4. Suitable for Chinese-language document analysis and bilingual agent tasks.",
+    "capabilities": ["multilingual", "reasoning", "tools"],
+    "training_cutoff": "~Early 2025",
+    "tags": ["latest"]
+  },
+  {
+    "name": "nemotron-3-nano",
+    "description": "NVIDIA's Nemotron-3 Nano is a compact model optimised for energy efficiency on NVIDIA hardware. Designed for on-device inference where power and memory are constrained.",
+    "capabilities": ["fast", "reasoning"],
+    "training_cutoff": "~Mid 2024",
+    "tags": ["30b"]
+  },
+  {
+    "name": "nemotron-3-super",
+    "description": "NVIDIA's Nemotron-3 Super is a large reasoning model targeting high-quality STEM and coding benchmarks while leveraging NVIDIA's training infrastructure.",
+    "capabilities": ["reasoning", "code"],
+    "training_cutoff": "~Mid 2024",
+    "tags": ["49b"]
+  },
+  {
+    "name": "kimi-k2",
+    "description": "Moonshot's Kimi K2 is a massive 1-trillion-parameter mixture-of-experts model built for complex reasoning, long-context understanding, and agentic tasks. Requires significant hardware.",
+    "capabilities": ["reasoning", "tools", "multilingual"],
+    "training_cutoff": "~Early 2025",
+    "tags": ["1t"]
+  },
+  {
+    "name": "nomic-embed-text",
+    "description": "Nomic's embed-text model produces high-quality text embeddings for semantic search and retrieval. Used by Lumogis as the default embedding model for file and document search.",
+    "capabilities": [],
+    "training_cutoff": "~Early 2024",
+    "tags": ["latest"]
+  }
+]

@@ -226,6 +226,10 @@ class QdrantStore:
             points_selector=[id],
         )
 
+    def delete_where(self, collection: str, filter: dict) -> None:
+        q_filter = self._build_filter(filter)
+        self._client.delete(collection_name=collection, points_selector=q_filter)
+
     def count(self, collection: str) -> int:
         info = self._client.get_collection(collection_name=collection)
         return info.points_count or 0

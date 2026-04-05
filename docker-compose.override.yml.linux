@@ -1,0 +1,11 @@
+# Linux host filesystem mounts for the folder browser.
+# Copy this file to docker-compose.override.yml and run: docker compose up -d
+#
+# This gives the orchestrator read-only access to your host filesystem
+# so the dashboard folder browser can navigate your local directories.
+services:
+  orchestrator:
+    environment:
+      HOST_OS: linux
+    volumes:
+      - /:/host:ro

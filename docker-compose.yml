@@ -1,28 +1,61 @@
 services:
   orchestrator:
-    build: ./orchestrator
+    build:
+      context: .
+      dockerfile: orchestrator/Dockerfile
     ports:
     - "8000:8000"
     env_file: .env
     environment:
       FILESYSTEM_ROOT: /data
+      FILESYSTEM_ROOT_HOST: ${FILESYSTEM_ROOT:-./lumogis-data}
+      STACK_CONTROL_URL: http://stack-control:9000
     volumes:
-      - ${FILESYSTEM_ROOT:-/tmp/lumogis-data}:/data:ro
-      - ./config/models.yaml:/app/models.yaml:ro
+      - ${FILESYSTEM_ROOT:-./lumogis-data}:/data:ro
+      # Project root — admin.py writes /project/.env (RERANKER_BACKEND, FILESYSTEM_ROOT),
+      # librechat_config.py writes /project/config/librechat.yaml, and entrypoint.sh
+      # generates secrets in /project/.env on first boot.
+      # Directory mount avoids Docker's single-file bind mount bug where individual
+      # file mounts (./.env:/app/host.env) create empty directories instead of files.
+      - .:/project
       - ./ai-workspace:/workspace
+      # HuggingFace model cache — persists BGE reranker weights across container rebuilds
+      - hf_cache:/root/.cache/huggingface
     depends_on:
-      - qdrant
-      - postgres
+      qdrant:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+      stack-control:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 300s
+    restart: unless-stopped
 
   qdrant:
-    image: qdrant/qdrant:latest
+    build:
+      context: ./docker/qdrant
+    image: lumogis-qdrant:v1.14.1
     ports:
       - "6333:6333"
     volumes:
       - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "-o", "/dev/null", "http://127.0.0.1:6333/readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+      start_period: 45s
+    restart: unless-stopped
 
   postgres:
-    image: postgres:16
+    image: postgres:16.8
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-lumogis}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lumogis-dev}
@@ -30,17 +63,29 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-lumogis}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
 
   # Activepieces (optional automation UI) — see docker-compose.activepieces.yml
   # FalkorDB graph store (for graph plugins) — see docker-compose.falkordb.yml
 
   mongodb:
-    image: mongo:7
+    image: mongo:7.0
     volumes:
       - mongodb_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')", "--quiet"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
 
   librechat:
-    image: ghcr.io/danny-avila/librechat:latest
+    image: ghcr.io/danny-avila/librechat:v0.7.9
     ports:
       - "3080:3080"
     env_file: .env
@@ -51,6 +96,7 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
       APP_TITLE: ${APP_TITLE:-Lumogis}
+      CUSTOM_FOOTER: ${CUSTOM_FOOTER:-[Dashboard & Settings](http://localhost:8000/dashboard)}
     volumes:
       - ./config/librechat.yaml:/app/librechat.yaml:ro
       - ./branding/favicon-16x16.png:/app/client/public/assets/favicon-16x16.png:ro
@@ -60,14 +106,49 @@ services:
       - ./branding/logo.svg:/app/client/public/assets/logo.svg:ro
       - ./branding/logo.svg:/app/client/dist/assets/logo.svg:ro
     depends_on:
-      - orchestrator
-      - mongodb
+      orchestrator:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3080 2>/dev/null || curl -sf http://localhost:3080 2>/dev/null || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+
+  stack-control:
+    build:
+      context: ./stack-control
+    env_file: .env
+    environment:
+      RESTART_SECRET: ${RESTART_SECRET:-}
+      COMPOSE_FILE: ${COMPOSE_FILE:-docker-compose.yml}
+      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - .:/project:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    # No host ports — only reachable from within the Docker network
 
   ollama:
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.9.0
     volumes:
       - ollama_data:/root/.ollama
-    # GPU support added via docker-compose.gpu.yml (set by make setup)
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list > /dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+    # GPU support added via docker-compose.gpu.yml (set COMPOSE_FILE in .env)
 
   # LiteLLM is optional — see docker-compose.litellm.yml
   # Enable for rate limiting, spend tracking, and observability.
@@ -95,4 +176,5 @@ volumes:
   ollama_data:
   qdrant_data:
   postgres_data:
+  hf_cache:      # HuggingFace model cache — persists across container rebuilds (BGE reranker)
   # ntfy_data:   # uncomment if ntfy service above is enabled

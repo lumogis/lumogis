@@ -16,22 +16,37 @@ Common setup and runtime issues.
 
 ---
 
-## `ping()` failure on startup
+## `ping()` failure on startup — Qdrant or Postgres unreachable
 
 **Symptoms:** Orchestrator exits immediately with `STARTUP FAILED: <backend> is unreachable`.
 
 **Causes and fixes:**
 
-- The named service (Qdrant, PostgreSQL, Ollama, or LiteLLM) has not finished initialising yet. Docker Compose `depends_on` does not wait for the service to be *ready*, only started.
-- Run `docker compose ps` to check service health.
-- Restart just the orchestrator: `docker compose restart orchestrator`.
+- Qdrant and Postgres are hard requirements — the orchestrator will not start if either is unreachable. With Docker-first healthchecks, `depends_on: condition: service_healthy` should prevent this on a clean start.
+- If it still occurs: run `docker compose ps` to see which service is unhealthy.
 - Check the failing service's logs: `docker compose logs -f <service>`.
+- Restart the full stack: `docker compose up -d`. Services restart automatically (`restart: unless-stopped`).
+
+---
+
+## Embedding model not available — search and ingest unavailable
+
+**Symptoms:** `GET /` returns `"embedding_model_ready": false`. Search, ingest, and RAG return HTTP 503.
+
+**Cause:** The embedding model (`nomic-embed-text` by default) has not been pulled into Ollama yet. On first start, the orchestrator entrypoint script pulls it automatically — but this can fail on slow or metered connections.
+
+**Fixes:**
+
+1. Check the entrypoint log: `docker compose logs orchestrator | grep entrypoint`
+2. Pull manually via the dashboard: open **http://localhost:8000/dashboard → Settings → Models** and click Pull next to `nomic-embed-text`.
+3. Or pull via CLI: `docker exec lumogis-ollama-1 ollama pull nomic-embed-text`
+4. After a successful pull, click **Restart** in the dashboard, or run `docker compose restart orchestrator`.
 
 ---
 
 ## GPU not detected by Docker
 
-**Symptoms:** `scripts/detect-hardware.sh` shows GPU available but Docker containers cannot see it.
+**Symptoms:** GPU is available on the host but Docker containers cannot see it.
 
 **Causes and fixes:**
 
@@ -73,3 +88,17 @@ docker compose up
 ```
 
 All previously indexed documents will need to be re-ingested.
+
+---
+
+## Dashboard “Save & restart” fails (stack-control / Docker socket)
+
+**Symptoms:** `permission denied while trying to connect to the docker API at unix:///var/run/docker.sock` in `docker compose logs stack-control`, or a restart error in the dashboard that now includes the stack-control message.
+
+**Cause:** The `stack-control` service must mount the host’s Docker socket. The image uses an **entrypoint** that reads the socket’s group at **container start** and adds the `appuser` to that group so `docker compose restart` works on Linux, Docker Desktop (macOS/Windows), and different distros without setting `DOCKER_GID` in `.env`.
+
+**Fixes:**
+
+- Confirm compose still has `- /var/run/docker.sock:/var/run/docker.sock` for `stack-control`.
+- **Recreate** the container after upgrading: `docker compose build stack-control && docker compose up -d stack-control`.
+- If you use a **custom** socket path, mount it at `/var/run/docker.sock` inside the container or adjust the stack-control service (advanced).

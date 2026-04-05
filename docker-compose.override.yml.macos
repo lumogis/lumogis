@@ -1,0 +1,12 @@
+# macOS host filesystem mounts for the folder browser.
+# Copy this file to docker-compose.override.yml and run: docker compose up -d
+#
+# Docker Desktop on macOS exposes /Users and /Volumes as real host paths.
+# The orchestrator gets read-only access to browse and index your files.
+services:
+  orchestrator:
+    environment:
+      HOST_OS: macos
+    volumes:
+      - /Users:/host/Users:ro
+      - /Volumes:/host/Volumes:ro
