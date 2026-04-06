@@ -97,6 +97,8 @@ services:
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
       APP_TITLE: ${APP_TITLE:-Lumogis}
       CUSTOM_FOOTER: ${CUSTOM_FOOTER:-[Dashboard & Settings](http://localhost:8000/dashboard)}
+      # LibreChat hides email sign-up unless this is true (see routes/config registrationEnabled).
+      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-true}
     volumes:
       - ./config/librechat.yaml:/app/librechat.yaml:ro
       - ./branding/favicon-16x16.png:/app/client/public/assets/favicon-16x16.png:ro
