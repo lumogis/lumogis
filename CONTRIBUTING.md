@@ -329,7 +329,9 @@ No code changes to lumogis are required. The PR modifies only `COMMUNITY-PLUGINS
 
 ## Governance
 
-Thomas reviews all PRs. Target review time: 48 hours.
+Maintainers review PRs. We aim for a first response within **48 hours**.
+
+**Pushing to the public GitHub repo:** see [docs/maintainers.md](docs/maintainers.md) so only paths meant for the public tree are published.
 
 **PRs must:**
 - Pass `make lint` (ruff check + format)

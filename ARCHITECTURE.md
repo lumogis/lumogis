@@ -238,7 +238,7 @@ def status(): ...
 Plugins may import from: `ports/`, `models/`, `events.py`, `hooks.py`.
 Plugins must **never** import from: `services/`, `adapters/`, `config.py`.
 
-Named plugin directories are listed in `.gitignore` so that plugin packages developed outside this repository can be mounted at deploy time without being tracked here. The orchestrator loads whatever is present — plugins are additive, never required. See [ADR-005](docs/decisions/005-open-core-boundary.md).
+Named plugin directories are listed in `.gitignore` so that plugin packages developed outside this repository can be mounted at deploy time without being tracked here. The orchestrator loads whatever is present — plugins are additive, never required. See [ADR-005](docs/decisions/005-plugin-boundary.md).
 
 ---
 
