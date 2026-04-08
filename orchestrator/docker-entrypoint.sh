@@ -4,6 +4,9 @@
 
 OLLAMA_URL="${OLLAMA_URL:-http://ollama:11434}"
 EMBEDDING_MODEL="${EMBEDDING_MODEL:-nomic-embed-text}"
+# Comma-separated chat LLM(s) to pull after the embedder (default: small Llama 3.2).
+# Use OLLAMA_EXTRA_MODELS= to disable (empty).
+OLLAMA_EXTRA_MODELS="${OLLAMA_EXTRA_MODELS-llama3.2:3b}"
 HOST_ENV="/project/.env"
 
 # ── Auto-generate secrets ────────────────────────────────────────────────────
@@ -62,6 +65,38 @@ else
         echo "[entrypoint] Use the dashboard (Settings → Models) to pull it manually." >&2
         # Do NOT exit — let the orchestrator start in degraded mode.
     fi
+fi
+
+# Optional chat LLM(s) pulled after the embedder (see OLLAMA_EXTRA_MODELS).
+_ensure_ollama_model() {
+    _name="$1"
+    [ -z "$_name" ] && return 0
+    if curl -sf -X POST "$OLLAMA_URL/api/show" \
+           -H "Content-Type: application/json" \
+           -d "{\"name\": \"$_name\"}" > /dev/null 2>&1; then
+        echo "[entrypoint] $_name already present."
+        return 0
+    fi
+    echo "[entrypoint] Pulling $_name (may take several minutes on first start)..."
+    if curl -sf -X POST "$OLLAMA_URL/api/pull" \
+           -H "Content-Type: application/json" \
+           -d "{\"name\": \"$_name\", \"stream\": false}" \
+           > /dev/null 2>&1; then
+        echo "[entrypoint] $_name pulled successfully."
+    else
+        echo "[entrypoint] WARNING: Failed to pull $_name." >&2
+        echo "[entrypoint] Pull it from the dashboard (Settings → Models) or: docker compose exec ollama ollama pull $_name" >&2
+    fi
+}
+
+if [ -n "$OLLAMA_EXTRA_MODELS" ]; then
+    _old_ifs="$IFS"
+    IFS=','
+    for _raw in $OLLAMA_EXTRA_MODELS; do
+        _m="$(echo "$_raw" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+        [ -n "$_m" ] && _ensure_ollama_model "$_m"
+    done
+    IFS="$_old_ifs"
 fi
 
 exec "$@"

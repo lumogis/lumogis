@@ -159,6 +159,18 @@ tr:hover td { background: var(--surface); }
   background: var(--accent); border-radius: 2px;
   animation: pull-sweep 1.6s ease-in-out infinite;
 }
+@keyframes pull-spin {
+  to { transform: rotate(360deg); }
+}
+.pull-spinner {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: pull-spin 0.75s linear infinite;
+}
 /* Ollama "Other models" disclosure — keep marker inside padding (outside sits on border) */
 .ollama-other-models {
   margin-top: 14px;
@@ -595,12 +607,12 @@ function initSSE() {
   connect();
 }
 
-function showToast(msg) {
+function showToast(msg, durationMs) {
   const t = document.createElement('div');
-  t.style.cssText = 'position:fixed;bottom:20px;right:20px;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:10px 16px;font-size:13px;z-index:999;box-shadow:0 4px 12px rgba(0,0,0,.3)';
+  t.style.cssText = 'position:fixed;bottom:20px;right:20px;max-width:min(420px,calc(100vw - 40px));background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:10px 16px;font-size:13px;z-index:999;box-shadow:0 4px 12px rgba(0,0,0,.3)';
   t.textContent = msg;
   document.body.appendChild(t);
-  setTimeout(() => t.remove(), 5000);
+  setTimeout(() => t.remove(), durationMs != null ? durationMs : 5000);
 }
 
 // ── Settings panel ───────────────────────────────────────────────
@@ -1226,10 +1238,11 @@ async function loadOllamaDiscovery() {
     setHtml('settingsOllama', `
       <div class="card-header">Local Ollama models</div>
       <div class="card-body" style="padding:16px">
-        <p style="color:var(--txt2);font-size:13px;margin-bottom:16px">
+        <p style="color:var(--txt2);font-size:13px;margin-bottom:12px">
           Manage locally-running models. RAM requirements are minimums for q4-quantised weights — more RAM means faster inference.
         </p>
-        <div style="margin-bottom:14px;display:flex;gap:8px;align-items:center">
+        <div id="ollamaPullStatus" style="margin-bottom:14px;font-size:12px;color:var(--txt2);min-height:0"></div>
+        <div style="margin-bottom:14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <input type="text" id="ollamaPullInput" placeholder="e.g. qwen2.5:14b" style="max-width:200px">
           <button onclick="pullOllamaModel($('ollamaPullInput').value, this)">Pull by name</button>
         </div>
@@ -1241,7 +1254,6 @@ async function loadOllamaDiscovery() {
           </table>
         </div>
         ${otherModelsBlock}
-        <div id="ollamaPullStatus" style="margin-top:12px;font-size:12px;color:var(--txt2)"></div>
       </div>
     `);
     // If a pull is in progress, restore the banner (re-render wipes it).
@@ -1249,6 +1261,7 @@ async function loadOllamaDiscovery() {
       const s = $('ollamaPullStatus');
       if (s) s.innerHTML = `
         <div class="pull-banner">
+          <div class="pull-spinner" role="status" aria-label="Loading"></div>
           <span>Downloading <strong>${esc(_ollamaPulling)}</strong> — this may take several minutes on first pull</span>
         </div>
         <div class="pull-bar-wrap"><div class="pull-bar-fill"></div></div>`;
@@ -1266,7 +1279,14 @@ let _ollamaPulling = null;
 
 async function pullOllamaModel(name, btn) {
   name = (name || '').trim();
-  if (!name || _ollamaPulling) return;
+  if (!name) {
+    showToast('Enter a model name (e.g. gemma4:e4b).');
+    return;
+  }
+  if (_ollamaPulling) {
+    showToast(`Already pulling ${_ollamaPulling}. Wait for it to finish.`, 6000);
+    return;
+  }
   _ollamaPulling = name;
 
   // Immediately disable the clicked button so the user sees something happened.
@@ -1275,15 +1295,18 @@ async function pullOllamaModel(name, btn) {
     btn.textContent = '↓ …';
   }
 
-  // Show animated banner + indeterminate progress bar above the table.
+  // Status lives at the top of this card so it stays visible (large models like Gemma 4 sort to the bottom of a long table).
   const status = $('ollamaPullStatus');
   if (status) {
     status.innerHTML = `
       <div class="pull-banner">
+        <div class="pull-spinner" role="status" aria-label="Loading"></div>
         <span>Downloading <strong>${esc(name)}</strong> — this may take several minutes on first pull</span>
       </div>
       <div class="pull-bar-wrap"><div class="pull-bar-fill"></div></div>`;
+    status.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
+  showToast(`Pulling ${name}… Large models can take 10+ minutes. Keep this tab open.`, 12000);
 
   try {
     const res = await fetch('/settings/ollama-pull', {

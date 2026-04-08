@@ -70,6 +70,13 @@
     "tags": ["4b", "12b", "27b"]
   },
   {
+    "name": "gemma4",
+    "description": "Google DeepMind's Gemma 4: multimodal (text and image), strong reasoning, coding, and native tool use. Sizes range from efficient edge variants (E2B, E4B) through 26B MoE and 31B dense — pick a tag in Settings → Models.",
+    "capabilities": ["reasoning", "code", "vision", "tools", "multilingual"],
+    "training_cutoff": "~Early 2026",
+    "tags": ["e2b", "e4b", "26b", "31b", "latest"]
+  },
+  {
     "name": "mistral",
     "description": "Mistral 7B is a fast, efficient open-weight model from Mistral AI. It's a great all-rounder for modest hardware and excels at concise answers, classification, and structured extraction.",
     "capabilities": ["fast", "tools"],

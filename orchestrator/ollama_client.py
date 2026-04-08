@@ -52,17 +52,35 @@ def list_local_models(timeout: float = 5.0) -> list[dict]:
         return []
 
 
-def pull_model(name: str, timeout: float = 600.0) -> None:
+def pull_model(name: str, timeout: float | None = None) -> None:
     """Trigger an Ollama model pull (blocking until complete).
+
+    Default timeout is long — multi-GB models (e.g. Gemma 4) often need 30+ minutes.
+    Override with OLLAMA_PULL_TIMEOUT_SEC (seconds) or pass ``timeout`` explicitly.
 
     Raises httpx.HTTPStatusError on failure.
     """
+    if timeout is None:
+        raw = os.environ.get("OLLAMA_PULL_TIMEOUT_SEC", "7200").strip()
+        try:
+            timeout = float(raw)
+        except ValueError:
+            timeout = 7200.0
     r = httpx.post(
         f"{_OLLAMA_URL}/api/pull",
         json={"name": name, "stream": False},
         timeout=timeout,
     )
-    r.raise_for_status()
+    if r.is_success:
+        return
+    try:
+        data = r.json()
+        msg = data.get("error") if isinstance(data, dict) else None
+    except Exception:
+        msg = None
+    if not msg:
+        msg = (r.text or "").strip() or f"HTTP {r.status_code}"
+    raise RuntimeError(msg)
 
 
 def delete_model(name: str, timeout: float = 30.0) -> None:
@@ -98,6 +116,7 @@ _DISPLAY_NAME_OVERRIDES: dict[str, str] = {
     "deepseek-v3.1": "DeepSeek V3.1",
     "deepseek-v3.2": "DeepSeek V3.2",
     "deepseek-r1.5": "DeepSeek R1.5",
+    "gemma4": "Gemma 4",
 }
 
 

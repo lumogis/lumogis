@@ -145,7 +145,7 @@ class TestFetchCatalog:
 class TestPullModel:
     def test_calls_ollama_pull(self):
         fake_resp = MagicMock()
-        fake_resp.raise_for_status = MagicMock()
+        fake_resp.is_success = True
         with patch("ollama_client.httpx.post", return_value=fake_resp) as mock_post:
             ollama_client.pull_model("qwen2.5:7b")
         mock_post.assert_called_once()
@@ -154,9 +154,10 @@ class TestPullModel:
 
     def test_raises_on_http_error(self):
         fake_resp = MagicMock()
-        fake_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
-            "404", request=MagicMock(), response=MagicMock()
-        )
+        fake_resp.is_success = False
+        fake_resp.status_code = 500
+        fake_resp.text = ""
+        fake_resp.json.return_value = {"error": "pull model manifest: not found"}
         with patch("ollama_client.httpx.post", return_value=fake_resp):
-            with pytest.raises(httpx.HTTPStatusError):
+            with pytest.raises(RuntimeError, match="not found"):
                 ollama_client.pull_model("no-such-model")

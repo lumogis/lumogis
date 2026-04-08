@@ -222,7 +222,7 @@ Open **[http://localhost:8000/dashboard](http://localhost:8000/dashboard)** — 
 - **Chat:** [http://localhost:3080](http://localhost:3080)
 - **Dashboard:** [http://localhost:8000/dashboard](http://localhost:8000/dashboard)
 
-The embedding model (~300 MB) pulls automatically on first start. Secrets are generated automatically. All services healthy within 5 minutes.
+The stack pins a **current** [Ollama](https://ollama.com/) release in `docker-compose.yml` (bumped over time so new library models like **Gemma 4** pull successfully — Docker’s `:latest` tag can lag). The embedding model (~300 MB) and a **small default chat model** (**Llama 3.2 3B**, ~2 GB) pull automatically on first start. The dashboard lists the full Ollama catalog; pull larger models only when you want them. Secrets are generated automatically. Expect a few minutes until services are healthy on first boot. Tune pulls with `OLLAMA_EXTRA_MODELS` in `.env` (see `.env.example`).
 
 <details>
 <summary>Optional: folder browser, GPU, advanced</summary>

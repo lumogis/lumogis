@@ -139,8 +139,9 @@ services:
     restart: unless-stopped
     # No host ports — only reachable from within the Docker network
 
+  # Pin a recent release: Docker Hub :latest can lag; Gemma 4+ needs Ollama ≥ ~0.20.
   ollama:
-    image: ollama/ollama:0.9.0
+    image: ollama/ollama:0.20.3
     volumes:
       - ollama_data:/root/.ollama
     healthcheck:

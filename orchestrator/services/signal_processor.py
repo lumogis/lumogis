@@ -4,7 +4,7 @@
 
 process_signal(raw_signal):
   1. Truncates raw_content to fit model context budget.
-  2. Calls LLM (llama3.2:3b) for summarisation, entity tagging, topic
+  2. Calls LLM (SIGNAL_LLM_MODEL, default llama) for summarisation, entity tagging, topic
      classification, and importance scoring in a single prompt.
   3. Runs match_relevance() against the stored RelevanceProfile.
   4. If relevance_score >= threshold: notifies via config.get_notifier()
@@ -17,6 +17,7 @@ score_importance() is also available standalone; it re-uses cached LLM results.
 import hashlib
 import json
 import logging
+import os
 import uuid
 
 import hooks
@@ -60,13 +61,12 @@ def process_signal(raw_signal: Signal, user_id: str = "default") -> Signal:
     Mutates nothing on the input — returns a new Signal with populated fields.
     raw_content is cleared on the returned signal (transient, not persisted).
     """
-    import os
-
     threshold = float(
         os.environ.get("SIGNAL_RELEVANCE_THRESHOLD", str(_RELEVANCE_THRESHOLD_DEFAULT))
     )
 
-    budget = get_budget("llama") - 500
+    signal_model = os.environ.get("SIGNAL_LLM_MODEL", "llama")
+    budget = get_budget(signal_model) - 500
     content = truncate_text(raw_signal.raw_content, budget)
 
     llm_data = _call_llm(raw_signal.title, content)
@@ -113,7 +113,8 @@ def score_importance(signal: Signal) -> float:
     if cache_key in _score_cache:
         return _score_cache[cache_key]
     # Re-run LLM only if not cached.
-    budget = get_budget("llama") - 500
+    signal_model = os.environ.get("SIGNAL_LLM_MODEL", "llama")
+    budget = get_budget(signal_model) - 500
     content = truncate_text(signal.raw_content or signal.content_summary, budget)
     data = _call_llm(signal.title, content)
     score = max(0.0, min(1.0, float(data.get("importance_score", 0.0))))
@@ -155,7 +156,8 @@ def _call_llm(title: str, content: str) -> dict:
     """Run the combined summarise+score LLM call. Returns parsed dict or {}."""
     prompt = _PROCESS_PROMPT_TEMPLATE.format(title=title, content=content)
     try:
-        llm = config.get_llm_provider("llama")
+        model_name = os.environ.get("SIGNAL_LLM_MODEL", "llama")
+        llm = config.get_llm_provider(model_name)
         response = llm.chat(
             messages=[{"role": "user", "content": prompt}],
             system="You are a concise content analyst. Always respond with valid JSON only.",

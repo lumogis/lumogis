@@ -10,6 +10,14 @@ models:
     tools: true
     # proxy_url: http://litellm:4000  # uncomment to route through LiteLLM
 
+  # Default local chat model — pulled on first start (OLLAMA_EXTRA_MODELS in .env).
+  llama:
+    adapter: openai
+    model: llama3.2:3b
+    base_url: http://ollama:11434/v1
+    tools: false
+    context_budget: 8192
+
   # --- Local models via Ollama ---
   # NOTE: You do NOT need to uncomment these manually.
   # Any model pulled via the dashboard (Settings → Models) or via
