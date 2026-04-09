@@ -219,6 +219,8 @@ cd "$HOME\lumogis"; Copy-Item .env.example .env; docker compose up -d
 
 Open **[http://localhost:8000/dashboard](http://localhost:8000/dashboard)** — the setup wizard guides you through adding an API key or pulling a local model.
 
+**LibreChat:** `config/librechat.yaml` is runtime-generated (gitignored). Commit only `config/librechat.coldstart.yaml` — the orchestrator entrypoint seeds `librechat.yaml` on first boot, then replaces it from `models.yaml` and Ollama.
+
 - **Chat:** [http://localhost:3080](http://localhost:3080)
 - **Dashboard:** [http://localhost:8000/dashboard](http://localhost:8000/dashboard)
 
@@ -401,7 +403,9 @@ orchestrator/
   tests/               # Unit tests (no Docker needed)
 
 config/
-  models.yaml          # Model registry — adapters, capabilities, endpoints
+  models.yaml                 # Model registry — adapters, capabilities, endpoints
+  librechat.coldstart.yaml    # Tracked LibreChat bootstrap template (seed for librechat.yaml)
+  librechat.yaml              # Generated at runtime — gitignored; do not commit
 
 postgres/
   init.sql             # Schema: file_index, entities, entity_relations, review_queue

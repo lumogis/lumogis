@@ -1,0 +1,55 @@
+# Tracked cold-start template for LibreChat. On first container boot, the orchestrator
+# entrypoint copies this file to librechat.yaml if that file is missing or empty.
+# The orchestrator then regenerates librechat.yaml from models.yaml + Ollama state at
+# startup. config/librechat.yaml is gitignored — change the live UI by editing models
+# or the dashboard; change the default bootstrap shape by editing this file.
+version: 1.3.5
+cache: true
+endpoints:
+  custom:
+  - name: Lumogis
+    apiKey: ignored
+    baseURL: http://orchestrator:8000/v1
+    models:
+      default:
+      - claude
+      - llama
+      - gemma4
+      fetch: true
+    titleConvo: false
+    summarize: false
+    forcePrompt: false
+    modelDisplayLabel: Lumogis
+modelSpecs:
+  enforce: true
+  prioritize: true
+  list:
+  - name: claude
+    label: Claude (Cloud)
+    description: Anthropic's Claude models, known for careful reasoning, long-context
+      understanding, and thoughtful responses.
+    preset:
+      endpoint: Lumogis
+      model: claude
+      modelLabel: Claude (Cloud)
+    iconURL: anthropic
+  - name: llama
+    label: Llama 3B (Local)
+    description: Meta's Llama 3.2 is a fast, compact multilingual model well-suited
+      to everyday chat, summaries, and translation. It runs comfortably on a single
+      consumer GPU and is the best starting point for most new users.
+    preset:
+      endpoint: Lumogis
+      model: llama
+      modelLabel: Llama 3B (Local)
+    iconURL: ollama
+  - name: gemma4
+    label: Gemma 4 8.0B (Local)
+    description: "Google DeepMind's Gemma 4: multimodal (text and image), strong reasoning,\
+      \ coding, and native tool use. Sizes range from efficient edge variants (E2B,\
+      \ E4B) through 26B MoE and 31B dense \u2014 pick a tag in Settings \u2192 Models."
+    preset:
+      endpoint: Lumogis
+      model: gemma4
+      modelLabel: Gemma 4 8.0B (Local)
+    iconURL: ollama

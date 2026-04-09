@@ -13,7 +13,8 @@ services:
     volumes:
       - ${FILESYSTEM_ROOT:-./lumogis-data}:/data:ro
       # Project root — admin.py writes /project/.env (RERANKER_BACKEND, FILESYSTEM_ROOT),
-      # librechat_config.py writes /project/config/librechat.yaml, and entrypoint.sh
+      # librechat_config.py overwrites /project/config/librechat.yaml at runtime (gitignored).
+      # librechat.coldstart.yaml is the tracked template; entrypoint seeds librechat.yaml if missing.
       # generates secrets in /project/.env on first boot.
       # Directory mount avoids Docker's single-file bind mount bug where individual
       # file mounts (./.env:/app/host.env) create empty directories instead of files.

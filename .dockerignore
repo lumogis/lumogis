@@ -12,6 +12,8 @@ __pycache__/
 
 # Large / irrelevant directories excluded from the orchestrator build context
 # (build context is repo root so config/ can be COPY'd into the image).
+# Runtime-generated LibreChat config — use librechat.coldstart.yaml in the image only.
+config/librechat.yaml
 lumogis-data/
 ai-workspace/inbox/*
 ai-workspace/outbox/*

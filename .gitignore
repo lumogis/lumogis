@@ -29,6 +29,10 @@ ai-workspace/review/*
 !ai-workspace/review/.gitkeep
 ai-workspace/backups/*.zip
 
+# LibreChat — regenerated at runtime from models.yaml + Ollama; do not commit.
+# Tracked template: config/librechat.coldstart.yaml
+config/librechat.yaml
+
 # Internal maintainer-only notes — not part of the distributed source tree
 AUDIT-REPORT.md
 REMEDIATION-PLAN.md

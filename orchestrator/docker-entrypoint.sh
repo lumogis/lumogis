@@ -2,6 +2,19 @@
 # Lumogis orchestrator entrypoint.
 # Do NOT use set -e — pull failures must be non-fatal (degraded-mode startup).
 
+# LibreChat bind-mount target — generated at runtime; gitignored in the repo.
+# Seed from the tracked cold-start template so fresh clones and single-file mounts work.
+_LIBRECHAT_CFG="/project/config/librechat.yaml"
+_LIBRECHAT_TEMPLATE="/project/config/librechat.coldstart.yaml"
+if [ ! -f "$_LIBRECHAT_CFG" ] || [ ! -s "$_LIBRECHAT_CFG" ]; then
+    if [ -f "$_LIBRECHAT_TEMPLATE" ]; then
+        cp "$_LIBRECHAT_TEMPLATE" "$_LIBRECHAT_CFG"
+        echo "[entrypoint] Seeded librechat.yaml from librechat.coldstart.yaml"
+    else
+        echo "[entrypoint] WARNING: missing $_LIBRECHAT_TEMPLATE — LibreChat may fail until config exists" >&2
+    fi
+fi
+
 OLLAMA_URL="${OLLAMA_URL:-http://ollama:11434}"
 EMBEDDING_MODEL="${EMBEDDING_MODEL:-nomic-embed-text}"
 # Comma-separated chat LLM(s) to pull after the embedder (default: small Llama 3.2).

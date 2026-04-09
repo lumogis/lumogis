@@ -5,6 +5,10 @@
 Reads models.yaml + live Ollama state to produce modelSpecs entries with
 auto-generated labels, so every enabled model appears in the LibreChat
 dropdown with a human-readable name — no manual config needed.
+
+The written path (default ``/project/config/librechat.yaml``) is gitignored.
+Commit changes to the cold-start shape in ``config/librechat.coldstart.yaml`` only;
+``docker-entrypoint.sh`` seeds ``librechat.yaml`` from that template when missing.
 """
 
 import logging
