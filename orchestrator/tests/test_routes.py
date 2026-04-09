@@ -5,6 +5,7 @@
 from unittest.mock import patch
 
 import main
+import routes.chat as chat_routes
 from fastapi.testclient import TestClient
 from models.stream import StreamEvent
 
@@ -58,6 +59,43 @@ def test_chat_completions_stream(mock_stream, mock_enabled, mock_cfg, mock_ctx):
     assert resp.status_code == 200
     assert "text/event-stream" in resp.headers["content-type"]
     assert "streamed" in resp.text
+
+
+@patch("routes.chat._inject_context", side_effect=lambda q, h, m, u: h)
+@patch(
+    "routes.chat.config.get_model_config",
+    return_value={"tools": False, "base_url": "http://ollama:11434/v1"},
+)
+@patch("routes.chat.config.is_model_enabled", return_value=True)
+@patch("routes.chat.ask_stream", side_effect=_mock_stream)
+def test_local_stream_includes_loading_note_only_first_time(
+    mock_stream, mock_enabled, mock_cfg, mock_ctx
+):
+    chat_routes._local_model_loading_note_shown.clear()
+    try:
+        with TestClient(main.app) as client:
+            first = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "llama",
+                    "stream": True,
+                    "messages": [{"role": "user", "content": "hello"}],
+                },
+            )
+            second = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "llama",
+                    "stream": True,
+                    "messages": [{"role": "user", "content": "again"}],
+                },
+            )
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert "first time may take" in first.text
+        assert "first time may take" not in second.text
+    finally:
+        chat_routes._local_model_loading_note_shown.clear()
 
 
 @patch("routes.chat.config.is_model_enabled", return_value=False)

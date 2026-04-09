@@ -101,6 +101,19 @@ def _sse_chunk(
 
 LOCAL_MODEL_LOADING_NOTE = "*Loading model on your machine — first time may take 1–2 minutes…*\n\n"
 
+# Shown at most once per orchestrator process per local model (not every chat turn).
+_local_model_loading_note_shown: set[str] = set()
+
+
+def should_prepend_local_loading_note(model: str) -> bool:
+    """True once per process for each local model; avoids repeating the hint every message."""
+    if not config.is_local_model(model):
+        return False
+    if model in _local_model_loading_note_shown:
+        return False
+    _local_model_loading_note_shown.add(model)
+    return True
+
 
 def stream_completion(
     events: Generator[StreamEvent, None, None],
@@ -228,7 +241,7 @@ def chat_completions(body: ChatCompletionsRequest, request: Request) -> Any:
             stream_completion(
                 events,
                 body.model,
-                prepend_loading_note=config.is_local_model(body.model),
+                prepend_loading_note=should_prepend_local_loading_note(body.model),
             ),
             media_type="text/event-stream",
         )
