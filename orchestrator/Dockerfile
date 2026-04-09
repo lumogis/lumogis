@@ -7,6 +7,7 @@ RUN pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
 COPY orchestrator/ .
 COPY config/ /opt/lumogis/config/
 COPY orchestrator/docker-entrypoint.sh /docker-entrypoint.sh
-RUN chmod +x /docker-entrypoint.sh
+# Strip CR so Windows CRLF checkouts do not break shebang (exec: no such file)
+RUN sed -i 's/\r$//' /docker-entrypoint.sh && chmod +x /docker-entrypoint.sh
 ENTRYPOINT ["/docker-entrypoint.sh"]
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

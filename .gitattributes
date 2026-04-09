@@ -1,0 +1,2 @@
+# Shell scripts must use LF so Linux containers execute shebangs correctly on Windows checkouts.
+*.sh text eol=lf
