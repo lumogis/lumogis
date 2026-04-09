@@ -226,6 +226,8 @@ Open **[http://localhost:8000/dashboard](http://localhost:8000/dashboard)** — 
 
 The stack pins a **current** [Ollama](https://ollama.com/) release in `docker-compose.yml` (bumped over time so new library models like **Gemma 4** pull successfully — Docker’s `:latest` tag can lag). The embedding model (~300 MB) and a **small default chat model** (**Llama 3.2 3B**, ~2 GB) pull automatically on first start. The dashboard lists the full Ollama catalog; pull larger models only when you want them. Secrets are generated automatically. Expect a few minutes until services are healthy on first boot. Tune pulls with `OLLAMA_EXTRA_MODELS` in `.env` (see `.env.example`).
 
+**Disk and downloads:** A full **cold** setup (images pulled or built, default Ollama models, empty app volumes) commonly lands around **10–15 GB** on disk — mostly the Ollama image and model blobs, the **orchestrator** image (Python stack including PyTorch-related deps used for optional reranking), plus LibreChat, databases, and Qdrant. Exact numbers depend on architecture and tags. Enabling **`RERANKER_BACKEND=bge`** adds a separate Hugging Face download for reranker weights (on the order of **hundreds of MB**; see `RERANKER_MODEL` in `.env.example`). Every extra Ollama model you pull adds more. **Reclaiming space:** unused images, build cache, and Compose volumes can be removed via Docker Desktop cleanup or `docker system prune` (use `--volumes` only if you accept losing local DB/index data).
+
 <details>
 <summary>Optional: folder browser, GPU, advanced</summary>
 
