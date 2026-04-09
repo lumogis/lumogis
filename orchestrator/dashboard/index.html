@@ -779,10 +779,10 @@ async function loadSettings() {
           Saves all changes above — indexed root, default model, API keys — then restarts the stack.
           The page will reconnect automatically.
         </p>
-        <div style="display:flex;gap:10px;align-items:center">
+        <div style="display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap">
           <button class="btn-danger" onclick="applyAndRestart()">Save changes &amp; restart stack</button>
           <button onclick="cancelSettings()">Cancel</button>
-          <span id="restartStatus" style="font-size:12px;color:var(--txt2)"></span>
+          <div id="restartStatus" style="font-size:12px;color:var(--txt2);flex:1;min-width:200px;max-width:520px;line-height:1.45"></div>
         </div>
       </div>
     `);
@@ -1333,6 +1333,77 @@ async function pullOllamaModel(name, btn) {
 
 // ── Save all + restart ────────────────────────────────────────────
 
+/** Poll GET /health every 2s until OK or deadline. */
+async function pollOrchestratorHealth(deadlineMs) {
+  const deadline = Date.now() + deadlineMs;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 2000));
+    try {
+      const h = await fetch('/health');
+      if (h.ok) return true;
+    } catch (_) {}
+  }
+  return false;
+}
+
+function restartWaitTimeoutHtml(extendedCheck) {
+  const intro = extendedCheck
+    ? 'The orchestrator still did not respond after an extra 2-minute check. '
+    : 'The stack may still be starting — this panel only waits <strong>90 seconds</strong> before showing this message. ';
+  return (
+    intro +
+    'If you enabled the <strong>BGE reranker</strong>, the first model download often takes <strong>several minutes</strong>; that is normal. ' +
+    'Check <code style="font-size:11px;word-break:break-all">docker compose logs orchestrator</code> for progress. ' +
+    '<div style="margin-top:10px">' +
+    '<button type="button" class="refresh-btn" onclick="retryRestartHealthCheck()">Check again</button>' +
+    '</div>'
+  );
+}
+
+/** After /health is OK: prune/reindex if needed, toast, reload settings. */
+async function finishRestartSuccessFlow(statusEl) {
+  let needsPrune = false;
+  try {
+    const s = await api('/settings');
+    needsPrune = s.pending_prune === true;
+  } catch (_) {}
+
+  if (needsPrune) {
+    if (statusEl) statusEl.textContent = 'Pruning stale index entries\u2026';
+    try {
+      const pr = await api('/settings/prune', { method: 'POST' });
+      if (pr.pruned_files > 0) showToast(`Removed ${pr.pruned_files} stale file(s) from index.`);
+    } catch (e) {
+      showToast(`Prune error: ${e.message}`);
+    }
+
+    if (statusEl) statusEl.textContent = 'Indexing files under new root\u2026';
+    try {
+      await fetch('/ingest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: '/data' }),
+      });
+    } catch (_) {}
+  }
+
+  if (statusEl) statusEl.textContent = needsPrune ? 'Root changed \u2014 re-indexing in background.' : 'Done.';
+  showToast('Stack restarted successfully.');
+  loadSettings();
+}
+
+async function retryRestartHealthCheck() {
+  const statusEl = $('restartStatus');
+  if (!statusEl) return;
+  statusEl.textContent = 'Checking whether the stack is up\u2026';
+  const ok = await pollOrchestratorHealth(120_000);
+  if (!ok) {
+    statusEl.innerHTML = restartWaitTimeoutHtml(true);
+    return;
+  }
+  await finishRestartSuccessFlow(statusEl);
+}
+
 async function applyAndRestart() {
   const newRoot = $('settingsRootInput')?.value.trim() ?? '';
   let staleMsg = '';
@@ -1414,50 +1485,13 @@ async function applyAndRestart() {
 
   // 3. Poll health until the stack comes back (max 90 s)
   if (statusEl) statusEl.textContent = 'Waiting for stack to come back up\u2026';
-  const deadline = Date.now() + 90_000;
-  let connected = false;
-  while (Date.now() < deadline) {
-    await new Promise(r => setTimeout(r, 2000));
-    try {
-      const h = await fetch('/health');
-      if (h.ok) { connected = true; break; }
-    } catch (_) {}
-  }
+  const connected = await pollOrchestratorHealth(90_000);
   if (!connected) {
-    if (statusEl) statusEl.textContent = 'Stack did not come back up within 90 s. Check docker compose logs.';
+    if (statusEl) statusEl.innerHTML = restartWaitTimeoutHtml();
     return;
   }
 
-  // 4. Check pending_prune flag from the (possibly new) container
-  let needsPrune = false;
-  try {
-    const s = await api('/settings');
-    needsPrune = s.pending_prune === true;
-  } catch (_) {}
-
-  // 5. Prune stale entries + re-index if the root changed
-  if (needsPrune) {
-    if (statusEl) statusEl.textContent = 'Pruning stale index entries\u2026';
-    try {
-      const pr = await api('/settings/prune', { method: 'POST' });
-      if (pr.pruned_files > 0) showToast(`Removed ${pr.pruned_files} stale file(s) from index.`);
-    } catch (e) {
-      showToast(`Prune error: ${e.message}`);
-    }
-
-    if (statusEl) statusEl.textContent = 'Indexing files under new root\u2026';
-    try {
-      await fetch('/ingest', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: '/data' }),
-      });
-    } catch (_) {}
-  }
-
-  if (statusEl) statusEl.textContent = needsPrune ? 'Root changed \u2014 re-indexing in background.' : 'Done.';
-  showToast('Stack restarted successfully.');
-  loadSettings();
+  await finishRestartSuccessFlow(statusEl);
 }
 
 function cancelSettings() {
