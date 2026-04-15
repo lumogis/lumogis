@@ -24,7 +24,7 @@ This is not a privacy policy. It is not a setting. It is physically impossible f
 
 When using a local model, nothing leaves your machine at all. When using a cloud model, only the composed prompt — your question plus the retrieved excerpts — travels to the model provider. Your raw files, full document corpus, embeddings, and conversation history never move.
 
-*Privacy is not a setting here. It is the architecture.*
+*Privacy is not a setting here. It is the architecture.* 
 
 ---
 
