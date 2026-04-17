@@ -1520,6 +1520,27 @@ async function loadHealth() {
       </div>`
     ).join(''));
     const allOk = Object.values(services).every(v => v === 'ok');
+    const capServices = d.capability_services || {};
+    const capEntries = Object.entries(capServices);
+    const capCard = capEntries.length === 0 ? '' : `
+      <div class="card" style="margin-top:14px">
+        <div class="card-header">
+          <span>Capability services</span>
+          <span class="mono" style="color:var(--txt2);font-size:12px">${capEntries.filter(([,v]) => v.healthy).length} of ${capEntries.length} healthy</span>
+        </div>
+        <div class="card-body" style="padding:8px 0">
+          ${capEntries.map(([id, v]) => `
+            <div class="service-badge" style="margin:4px 12px">
+              <div class="badge-dot ${v.healthy ? 'ok' : 'unreachable'}"></div>
+              <span>${esc(id)}</span>
+              <span class="tag" style="margin-left:4px">v${esc(v.version)}</span>
+              <span style="color:var(--txt2);font-size:11px;margin-left:6px">${v.tools_available} tool${v.tools_available === 1 ? '' : 's'}</span>
+              <span style="color:var(--txt2);font-size:11px;margin-left:auto">${v.last_seen_healthy ? 'last healthy ' + fmt.date(v.last_seen_healthy) : 'never seen healthy'}</span>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
     setHtml('healthExtra', `
       <div class="card" style="margin-top:0">
         <div class="card-body" style="padding:14px 16px">
@@ -1530,6 +1551,7 @@ async function loadHealth() {
           </div>
         </div>
       </div>
+      ${capCard}
     `);
   } catch (e) {
     setHtml('healthServices', `<div class="empty">Could not reach orchestrator: ${esc(e.message)}</div>`);

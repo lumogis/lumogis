@@ -59,8 +59,14 @@ service from blocking startup or the refresh job."""
 class RegisteredService(BaseModel):
     """A capability service whose manifest has been fetched and validated.
 
-    `last_seen_healthy` is populated by Area 3's health check. It stays
-    None until the first successful health probe.
+    Health state is mutated in place by `check_health()` from a scheduled
+    job. CPython attribute assignment is atomic for these primitive fields,
+    so concurrent reads from request handlers are safe — the worst case is
+    a stale-by-one-tick value, never a torn write.
+
+    `last_seen_healthy` is populated only by successful health probes per
+    the Area 3 prompt; failed probes flip `healthy` False but leave the
+    last-known-good timestamp untouched.
     """
 
     manifest: CapabilityManifest
@@ -68,6 +74,51 @@ class RegisteredService(BaseModel):
     registered_at: datetime
     last_seen_healthy: datetime | None = None
     healthy: bool = False
+
+    async def check_health(
+        self, transport: httpx.AsyncBaseTransport | None = None
+    ) -> bool:
+        """Probe the capability service's declared health endpoint.
+
+        Returns True iff the endpoint responds with HTTP 200 within the
+        timeout. Updates `self.healthy` and (on success only) the
+        `self.last_seen_healthy` timestamp. Never raises — capability
+        service health is a soft signal, not a Core failure trigger.
+
+        `transport` is the same TEST-ONLY seam used by CapabilityRegistry
+        for hermetic testing. Production code does not pass it.
+        """
+        url = self.base_url.rstrip("/") + self.manifest.health_endpoint
+        client_kwargs: dict = {"timeout": _DEFAULT_TIMEOUT_SECONDS}
+        if transport is not None:
+            client_kwargs["transport"] = transport
+
+        try:
+            async with httpx.AsyncClient(**client_kwargs) as client:
+                resp = await client.get(url)
+        except httpx.HTTPError as exc:
+            self.healthy = False
+            _log.warning(
+                "Capability service %s health probe failed: %s (%s)",
+                self.manifest.id,
+                url,
+                exc.__class__.__name__,
+            )
+            return False
+
+        if resp.status_code != 200:
+            self.healthy = False
+            _log.warning(
+                "Capability service %s health probe returned HTTP %d at %s",
+                self.manifest.id,
+                resp.status_code,
+                url,
+            )
+            return False
+
+        self.healthy = True
+        self.last_seen_healthy = datetime.now(timezone.utc)
+        return True
 
 
 class CapabilityRegistry:
@@ -260,3 +311,36 @@ class CapabilityRegistry:
     def all_services(self) -> list[RegisteredService]:
         with self._lock:
             return list(self._services.values())
+
+    # ------------------------------------------------------------------
+    # Health probing (Area 3)
+    # ------------------------------------------------------------------
+
+    async def check_all_health(self) -> None:
+        """Probe every registered service's health endpoint in parallel.
+
+        Each probe mutates its own `RegisteredService` in place. Per-service
+        failures are swallowed (handled inside `check_health()` which never
+        raises), so this method itself never raises. A capability service
+        being unhealthy is reported but never escalated into Core failure.
+        """
+        with self._lock:
+            services = list(self._services.values())
+        if not services:
+            return
+        await asyncio.gather(
+            *(svc.check_health(transport=self._transport) for svc in services),
+            return_exceptions=True,
+        )
+
+    def check_all_health_sync(self) -> None:
+        """Sync wrapper for APScheduler. Do not call from async contexts.
+
+        APScheduler's BackgroundScheduler runs jobs in worker threads where
+        no event loop exists; asyncio.run() is safe there. Calling this
+        from within an async function will raise RuntimeError.
+        """
+        try:
+            asyncio.run(self.check_all_health())
+        except Exception:
+            _log.exception("Capability registry health refresh failed")

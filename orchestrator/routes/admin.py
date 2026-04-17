@@ -711,7 +711,13 @@ def _check_service(name: str, check_fn) -> str:
 
 @router.get("/")
 def status_page(request: Request):
-    """System status: confirms the orchestrator is running and backends are healthy."""
+    """System status: confirms the orchestrator is running and backends are healthy.
+
+    The `capability_services` section reports out-of-process capability
+    services discovered via CAPABILITY_SERVICE_URLS (Area 2). Per the
+    ecosystem-plumbing contract, capability service health is informational
+    only — it never flips Core's `status` field to "degraded".
+    """
     vs = config.get_vector_store()
     meta = config.get_metadata_store()
     embedder = config.get_embedder()
@@ -721,6 +727,21 @@ def status_page(request: Request):
         "postgres": _check_service("postgres", meta.ping),
         "embedder": _check_service("embedder", embedder.ping),
     }
+
+    capability_services: dict[str, dict] = {}
+    try:
+        registry = config.get_capability_registry()
+        for svc in registry.all_services():
+            capability_services[svc.manifest.id] = {
+                "healthy": svc.healthy,
+                "version": svc.manifest.version,
+                "tools_available": len(svc.manifest.tools),
+                "last_seen_healthy": (
+                    svc.last_seen_healthy.isoformat() if svc.last_seen_healthy else None
+                ),
+            }
+    except Exception:
+        _log.warning("status_page: capability registry read failed", exc_info=True)
 
     docs_indexed = 0
     sessions_stored = 0
@@ -770,6 +791,7 @@ def status_page(request: Request):
         "sessions_stored": sessions_stored,
         "entities_known": entities_known,
         "services": services,
+        "capability_services": capability_services,
         "links": links,
         "setup_needed": setup_needed,
     }
@@ -832,6 +854,16 @@ def health():
     if total_chunks > 0:
         chunk_drift_pct = round(abs(qdrant_doc_count - total_chunks) / total_chunks * 100, 1)
 
+    capability_summary = {"registered": 0, "healthy": 0}
+    try:
+        registered = config.get_capability_registry().all_services()
+        capability_summary = {
+            "registered": len(registered),
+            "healthy": sum(1 for s in registered if s.healthy),
+        }
+    except Exception:
+        _log.warning("/health: capability registry read failed", exc_info=True)
+
     body = {
         "qdrant_doc_count": qdrant_doc_count,
         "file_index_count": file_index_count,
@@ -841,6 +873,7 @@ def health():
         "error_count": error_count,
         "chunk_drift_pct": chunk_drift_pct,
         "postgres_ok": postgres_ok,
+        "capability_services": capability_summary,
     }
     status_code = 200 if postgres_ok else 503
     return JSONResponse(content=body, status_code=status_code)

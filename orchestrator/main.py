@@ -134,8 +134,11 @@ async def lifespan(app: FastAPI):
     register_routines()
 
     # Capability service registry: discover out-of-process services declared
-    # in CAPABILITY_SERVICE_URLS. Failures are warnings, never errors —
-    # Core must start cleanly even when zero services are reachable.
+    # in CAPABILITY_SERVICE_URLS, then immediately probe each one's health
+    # endpoint so the very first GET / after startup reflects real state
+    # rather than the default healthy=False placeholders. Both steps are
+    # warnings-only — Core must start cleanly even when zero services are
+    # reachable or when every service is down.
     capability_registry = config.get_capability_registry()
     capability_urls = config.get_capability_service_urls()
     if capability_urls:
@@ -148,6 +151,17 @@ async def lifespan(app: FastAPI):
             )
         except Exception as exc:
             _log.warning("Capability registry initial discovery failed: %s", exc)
+
+        try:
+            await capability_registry.check_all_health()
+            healthy = sum(1 for s in capability_registry.all_services() if s.healthy)
+            _log.info(
+                "Capability registry: initial health probe complete (%d/%d healthy)",
+                healthy,
+                len(capability_registry.all_services()),
+            )
+        except Exception as exc:
+            _log.warning("Capability registry initial health probe failed: %s", exc)
     else:
         _log.info("Capability registry: no CAPABILITY_SERVICE_URLS configured")
 
@@ -171,6 +185,24 @@ async def lifespan(app: FastAPI):
         )
         _log.info("Capability registry refresh job registered (every 5 minutes)")
 
+        # Capability service health probe — faster cadence than discovery
+        # because health is cheap and operators want fresh status. Updates
+        # `healthy` and `last_seen_healthy` on each RegisteredService in place.
+        def _probe_capability_health() -> None:
+            capability_registry.check_all_health_sync()
+
+        scheduler.add_job(
+            _probe_capability_health,
+            trigger="interval",
+            seconds=60,
+            id="capability_health_check",
+            name="Capability service health probes",
+            replace_existing=True,
+            misfire_grace_time=30,
+            coalesce=True,
+            max_instances=1,
+        )
+        _log.info("Capability service health probe job registered (every 60 seconds)")
 
     from librechat_config import generate_librechat_yaml
 
