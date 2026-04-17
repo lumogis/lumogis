@@ -26,3 +26,6 @@ psutil>=6.0.0
 pyjwt>=2.8.0
 pytest>=8.0.0
 pytest-asyncio>=0.24.0
+# mcp is required at test time so that mcp_server.py imports cleanly and
+# the /mcp mount + /capabilities tests can exercise the real SDK.
+mcp>=1.10.0

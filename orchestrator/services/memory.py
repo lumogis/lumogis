@@ -111,6 +111,47 @@ def store_session(
     )
 
 
+def recent_sessions(
+    limit: int = 10,
+    user_id: str = "default",
+) -> list[SessionSummary]:
+    """Return the N most recent session summaries for `user_id`.
+
+    Thin Postgres helper backing the MCP `memory.get_recent` tool. No
+    embedding work, no LLM work — just an ORDER BY recency read against
+    the canonical `sessions` table.
+
+    Mirrors the error-handling pattern of routes/data.py::list_entities:
+    on any DB failure the helper logs a WARNING and returns an empty
+    list, never raises. Empty list is a safe answer for callers that
+    cannot recover from a hard failure (the MCP tool, the dashboard).
+    """
+    ms = config.get_metadata_store()
+    try:
+        rows = ms.fetch_all(
+            "SELECT session_id, summary, topics, entities, entity_ids "
+            "FROM sessions "
+            "WHERE user_id = %s "
+            "ORDER BY updated_at DESC "
+            "LIMIT %s",
+            (user_id, limit),
+        )
+    except Exception as exc:
+        _log.warning("recent_sessions: DB query failed — %s", exc)
+        return []
+
+    return [
+        SessionSummary(
+            session_id=r["session_id"],
+            summary=r["summary"] or "",
+            topics=r.get("topics") or [],
+            entities=r.get("entities") or [],
+            entity_ids=r.get("entity_ids") or [],
+        )
+        for r in rows
+    ]
+
+
 def retrieve_context(
     query: str,
     limit: int = 3,

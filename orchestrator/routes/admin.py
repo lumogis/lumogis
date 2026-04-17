@@ -784,6 +784,20 @@ def status_page(request: Request):
         api_keys_set = False
     setup_needed = no_data and not api_keys_set
 
+    # MCP server status (Area 4) — surfaced here so the dashboard can show
+    # endpoint URL + auth state without needing a dedicated endpoint.
+    # `mcp_enabled` reflects whether the mcp package is installed and the
+    # FastMCP server constructed successfully; `mcp_auth_required` reflects
+    # whether MCP_AUTH_TOKEN is set (i.e. whether external clients must
+    # present a Bearer token on /mcp/* requests).
+    try:
+        import mcp_server as _mcp_server
+
+        mcp_enabled = _mcp_server.mcp is not None
+    except Exception:
+        mcp_enabled = False
+    mcp_auth_required = bool(os.environ.get("MCP_AUTH_TOKEN", "").strip())
+
     return {
         "status": "healthy" if all_ok else "degraded",
         "embedding_model_ready": embedding_ready,
@@ -792,6 +806,8 @@ def status_page(request: Request):
         "entities_known": entities_known,
         "services": services,
         "capability_services": capability_services,
+        "mcp_enabled": mcp_enabled,
+        "mcp_auth_required": mcp_auth_required,
         "links": links,
         "setup_needed": setup_needed,
     }

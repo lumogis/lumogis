@@ -492,6 +492,7 @@ tr:hover td { background: var(--surface); }
       <div id="settingsCloud" class="card section-gap"></div>
       <div id="settingsOllama" class="card section-gap"></div>
       <div id="settingsReranker" class="card section-gap"></div>
+      <div id="settingsMcp" class="card section-gap"></div>
       <div id="settingsRestart" class="card section-gap"></div>
     </section>
 
@@ -771,6 +772,49 @@ async function loadSettings() {
       });
     }
 
+    // ── MCP server (Area 4 ecosystem plumbing) ───────────────────
+    // Status comes from GET / (status_page) which exposes mcp_enabled
+    // and mcp_auth_required. Connected-clients count is intentionally
+    // omitted: stateless transport has no session concept.
+    try {
+      const status = await api('/');
+      const mcpUrl = `${window.location.origin}/mcp/`;
+      const enabled = !!status.mcp_enabled;
+      const authSet = !!status.mcp_auth_required;
+      setHtml('settingsMcp', `
+        <div class="card-header">MCP server</div>
+        <div class="card-body" style="padding:16px">
+          <p style="color:var(--txt2);font-size:13px;margin-bottom:12px">
+            External MCP-speaking clients (Thunderbolt, Claude Desktop, others)
+            can connect to Lumogis at this endpoint to use the community memory,
+            entity, and context tools.
+          </p>
+          <div class="form-row" style="margin-bottom:10px;align-items:center;gap:10px">
+            <label style="min-width:120px">Status</label>
+            <span class="badge-dot ${enabled ? 'ok' : 'unreachable'}"></span>
+            <span style="color:var(--txt2)">${enabled ? 'enabled' : 'disabled (mcp package not installed)'}</span>
+          </div>
+          <div class="form-row" style="margin-bottom:10px;align-items:center;gap:10px">
+            <label style="min-width:120px">Endpoint</label>
+            <span class="mono" id="mcpEndpoint" style="color:var(--txt2)">${esc(mcpUrl)}</span>
+            <button type="button" onclick="navigator.clipboard.writeText('${esc(mcpUrl)}')"
+              title="Copy endpoint URL">Copy</button>
+          </div>
+          <div class="form-row" style="align-items:center;gap:10px">
+            <label style="min-width:120px">Auth token</label>
+            <span class="badge-dot ${authSet ? 'ok' : 'unreachable'}"></span>
+            <span style="color:var(--txt2)">
+              ${authSet
+                ? 'set — Bearer token required on every /mcp request'
+                : 'not set — local connections allowed without auth'}
+            </span>
+          </div>
+        </div>
+      `);
+    } catch (mcpErr) {
+      setHtml('settingsMcp', '');
+    }
+
     // Restart
     setHtml('settingsRestart', `
       <div class="card-header">Save and restart</div>
@@ -795,6 +839,7 @@ async function loadSettings() {
     setHtml('settingsModels', '');
     setHtml('settingsOllama', '');
     setHtml('settingsReranker', '');
+    setHtml('settingsMcp', '');
     setHtml('settingsRestart', '');
   }
 }

@@ -290,3 +290,88 @@ def _upsert_entity(
         evidence_type=evidence_type,
         user_id=user_id,
     )
+    return entity_id
+
+
+# ----------------------------------------------------------------------
+# Read helpers (Area 4 — backing the MCP entity.lookup / entity.search
+# tools). Thin Postgres wrappers, no business logic. They mirror the
+# error-handling pattern of routes/data.py::list_entities: on any DB
+# failure, log a WARNING and return the empty answer (None / []), never
+# raise. Callers (MCP tools, future REST surfaces) treat empty as
+# "nothing found", which is the only safe answer when the DB is down.
+# ----------------------------------------------------------------------
+
+
+def lookup_by_name(name: str, user_id: str = "default") -> dict | None:
+    """Find an entity by exact case-insensitive name match.
+
+    Returns a serialisable dict or None when no match (or DB failure).
+    Aliases are NOT searched — this is the strict-lookup path used by
+    `entity.lookup`. For partial matches use `search_by_name`.
+    """
+    if not name or not name.strip():
+        return None
+
+    ms = config.get_metadata_store()
+    try:
+        row = ms.fetch_one(
+            "SELECT name, entity_type, mention_count, aliases, context_tags "
+            "FROM entities "
+            "WHERE user_id = %s AND lower(name) = lower(%s) "
+            "LIMIT 1",
+            (user_id, name.strip()),
+        )
+    except Exception as exc:
+        _log.warning("lookup_by_name: DB query failed — %s", exc)
+        return None
+
+    if row is None:
+        return None
+    return {
+        "name": row["name"],
+        "entity_type": row["entity_type"],
+        "mention_count": row["mention_count"],
+        "aliases": row.get("aliases") or [],
+        "context_tags": row.get("context_tags") or [],
+    }
+
+
+def search_by_name(
+    query: str,
+    limit: int = 10,
+    user_id: str = "default",
+) -> list[dict]:
+    """Find entities whose name matches `query` as a case-insensitive substring.
+
+    Ordered by mention_count descending so the strongest signals surface
+    first. Returns [] on empty/whitespace query or any DB failure.
+    """
+    if not query or not query.strip():
+        return []
+
+    ms = config.get_metadata_store()
+    pattern = f"%{query.strip()}%"
+    try:
+        rows = ms.fetch_all(
+            "SELECT name, entity_type, mention_count, aliases, context_tags "
+            "FROM entities "
+            "WHERE user_id = %s AND name ILIKE %s "
+            "ORDER BY mention_count DESC "
+            "LIMIT %s",
+            (user_id, pattern, limit),
+        )
+    except Exception as exc:
+        _log.warning("search_by_name: DB query failed — %s", exc)
+        return []
+
+    return [
+        {
+            "name": r["name"],
+            "entity_type": r["entity_type"],
+            "mention_count": r["mention_count"],
+            "aliases": r.get("aliases") or [],
+            "context_tags": r.get("context_tags") or [],
+        }
+        for r in rows
+    ]

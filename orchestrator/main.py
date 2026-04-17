@@ -21,6 +21,7 @@ from fastapi import FastAPI
 from plugins import load_plugins
 from routes.actions import router as actions_router
 from routes.admin import router as admin_router
+from routes.capabilities import router as capabilities_router
 from routes.chat import router as chat_router
 from routes.data import router as data_router
 from routes.events import register_hooks as register_sse_hooks
@@ -28,6 +29,7 @@ from routes.events import router as events_router
 from routes.signals import router as signals_router
 
 import config
+import mcp_server
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 _log = logging.getLogger(__name__)
@@ -222,8 +224,41 @@ async def lifespan(app: FastAPI):
         except Exception as exc:
             _log.warning("Could not restart LibreChat: %s", exc)
 
+    # MCP startup: build a fresh FastMCP, point the existing /mcp mount at
+    # its Starlette sub-app, and enter session_manager.run() to start the
+    # anyio task group that StreamableHTTPSessionManager.handle_request
+    # needs.
+    #
+    # Why rebuild instead of reusing mcp_server.mcp?
+    # StreamableHTTPSessionManager.run() can only be called once per
+    # FastMCP instance. Production lifespans run once so reuse would
+    # work, but TestClient(main.app) starts a fresh lifespan per test —
+    # rebuilding makes both paths identical and keeps the production code
+    # equally simple. The cost is ~1ms.
+    if mcp_server.mcp is not None and _mcp_mount_route is not None:
+        try:
+            fresh = mcp_server.build_fastmcp()
+            mcp_server.mcp = fresh
+            _mcp_mount_route.app = fresh.streamable_http_app()
+            _mcp_run_cm = fresh.session_manager.run()
+            await _mcp_run_cm.__aenter__()
+            app.state.mcp_run_cm = _mcp_run_cm
+            _log.info("MCP session manager started")
+        except Exception as exc:
+            app.state.mcp_run_cm = None
+            _log.warning("MCP session manager failed to start: %s", exc)
+    else:
+        app.state.mcp_run_cm = None
+
     _log.info("Startup complete")
     yield
+
+    if getattr(app.state, "mcp_run_cm", None) is not None:
+        try:
+            await app.state.mcp_run_cm.__aexit__(None, None, None)
+            _log.info("MCP session manager stopped")
+        except Exception as exc:
+            _log.warning("MCP session manager shutdown error: %s", exc)
 
     from services.ingest import stop_watcher
 
@@ -248,3 +283,30 @@ app.include_router(data_router)
 app.include_router(signals_router)
 app.include_router(actions_router)
 app.include_router(events_router)
+app.include_router(capabilities_router)
+
+# Mount the MCP server at /mcp when the SDK is installed. The mount
+# route is created once at module-load with the initial sub-app; the
+# lifespan above swaps in a freshly-built sub-app on every startup so
+# that StreamableHTTPSessionManager.run() (which is single-shot per
+# FastMCP instance) can be entered cleanly each time. We hold onto the
+# Mount route object here so the lifespan can mutate `route.app`.
+# If the mcp package is missing or the mount fails, log a warning and
+# continue: Core boots normally and /capabilities still serves a manifest
+# that lists the MCP surface for discovery by future clients.
+_mcp_mount_route = None
+if mcp_server.mcp is not None:
+    try:
+        app.mount("/mcp", mcp_server.mcp.streamable_http_app())
+        # The just-added route is always the last one Starlette appended.
+        from starlette.routing import Mount as _Mount
+
+        for _r in reversed(app.routes):
+            if isinstance(_r, _Mount) and _r.path == "/mcp":
+                _mcp_mount_route = _r
+                break
+        _log.info("MCP server mounted at /mcp (stateless HTTP, JSON responses)")
+    except Exception as exc:
+        _log.warning("MCP mount failed (%s) — continuing without /mcp", exc)
+else:
+    _log.info("MCP server disabled (mcp package not installed)")
