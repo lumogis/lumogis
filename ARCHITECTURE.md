@@ -207,6 +207,92 @@ Every action execution (success, failure, approval, rejection) is logged to `aud
 
 ---
 
+## Ecosystem plumbing — out-of-process capability services and the MCP surface
+
+In addition to in-process plugins, Core can discover and interact with **out-of-process capability services** (separate containers that expose tools over HTTP) and exposes its own **MCP server** so external clients can use Lumogis as infrastructure.
+
+```
+                                ┌──────────────────────────┐
+                                │   Out-of-process         │
+                                │   capability services    │
+                                │   (declared via env var) │
+                                └────────────┬─────────────┘
+              GET /capabilities              │  HTTP
+              GET /health                    ▼
+        ┌──────────────────────┐    ┌────────────────┐
+        │ CapabilityRegistry   │◄───┤ httpx async    │
+        │  (services/          │    │ client +       │
+        │   capability_        │    │ APScheduler    │
+        │   registry.py)       │    │ (5 min refresh,│
+        │                      │    │  60 s health)  │
+        └──────────┬───────────┘    └────────────────┘
+                   │
+        Surfaced on │
+                   ▼
+        ┌──────────────────────────────────────────────┐
+        │ GET /            mcp_enabled, mcp_auth_      │
+        │                  required, capability_       │
+        │                  services{...}               │
+        │ GET /health      capability_services summary │
+        │ GET /capabilities  Core's own manifest       │
+        │ /mcp/            FastMCP streamable HTTP     │
+        │                  (stateless, JSON, 5 tools)  │
+        └──────────────────────────────────────────────┘
+```
+
+Four pieces, all additive — Core boots cleanly when no capability services are configured and when the MCP SDK is absent.
+
+### Capability manifest (`models/capability.py`)
+
+A `CapabilityManifest` is the contract that any out-of-process service publishes at `GET /capabilities`. It declares the service's `id`, `version`, `transport` (`http` or `mcp`), `license_mode` (`community` or `commercial`), `maturity` (`preview` / `stable` / `deprecated`), the list of `tools` it exposes (with hand-coded JSON input/output schemas), required permissions, a config schema, the minimum Core version it needs, and a maintainer string. Core's own manifest is built by `mcp_server.build_core_manifest()` and served at `GET /capabilities`.
+
+### CapabilityRegistry (`services/capability_registry.py`)
+
+Discovers services declared in the `CAPABILITY_SERVICE_URLS` env var (comma-separated base URLs). For each URL it fetches `/capabilities`, validates the manifest, compares `min_core_version` against `__version__.py` using `packaging.version.Version`, then probes `/health`. Discovery and health checking are both async (`httpx.AsyncClient`) and parallel; `discover_sync()` and `check_all_health_sync()` wrap them with `asyncio.run()` so APScheduler — which is synchronous — can call them on its threadpool. A `transport=` constructor parameter is reserved for tests (`httpx.MockTransport`).
+
+The registry is a singleton on `config.get_capability_registry()` and is owned by the FastAPI lifespan. Sequence at startup is strict: discover → immediate one-shot health probe → register the two interval jobs (5-minute discovery refresh, 60-second health refresh).
+
+### Health surface
+
+| Endpoint | What changed | Why |
+|---|---|---|
+| `GET /` | Adds `capability_services{<id>: {healthy, version, tools, last_seen_healthy}}` plus `mcp_enabled` and `mcp_auth_required` | The dashboard already polls this for live status; it is the natural home for detailed per-service info |
+| `GET /health` | Adds a minimal `capability_services{registered, healthy}` summary | Symmetry — keeps the JSON shape predictable for external monitors without making them parse the full registry |
+
+Capability service failures are **never** escalated to Core's overall health status. A service being down is informational; the 200/503 contract on `/health` continues to track Postgres only.
+
+### MCP server surface (`mcp_server.py` + `routes/capabilities.py`)
+
+Core exposes five read-only community tools over MCP at `/mcp/`:
+
+| MCP tool | Backing service helper |
+|---|---|
+| `memory.search` | `services.memory.retrieve_context` |
+| `memory.get_recent` | `services.memory.recent_sessions` |
+| `entity.lookup` | `services.entities.lookup_by_name` |
+| `entity.search` | `services.entities.search_by_name` |
+| `context.build` | `services.search.semantic_search` + `services.memory.retrieve_context` + `services.context_budget.truncate_text` |
+
+All tools are thin wrappers — no business logic in `mcp_server.py`. The three new helpers in `services/memory.py` and `services/entities.py` mirror the existing `routes/data.py::list_entities` error-handling pattern: warn + return empty answer (`[]` or `None`) on any DB failure, never raise.
+
+Transport: `FastMCP(stateless_http=True, json_response=True)` mounted at `/mcp` via `app.mount`. Stateless mode is a deliberate scope choice — every tool is read-only and self-contained, so no sessions, no streaming, no server→client notifications. A future stateful MCP surface (e.g. for long-running KG queries) belongs in a separate capability service rather than Core. The canonical client URL is **`/mcp/`** with the trailing slash; `POST /mcp` triggers a 307 redirect that some HTTP clients drop the `Authorization` header on.
+
+Lifespan integration: the SDK's `StreamableHTTPSessionManager` requires its anyio task group to be active even in stateless mode, so the FastAPI lifespan calls `mcp.session_manager.run().__aenter__()` after building a fresh `FastMCP` via `build_fastmcp()`. The factory is rebuilt per lifespan startup because `session_manager.run()` is single-shot per `FastMCP` instance — production lifespans run once so reuse would work, but `TestClient(main.app)` starts a fresh lifespan per test.
+
+### Auth
+
+The `auth_middleware` in `auth.py` gates `/mcp/*` independently of `AUTH_ENABLED` using `MCP_AUTH_TOKEN`. When the env var is set, every `/mcp/*` request must present `Authorization: Bearer <token>`; comparison is timing-safe via `hmac.compare_digest`. When unset, `/mcp/*` is open — the documented single-user-local default. `GET /capabilities` is **never** gated; the manifest is the public discovery contract.
+
+### What is NOT in scope here
+
+- **Plugin loading** is unchanged. Capability services are out-of-process containers; plugins are in-process Python packages under `plugins/`. They serve different extension points.
+- **`plugins/graph/`** is untouched.
+- The MCP surface intentionally exposes only community tools. Premium/commercial tools (graph queries, multi-source context packs, etc.) belong in their own capability services that Core discovers via `CAPABILITY_SERVICE_URLS`, not in `mcp_server.py`.
+
+See [ADR-010 — Ecosystem plumbing](docs/decisions/010-ecosystem-plumbing.md) for the rationale and known technical debt.
+
+---
+
 ## Plugin system
 
 Plugins live in `plugins/<name>/` with an `__init__.py`. The plugin loader scans subdirectories on startup and imports each one.

@@ -344,6 +344,23 @@ Add optional infrastructure (push notifications, automation UI, LiteLLM proxy, J
 
 See [docs/extending-the-stack.md](docs/extending-the-stack.md) for the full guide.
 
+### Out-of-process capability services
+
+For extensions that cannot live in the Core process — different runtime, heavy dependencies, GPU isolation, separate licence — Core can also discover **capability services**: separate containers that expose tools over HTTP and register themselves at startup.
+
+A capability service publishes a `CapabilityManifest` (schema in `orchestrator/models/capability.py`) at `GET /capabilities` and a 200 at `GET /health`. The manifest declares the service's id, version, transport, tools (with JSON schemas), permissions, and the minimum Core version it requires. Register the service with Core by adding its base URL to `.env`:
+
+```bash
+# Comma-separated, one entry per service
+CAPABILITY_SERVICE_URLS=http://my-capability:8000
+```
+
+Restart the orchestrator. Core fetches the manifest, refuses to register the service if its `min_core_version` exceeds Core's, probes `/health` immediately and every 60 s thereafter, and re-fetches the manifest every 5 minutes. Registered services appear in `GET /` and on the dashboard. A service being down is logged as a warning, never escalated to Core's overall health — Core boots cleanly even when every declared service is unreachable.
+
+To call Core back from a capability service, point an MCP client at `http://orchestrator:8000/mcp/` (note the trailing slash — the canonical, redirect-free path). Five read-only community tools are exposed: `memory.search`, `memory.get_recent`, `entity.lookup`, `entity.search`, `context.build`. Set `MCP_AUTH_TOKEN` in `.env` to require a Bearer token on every `/mcp/*` request; leave it unset for single-user local setups.
+
+See [docs/extending-the-stack.md](docs/extending-the-stack.md#out-of-process-capability-services) and [ADR-010 — Ecosystem plumbing](docs/decisions/010-ecosystem-plumbing.md) for the full design.
+
 ---
 
 ## Project structure

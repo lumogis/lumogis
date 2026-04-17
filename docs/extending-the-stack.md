@@ -187,6 +187,119 @@ Add it to `COMPOSE_FILE` and run `docker compose up -d myservice`. Your containe
 
 ---
 
+## Out-of-process capability services
+
+Capability services are separate containers — your own or third-party — that expose tools over HTTP and are discovered by Core at startup. They are the right extension point when:
+
+- Your code cannot live inside the Core process (different runtime, heavy dependencies, GPU isolation, separate licence)
+- You want to ship a service with its own release cadence
+- You need to run on a separate host or scale independently
+
+In-process plugins (`plugins/<name>/`) are still the right choice for lightweight Python extensions that want to use Core's hooks, ports, and models directly. Capability services trade tight coupling for runtime independence.
+
+### The contract
+
+Every capability service exposes two endpoints:
+
+- `GET /capabilities` — returns a `CapabilityManifest` JSON (schema in `orchestrator/models/capability.py`)
+- `GET /health` — returns 200 when ready
+
+The manifest declares the service's identity, version, transport, tools (with JSON schemas), and the minimum Core version it requires. A minimal example:
+
+```json
+{
+  "name": "lumogis-memory-pro",
+  "id": "lumogis.memory.pro",
+  "version": "0.1.0",
+  "type": "service",
+  "transport": "http",
+  "license_mode": "commercial",
+  "maturity": "preview",
+  "description": "Long-window memory tier with cross-session summarisation.",
+  "tools": [
+    {
+      "name": "memory.long_search",
+      "description": "Search across all archived sessions.",
+      "license_mode": "commercial",
+      "input_schema": { "type": "object", "properties": { "query": { "type": "string" } }, "required": ["query"] },
+      "output_schema": { "type": "object", "properties": { "results": { "type": "array" } }, "required": ["results"] }
+    }
+  ],
+  "health_endpoint": "/health",
+  "capabilities_endpoint": "/capabilities",
+  "permissions_required": [],
+  "config_schema": { "type": "object", "properties": {} },
+  "min_core_version": "0.3.0",
+  "maintainer": "you@example.com"
+}
+```
+
+### Registering with Core
+
+Add the service's base URL to `.env`:
+
+```bash
+# One service
+CAPABILITY_SERVICE_URLS=http://my-service:8001
+
+# Multiple services — comma-separated, no spaces around commas required
+CAPABILITY_SERVICE_URLS=http://lumogis-memory-pro:8001,http://lumogis-graph-pro:8002
+```
+
+Restart the orchestrator. Core will:
+
+1. Fetch each service's `/capabilities` manifest at startup
+2. Refuse to register the service if its `min_core_version` is greater than Core's `__version__`
+3. Probe `/health` immediately, then every 60 seconds
+4. Re-fetch every manifest every 5 minutes (so version bumps on the service container surface without a Core restart)
+
+A registered service appears in `GET /` under `capability_services` and on the dashboard's main panel. Failures to reach a service are logged as warnings — Core boots cleanly even when every declared service is unreachable.
+
+### Add the service to your stack
+
+Capability services are just containers on the same Docker network as the orchestrator, so the standard overlay pattern from earlier in this guide applies:
+
+```yaml
+# docker-compose.my-capability.yml
+services:
+  my-capability:
+    image: my-capability:latest
+    environment:
+      LUMOGIS_CORE_URL: http://orchestrator:8000
+    # No port mapping needed — Core reaches it by service name on the
+    # internal network. Add a port mapping only if you want to call it
+    # directly from the host for debugging.
+```
+
+```bash
+# .env
+COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml:docker-compose.my-capability.yml
+CAPABILITY_SERVICE_URLS=http://my-capability:8000
+```
+
+```bash
+docker compose up -d my-capability
+```
+
+### Calling Core back from a capability service
+
+Capability services often need to read from Core (memory, entities, context). Use the MCP server surface at `http://orchestrator:8000/mcp/` rather than the REST API — it is the supported public contract for external consumers and exposes five read-only community tools (`memory.search`, `memory.get_recent`, `entity.lookup`, `entity.search`, `context.build`).
+
+Configure your MCP client with:
+
+- URL: `http://orchestrator:8000/mcp/` (note the trailing slash — the canonical, redirect-free path)
+- Bearer token: set `MCP_AUTH_TOKEN` in `.env` and configure the same value on the client; leave both unset for local single-user setups
+
+The MCP server is enabled automatically when the `mcp` Python package is installed (it is in `orchestrator/requirements.txt`). Status visible in the dashboard under **Settings → MCP server**.
+
+### Discovering Core's manifest
+
+Core publishes its own `CapabilityManifest` at `GET /capabilities` (no auth, never gated). External tools — Thunderbolt, future capability marketplaces, your own installer — can discover the running Core's tools and version through the same contract that out-of-process services use.
+
+See [ADR-010 — Ecosystem plumbing](decisions/010-ecosystem-plumbing.md) for the full design rationale.
+
+---
+
 ## Code extensions
 
 Stack add-ons add containers. Code extensions add capability to the orchestrator itself. Drop a Python file in the right place and it is discovered automatically at startup.
