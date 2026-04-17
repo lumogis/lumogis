@@ -133,6 +133,45 @@ async def lifespan(app: FastAPI):
 
     register_routines()
 
+    # Capability service registry: discover out-of-process services declared
+    # in CAPABILITY_SERVICE_URLS. Failures are warnings, never errors —
+    # Core must start cleanly even when zero services are reachable.
+    capability_registry = config.get_capability_registry()
+    capability_urls = config.get_capability_service_urls()
+    if capability_urls:
+        try:
+            await capability_registry.discover(capability_urls)
+            _log.info(
+                "Capability registry: %d service(s) registered, %d tool(s) available",
+                len(capability_registry.all_services()),
+                len(capability_registry.get_tools()),
+            )
+        except Exception as exc:
+            _log.warning("Capability registry initial discovery failed: %s", exc)
+    else:
+        _log.info("Capability registry: no CAPABILITY_SERVICE_URLS configured")
+
+    # Capability registry refresh — picks up services that came online
+    # after Core started, and refreshes manifests for already-registered
+    # services. Job is a sync wrapper around discover_sync().
+    if scheduler:
+        def _refresh_capability_registry() -> None:
+            capability_registry.discover_sync(config.get_capability_service_urls())
+
+        scheduler.add_job(
+            _refresh_capability_registry,
+            trigger="interval",
+            minutes=5,
+            id="capability_registry_refresh",
+            name="Capability registry refresh",
+            replace_existing=True,
+            misfire_grace_time=60,
+            coalesce=True,
+            max_instances=1,
+        )
+        _log.info("Capability registry refresh job registered (every 5 minutes)")
+
+
     from librechat_config import generate_librechat_yaml
 
     if generate_librechat_yaml():

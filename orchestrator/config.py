@@ -353,6 +353,36 @@ def get_scheduler():
     return _instances["scheduler"]
 
 
+# ---------------------------------------------------------------------------
+# Ecosystem plumbing — out-of-process capability services (Area 2)
+# ---------------------------------------------------------------------------
+
+
+def get_capability_service_urls() -> list[str]:
+    """Parse CAPABILITY_SERVICE_URLS env var into a clean list of base URLs.
+
+    Comma-separated. Whitespace is stripped, empty entries are dropped.
+    Returns [] when the env var is unset or empty so callers can short-circuit.
+    """
+    raw = os.environ.get("CAPABILITY_SERVICE_URLS", "")
+    return [u.strip() for u in raw.split(",") if u.strip()]
+
+
+def get_capability_registry():
+    """Return the shared CapabilityRegistry singleton.
+
+    Discovery is driven from main.py lifespan (startup) and an APScheduler
+    job (5-minute refresh). The registry itself does not initiate discovery.
+    """
+    if "capability_registry" not in _instances:
+        from services.capability_registry import CapabilityRegistry
+
+        _instances["capability_registry"] = CapabilityRegistry()
+        _log.info("CapabilityRegistry created")
+    return _instances["capability_registry"]
+
+
+
 def shutdown() -> None:
     """Close connections and release resources."""
     store = _instances.get("metadata_store")
