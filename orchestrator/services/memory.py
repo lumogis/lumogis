@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Lumogis
 """Session memory: summarize conversations and retrieve past context.
 
@@ -65,10 +65,11 @@ def summarize_session(
             summary=data.get("summary", response.text),
             topics=data.get("topics", []),
             entities=data.get("entities", []),
+            entity_ids=[],
         )
     except (json.JSONDecodeError, KeyError):
         _log.warning("LLM returned non-JSON summary, using raw text")
-        return SessionSummary(session_id=sid, summary=response.text)
+        return SessionSummary(session_id=sid, summary=response.text, entity_ids=[])
 
 
 def store_session(

@@ -273,11 +273,11 @@ Core exposes five read-only community tools over MCP at `/mcp/`:
 | `entity.search` | `services.entities.search_by_name` |
 | `context.build` | `services.search.semantic_search` + `services.memory.retrieve_context` + `services.context_budget.truncate_text` |
 
-All tools are thin wrappers — no business logic in `mcp_server.py`. The three new helpers in `services/memory.py` and `services/entities.py` mirror the existing `routes/data.py::list_entities` error-handling pattern: warn + return empty answer (`[]` or `None`) on any DB failure, never raise.
+All tools are thin wrappers — no business logic in `mcp_server.py`. The new helpers in `services/memory.py` and `services/entities.py` mirror the existing `routes/data.py::list_entities` error-handling pattern: warn + return empty answer (`[]` or `None`) on any DB failure, never raise.
 
 Transport: `FastMCP(stateless_http=True, json_response=True)` mounted at `/mcp` via `app.mount`. Stateless mode is a deliberate scope choice — every tool is read-only and self-contained, so no sessions, no streaming, no server→client notifications. A future stateful MCP surface (e.g. for long-running KG queries) belongs in a separate capability service rather than Core. The canonical client URL is **`/mcp/`** with the trailing slash; `POST /mcp` triggers a 307 redirect that some HTTP clients drop the `Authorization` header on.
 
-Lifespan integration: the SDK's `StreamableHTTPSessionManager` requires its anyio task group to be active even in stateless mode, so the FastAPI lifespan calls `mcp.session_manager.run().__aenter__()` after building a fresh `FastMCP` via `build_fastmcp()`. The factory is rebuilt per lifespan startup because `session_manager.run()` is single-shot per `FastMCP` instance — production lifespans run once so reuse would work, but `TestClient(main.app)` starts a fresh lifespan per test.
+Lifespan integration: the SDK's `StreamableHTTPSessionManager` requires its anyio task group to be active even in stateless mode, so the FastAPI lifespan calls `mcp.session_manager.run().__aenter__()` after building a fresh `FastMCP` via `build_fastmcp()`. The factory is rebuilt per lifespan startup because `session_manager.run()` is single-shot per `FastMCP` instance — production lifespans run once so reuse would work, but `TestClient(main.app)` starts a fresh lifespan per test — rebuilding makes both paths identical and keeps the production code equally simple.
 
 ### Auth
 

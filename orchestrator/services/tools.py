@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Lumogis
 """
 Tool registry and executor for the Lumogis orchestrator.

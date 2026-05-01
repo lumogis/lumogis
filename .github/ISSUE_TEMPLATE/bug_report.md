@@ -18,13 +18,6 @@ A clear description of what is broken and what you expected to happen.
 
 ## Actual behaviour
 
-## Hardware tier
-
-Paste the output of `bash scripts/detect-hardware.sh`:
-
-```
-```
-
 ## Environment
 
 - OS:

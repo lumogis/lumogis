@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Lumogis
 """
 Wiring layer: reads .env, returns cached adapter singletons.
@@ -380,7 +380,6 @@ def get_capability_registry():
         _instances["capability_registry"] = CapabilityRegistry()
         _log.info("CapabilityRegistry created")
     return _instances["capability_registry"]
-
 
 
 def shutdown() -> None:

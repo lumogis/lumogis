@@ -20,11 +20,11 @@ And then you do it anyway. Because the alternative is worse.
 
 Lumogis fixes the thing that causes the hesitation. Your files, documents, and conversations are indexed and stored entirely on your own machine. When you ask a question, Lumogis assembles the relevant context from your local index and sends a composed prompt — your question plus the pieces of your thinking that bear on it — to whichever model is best suited. Claude for deep reasoning. GPT-4 for breadth. A local model for anything you want to keep completely offline. Your archive never travels. What travels is a question.
 
-This is not a privacy policy. It is not a setting. It is physically impossible for your files to reach a Lumogis server, because there is no Lumogis server. The source is public under the AGPL — anyone can verify it.
+This is not a privacy policy. It is not a setting. It is physically impossible for your files to reach a Lumogis server, because there is no Lumogis server. The source is public under the GNU Affero General Public License v3.0 only (AGPL-3.0-only) — anyone can verify it.
 
 When using a local model, nothing leaves your machine at all. When using a cloud model, only the composed prompt — your question plus the retrieved excerpts — travels to the model provider. Your raw files, full document corpus, embeddings, and conversation history never move.
 
-*Privacy is not a setting here. It is the architecture.* 
+*Privacy is not a setting here. It is the architecture.*
 
 ---
 
@@ -172,7 +172,7 @@ The self-hosted AI space is crowded. Here is how Lumogis differs from the projec
 - CVE-2026-25253 (CVSS 8.8): [NVD — National Vulnerability Database](https://nvd.nist.gov/vuln/detail/CVE-2026-25253)
 - GitHub Security Advisory GHSA-g8p2-7wf7-98mq: [openclaw/openclaw](https://github.com/openclaw/openclaw/security/advisories/GHSA-g8p2-7wf7-98mq)
 - 40,000+ exposed instances: [Infosecurity Magazine](https://www.infosecurity-magazine.com/news/researchers-40000-exposed-openclaw/) · [runZero exposure analysis](https://www.runzero.com/blog/openclaw/)
-- ClawHavoc campaign and related — 76 confirmed malicious payloads: [Snyk ToxicSkills research](https://snyk.io/blog/toxicskills-malicious-ai-agent-skills-clawhub/)
+- ClawHavoc campaign — 341 malicious skills: [Snyk ToxicSkills research](https://snyk.io/blog/toxicskills-malicious-ai-agent-skills-clawhub/)
 - Full technical breakdown: [The Hacker News](https://thehackernews.com/2026/02/openclaw-bug-enables-one-click-remote.html)
 
 </details>

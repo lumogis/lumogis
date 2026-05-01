@@ -9,7 +9,8 @@ __pycache__/
 venv/
 .venv/
 
-# Cursor IDE
+# Cursor IDE — local workspace (plans, skills, rules); not part of public
+# release trees. See docs/release/public-agpl-release-workflow.md.
 .cursor/
 
 # Plugin packages mounted at deploy time — not tracked in core.
