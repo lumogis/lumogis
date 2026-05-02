@@ -1,13 +1,11 @@
 # Connect Everything & Verify — End-to-End Runbook
 
 > Status: Active  
-> Last reviewed: 2026-05-01  
-> Verified against commit: cdbd657  
+> Last reviewed: 2026-05-02  
+> Verified against commit: 98f02b1  
 > Owner: Docs Librarian
 
-A linear, copy-paste runbook for standing up the **full premium Lumogis
-stack** and proving every link works. Follow top-to-bottom; each step has
-a clear pass/fail check before you move on.
+A linear, copy-paste runbook for standing up the **full self-hosted stack** (Core, Lumogis Web + Caddy, optional LibreChat, optional **lumogis-graph** + FalkorDB) and proving every link works. Follow top-to-bottom; each step has a clear pass/fail check before you move on.
 
 > Companion to `docs/dev-cheatsheet.md` (reference) and
 > `docs/kg_operations_guide.md` (concepts). Run all `docker compose`
@@ -19,18 +17,19 @@ a clear pass/fail check before you move on.
 
 ```
                               ┌──────────────────┐
-       Browser ──────────────▶│   LibreChat UI   │  :3080
+       Browser ──────────────▶│  Lumogis Web UI  │  same-origin :80 (Caddy)
                               └────────┬─────────┘
-                                       │ /v1/chat/completions
+                                       │ /api/* + static
                                        ▼
+       Browser ──(optional)──▶ LibreChat :3080──▶ /v1/chat/completions
        Browser ──▶  /dashboard ──┐
        Browser ──▶  /graph/viz ──┼──▶┌──────────────────┐
-       Browser ──▶  /mcp        ◀┘   │   orchestrator   │  :8000  (Core)
+       Browser ──▶  /mcp        ◀┘   │ Core orchestrator │  :8000
                                      └──┬───────┬───────┘
                                         │       │ /webhook + /context
                                 ingest  │       ▼
                                         │  ┌──────────────┐
-                                        │  │ lumogis-graph│ :8001  (premium KG)
+                                        │  │ lumogis-graph│ :8001  (optional KG service)
                                         │  └──────┬───────┘
                                         │         │
                           ┌─────────────┼─────────┼──────────────────┐
@@ -60,7 +59,7 @@ Optional but recommended: `jq` for nicer JSON output. The runbook uses
 
 ---
 
-## Step 1 — Configure `.env` for the full premium stack
+## Step 1 — Configure `.env` for the full stack (Core + lumogis-graph service mode)
 
 ```bash
 cd /path/to/lumogis    # repository root — use your actual clone path
@@ -70,7 +69,7 @@ cp -n .env.example .env       # only if you don't already have one
 Open `.env` and make sure these lines are set:
 
 ```bash
-# --- Compose layout: Core + FalkorDB + premium KG service ---
+# --- Compose layout: Core + FalkorDB + lumogis-graph (docker-compose.premium.yml overlay) ---
 COMPOSE_PROJECT_NAME=lumogis
 COMPOSE_FILE=docker-compose.yml:docker-compose.falkordb.yml:docker-compose.premium.yml
 
@@ -100,7 +99,7 @@ EMBEDDER_BACKEND=ollama
 GRAPH_BACKEND=falkordb
 FALKORDB_URL=redis://falkordb:6379
 
-# --- Premium KG: Core must talk to lumogis-graph over the network ---
+# --- KG service mode: Core must talk to lumogis-graph over the network ---
 GRAPH_MODE=service
 KG_SERVICE_URL=http://lumogis-graph:8001
 CAPABILITY_SERVICE_URLS=http://lumogis-graph:8001
@@ -223,7 +222,7 @@ curl -sf http://localhost:8000/health \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['capability_services'])"
 ```
 
-With the **full premium** `.env` from Step 1, expect **`registered`** and
+With the **service-mode KG** `.env` from Step 1, expect **`registered`** and
 **`healthy`** to be **≥ 1** once `lumogis-graph` is up and Core has probed it.
 If both stay **0**, Core never discovered the KG URL — check `.env`,
 `docker compose ps`, and orchestrator logs.
@@ -248,7 +247,7 @@ curl -s http://localhost:8000/ | python3 -m json.tool | head -60
 
 ---
 
-## Step 5 — Verify the premium KG service is up and Core is wired to it in `service` mode
+## Step 5 — Verify the lumogis-graph service is up and Core is wired to it in `service` mode
 
 The KG container has **no host port** by design. Reach it via Core's
 network:
@@ -1317,6 +1316,8 @@ them transparently because of `CAPABILITY_SERVICE_URLS`).
 
 ## Step 11 — Run the automated test suites against the live stack
 
+See [`testing/automated-test-strategy.md`](testing/automated-test-strategy.md) for how these layers fit CI and local development.
+
 Now that the stack is up and proven by hand, run the test matrix to
 catch regressions:
 
@@ -1333,7 +1334,7 @@ make compose-test-kg
 # Integration tests against the running stack (Core ↔ FalkorDB)
 make compose-test-integration
 
-# Premium-mode integration: Core ↔ lumogis-graph over HTTP
+# Service-mode integration: Core ↔ lumogis-graph over HTTP
 COMPOSE_FILE=docker-compose.yml:docker-compose.falkordb.yml:docker-compose.premium.yml \
 docker compose run --rm \
   -v $(pwd)/tests:/integration-tests:ro \
@@ -1348,7 +1349,7 @@ make test-graph-parity
 ```
 
 **Pass criterion:** every suite is green. The parity test is the
-strongest single signal that the premium extraction hasn't drifted from
+strongest single signal that the KG service extraction hasn't drifted from
 the in-process behaviour.
 
 ---
@@ -1360,7 +1361,7 @@ the in-process behaviour.
 | Core not wired to KG service (still using in-process plugin)    | `.env` missing `GRAPH_MODE=service`. Verify with `docker compose exec orchestrator printenv GRAPH_MODE`; expect `service`. Fix `.env`, then `docker compose up -d orchestrator` (or `restart orchestrator`). Core's `/graph/health` does **not** report wiring — use the env check + `capability_services` on `/health`. |
 | Core can't reach `lumogis-graph` (webhooks fail, capabilities show 0) | `KG_SERVICE_URL` / `CAPABILITY_SERVICE_URLS` wrong or empty. Both must be `http://lumogis-graph:8001` (container DNS, not `localhost`). Fix `.env`, restart Core. |
 | `lumogis-graph` logs `401 /webhook`                             | `GRAPH_WEBHOOK_SECRET` mismatch. For dev, set `KG_ALLOW_INSECURE_WEBHOOKS=true` and unset the secret on both. |
-| `/health` shows `capability_services.registered: 0` on premium stack | Wrong or missing `CAPABILITY_SERVICE_URLS`, KG unhealthy at Core boot, or Core started before KG: fix `.env`, wait for `lumogis-graph` healthy, recreate or restart orchestrator. Remote tools are **not** merged into `GET /capabilities`; check `capability_services` on `/health` or list tools via MCP at `/mcp`. |
+| `/health` shows `capability_services.registered: 0` on a stack with `lumogis-graph` | Wrong or missing `CAPABILITY_SERVICE_URLS`, KG unhealthy at Core boot, or Core started before KG: fix `.env`, wait for `lumogis-graph` healthy, recreate or restart orchestrator. Remote tools are **not** merged into `GET /capabilities`; check `capability_services` on `/health` or list tools via MCP at `/mcp`. |
 | Ingest 200s but FalkorDB stays empty                            | Webhooks not reaching KG. `docker compose logs -f lumogis-graph` while re-ingesting; look for `POST /webhook`. |
 | `/graph/viz` is empty after ingest                              | Either FalkorDB really is empty (see above), or browser cached an old empty render — hard reload.             |
 | LibreChat 502s when sending a message                           | Core unhealthy. `docker compose logs orchestrator`; usually missing `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`.   |
@@ -1393,7 +1394,7 @@ After completing all steps:
 
 - [ ] `docker compose ps` — all services healthy
 - [ ] All four storage backends respond (Qdrant, Postgres, FalkorDB, Ollama)
-- [ ] `/health` on Core returns HTTP 200 with `"postgres_ok": true` (and `capability_services` counts match premium wiring)
+- [ ] `/health` on Core returns HTTP 200 with `"postgres_ok": true` (and `capability_services` counts match lumogis-graph wiring)
 - [ ] Core wiring: `GRAPH_MODE=service` in the orchestrator container env, and `/health` → `capability_services.registered ≥ 1` (and `healthy ≥ 1`) for `lumogis-graph`
 - [ ] `/health` on the KG service (via `exec`) returns `"falkordb": true` and `"postgres": true`
 - [ ] `/graph/stats` on the KG service shows `"available": true` (node/edge counts grow after ingest)

@@ -25,10 +25,10 @@ This is **install-time / revisit performance** for the shell bundle — **not** 
 
 ## Phase 3C — composer draft storage (`drafts.ts`)
 
-- **Source:** `src/pwa/drafts.ts` — thin **`idb-keyval`** wrapper: `getDraft` / `setDraft` / `deleteDraft`, `makeChatDraftKey(threadId)`, `makeCaptureDraftKey(captureId)` (key helper for **future** QuickCapture; **no** capture UI in this pass).
+- **Source:** `src/pwa/drafts.ts` — thin **`idb-keyval`** wrapper: `getDraft` / `setDraft` / `deleteDraft`, `makeChatDraftKey(threadId)`, `makeCaptureDraftKey(captureId)` (capture draft keys used by **QuickCapture** on `/capture`).
 - **Payload:** **plain text only** (max 32&nbsp;768 chars, trimmed; empty/whitespace deletes the row). **No** auth tokens, user ids in keys, assistant text, API responses, or transcript blobs.
 - **Chat UI:** `ChatPage.tsx` loads/saves the composer per thread, debounced writes, clears the draft only after a **completed** assistant stream; **`threadStore`** + **`sessionStorage`** transcript mirroring is unchanged and **stays per-tab only** — not promoted to IndexedDB.
-- **Out of scope here:** service worker / Cache Storage behaviour beyond 3B, Web Push, capture upload.
+- **Out of scope here:** expanding **`drafts.ts`** into offline search or SW `fetch` cache. **Capture sync** lives in QuickCapture/outbox flows, not in `drafts.ts`.
 
 ## Phase 3D — bounded TanStack Query persistence (`queryPersistence.ts`)
 
@@ -57,4 +57,4 @@ Operator env, HTTPS/Safari caveats, **`pywebpush`** image rebuild note, manual s
 
 ## Deferred (later parent-plan phases)
 
-Phase **6** — Tauri desktop checklist per `.cursor/plans/cross_device_lumogis_web.plan.md`. Parent **Pass 4.3** (LibreChat compose defaults) stays separate from **`swPush`**. **File / media** Web Share Target (**POST** multipart) remains deferred (needs SW **`fetch`** or unsafe silent handling).
+Phase **6** — Tauri desktop checklist (see [`../../../../docs/architecture/cross-device-web-phase-2-mobile-ux-plan.md`](../../../../docs/architecture/cross-device-web-phase-2-mobile-ux-plan.md) and Web roadmap reconciliation for status). **LibreChat** compose defaults remain separate from **`swPush`**. **File / media** Web Share Target (**POST** multipart) remains deferred (needs SW **`fetch`** or unsafe silent handling).

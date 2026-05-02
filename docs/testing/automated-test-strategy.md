@@ -2,6 +2,9 @@
 
 This document is the **permanent** Lumogis test strategy for private **`main`**. It complements release-mechanics docs under `docs/release/` (which stay focused on RC promotion, export, and upstream publishing).
 
+Last reviewed: 2026-05-02  
+Verified against commit: 98f02b1
+
 ---
 
 ## A. Purpose
@@ -112,7 +115,27 @@ Each tier has a role in the pyramid from cheap hygiene to optional heavy checks.
 
 ---
 
-## D. Full product stack principle
+## D. Quick reference — Makefile layers (contributors)
+
+Day-to-day and stack-shaped suites also map cleanly to direct Makefile targets:
+
+| Layer | Command(s) | Needs |
+| --- | --- | --- |
+| **Orchestrator unit tests** | `make test` (venv) or `make compose-test` (Docker) | Optional venv with `orchestrator/requirements-dev.txt`, or Docker only |
+| **Stack-control unit tests** | Included in `make test`; alone: `make compose-test-stack-control` | Docker |
+| **Integration (HTTP against live Core)** | `make test-integration` (venv) or `make compose-test-integration` (Docker; includes FalkorDB overlay) | Full stack up; FalkorDB merge for graph tests |
+| **lumogis-graph service tests** | `make compose-test-kg` | Docker (KG test image) |
+| **Mock capability contract tests** | `make mock-capability-test` | Python venv with `services/lumogis-mock-capability/requirements-dev.txt` |
+| **Web unit / lint** | `make web-test`, `make web-lint` | Node in `clients/lumogis-web` |
+| **Web e2e (Playwright)** | `make web-e2e` or `make web-e2e-prove` | Stack + env creds (see `clients/lumogis-web/README.md`) |
+| **Caddy security headers** | `make web-caddy-headers` / `make web-caddy-headers-prove` | Caddy + web + orchestrator |
+| **Graph inprocess vs service parity** | `make test-graph-parity` | Docker; **destructive** to dev volumes — see `Makefile` |
+
+**Auth defaults for pytest:** `make compose-test` and `make test` force `AUTH_ENABLED=false` so local family-LAN `.env` settings do not break TestClient suites (see `Makefile`).
+
+---
+
+## E. Full product stack principle
 
 Automated coverage should **eventually** touch (and regressions should be detectable at the right tier for):
 
@@ -131,7 +154,7 @@ Automated coverage should **eventually** touch (and regressions should be detect
 
 ---
 
-## E. Determinism rules
+## F. Determinism rules
 
 **Required gates must not depend on:**
 
@@ -152,7 +175,7 @@ Automated coverage should **eventually** touch (and regressions should be detect
 
 ---
 
-## F. Feature test policy
+## G. Feature test policy
 
 For **every new feature**, extend automation according to this checklist:
 
@@ -168,7 +191,7 @@ For **every new feature**, extend automation according to this checklist:
 
 ---
 
-## G. Examples (apply §F)
+## H. Examples (apply §G)
 
 | Scenario | Typical additions |
 |----------|-------------------|
@@ -181,7 +204,7 @@ For **every new feature**, extend automation according to this checklist:
 
 ---
 
-## H. Required vs full gate
+## I. Required vs full gate
 
 - **`make verify-public-rc`** — **Deterministic required product gate:** hygiene, unit, web, compose pytest (`public_rc` integration scope), Playwright **gate UI**, export tree verification. This is the baseline **merge-quality** bar for RC → **`main`**.
 - **`make verify-public-rc-full`** — **Required gate plus deeper/heavier checks:** adds **`test-migrations`**, **seeded full Playwright** (`test-ui-full`), and **optional** tails such as **`compose-test`**, **`compose-test-kg`**, **`test-graph-parity`** (graph parity across modes, docker image tests, signed-in deep navigation — subject to Makefile “optional” conventions).
@@ -190,7 +213,7 @@ Treat **`verify-public-rc-full`** as the **release-hardening** superset; **`veri
 
 ---
 
-## I. Playwright policy
+## J. Playwright policy
 
 - **Desktop and mobile:** Both viewports are expected for **user-visible** features unless explicitly desktop-only.
 - **Selectors:** Prefer **`data-testid`** for stable hooks; avoid brittle **copy/text** selectors that break on i18n or copy tweaks.
@@ -200,16 +223,18 @@ Treat **`verify-public-rc-full`** as the **release-hardening** superset; **`veri
 
 ---
 
-## J. CI policy
+## K. CI policy
 
 - **Fast paths:** Hygiene, **`test-unit`**, **`test-web`** (and optionally lightweight integration slices) can run on **every PR/push**.
+- **CI today (representative):** GitHub Actions (`.github/workflows/ci.yml`) runs Ruff plus orchestrator and stack-control **unit** tests on typical PRs to `main`/`master`.
 - **Docker / Playwright full RC gate:** May run on **`workflow_dispatch`**, **scheduled** windows, or dedicated jobs until **cost and flake rate** are acceptable for mandatory blocking status.
+- **Not always in default CI:** Docker integration, Playwright, KG image tests, and parity often need heavier runners; contributors still run them when touching those surfaces, and the Makefile remains the single catalog of commands.
 - **`main` discipline:** **`main`** should **not** rely on **manual local-only** testing forever — automation on **`main`** is the source of truth for regressions.
 - **Future goal:** Promote **`verify-public-rc`** (or equivalent CI aggregation) into **required** GitHub checks when runner capacity and reliability allow.
 
 ---
 
-## K. Optional / heavy tests
+## L. Optional / heavy tests
 
 Keep **optional or nightly** unless explicitly promoted:
 
@@ -222,7 +247,7 @@ Keep **optional or nightly** unless explicitly promoted:
 
 ---
 
-## L. Maintenance rules
+## M. Maintenance rules
 
 - **Flaky tests** must be **fixed**, **quarantined with documented reason**, or **moved to full/nightly** — not silently ignored.
 - **Do not weaken** hygiene or export scripts to “green” tests — fix product or fix tests.
@@ -240,6 +265,9 @@ Keep **optional or nightly** unless explicitly promoted:
 - **`scripts/integration-public-rc.sh`** — compose lifecycle and pytest phases.
 - **`scripts/seed-public-rc-smoke-user.sh`** — idempotent smoke user for Tier 5.
 - **`docs/release/rc-dev-clean-snapshot-plan.md`** — RC mechanics only; points here for **permanent** testing strategy.
+- [CONTRIBUTING.md](../../CONTRIBUTING.md) — setup, venv vs Docker
+- [tests/integration/README.md](../../tests/integration/README.md) — live stack integration
+- [clients/lumogis-web/README.md](../../clients/lumogis-web/README.md) — codegen, PWA checks, Playwright
 
 ---
 

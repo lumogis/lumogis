@@ -7,6 +7,9 @@
 **Scope:** Describes Lumogis **as of** consolidation after cross-device Lumogis Web Phase 0/1, Admin & Me shell closure, self-hosted architecture remediation Phases 0–5 (household surfaces + capability scaffolding), password-management foundation, admin user import/export UI, and extraction of the **parent** Web Phase 2 (mobile UX) plan.  
 **Authority:** Prefer **closeout reviews** and **[Web roadmap reconciliation](architecture/lumogis-web-roadmap-reconciliation-after-remediation.md)** over older plan prose when they disagree.
 
+Last reviewed: 2026-05-02  
+Verified against commit: 98f02b1
+
 **Code cross-check (spot audit):** Key claims were traced to `orchestrator/config.py` (`get_tool_catalog_enabled`), `orchestrator/loop.py` + `services/unified_tools.py` (tool-list merge + teardown), `services/capability_http.py` (`graph_query_tool_proxy_call` / `{"input": …}`), `services/execution.py` (`tool.execute.capability`), `routes/auth.py` (`REFRESH_COOKIE_PATH = "/api/v1/auth"`), `docker/caddy/Caddyfile` path table, `postgres/migrations/016-per-user-connector-permissions.sql` (per-user `connector_permissions`), `rg` for `from adapters` under `orchestrator/services/` and `orchestrator/routes/` (no matches), `docker-compose.yml` (no mock-capability service), and `clients/lumogis-web` routes under `/me/*` and `/admin/*`. **§19** frames extension work as **five practical families** (plus how lower-level pieces compose); it aligns with `ARCHITECTURE.md` / `CONTRIBUTING.md`, not a parallel architecture.
 
 **Important — two different “Phase 4 / Phase 5” programmes:**
@@ -14,7 +17,7 @@
 | Programme | “Phase 4” means | “Phase 5” means |
 | --- | --- | --- |
 | **Self-hosted architecture remediation** ([remediation plan](architecture/lumogis-self-hosted-platform-remediation-plan.md)) | Household-control JSON façades + Web read-only views (e.g. `/api/v1/me/tools`, diagnostics) | Optional **capability** scaffolding (discovery, OOP tool bridge, mock service, audit fan-in) |
-| **Cross-device Lumogis Web** (parent plan under `.cursor/plans/`) | **Web Push** + background approvals (not the same as remediation Phase 4) | **Capture-from-anywhere** (not the same as remediation Phase 5) |
+| **Cross-device Lumogis Web** (parent plan files may exist only on maintainer checkouts — *not in this repository*; see [Web roadmap reconciliation](architecture/lumogis-web-roadmap-reconciliation-after-remediation.md)) | **Web Push** + background approvals (not the same as remediation Phase 4) | **Capture-from-anywhere** (not the same as remediation Phase 5) |
 
 This manual uses **remediation** vs **cross-device Web** explicitly to avoid confusion.
 
@@ -54,8 +57,8 @@ This manual uses **remediation** vs **cross-device Web** explicitly to avoid con
 | **Safe credential handling** | Passwords and API keys are not splashed in the UI after save. | Encrypted credential payloads, copy-once tokens where applicable—[ADR 018](decisions/018-per-user-connector-credentials.md), [027](decisions/027-credential_scopes_shared_system.md), [029](decisions/029-self-hosted-account-password-management.md). |
 | **Auditability** | Important actions leave a trail. | Append-only `audit_log`; structured logging—[ADR 019](decisions/019-structured-audit-logging.md). |
 | **Modularity** | Swap vector store, LLM, etc., via adapters and ports. | `ports/` + `config.py` factories—`ARCHITECTURE.md`. |
-| **Optional capabilities** | Heavy or premium features can run **beside** Core, not inside its DB. | HTTP manifest at `GET /capabilities`, bearer trust—[ADR 010](decisions/010-ecosystem-plumbing.md), [011](decisions/011-lumogis-graph-service-extraction.md). |
-| **Agentic Core direction** | Future agents remain bounded roles under Core policy, not autonomous authority. | Planning baseline: [Agentic Core](architecture/agentic_core.md); draft ADR: `.cursor/adrs/agentic_core.md`. |
+| **Optional capabilities** | Heavy or isolated features can run **beside** Core, not inside its DB. | HTTP manifest at `GET /capabilities`, bearer trust—[ADR 010](decisions/010-ecosystem-plumbing.md), [011](decisions/011-lumogis-graph-service-extraction.md). |
+| **Agentic Core direction** | Future agents remain bounded roles under Core policy, not autonomous authority. | Planning baseline: [Agentic Core](architecture/agentic_core.md); any draft ADR text may exist only on maintainer checkouts. |
 | **No full-corpus cloud upload by default** | Your entire indexed library is not bulk-uploaded to an LLM vendor. | If a **cloud LLM** is configured, **composed prompts + retrieved excerpts** may leave the machine; **Qdrant/Postgres and raw files stay local** unless another feature sends them out. **Connectors** intentionally reach **their** configured services. |
 
 ---
@@ -541,6 +544,7 @@ MCP is **transport**. It exposes a **curated subset** of Core functions to exter
 - [`README.md`](../README.md) — install, stack, optional LibreChat profile notes  
 - [`ARCHITECTURE.md`](../ARCHITECTURE.md) — pillars, Caddy routing, MCP, plugins  
 - [`CONTRIBUTING.md`](../CONTRIBUTING.md) — dev setup, `compose-test`, codegen  
+- [`testing/automated-test-strategy.md`](testing/automated-test-strategy.md) — CI vs integration / web / KG / browser suites  
 - **ADRs:** [005](decisions/005-plugin-boundary.md), [006](decisions/006-ask-do-safety-model.md), [010](decisions/010-ecosystem-plumbing.md), [011](decisions/011-lumogis-graph-service-extraction.md), [012](decisions/012-family-lan-multi-user.md), [015](decisions/015-personal-shared-system-memory-scopes.md), [017](decisions/017-mcp-token-user-map.md), [018](decisions/018-per-user-connector-credentials.md), [019](decisions/019-structured-audit-logging.md), [024](decisions/024-per-user-connector-permissions.md), [026](decisions/026-llm-provider-keys-per-user.md), [027](decisions/027-credential_scopes_shared_system.md), [028](decisions/028-self-hosted-extension-architecture-and-household-control-surfaces.md), [029](decisions/029-self-hosted-account-password-management.md)  
 - [Self-hosted remediation plan](architecture/lumogis-self-hosted-platform-remediation-plan.md)  
 - [Phase 4 household closeout](architecture/phase-4-household-control-surface-closeout-review.md)  
@@ -552,7 +556,7 @@ MCP is **transport**. It exposes a **curated subset** of Core functions to exter
 - [`clients/lumogis-web/README.md`](../clients/lumogis-web/README.md)  
 - [`services/lumogis-graph/README.md`](../services/lumogis-graph/README.md)  
 - [`services/lumogis-mock-capability/README.md`](../services/lumogis-mock-capability/README.md)  
-- **Plans (historical context):** [`.cursor/plans/cross_device_lumogis_web.plan.md`](../.cursor/plans/cross_device_lumogis_web.plan.md), [`.cursor/plans/lumogis_web_admin_shell.plan.md`](../.cursor/plans/lumogis_web_admin_shell.plan.md) — prefer closeouts + reconciliation for current truth  
+- **Plans (historical context):** Long-form Web plans may exist only on maintainer checkouts *(not tracked in this repository)* — for shipped intent see [`architecture/lumogis-web-roadmap-reconciliation-after-remediation.md`](architecture/lumogis-web-roadmap-reconciliation-after-remediation.md), [`architecture/cross-device-web-phase-2-mobile-ux-plan.md`](architecture/cross-device-web-phase-2-mobile-ux-plan.md), and ADRs  
 
 ---
 

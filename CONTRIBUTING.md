@@ -329,7 +329,9 @@ Use `make test-integration-full` to include slow cases (e.g. waiting for RSS pol
 
 Tests cover the full pipeline: ingest → search → entity extraction → session memory → signal source → routine run → audit log → feedback → export.
 
-**Important:** CI runs unit tests only. Integration tests are run manually before each release. If you are adding a new service or adapter, add an integration test that exercises the full path.
+**CI vs broader automation:** `.github/workflows/ci.yml` runs **orchestrator** and **stack-control unit tests** plus Ruff on every PR. Integration, web, Playwright, KG-image, and parity suites require Docker and/or Node; they are part of the permanent strategy documented in [`docs/testing/automated-test-strategy.md`](docs/testing/automated-test-strategy.md). Run the targets that match your change (e.g. `make compose-test-integration` after HTTP/API work, `make web-test` after web changes).
+
+**New behaviour:** add tests at the right layer (unit for pure logic, integration when the HTTP stack matters, web tests for client regressions). No new secret values or private-only paths in commits — see [`docs/maintainers.md`](docs/maintainers.md) and `scripts/check-public-export.sh` for **public export hygiene** (paths omitted from the upstream tree must never leak into patches meant for the public repo).
 
 ---
 
@@ -359,10 +361,10 @@ Maintainers review PRs. We aim for a first response within **48 hours**.
 **PRs must:**
 - Pass `make lint` (ruff check + format)
 - Pass `make test` (unit tests)
-- Include tests for new functionality
+- Include tests for new functionality at the appropriate layer — see [`docs/testing/automated-test-strategy.md`](docs/testing/automated-test-strategy.md)
 - Sign the CLA
 
-**Integration tests** are run manually before each release — not required per-PR, but your PR description should explain how you tested it against the live stack.
+Describe in the PR body what you ran (`make test`, `make compose-test`, integration/web targets as applicable). Heavy suites may be additionally verified on merge.
 
 **For design decisions:** open a Discussion first — not every idea needs a PR. If you are proposing a new port, changing a Protocol signature, or adding a dependency, start a Discussion so the approach can be agreed before you write code. This saves everyone time.
 

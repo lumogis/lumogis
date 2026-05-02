@@ -1,9 +1,8 @@
 # Lumogis Web
 
-Responsive PWA client for the Lumogis orchestrator. Phase 0 ships the build
-scaffold and OpenAPI codegen plumbing; the feature pages (chat, search,
-approvals, captures, notifications) land in Phases 1–5 per
-`.cursor/plans/cross_device_lumogis_web.plan.md`.
+Responsive PWA client for the Lumogis orchestrator. Ship paths and feature areas (chat, search,
+approvals, captures, notifications) are described in this README and in
+[`../../docs/architecture/cross-device-web-phase-2-mobile-ux-plan.md`](../../docs/architecture/cross-device-web-phase-2-mobile-ux-plan.md) / the [Web roadmap reconciliation](../../docs/architecture/lumogis-web-roadmap-reconciliation-after-remediation.md).
 
 Backend vocabulary for tools vs actions vs MCP vs capabilities:
 [`../../docs/architecture/tool-vocabulary.md`](../../docs/architecture/tool-vocabulary.md).

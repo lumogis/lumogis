@@ -324,7 +324,10 @@ The MCP server is enabled automatically when the `mcp` Python package is install
 
 Core publishes its own `CapabilityManifest` at `GET /capabilities` (no auth, never gated). External tools — Thunderbolt, future capability marketplaces, your own installer — can discover the running Core's tools and version through the same contract that out-of-process services use.
 
-See [ADR-010 — Ecosystem plumbing](decisions/010-ecosystem-plumbing.md) for the full design rationale.
+### Shipped examples in this repository
+
+- **`lumogis-graph`** — First-party knowledge-graph capability used when **`GRAPH_MODE=service`**. Typical merge: `docker-compose.yml` + `docker-compose.falkordb.yml` + `docker-compose.premium.yml`, plus `KG_SERVICE_URL` / `CAPABILITY_SERVICE_URLS` as in `services/lumogis-graph/README.md` and [`docs/kg_reference.md`](kg_reference.md).
+- **`lumogis-mock-capability`** — Tiny **non-production** second service for contract / discovery smoke tests. Overlay: `docker-compose.mock-capability.yml`. See [`services/lumogis-mock-capability/README.md`](../services/lumogis-mock-capability/README.md).
 
 ---
 

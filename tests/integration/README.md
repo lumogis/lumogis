@@ -43,4 +43,4 @@ Override base URL:
 LUMOGIS_API_URL=http://host.docker.internal:8000 make test-integration
 ```
 
-CI runs **unit tests only**; integration is manual pre-release (see CONTRIBUTING.md).
+CI runs **orchestrator and stack-control unit tests** on each PR (see `.github/workflows/ci.yml`). **Integration** tests need a live stack; **`make compose-test-integration`** uses the FalkorDB overlay. See [`../docs/testing/automated-test-strategy.md`](../docs/testing/automated-test-strategy.md) for the full matrix (web, Playwright, KG image, mock capability, parity).

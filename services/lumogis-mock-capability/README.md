@@ -2,7 +2,7 @@
 
 Tiny **non-product** HTTP capability: manifest + health + one tool. Used to prove
 packaging boundaries for a **second** service (Phase 5 FU-4) without adding a
-real premium feature.
+real workload capability.
 
 ## Not included in the default stack
 

@@ -1,8 +1,8 @@
 # Dev Deployment Cheat Sheet — Docker & Git
 
 > Status: Active  
-> Last reviewed: 2026-05-01  
-> Verified against commit: cdbd657  
+> Last reviewed: 2026-05-02  
+> Verified against commit: 98f02b1  
 > Owner: Docs Librarian
 
 A practical, paste-ready reference for working on the **lumogis** repository
@@ -10,9 +10,10 @@ A practical, paste-ready reference for working on the **lumogis** repository
 now what?" loop, and the Git workflow to ship those changes.
 
 > **Companion doc:** [`connect-and-verify.md`](./connect-and-verify.md) — a
-> linear runbook to stand up the **full premium stack** (Core + lumogis-graph +
-> FalkorDB + LibreChat + storage) and prove every connection works end-to-end.
+> linear runbook to stand up **Core + Lumogis Web (Caddy) + optional LibreChat + optional lumogis-graph + FalkorDB + storage** and prove every connection end-to-end.
 > Use that when you want a single "connect everything and test" walkthrough.
+
+> Automated test layers: [`testing/automated-test-strategy.md`](testing/automated-test-strategy.md).
 
 > Run all `docker compose ...` commands from the **repository root** (where
 > `docker-compose.yml` and `.env` live). Replace `/path/to/lumogis` below with

@@ -1,41 +1,47 @@
-# Documentation Index
+# Documentation index
 
-Last reviewed: 2026-05-01  
-Verified against commit: cdbd657
+Last reviewed: 2026-05-02  
+Verified against commit: 98f02b1
 
-## Canonical docs
+## Product and operators
 
 - [`LUMOGIS_REFERENCE_MANUAL.md`](LUMOGIS_REFERENCE_MANUAL.md) — consolidated operator and contributor reference
-- [Repository root `README.md`](../README.md) — product overview and quickstart
-- [`ARCHITECTURE.md`](../ARCHITECTURE.md) — orchestrator structure (links here for depth)
+- [Repository root `README.md`](../README.md) — product overview and quickstart (Lumogis Web + Caddy + Core)
+- [`connect-and-verify.md`](connect-and-verify.md) — end-to-end stack runbook
+- [`dev-cheatsheet.md`](dev-cheatsheet.md) — Docker, Compose, day-to-day commands
+- [`troubleshooting.md`](troubleshooting.md)
+- [`gpu-setup.md`](gpu-setup.md)
+- [`connector-credentials.md`](connector-credentials.md)
+- [`per-user-export-format.md`](per-user-export-format.md)
 
 ## Architecture
 
+- [`../ARCHITECTURE.md`](../ARCHITECTURE.md) — Core structure, Caddy routing, MCP/capability registry
 - [`architecture/`](architecture/) — plans, closeout reviews, plugin imports, tool vocabulary
-- [`architecture/plugin-imports.md`](architecture/plugin-imports.md) — plugin import allow-list
+- [`decisions/`](decisions/) — ADRs (`001`–`032`, `DEBT.md`)
 
-## Decisions / ADRs
+## Testing
 
-- [`decisions/`](decisions/) — finalised ADRs (`001`–`031`, `DEBT.md`)
+- [`testing/automated-test-strategy.md`](testing/automated-test-strategy.md) — CI, pytest layers, integration, web, KG, Playwright
+- [`../tests/integration/README.md`](../tests/integration/README.md) — live stack integration tests
 
-## Implementation plans
+## Knowledge graph
 
-- **Skill-managed plans** live only on maintainer checkouts *(not part of the tracked repository)*; for shipped intent use `docs/architecture/` and `docs/decisions/`.
+- [`kg_reference.md`](kg_reference.md) — technical KG reference (in-process vs `lumogis-graph` service mode)
+- [`kg_operations_guide.md`](kg_operations_guide.md) — operator-facing KG concepts and runbook
 
-## Operations
+## Lumogis Web and PWA
 
-- [`dev-cheatsheet.md`](dev-cheatsheet.md) — Docker, Compose, Git
-- [`connect-and-verify.md`](connect-and-verify.md) — full premium stack end-to-end runbook
-- [`troubleshooting.md`](troubleshooting.md)
-- [`gpu-setup.md`](gpu-setup.md)
-- [`maintainers.md`](maintainers.md)
-- [`kg_operations_guide.md`](kg_operations_guide.md), [`kg_reference.md`](kg_reference.md)
+- [`../clients/lumogis-web/README.md`](../clients/lumogis-web/README.md) — SPA, codegen, production behind Caddy, Playwright
+- [`../clients/lumogis-web/src/pwa/README.md`](../clients/lumogis-web/src/pwa/README.md) — service worker, Web Push, offline UX boundaries
 
-## Archive
+## Extending and contributing
 
-- [`_librarian/docs-inventory.md`](_librarian/docs-inventory.md) — grouped inventory and statuses
-- Historical snapshots will live under `docs/archive/YYYY-MM/` when introduced
+- [`extending-the-stack.md`](extending-the-stack.md) — compose overlays, capability services, adapters/plugins
+- [`../CONTRIBUTING.md`](../CONTRIBUTING.md) — contributor setup and expectations
+- [`examples/example_plugin/`](examples/example_plugin/) — minimal plugin template
+- [`maintainers.md`](maintainers.md) — maintainer-facing publishing notes (hygiene / public tree)
 
-## Librarian
+## Maintainer-only material (private repository)
 
-- [`_librarian/`](_librarian/) — daily reports and inventory
+The following exist on the **private** monorepo only and are **omitted** from the public AGPL export (`scripts/check-public-export.sh`): maintainer release workflow under `docs/release/`, internal inventories under `docs/_librarian/`, and `docs/private/`. Do not rely on those paths in contributions meant for the upstream public tree.

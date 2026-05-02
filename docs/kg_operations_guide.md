@@ -540,13 +540,13 @@ Lumogis ships two equivalent ways of running the knowledge graph. They produce t
 | Mode | What runs where | When to choose it |
 |------|-----------------|-------------------|
 | `inprocess` (default) | The graph plugin lives inside the orchestrator container. One process, one set of logs, one image to update. | Single-machine self-hosted setups, dev work, anything you don't need to scale or isolate. |
-| `service` | The plugin runs in a separate `lumogis-graph` container. Orchestrator talks to it over HTTP. Both processes share the same Postgres, Qdrant, and FalkorDB. | You want to update / restart the graph without restarting chat, run it on a different host, give it its own resource budget, or treat the graph as a "premium" capability that can be enabled/disabled independently. |
+| `service` | The plugin runs in a separate `lumogis-graph` container. Orchestrator talks to it over HTTP. Both processes share the same Postgres, Qdrant, and FalkorDB. | You want to update / restart the graph without restarting chat, run it on a different host, give it its own resource budget, or run the KG as an optional isolated service you can enable or disable independently. |
 | `disabled` | No graph code runs anywhere. `query_graph` is not available, no `[Graph]` lines appear in chat, nothing is projected to FalkorDB. | You want to turn the feature off entirely without removing the database. |
 
 ### Switching modes
 
 1. Edit `.env` and set `GRAPH_MODE=inprocess` or `GRAPH_MODE=service`.
-2. If switching to `service`, also set `GRAPH_WEBHOOK_SECRET` to a long random string and bring up the premium overlay:
+2. If switching to `service`, also set `GRAPH_WEBHOOK_SECRET` to a long random string and bring up the **`lumogis-graph` overlay** (`docker-compose.premium.yml` — historical filename):
 
    ```bash
    docker compose -f docker-compose.yml \
@@ -573,4 +573,4 @@ These only apply when `GRAPH_MODE=service`. In `inprocess` mode none of these ca
 | All webhooks return 401 | The two processes have different `GRAPH_WEBHOOK_SECRET` values, or one is set and the other is not. | Make sure both Core and KG read the same `.env` (or set the variable identically in both compose files). |
 | Newly ingested entities are missing from the graph for a few hours | The KG container was unreachable when the events fired. Reconciliation will catch them up. | Wait until 03:00 UTC, or trigger an immediate catch-up: `curl -X POST http://localhost:8000/graph/backfill` (uses Core's reverse-proxy path) or `curl -X POST http://lumogis-graph:8001/graph/backfill` (direct, only available when the KG host port is exposed). |
 | Weekly job log line appears in BOTH the orchestrator and the KG container | Both schedulers are active. | In `service` mode, leave the KG scheduler enabled (`KG_SCHEDULER_ENABLED=true`) and make sure the Core process is in `service` mode too — Core skips the weekly job in that mode. If you want to silence the KG scheduler instead (e.g. running multiple KG replicas), set `KG_SCHEDULER_ENABLED=false` on all but one. |
-| `/graph/mgm` page is unreachable on the KG container's host port | The premium overlay does NOT expose port 8001 to the host by default — that is intentional. | Reach `/mgm` via Core's `/graph/mgm` (which is the same page), or `docker compose exec lumogis-graph curl http://localhost:8001/mgm`, or add a port mapping in your own overlay file. |
+| `/graph/mgm` page is unreachable on the KG container's host port | The **`lumogis-graph` compose overlay** does NOT expose port 8001 to the host by default — that is intentional. | Reach `/mgm` via Core's `/graph/mgm` (which is the same page), or `docker compose exec lumogis-graph curl http://localhost:8001/mgm`, or add a port mapping in your own overlay file. |

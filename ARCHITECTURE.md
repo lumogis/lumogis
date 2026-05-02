@@ -1,6 +1,8 @@
 # Lumogis Architecture
 
-This document explains how the lumogis orchestrator is structured and how the pieces fit together. Read this before contributing code. For a **single consolidated overview** aimed at operators and contributors (components, mental model, Web surfaces, deployment, roadmap disambiguation), see [`docs/LUMOGIS_REFERENCE_MANUAL.md`](docs/LUMOGIS_REFERENCE_MANUAL.md). For decisions on *why* specific technologies were chosen, see `docs/decisions/`. For the **post-remediation** framing (Core as policy kernel, tool catalog overlay, household-control `/api/v1` facades), see [ADR 028 — Self-hosted extension architecture and household control surfaces](docs/decisions/028-self-hosted-extension-architecture-and-household-control-surfaces.md).
+This document explains how the lumogis orchestrator (**Core**) is structured and how the pieces fit together. Read this before contributing code. For a **single consolidated overview** aimed at operators and contributors (components, mental model, Web surfaces, deployment, roadmap disambiguation), see [`docs/LUMOGIS_REFERENCE_MANUAL.md`](docs/LUMOGIS_REFERENCE_MANUAL.md). For decisions on *why* specific technologies were chosen, see `docs/decisions/`. For the **post-remediation** framing (Core as policy kernel, tool catalog overlay, household-control `/api/v1` facades), see [ADR 028 — Self-hosted extension architecture and household control surfaces](docs/decisions/028-self-hosted-extension-architecture-and-household-control-surfaces.md).
+
+**Stores and optional services (high level):** **Postgres** (metadata, audit, users), **Qdrant** (vectors / hybrid search), **Ollama** (local embed + LLM). **FalkorDB** backs the knowledge graph when the graph feature is enabled (in-process plugin and/or **`GRAPH_MODE=service`** with the **`lumogis-graph`** HTTP service — see `docker-compose.falkordb.yml` and `docker-compose.premium.yml`). **Testing:** layered pytest, integration, and web targets are summarized in [`docs/testing/automated-test-strategy.md`](docs/testing/automated-test-strategy.md).
 
 ---
 
@@ -299,7 +301,7 @@ The `auth_middleware` in `auth.py` gates `/mcp/*` independently of `AUTH_ENABLED
 
 - **Plugin loading** is unchanged. Capability services are out-of-process containers; plugins are in-process Python packages under `plugins/`. They serve different extension points.
 - **`plugins/graph/`** is untouched.
-- The MCP surface intentionally exposes only community tools. Premium/commercial tools (graph queries, multi-source context packs, etc.) belong in their own capability services that Core discovers via `CAPABILITY_SERVICE_URLS`, not in `mcp_server.py`.
+- The MCP surface on Core intentionally exposes a small **read-only** community tool set. Heavier or specialised tools (e.g. graph query surfaces, multi-source packs) belong in **separate capability services** that Core discovers via `CAPABILITY_SERVICE_URLS`, not in `mcp_server.py`.
 
 See [ADR-010 — Ecosystem plumbing](docs/decisions/010-ecosystem-plumbing.md) for the rationale and known technical debt.
 
@@ -349,4 +351,4 @@ make lint               # ruff check + ruff format --check
 make test-integration   # full-stack integration tests — requires docker compose up -d
 ```
 
-Unit tests use mock adapters from `tests/conftest.py`. No running Docker services are needed for the unit suite. Integration tests in `tests/integration/` run against the live stack via `httpx`.
+Unit tests use mock adapters from `tests/conftest.py`. No running Docker services are needed for the unit suite. Integration tests in `tests/integration/` run against the live stack via `httpx`. For the full matrix (compose-test, web, KG, Playwright), see [`docs/testing/automated-test-strategy.md`](docs/testing/automated-test-strategy.md).

@@ -1,7 +1,10 @@
 # Lumogis Knowledge Graph — Technical Reference
 
+> Last reviewed: 2026-05-02 (spot-check against `GRAPH_MODE` / service wiring; large doc — see codebase if anything disagrees)  
+> Verified against commit: 98f02b1
+
 > Authoritative reference for the knowledge graph subsystem built in Phase 3 (M1–M4, M9), the KG Quality Pipeline (Pass 1–4b), the lumogis-graph service extraction, and the **family-LAN multi-user + personal/shared/system scopes** work (ADRs 012, 013, 015, 023).
-> Generated from the codebase as of **2026-04-24** (this refresh). Where the codebase differs from any plan or earlier description, the codebase is authoritative.
+> Generated from the codebase as of **2026-04-24** (prior deep refresh). Where the codebase differs from any plan or earlier description, the codebase is authoritative.
 
 > **Deployment modes** — The KG subsystem runs in `GRAPH_MODE=inprocess` (default) or `GRAPH_MODE=service`. See §1.6, §5.4, §6.4, and §8.1. **HTTP routes** for `/graph/ego`, `/graph/viz`, etc. are registered on **Core** only when `inprocess`; in `service` they are served from **`lumogis-graph`** (same path relative to `KG_SERVICE_URL`).
 

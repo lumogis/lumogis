@@ -2,10 +2,11 @@
 
 Standalone, out-of-process knowledge-graph capability service for Lumogis.
 
-This is the Pass-2 build artefact of the [lumogis-graph extraction
-plan](../../.cursor/plans/lumogis_graph_service_extraction.plan.md). It runs
-as a separate FastAPI process behind Core, owning all FalkorDB writes and
+This is the first-party implementation of the [lumogis-graph service extraction ADR](../../docs/decisions/011-lumogis-graph-service-extraction.md) and related closeout docs. It runs
+as a separate FastAPI process behind Core, owning FalkorDB writes and
 exposing six `graph.*` tools via a mounted FastMCP server at `/mcp`.
+
+The supported Compose merge is **`docker-compose.yml` + `docker-compose.falkordb.yml` + `docker-compose.premium.yml`** (the **`premium`** filename is historical; the overlay adds the `lumogis-graph` service and env wiring for `GRAPH_MODE=service`).
 
 ## Quick reference
 
@@ -33,14 +34,14 @@ KG endpoint auth is **not** the same as Core’s FastAPI `require_admin` matrix.
 
 The service is built from the **repo root** because the Dockerfile pulls in
 `services/lumogis-graph/` as part of the build context. Compose orchestrates
-both pieces — see `docker-compose.premium.yml` (Pass 3).
+both pieces — merge **`docker-compose.yml`**, **`docker-compose.falkordb.yml`**, and **`docker-compose.premium.yml`** (see comments in those files).
 
 ```bash
 # Standalone build (sanity check):
 docker build -f services/lumogis-graph/Dockerfile -t lumogis-graph:dev .
 
 # In a full Lumogis stack (the supported path):
-docker compose -f docker-compose.yml -f docker-compose.premium.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.falkordb.yml -f docker-compose.premium.yml up -d
 ```
 
 ## Tests

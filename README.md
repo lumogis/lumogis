@@ -6,6 +6,8 @@
 
 **The AI comes to your data. Not the other way around.**
 
+Lumogis is a **self-hosted, local-first** household and personal AI platform: you run it on your own machine with Docker Compose under **AGPL-3.0-only**. The primary browser experience is **Lumogis Web** (same-origin behind **Caddy**); **Core** is the orchestrator (FastAPI). Optional **LibreChat** remains available as a compose profile for legacy OpenAI-style chat, not as the main product UI.
+
 ---
 
 ![Lumogis demo](branding/demo2.gif)
@@ -97,10 +99,18 @@ Five concepts. Everything in the codebase maps to one of them.
 
 ```mermaid
 flowchart TB
-    LC["LibreChat · :3080"] --> ORC
+    BR["Browser"]
+    CADDY["Caddy · :80 / :443\nsame-origin front door"]
+    WEB["Lumogis Web · SPA"]
+
+    BR --> CADDY
+    CADDY --> WEB
+    CADDY --> ORC
+
+    LC["LibreChat · :3080\n(optional compose profile)"] -. "OpenAI-style chat only" .-> ORC
 
     subgraph machine["your machine"]
-        ORC["Orchestrator · FastAPI"]
+        ORC["Core / Orchestrator · FastAPI · :8000"]
 
         subgraph core["core"]
             SVC["services/\ningest · search · memory\nentities · tools · routines"]
@@ -124,18 +134,20 @@ flowchart TB
         ADP --> QDR & PG & OLL & FLK
     end
 
+    ORC -. "optional: lumogis-graph\nHTTP capability" .-> KGSVC["lumogis-graph · KG service"]
     ORC -. "composed prompt only" .-> EXT["Claude · GPT-4 · local"]
 
     style machine fill:#f8f9fa,stroke:#dee2e6
     style stores fill:#e9ecef,stroke:#ced4da
     style core fill:#e9ecef,stroke:#ced4da
     style EXT fill:#fff3cd,stroke:#ffc107
+    style KGSVC fill:#e7f3ff,stroke:#b6d4fe
 
     classDef concept font-weight:bold,font-size:15px
     class SVC,SIG,ACT,ADP,PLG concept
 ```
 
-_† FalkorDB and Redis are only started when the graph plugin is present._
+_† FalkorDB and Redis start when you merge `docker-compose.falkordb.yml` (graph plugin and/or `lumogis-graph` in `GRAPH_MODE=service`)._
 
 | Concept | Lives in | Purpose |
 |---|---|---|
@@ -146,6 +158,8 @@ _† FalkorDB and Redis are only started when the graph plugin is present._
 | **Actions** | `actions/` | Executable operations with audit logging and Ask/Do enforcement |
 
 **Reference manual:** For a single consolidated guide (operators + contributors, roadmap disambiguation, extension use cases), see [`docs/LUMOGIS_REFERENCE_MANUAL.md`](docs/LUMOGIS_REFERENCE_MANUAL.md).
+
+**Automated testing:** Layered pytest, integration, web, and optional browser checks are described in [`docs/testing/automated-test-strategy.md`](docs/testing/automated-test-strategy.md).
 
 ---
 
@@ -237,12 +251,13 @@ cd "$HOME\lumogis"; Copy-Item .env.example .env; docker compose up -d
 
 Open the **Lumogis Web** UI at **[http://localhost/](http://localhost/)** (same-origin Caddy) or the orchestrator **dashboard** at **[http://localhost:8000/dashboard](http://localhost:8000/dashboard)** / **[http://localhost/dashboard](http://localhost/dashboard)** through Caddy. The setup wizard guides you through adding an API key or pulling a local model.
 
-**LibreChat:** `config/librechat.yaml` is runtime-generated (gitignored). Commit only `config/librechat.coldstart.yaml` — the orchestrator entrypoint seeds `librechat.yaml` on first boot, then replaces it from `models.yaml` and Ollama. The path must be a **file**; if you ever see a **directory** at `config/librechat.yaml` (or `EISDIR` in LibreChat logs), remove it and let the entrypoint re-seed, or copy from `librechat.coldstart.yaml` and `docker compose up -d --force-recreate librechat`.
+**LibreChat (optional):** when the `librechat` profile is enabled, OpenAI-compatible chat is at **[http://localhost:3080](http://localhost:3080)**. `config/librechat.yaml` is runtime-generated (gitignored). Commit only `config/librechat.coldstart.yaml` — the orchestrator entrypoint seeds `librechat.yaml` on first boot, then replaces it from `models.yaml` and Ollama. The path must be a **file**; if you ever see a **directory** at `config/librechat.yaml` (or `EISDIR` in LibreChat logs), remove it and let the entrypoint re-seed, or copy from `librechat.coldstart.yaml` and `docker compose up -d --force-recreate librechat`.
 
 **Postgres schema:** `postgres/init.sql` runs once on a fresh data volume; subsequent schema changes live in `postgres/migrations/*.sql`. The orchestrator entrypoint applies any pending migrations on every boot via `orchestrator/db_migrations.py` and tracks them in a `schema_migrations` table — fresh installs and existing installs converge automatically. Inspect with `docker compose logs orchestrator | grep '[migrations]'` and `docker compose exec -T postgres psql -U lumogis -d lumogis -c "SELECT filename, applied_at FROM schema_migrations ORDER BY filename"`.
 
-- **Chat:** [http://localhost:3080](http://localhost:3080)
-- **Dashboard:** [http://localhost:8000/dashboard](http://localhost:8000/dashboard)
+- **Lumogis Web (primary):** [http://localhost/](http://localhost/)
+- **Orchestrator / dashboard (direct or via Caddy):** [http://localhost:8000/dashboard](http://localhost:8000/dashboard) or [http://localhost/dashboard](http://localhost/dashboard)
+- **LibreChat (profile `librechat`):** [http://localhost:3080](http://localhost:3080)
 
 The stack pins a **current** [Ollama](https://ollama.com/) release in `docker-compose.yml` (bumped over time so new library models like **Gemma 4** pull successfully — Docker’s `:latest` tag can lag). The embedding model (~300 MB) and a **small default chat model** (**Llama 3.2 3B**, ~2 GB) pull automatically on first start. The dashboard lists the full Ollama catalog; pull larger models only when you want them. Secrets are generated automatically. Expect a few minutes until services are healthy on first boot. Tune pulls with `OLLAMA_EXTRA_MODELS` in `.env` (see `.env.example`).
 
@@ -284,7 +299,7 @@ Then restart: `docker compose up -d`. Requires NVIDIA Container Toolkit on Linux
 
 ### Contributing
 
-Clone the repo, run `docker compose up -d`, and use `make compose-test` / `make compose-lint` for CI inside the container. See `Makefile` for all available targets.
+Clone the repo, run `docker compose up -d`, and use `make compose-test` / `make compose-lint` for CI-parity checks inside the container. See `Makefile` and [`docs/testing/automated-test-strategy.md`](docs/testing/automated-test-strategy.md) for the full testing story.
 
 ---
 
@@ -328,12 +343,14 @@ ROUTINE_ELEVATION_THRESHOLD=10    # clean approvals before auto-elevation
 | Component | Status | Purpose |
 |---|---|---|
 | Orchestrator (FastAPI) | Required | Core runtime — ingest, search, memory, actions |
+| Caddy + Lumogis Web | Required | Same-origin browser UI at `http://localhost/` (Caddy proxies `/api/*`, `/v1/*`, `/mcp/*`, etc. to Core) |
 | Qdrant | Required | Vector store for documents, sessions, entities |
 | Postgres | Required | Metadata, file index, audit log, entity relations |
 | Ollama | Required | Local embeddings (Nomic Embed) and local LLM inference |
 | BGE Reranker | Optional | Two-stage retrieval — re-scores candidates by relevance. Enable with `RERANKER_BACKEND=bge` in `.env`. |
-| LibreChat | Required | Chat interface at localhost:3080 |
-| FalkorDB + Redis | Optional | Graph store — only started when the graph plugin is present |
+| LibreChat + MongoDB | Optional | Legacy chat UI at localhost:3080 — enable with compose profile `librechat` (still default in `.env.example` for existing installs) |
+| lumogis-graph | Optional | Out-of-process KG capability when `GRAPH_MODE=service` — see `docker-compose.premium.yml` + FalkorDB overlay |
+| FalkorDB + Redis | Optional | Graph store — used by the graph plugin and/or `lumogis-graph` |
 | LiteLLM | Optional | Unified model proxy — enables multi-provider routing in one endpoint |
 | Activepieces | Optional | Automation UI — nightly ingest, session triggers, scheduled digests |
 | Playwright | Optional | JS rendering for web page signal sources |
