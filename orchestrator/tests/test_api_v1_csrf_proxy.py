@@ -12,9 +12,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import pytest
-
-from csrf import _parse_trusted_proxies, _proxied_client_ip
+from csrf import _parse_trusted_proxies
+from csrf import _proxied_client_ip
 
 
 def _req(peer: str | None, **headers) -> SimpleNamespace:
@@ -31,9 +30,7 @@ def test_untrusted_peer_ignores_xff(monkeypatch):
     monkeypatch.setenv("LUMOGIS_TRUSTED_PROXIES", "10.99.99.99")
     _parse_trusted_proxies.cache_clear()
     assert (
-        _proxied_client_ip(
-            _req("203.0.113.10", **{"X-Forwarded-For": "198.51.100.1"})
-        )
+        _proxied_client_ip(_req("203.0.113.10", **{"X-Forwarded-For": "198.51.100.1"}))
         == "203.0.113.10"
     )
 
@@ -70,9 +67,7 @@ def test_empty_allowlist_trusts_no_forwarded_headers(monkeypatch):
     monkeypatch.delenv("LUMOGIS_TRUSTED_PROXIES", raising=False)
     _parse_trusted_proxies.cache_clear()
     assert (
-        _proxied_client_ip(
-            _req("172.20.0.5", **{"X-Forwarded-For": "198.51.100.7"})
-        )
+        _proxied_client_ip(_req("172.20.0.5", **{"X-Forwarded-For": "198.51.100.7"}))
         == "172.20.0.5"
     )
 
@@ -81,9 +76,7 @@ def test_malformed_xff_entry_returns_last_valid(monkeypatch):
     monkeypatch.setenv("LUMOGIS_TRUSTED_PROXIES", "127.0.0.0/8")
     _parse_trusted_proxies.cache_clear()
     # Right-to-left walk: 'not-an-ip' is malformed → last valid hop wins.
-    out = _proxied_client_ip(
-        _req("127.0.0.1", **{"X-Forwarded-For": "not-an-ip, 127.0.0.1"})
-    )
+    out = _proxied_client_ip(_req("127.0.0.1", **{"X-Forwarded-For": "not-an-ip, 127.0.0.1"}))
     # The walker pops 127.0.0.1 (trusted) first, then sees 'not-an-ip'
     # and returns the last valid (which was 127.0.0.1).
     assert out == "127.0.0.1"

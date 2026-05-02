@@ -14,9 +14,9 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pytest
+from routes import chat as chat_route
 
 import config
-from routes import chat as chat_route
 
 
 @pytest.fixture
@@ -30,15 +30,15 @@ def stub_inject_dependencies(monkeypatch):
     """
     monkeypatch.setattr("services.memory.retrieve_context", lambda *a, **kw: [])
     monkeypatch.setattr(chat_route, "truncate_messages", lambda h, **kw: h)
-    monkeypatch.setattr(
-        chat_route, "truncate_text", lambda text, budget: text or ""
-    )
+    monkeypatch.setattr(chat_route, "truncate_text", lambda text, budget: text or "")
     monkeypatch.setattr(chat_route, "get_budget", lambda model: 4096)
     monkeypatch.setattr(
         chat_route,
         "allocate",
         lambda total, ratios: {
-            "session_context": 200, "plugin_context": 200, "history": 1000,
+            "session_context": 200,
+            "plugin_context": 200,
+            "history": 1000,
         },
     )
 
@@ -55,9 +55,7 @@ def test_inject_context_inprocess_does_not_call_get_context_sync(
         sentinel["called"] = True
         return ["[Graph] should not be appended in inprocess mode"]
 
-    monkeypatch.setattr(
-        "services.graph_webhook_dispatcher.get_context_sync", _spy
-    )
+    monkeypatch.setattr("services.graph_webhook_dispatcher.get_context_sync", _spy)
 
     chat_route._inject_context("ada", history=[], model="m", user_id="u")
 
@@ -79,12 +77,13 @@ def test_inject_context_service_calls_get_context_sync_and_appends(
         captured.update(kwargs)
         return ["[Graph] Ada knew Babbage."]
 
-    monkeypatch.setattr(
-        "services.graph_webhook_dispatcher.get_context_sync", _stub
-    )
+    monkeypatch.setattr("services.graph_webhook_dispatcher.get_context_sync", _stub)
 
     messages = chat_route._inject_context(
-        "what does the graph know about Ada?", history=[], model="m", user_id="user-42",
+        "what does the graph know about Ada?",
+        history=[],
+        model="m",
+        user_id="user-42",
     )
 
     assert captured == {
@@ -98,9 +97,7 @@ def test_inject_context_service_calls_get_context_sync_and_appends(
     )
 
 
-def test_inject_context_service_swallows_kg_failure(
-    stub_inject_dependencies, monkeypatch
-):
+def test_inject_context_service_swallows_kg_failure(stub_inject_dependencies, monkeypatch):
     """If `get_context_sync` returns [] (KG offline / timeout / error), the
     chat path must continue without graph fragments — not raise, not stall.
     """
@@ -130,9 +127,7 @@ def test_inject_context_disabled_does_not_call_get_context_sync(
         called = True
         return []
 
-    monkeypatch.setattr(
-        "services.graph_webhook_dispatcher.get_context_sync", _spy
-    )
+    monkeypatch.setattr("services.graph_webhook_dispatcher.get_context_sync", _spy)
 
     chat_route._inject_context("ada", history=[], model="m", user_id="u")
 

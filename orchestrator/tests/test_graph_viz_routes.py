@@ -37,9 +37,9 @@ Coverage:
   21. Edge cap enforced: truncated=true when edges hit GRAPH_VIZ_MAX_EDGES
 """
 
-import config
-
 import pytest
+
+import config
 
 pytestmark = pytest.mark.skip(
     reason="Core no longer mounts graph viz HTTP routes (owned by services/lumogis-graph).",
@@ -52,6 +52,7 @@ pytestmark = pytest.mark.skip(
 #  our own here so tests can inject configurable query results without
 #  coupling to the conftest defaults.)
 # ---------------------------------------------------------------------------
+
 
 class MockGraphStore:
     """In-memory GraphStore for viz route tests.
@@ -126,6 +127,7 @@ def _ent(name, eid, etype="PERSON", mention_count=5):
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _client_with(gs, ms):
     """Return a context-manager TestClient with graph + metadata injected.
 
@@ -137,6 +139,7 @@ def _client_with(gs, ms):
     config._instances["metadata_store"] = ms
     import main
     from fastapi.testclient import TestClient
+
     return TestClient(main.app)
 
 
@@ -144,14 +147,22 @@ def _client_with(gs, ms):
 # 1–6. GET /graph/ego
 # ---------------------------------------------------------------------------
 
-class TestEgoEndpoint:
 
+class TestEgoEndpoint:
     def test_ego_success(self):
         ada = _ent("Ada Lovelace", "ada-uuid")
-        gs = MockGraphStore({"RELATES_TO": [
-            {"neighbor_id": "bob-uuid", "neighbor_name": "Bob",
-             "neighbor_type": "PERSON", "strength": 5},
-        ]})
+        gs = MockGraphStore(
+            {
+                "RELATES_TO": [
+                    {
+                        "neighbor_id": "bob-uuid",
+                        "neighbor_name": "Bob",
+                        "neighbor_type": "PERSON",
+                        "strength": 5,
+                    },
+                ]
+            }
+        )
         ms = MockMetaStore(entity_rows={"Ada Lovelace": ada})
 
         with _client_with(gs, ms) as c:
@@ -164,7 +175,7 @@ class TestEgoEndpoint:
         assert body["entity_id"] == "ada-uuid"
         assert body["entity_name"] == "Ada Lovelace"
         assert body["entity_type"] == "PERSON"
-        assert body["node_count"] == 2          # center + 1 neighbor
+        assert body["node_count"] == 2  # center + 1 neighbor
         assert body["edge_count"] == 1
         assert body["edges"][0]["type"] == "RELATES_TO"
         assert body["edges"][0]["strength"] == 5
@@ -200,8 +211,12 @@ class TestEgoEndpoint:
         monkeypatch.setenv("GRAPH_VIZ_MAX_NODES", "3")
         ada = _ent("Ada Lovelace", "ada-uuid")
         neighbors = [
-            {"neighbor_id": f"n{i}", "neighbor_name": f"N{i}",
-             "neighbor_type": "PERSON", "strength": 5}
+            {
+                "neighbor_id": f"n{i}",
+                "neighbor_name": f"N{i}",
+                "neighbor_type": "PERSON",
+                "strength": 5,
+            }
             for i in range(10)
         ]
         gs = MockGraphStore({"RELATES_TO": neighbors})
@@ -209,7 +224,9 @@ class TestEgoEndpoint:
 
         # Re-import the module so _max_nodes() picks up the monkeypatched env var
         import importlib
+
         import plugins.graph.viz_routes as vr
+
         importlib.reload(vr)
 
         with _client_with(gs, ms) as c:
@@ -225,15 +242,21 @@ class TestEgoEndpoint:
         monkeypatch.setenv("GRAPH_VIZ_MAX_EDGES", "2")
         ada = _ent("Ada Lovelace", "ada-uuid")
         neighbors = [
-            {"neighbor_id": f"n{i}", "neighbor_name": f"N{i}",
-             "neighbor_type": "PERSON", "strength": 5}
+            {
+                "neighbor_id": f"n{i}",
+                "neighbor_name": f"N{i}",
+                "neighbor_type": "PERSON",
+                "strength": 5,
+            }
             for i in range(10)
         ]
         gs = MockGraphStore({"RELATES_TO": neighbors})
         ms = MockMetaStore(entity_rows={"Ada Lovelace": ada})
 
         import importlib
+
         import plugins.graph.viz_routes as vr
+
         importlib.reload(vr)
 
         with _client_with(gs, ms) as c:
@@ -270,15 +293,15 @@ class TestEgoEndpoint:
 
         assert resp.status_code == 200
         body = resp.json()
-        assert "available" in body   # route processed, no 4xx
+        assert "available" in body  # route processed, no 4xx
 
 
 # ---------------------------------------------------------------------------
 # 7–12. GET /graph/path
 # ---------------------------------------------------------------------------
 
-class TestPathEndpoint:
 
+class TestPathEndpoint:
     def test_path_success(self):
         ada = _ent("Ada Lovelace", "ada-uuid")
         bob = _ent("Bob", "bob-uuid")
@@ -307,7 +330,7 @@ class TestPathEndpoint:
     def test_path_no_path_found(self):
         ada = _ent("Ada Lovelace", "ada-uuid")
         bob = _ent("Bob", "bob-uuid")
-        gs = MockGraphStore()   # no algo.SPpaths result
+        gs = MockGraphStore()  # no algo.SPpaths result
         ms = MockMetaStore(entity_rows={"Ada Lovelace": ada, "Bob": bob})
 
         with _client_with(gs, ms) as c:
@@ -375,14 +398,20 @@ class TestPathEndpoint:
 # 13–15. GET /graph/search
 # ---------------------------------------------------------------------------
 
-class TestSearchEndpoint:
 
+class TestSearchEndpoint:
     def test_search_returns_results(self):
         gs = MockGraphStore()
-        ms = MockMetaStore(search_rows=[
-            {"entity_id": "ada-uuid", "name": "Ada Lovelace",
-             "entity_type": "PERSON", "mention_count": 10},
-        ])
+        ms = MockMetaStore(
+            search_rows=[
+                {
+                    "entity_id": "ada-uuid",
+                    "name": "Ada Lovelace",
+                    "entity_type": "PERSON",
+                    "mention_count": 10,
+                },
+            ]
+        )
 
         with _client_with(gs, ms) as c:
             resp = c.get("/graph/search?q=Ada")
@@ -421,16 +450,20 @@ class TestSearchEndpoint:
 # 16–18. GET /graph/stats
 # ---------------------------------------------------------------------------
 
-class TestStatsEndpoint:
 
+class TestStatsEndpoint:
     def test_stats_success(self):
-        gs = MockGraphStore({
-            "count(n)": [{"cnt": 42}],
-            "count(r)": [{"cnt": 17}],
-        })
-        ms = MockMetaStore(top_rows=[
-            {"name": "Ada Lovelace", "entity_type": "PERSON", "mention_count": 10},
-        ])
+        gs = MockGraphStore(
+            {
+                "count(n)": [{"cnt": 42}],
+                "count(r)": [{"cnt": 17}],
+            }
+        )
+        ms = MockMetaStore(
+            top_rows=[
+                {"name": "Ada Lovelace", "entity_type": "PERSON", "mention_count": 10},
+            ]
+        )
 
         with _client_with(gs, ms) as c:
             resp = c.get("/graph/stats")
@@ -459,17 +492,22 @@ class TestStatsEndpoint:
 
     def test_stats_never_5xx_when_graph_throws(self):
         """FalkorDB query errors must not propagate as 5xx."""
+
         class ThrowingGraphStore:
-            def ping(self): return True
-            def create_node(self, *a, **k): pass
-            def create_edge(self, *a, **k): pass
+            def ping(self):
+                return True
+
+            def create_node(self, *a, **k):
+                pass
+
+            def create_edge(self, *a, **k):
+                pass
+
             def query(self, cypher, params=None):
                 raise RuntimeError("simulated failure")
 
         config._instances["graph_store"] = ThrowingGraphStore()
         ms = MockMetaStore(top_rows=[])
-        import main
-        from fastapi.testclient import TestClient
 
         with _client_with(ThrowingGraphStore(), ms) as c:
             resp = c.get("/graph/stats")
@@ -484,8 +522,8 @@ class TestStatsEndpoint:
 # 19–20. Auth enforcement
 # ---------------------------------------------------------------------------
 
-class TestAuthEnforcement:
 
+class TestAuthEnforcement:
     def test_ego_401_when_auth_enabled_and_unauthenticated(self, monkeypatch):
         monkeypatch.setenv("AUTH_ENABLED", "true")
         gs = MockGraphStore()
@@ -512,10 +550,11 @@ class TestAuthEnforcement:
 # Viz page served
 # ---------------------------------------------------------------------------
 
-class TestVizPage:
 
+class TestVizPage:
     def test_viz_page_served(self):
         from plugins.graph.viz_routes import _VIZ_HTML
+
         if not _VIZ_HTML.exists():
             pytest.skip("graph_viz.html not present — skipping page-serve test")
 

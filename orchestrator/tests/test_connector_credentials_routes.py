@@ -33,15 +33,13 @@ from __future__ import annotations
 import os
 import time
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime
+from datetime import timezone
 
 import jwt
 import pytest
-from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
-
 from tests.test_auth_phase1 import FakeUsersStore  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Composite store — FakeUsersStore (users CRUD) + the SQL surface
@@ -102,9 +100,7 @@ class _RoutesFakeStore(FakeUsersStore):
         # Plaintext read (get_payload — service layer; not exercised by
         # the route tests directly, but the stale `get_payload` path
         # may still be hit by a future test, so we model it).
-        if q.startswith(
-            "select ciphertext from user_connector_credentials"
-        ):
+        if q.startswith("select ciphertext from user_connector_credentials"):
             uid, conn = p
             row = self.creds.get((uid, conn))
             return {"ciphertext": row["ciphertext"]} if row else None
@@ -153,15 +149,17 @@ class _RoutesFakeStore(FakeUsersStore):
         # Audit insert (services.actions / actions.audit.write_audit).
         if q.startswith("insert into audit_log"):
             row_id = len(self.audit) + 1
-            self.audit.append({
-                "id": row_id,
-                "user_id": p[0],
-                "action_name": p[1],
-                "connector": p[2],
-                "mode": p[3],
-                "input_summary": p[4],
-                "result_summary": p[5],
-            })
+            self.audit.append(
+                {
+                    "id": row_id,
+                    "user_id": p[0],
+                    "action_name": p[1],
+                    "connector": p[2],
+                    "mode": p[3],
+                    "input_summary": p[4],
+                    "result_summary": p[5],
+                }
+            )
             return {"id": row_id}
 
         return super().fetch_one(query, params)
@@ -252,6 +250,7 @@ def auth_env(monkeypatch):
     monkeypatch.delenv("LUMOGIS_CREDENTIAL_KEYS", raising=False)
     yield
     from routes.auth import _reset_rate_limit_for_tests
+
     _reset_rate_limit_for_tests()
 
 
@@ -272,6 +271,7 @@ def _mint_jwt(user_id: str, role: str) -> str:
 def _client():
     """Boot the live FastAPI app inside a TestClient (lifespan executes)."""
     import main
+
     with TestClient(main.app) as client:
         yield client
 
@@ -279,6 +279,7 @@ def _client():
 def _seed(store, *, email: str, role: str) -> str:
     """Create a user via the real service and return their id."""
     import services.users as users_svc
+
     if users_svc.get_user_by_email(email) is None:
         users_svc.create_user(email, "verylongpassword12", role)
     user = users_svc.get_user_by_email(email)
@@ -499,9 +500,7 @@ def test_get_response_never_carries_payload_or_ciphertext(store, dev_env):
     assert forbidden.isdisjoint(single.keys())
     for item in listed["items"]:
         assert forbidden.isdisjoint(item.keys())
-    raw_text = (
-        client_get_raw := str(single) + str(listed)
-    )
+    raw_text = str(single) + str(listed)
     assert "sk-secret-must-not-leak" not in raw_text
 
 
@@ -520,7 +519,8 @@ def test_admin_list_for_user(store, auth_env):
     with _client() as client:
         client.put(
             "/api/v1/me/connector-credentials/testconnector",
-            headers=bob_hdr, json={"payload": {"x": 1}},
+            headers=bob_hdr,
+            json={"payload": {"x": 1}},
         )
         resp = client.get(
             f"/api/v1/admin/users/{bob}/connector-credentials",
@@ -559,10 +559,7 @@ def test_admin_put_uses_admin_actor_string(store, auth_env):
     assert resp.status_code == 200, resp.text
     assert resp.json()["created_by"] == f"admin:{admin}"
 
-    put_audits = [
-        a for a in store.audit
-        if a["action_name"] == "__connector_credential__.put"
-    ]
+    put_audits = [a for a in store.audit if a["action_name"] == "__connector_credential__.put"]
     assert put_audits, "expected at least one put audit row"
     assert f"admin:{admin}" in put_audits[-1]["input_summary"]
 
@@ -618,10 +615,7 @@ def test_admin_delete_for_unregistered_stale_row(store, auth_env):
     assert resp.status_code == 204, resp.text
     assert (bob, "historic_connector") not in store.creds
 
-    del_audits = [
-        a for a in store.audit
-        if a["action_name"] == "__connector_credential__.deleted"
-    ]
+    del_audits = [a for a in store.audit if a["action_name"] == "__connector_credential__.deleted"]
     assert del_audits, "expected at least one delete audit row"
     last = del_audits[-1]
     assert last["connector"] == "historic_connector"

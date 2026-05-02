@@ -35,9 +35,12 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import HTTPException, Request, status
-
-from auth import UserContext, auth_enabled, get_user
+from auth import UserContext
+from auth import auth_enabled
+from auth import get_user
+from fastapi import HTTPException
+from fastapi import Request
+from fastapi import status
 
 _log = logging.getLogger(__name__)
 

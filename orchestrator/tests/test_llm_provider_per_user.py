@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import sys
 import types
-from unittest.mock import patch
 
 import pytest
 from cryptography.fernet import Fernet
@@ -32,8 +31,7 @@ from cryptography.fernet import Fernet
 # be constructible.
 for _mod, _attrs in (
     ("openai", ("OpenAI",)),
-    ("anthropic", ("Anthropic", "APIError", "APIStatusError",
-                   "APITimeoutError", "RateLimitError")),
+    ("anthropic", ("Anthropic", "APIError", "APIStatusError", "APITimeoutError", "RateLimitError")),
 ):
     if _mod not in sys.modules:
         m = types.ModuleType(_mod)
@@ -41,10 +39,10 @@ for _mod, _attrs in (
             setattr(m, _a, type(_a, (), {"__init__": lambda self, *a, **kw: None}))
         sys.modules[_mod] = m
 
+from tests.test_connector_credentials_service import _FakeStore
+
 import config
 from services import connector_credentials as svc
-
-from tests.test_connector_credentials_service import _FakeStore
 
 
 class _StubAdapter:
@@ -204,7 +202,8 @@ def test_non_llm_connector_change_does_not_touch_llm_cache(store):
     assert "llm:alice:chatgpt" in config._instances
 
     svc.put_payload(
-        "alice", "caldav",
+        "alice",
+        "caldav",
         {"base_url": "https://example.com/dav/", "username": "a", "password": "b"},
         actor="self",
     )

@@ -86,7 +86,11 @@ class _FakeBatchQueueStore:
                 if ra > now:
                     continue
                 uid = row["user_id"]
-                running = sum(1 for r in self.rows.values() if r["user_id"] == uid and r["status"] == "running")
+                running = sum(
+                    1
+                    for r in self.rows.values()
+                    if r["user_id"] == uid and r["status"] == "running"
+                )
                 if running >= cap:
                     continue
                 row["status"] = "running"

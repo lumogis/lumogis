@@ -52,8 +52,8 @@ from urllib.parse import urlparse
 
 from auth import auth_enabled
 from connectors.registry import CALDAV
-from services import connector_credentials as ccs
 
+from services import connector_credentials as ccs
 
 _PAYLOAD_KEYS: tuple[str, str, str] = ("base_url", "username", "password")
 """Wire contract for the encrypted CalDAV payload (v1).
@@ -109,9 +109,7 @@ def load_connection(user_id: str) -> CaldavConnection:
         )
 
     if auth_enabled():
-        raise ccs.ConnectorNotConfigured(
-            f"no caldav credential row for user_id={user_id!r}"
-        )
+        raise ccs.ConnectorNotConfigured(f"no caldav credential row for user_id={user_id!r}")
 
     env_url = os.environ.get("CALENDAR_CALDAV_URL", "")
     if not env_url:
@@ -144,44 +142,30 @@ def _validate_payload(payload: Any) -> tuple[str, str, str]:
     fields like ``auth_type``).
     """
     if not isinstance(payload, dict):
-        raise ccs.CredentialUnavailable(
-            "caldav payload must be a JSON object"
-        )
+        raise ccs.CredentialUnavailable("caldav payload must be a JSON object")
 
     values: dict[str, str] = {}
     for key in _PAYLOAD_KEYS:
         if key not in payload:
-            raise ccs.CredentialUnavailable(
-                f"caldav payload missing required key: {key!r}"
-            )
+            raise ccs.CredentialUnavailable(f"caldav payload missing required key: {key!r}")
         value = payload[key]
         if not isinstance(value, str):
-            raise ccs.CredentialUnavailable(
-                f"caldav payload field {key!r} must be a string"
-            )
+            raise ccs.CredentialUnavailable(f"caldav payload field {key!r} must be a string")
         if not value:
-            raise ValueError(
-                f"caldav payload field {key!r} is empty"
-            )
+            raise ValueError(f"caldav payload field {key!r} is empty")
         if value.strip() != value:
-            raise ValueError(
-                f"caldav payload field {key!r} has leading/trailing whitespace"
-            )
+            raise ValueError(f"caldav payload field {key!r} has leading/trailing whitespace")
         values[key] = value
 
     parsed = urlparse(values["base_url"])
     scheme = (parsed.scheme or "").lower()
     if scheme not in {"http", "https"}:
-        raise ValueError(
-            "caldav base_url must use scheme http or https"
-        )
+        raise ValueError("caldav base_url must use scheme http or https")
     # ``parsed.netloc`` of ``"https:// /dav"`` is the literal string
     # ``" "`` — non-empty per ``str``, but functionally hostless. The
     # ``.strip()`` rejects whitespace-only netlocs without inviting
     # the validator to second-guess otherwise-valid hostnames.
     if not parsed.netloc.strip():
-        raise ValueError(
-            "caldav base_url must include a non-empty host"
-        )
+        raise ValueError("caldav base_url must include a non-empty host")
 
     return values["base_url"], values["username"], values["password"]

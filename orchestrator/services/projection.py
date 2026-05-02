@@ -41,14 +41,17 @@ is gated on ``scope IN ('shared','system')``, not on ``user_id``
 matching the requester. Analytics that ``GROUP BY user_id`` over
 shared rows must read this as "publisher", not "owner".
 """
+
 from __future__ import annotations
 
 import logging
 import uuid
-from typing import Any, Optional
+from typing import Any
+from typing import Optional
+
+from auth import UserContext
 
 import config
-from auth import UserContext
 
 _log = logging.getLogger(__name__)
 
@@ -200,7 +203,10 @@ def project_note(src: dict, *, target_scope: str, actor: UserContext) -> dict:
     )
     _log.info(
         "projection: note src=%s new=%s scope=%s actor=%s",
-        src_pk, new_pk, target_scope, actor.user_id,
+        src_pk,
+        new_pk,
+        target_scope,
+        actor.user_id,
     )
     return row or {"note_id": new_pk, "scope": target_scope, "published_from": src_pk}
 
@@ -250,7 +256,10 @@ def project_audio_memo(src: dict, *, target_scope: str, actor: UserContext) -> d
     )
     _log.info(
         "projection: audio src=%s new=%s scope=%s actor=%s",
-        src_pk, new_pk, target_scope, actor.user_id,
+        src_pk,
+        new_pk,
+        target_scope,
+        actor.user_id,
     )
     return row or {"audio_id": new_pk, "scope": target_scope, "published_from": src_pk}
 
@@ -303,7 +312,10 @@ def project_session(src: dict, *, target_scope: str, actor: UserContext) -> dict
     )
     _log.info(
         "projection: session src=%s new=%s scope=%s actor=%s",
-        src_pk, new_pk, target_scope, actor.user_id,
+        src_pk,
+        new_pk,
+        target_scope,
+        actor.user_id,
     )
     return row or {"session_id": new_pk, "scope": target_scope, "published_from": src_pk}
 
@@ -344,7 +356,10 @@ def project_file(src: dict, *, target_scope: str, actor: UserContext) -> dict:
     )
     _log.info(
         "projection: file src=%d new=%s scope=%s actor=%s",
-        src_pk, (row or {}).get("id"), target_scope, actor.user_id,
+        src_pk,
+        (row or {}).get("id"),
+        target_scope,
+        actor.user_id,
     )
     return row or {"id": None, "scope": target_scope, "published_from": src_pk}
 
@@ -405,7 +420,10 @@ def project_entity(src: dict, *, target_scope: str, actor: UserContext) -> dict:
     )
     _log.info(
         "projection: entity src=%s new=%s scope=%s actor=%s",
-        src_pk, new_pk, target_scope, actor.user_id,
+        src_pk,
+        new_pk,
+        target_scope,
+        actor.user_id,
     )
     return row or {"entity_id": new_pk, "scope": target_scope, "published_from": src_pk}
 
@@ -471,7 +489,10 @@ def project_signal(src: dict, *, target_scope: str, actor: UserContext) -> dict:
     )
     _log.info(
         "projection: signal src=%s new=%s scope=%s actor=%s",
-        src_pk, new_pk, target_scope, actor.user_id,
+        src_pk,
+        new_pk,
+        target_scope,
+        actor.user_id,
     )
     return row or {"signal_id": new_pk, "scope": target_scope, "published_from": src_pk}
 
@@ -495,9 +516,7 @@ def _unproject_uuid_pk(
     """
     ms = config.get_metadata_store()
     deleted = ms.fetch_one(
-        f"DELETE FROM {table} "
-        f"WHERE published_from = %s AND scope = %s "
-        f"RETURNING {pk_col}",
+        f"DELETE FROM {table} WHERE published_from = %s AND scope = %s RETURNING {pk_col}",
         (src_pk, target_scope),
     )
     if qdrant_collection is not None:
@@ -510,36 +529,51 @@ def _unproject_uuid_pk(
 
 def unproject_note(src_pk: str, target_scope: str = "shared") -> int:
     return _unproject_uuid_pk(
-        table="notes", pk_col="note_id", src_pk=src_pk,
-        target_scope=target_scope, qdrant_collection="conversations",
+        table="notes",
+        pk_col="note_id",
+        src_pk=src_pk,
+        target_scope=target_scope,
+        qdrant_collection="conversations",
     )
 
 
 def unproject_audio_memo(src_pk: str, target_scope: str = "shared") -> int:
     return _unproject_uuid_pk(
-        table="audio_memos", pk_col="audio_id", src_pk=src_pk,
-        target_scope=target_scope, qdrant_collection="conversations",
+        table="audio_memos",
+        pk_col="audio_id",
+        src_pk=src_pk,
+        target_scope=target_scope,
+        qdrant_collection="conversations",
     )
 
 
 def unproject_session(src_pk: str, target_scope: str = "shared") -> int:
     return _unproject_uuid_pk(
-        table="sessions", pk_col="session_id", src_pk=src_pk,
-        target_scope=target_scope, qdrant_collection="conversations",
+        table="sessions",
+        pk_col="session_id",
+        src_pk=src_pk,
+        target_scope=target_scope,
+        qdrant_collection="conversations",
     )
 
 
 def unproject_entity(src_pk: str, target_scope: str = "shared") -> int:
     return _unproject_uuid_pk(
-        table="entities", pk_col="entity_id", src_pk=src_pk,
-        target_scope=target_scope, qdrant_collection="entities",
+        table="entities",
+        pk_col="entity_id",
+        src_pk=src_pk,
+        target_scope=target_scope,
+        qdrant_collection="entities",
     )
 
 
 def unproject_signal(src_pk: str, target_scope: str = "shared") -> int:
     return _unproject_uuid_pk(
-        table="signals", pk_col="signal_id", src_pk=src_pk,
-        target_scope=target_scope, qdrant_collection="signals",
+        table="signals",
+        pk_col="signal_id",
+        src_pk=src_pk,
+        target_scope=target_scope,
+        qdrant_collection="signals",
     )
 
 
@@ -552,9 +586,7 @@ def unproject_file(src_pk: int, target_scope: str = "shared") -> int:
     """
     ms = config.get_metadata_store()
     deleted = ms.fetch_one(
-        "DELETE FROM file_index "
-        "WHERE published_from = %s AND scope = %s "
-        "RETURNING id",
+        "DELETE FROM file_index WHERE published_from = %s AND scope = %s RETURNING id",
         (int(src_pk), target_scope),
     )
     return 1 if deleted else 0
@@ -612,14 +644,15 @@ def remap_published_from(loser_id: Any, winner_id: Any) -> None:
             (loser_id, winner_id),
         )
         ms.execute(
-            f"UPDATE {table} SET published_from = %s "
-            f"WHERE published_from = %s",
+            f"UPDATE {table} SET published_from = %s WHERE published_from = %s",
             (winner_id, loser_id),
         )
 
     _log.info(
         "remap_published_from: swept %d tables loser=%s winner=%s",
-        len(_PROJECTION_TABLES), loser_id, winner_id,
+        len(_PROJECTION_TABLES),
+        loser_id,
+        winner_id,
     )
 
 
@@ -641,6 +674,7 @@ def _json_or_default(value: Any, default: str) -> str:
         return value
     try:
         import json as _json
+
         return _json.dumps(value)
     except Exception:
         return default

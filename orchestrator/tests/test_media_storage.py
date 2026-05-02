@@ -12,9 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 import services.media_storage as ms
-
 
 # ── safe_attachment_path ──────────────────────────────────────────────
 
@@ -35,14 +33,13 @@ class TestSafeAttachmentPath:
 
     def test_traversal_in_user_id_is_caught(self, tmp_path: Path):
         with pytest.raises(ValueError, match="path traversal"):
-            ms.safe_attachment_path(
-                "../" * 20, "cap-uuid", "att-uuid", "file.jpg", root=tmp_path
-            )
+            ms.safe_attachment_path("../" * 20, "cap-uuid", "att-uuid", "file.jpg", root=tmp_path)
 
     def test_normal_nested_path_does_not_raise(self, tmp_path: Path):
         # Nested sub-path still inside root — should not raise.
         result = ms.safe_attachment_path(
-            "alice", "00000000-0000-0000-0000-000000000001",
+            "alice",
+            "00000000-0000-0000-0000-000000000001",
             "00000000-0000-0000-0000-000000000002",
             "photo.jpg",
             root=tmp_path,

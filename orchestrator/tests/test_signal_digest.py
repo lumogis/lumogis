@@ -42,32 +42,53 @@ class _DigestStore:
 def install_store(monkeypatch):
     def _install(signals_by_user):
         import config as _config
+
         store = _DigestStore(signals_by_user)
         _config._instances["metadata_store"] = store
         return store
+
     return _install
 
 
 def test_send_digest_fans_out_per_user(install_store, monkeypatch):
-    install_store({
-        "alice": [
-            {"title": "A1", "url": "https://e/a1", "content_summary": "s",
-             "relevance_score": 0.5, "importance_score": 0.5},
-        ],
-        "bob": [
-            {"title": "B1", "url": "https://e/b1", "content_summary": "s",
-             "relevance_score": 0.7, "importance_score": 0.7},
-            {"title": "B2", "url": "https://e/b2", "content_summary": "s",
-             "relevance_score": 0.6, "importance_score": 0.6},
-        ],
-    })
+    install_store(
+        {
+            "alice": [
+                {
+                    "title": "A1",
+                    "url": "https://e/a1",
+                    "content_summary": "s",
+                    "relevance_score": 0.5,
+                    "importance_score": 0.5,
+                },
+            ],
+            "bob": [
+                {
+                    "title": "B1",
+                    "url": "https://e/b1",
+                    "content_summary": "s",
+                    "relevance_score": 0.7,
+                    "importance_score": 0.7,
+                },
+                {
+                    "title": "B2",
+                    "url": "https://e/b2",
+                    "content_summary": "s",
+                    "relevance_score": 0.6,
+                    "importance_score": 0.6,
+                },
+            ],
+        }
+    )
 
     notifier = MagicMock()
     notifier.notify.return_value = True
     import config as _config
+
     monkeypatch.setattr(_config, "get_notifier", lambda: notifier)
 
     from signals import digest
+
     digest._send_digest()
 
     assert notifier.notify.call_count == 2
@@ -80,20 +101,38 @@ def test_send_digest_no_signals_skips(install_store, monkeypatch):
 
     notifier = MagicMock()
     import config as _config
+
     monkeypatch.setattr(_config, "get_notifier", lambda: notifier)
 
     from signals import digest
+
     digest._send_digest()
     assert notifier.notify.call_count == 0
 
 
 def test_send_digest_continues_after_one_user_error(install_store, monkeypatch):
-    install_store({
-        "alice": [{"title": "A1", "url": "u", "content_summary": "s",
-                   "relevance_score": 0.5, "importance_score": 0.5}],
-        "bob": [{"title": "B1", "url": "u", "content_summary": "s",
-                 "relevance_score": 0.5, "importance_score": 0.5}],
-    })
+    install_store(
+        {
+            "alice": [
+                {
+                    "title": "A1",
+                    "url": "u",
+                    "content_summary": "s",
+                    "relevance_score": 0.5,
+                    "importance_score": 0.5,
+                }
+            ],
+            "bob": [
+                {
+                    "title": "B1",
+                    "url": "u",
+                    "content_summary": "s",
+                    "relevance_score": 0.5,
+                    "importance_score": 0.5,
+                }
+            ],
+        }
+    )
 
     notifier = MagicMock()
 
@@ -104,8 +143,10 @@ def test_send_digest_continues_after_one_user_error(install_store, monkeypatch):
 
     notifier.notify.side_effect = _flaky
     import config as _config
+
     monkeypatch.setattr(_config, "get_notifier", lambda: notifier)
 
     from signals import digest
+
     digest._send_digest()
     assert notifier.notify.call_count == 2

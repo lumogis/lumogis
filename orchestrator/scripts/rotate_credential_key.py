@@ -146,10 +146,7 @@ def _parse_tables(raw: str) -> tuple[str, ...]:
     """Parse the ``--tables`` CSV; reject unknown / blank entries."""
     parts = [p.strip() for p in raw.split(",") if p.strip()]
     if not parts:
-        raise SystemExit(
-            "rotate_credential_key: --tables must be a non-empty CSV "
-            "of table names"
-        )
+        raise SystemExit("rotate_credential_key: --tables must be a non-empty CSV of table names")
     unknown = [p for p in parts if p not in _VALID_TABLES]
     if unknown:
         raise SystemExit(
@@ -179,7 +176,8 @@ def main(argv: list[str] | None = None) -> int:
         _log.error(
             "rotate_credential_key: %d row(s) failed to re-encrypt "
             "across tables=%s; fix the underlying issue and re-run.",
-            failed, tables,
+            failed,
+            tables,
         )
         return 1
     return 0

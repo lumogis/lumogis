@@ -109,9 +109,7 @@ async def transcribe_voice(
                 status.HTTP_415_UNSUPPORTED_MEDIA_TYPE
                 if exc.code == "stt_bad_mime"
                 else (
-                    status.HTTP_400_BAD_REQUEST
-                    if exc.code == "stt_duration_exceeded"
-                    else _STT_422
+                    status.HTTP_400_BAD_REQUEST if exc.code == "stt_duration_exceeded" else _STT_422
                 )
             )
         )

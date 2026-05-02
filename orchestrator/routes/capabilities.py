@@ -16,10 +16,9 @@ This endpoint exists purely for symmetric external discovery.
 
 import logging
 
+import mcp_server
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-
-import mcp_server
 
 router = APIRouter()
 _log = logging.getLogger(__name__)

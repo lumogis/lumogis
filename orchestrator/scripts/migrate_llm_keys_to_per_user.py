@@ -177,8 +177,15 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _emit_pair(stream, *, user_id: str, connector: str, outcome: str,
-               key_present: bool, error_class: str | None) -> None:
+def _emit_pair(
+    stream,
+    *,
+    user_id: str,
+    connector: str,
+    outcome: str,
+    key_present: bool,
+    error_class: str | None,
+) -> None:
     stream.write(
         json.dumps(
             {

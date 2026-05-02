@@ -23,7 +23,6 @@ applied verbatim against that subset.
 from __future__ import annotations
 
 import os
-import re
 import uuid
 from pathlib import Path
 
@@ -134,8 +133,7 @@ def _apply_migration(conn, schema_name: str) -> None:
 def _seed_user(conn, *, user_id: str, email: str, disabled: bool = False) -> None:
     with conn.cursor() as cur:
         cur.execute(
-            "INSERT INTO users (id, email, password_hash, disabled) "
-            "VALUES (%s, %s, %s, %s)",
+            "INSERT INTO users (id, email, password_hash, disabled) VALUES (%s, %s, %s, %s)",
             (user_id, email, "x" * 32, disabled),
         )
 
@@ -143,15 +141,18 @@ def _seed_user(conn, *, user_id: str, email: str, disabled: bool = False) -> Non
 def _seed_global_permission(conn, *, connector: str, mode: str) -> None:
     with conn.cursor() as cur:
         cur.execute(
-            "INSERT INTO connector_permissions (user_id, connector, mode) "
-            "VALUES (%s, %s, %s)",
+            "INSERT INTO connector_permissions (user_id, connector, mode) VALUES (%s, %s, %s)",
             ("default", connector, mode),
         )
 
 
 def _seed_global_routine(
-    conn, *, connector: str, action_type: str,
-    approval_count: int = 0, auto_approved: bool = False,
+    conn,
+    *,
+    connector: str,
+    action_type: str,
+    approval_count: int = 0,
+    auto_approved: bool = False,
 ) -> None:
     """Insert a pre-016 'global' routine row.
 
@@ -179,8 +180,7 @@ def _seed_global_routine(
 def _fetch_perm_rows(conn) -> list[dict]:
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT user_id, connector, mode FROM connector_permissions "
-            "ORDER BY user_id, connector"
+            "SELECT user_id, connector, mode FROM connector_permissions ORDER BY user_id, connector"
         )
         cols = [d[0] for d in cur.description]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
@@ -199,6 +199,7 @@ def _fetch_routine_rows(conn) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Tests #35 — eager-backfill cross-joins existing users with non-ASK rows
 # ---------------------------------------------------------------------------
+
 
 def test_eager_backfill_cross_joins_existing_users_with_non_ask_global_rows(schema):
     conn, schema_name = schema
@@ -220,6 +221,7 @@ def test_eager_backfill_cross_joins_existing_users_with_non_ask_global_rows(sche
 # Test #36 — skip when only the default sentinel row exists
 # ---------------------------------------------------------------------------
 
+
 def test_eager_backfill_skips_when_only_default_user_exists(schema):
     conn, schema_name = schema
     # No real users seeded.
@@ -229,15 +231,13 @@ def test_eager_backfill_skips_when_only_default_user_exists(schema):
 
     rows = _fetch_perm_rows(conn)
     # Legacy 'default' row remains for db_default_user_remap.py to remap.
-    assert any(
-        r["user_id"] == "default" and r["connector"] == "filesystem-mcp"
-        for r in rows
-    )
+    assert any(r["user_id"] == "default" and r["connector"] == "filesystem-mcp" for r in rows)
 
 
 # ---------------------------------------------------------------------------
 # Test #37 — eager backfill skips global ASK rows
 # ---------------------------------------------------------------------------
+
 
 def test_eager_backfill_skips_global_ASK_rows(schema):
     conn, schema_name = schema
@@ -260,6 +260,7 @@ def test_eager_backfill_skips_global_ASK_rows(schema):
 # Test #38 — idempotency on re-apply
 # ---------------------------------------------------------------------------
 
+
 def test_migration_is_idempotent_on_reapply(schema):
     conn, schema_name = schema
     _seed_user(conn, user_id="alice", email="alice@home.lan")
@@ -271,14 +272,13 @@ def test_migration_is_idempotent_on_reapply(schema):
     _apply_migration(conn, schema_name)
     rows_second = _fetch_perm_rows(conn)
 
-    assert rows_first == rows_second, (
-        "Re-applying the migration changed the row set"
-    )
+    assert rows_first == rows_second, "Re-applying the migration changed the row set"
 
 
 # ---------------------------------------------------------------------------
 # Test #39 — user_id column exists with correct shape post-016
 # ---------------------------------------------------------------------------
+
 
 def test_migration_adds_user_id_column_to_routine_do_tracking(schema):
     conn, schema_name = schema
@@ -302,6 +302,7 @@ def test_migration_adds_user_id_column_to_routine_do_tracking(schema):
 # Test #40 — composite unique constraint accepts two per-user rows
 # ---------------------------------------------------------------------------
 
+
 def test_migration_swaps_unique_constraint_on_connector_permissions(schema):
     conn, schema_name = schema
     _seed_user(conn, user_id="alice", email="alice@home.lan")
@@ -323,6 +324,7 @@ def test_migration_swaps_unique_constraint_on_connector_permissions(schema):
 # ---------------------------------------------------------------------------
 # Test #41 — fans out to disabled users too (no silent ASK demotion)
 # ---------------------------------------------------------------------------
+
 
 def test_eager_backfill_fans_out_to_disabled_users_too(schema):
     conn, schema_name = schema
@@ -347,26 +349,32 @@ def test_eager_backfill_fans_out_to_disabled_users_too(schema):
 # Test #42 — pending routine counters retained for db_default_user_remap.py
 # ---------------------------------------------------------------------------
 
+
 def test_eager_backfill_preserves_pending_routine_counters_via_remap(schema):
     conn, schema_name = schema
     _seed_user(conn, user_id="alice", email="alice@home.lan")
     _seed_user(conn, user_id="bob", email="bob@home.lan")
     _seed_user(conn, user_id="carol", email="carol@home.lan")
     _seed_global_routine(
-        conn, connector="calendar-mcp", action_type="create_event",
-        approval_count=15, auto_approved=True,
+        conn,
+        connector="calendar-mcp",
+        action_type="create_event",
+        approval_count=15,
+        auto_approved=True,
     )
     _seed_global_routine(
-        conn, connector="filesystem-mcp", action_type="write_file",
-        approval_count=14, auto_approved=False,
+        conn,
+        connector="filesystem-mcp",
+        action_type="write_file",
+        approval_count=14,
+        auto_approved=False,
     )
 
     _apply_migration(conn, schema_name)
 
     rows = _fetch_routine_rows(conn)
     auto_approved_keys = {
-        (r["user_id"], r["connector"], r["action_type"])
-        for r in rows if r["auto_approved"]
+        (r["user_id"], r["connector"], r["action_type"]) for r in rows if r["auto_approved"]
     }
     # (a) all three users got the auto_approved=TRUE row.
     for uid in ("alice", "bob", "carol"):
@@ -375,15 +383,13 @@ def test_eager_backfill_preserves_pending_routine_counters_via_remap(schema):
         )
     # (b) the 'default' calendar/create_event row is swept.
     default_calendar = [
-        r for r in rows
-        if r["user_id"] == "default" and r["connector"] == "calendar-mcp"
+        r for r in rows if r["user_id"] == "default" and r["connector"] == "calendar-mcp"
     ]
-    assert default_calendar == [], (
-        "Auto-approved 'default' row must be swept after fan-out"
-    )
+    assert default_calendar == [], "Auto-approved 'default' row must be swept after fan-out"
     # (c) the 'default' filesystem/write_file pending row is RETAINED.
     default_pending = [
-        r for r in rows
+        r
+        for r in rows
         if r["user_id"] == "default"
         and r["connector"] == "filesystem-mcp"
         and r["action_type"] == "write_file"
@@ -393,7 +399,8 @@ def test_eager_backfill_preserves_pending_routine_counters_via_remap(schema):
     assert default_pending[0]["auto_approved"] is False
     # (d) no user has a per-user filesystem/write_file row yet.
     user_pending = [
-        r for r in rows
+        r
+        for r in rows
         if r["user_id"] in {"alice", "bob", "carol"}
         and r["connector"] == "filesystem-mcp"
         and r["action_type"] == "write_file"
@@ -405,12 +412,16 @@ def test_eager_backfill_preserves_pending_routine_counters_via_remap(schema):
 # Test #43 — empty users table → no fan-out, legacy rows retained
 # ---------------------------------------------------------------------------
 
+
 def test_eager_backfill_skips_when_users_table_is_empty(schema):
     conn, schema_name = schema
     _seed_global_permission(conn, connector="filesystem-mcp", mode="DO")
     _seed_global_routine(
-        conn, connector="calendar-mcp", action_type="create_event",
-        approval_count=20, auto_approved=True,
+        conn,
+        connector="calendar-mcp",
+        action_type="create_event",
+        approval_count=20,
+        auto_approved=True,
     )
 
     _apply_migration(conn, schema_name)
@@ -427,6 +438,7 @@ def test_eager_backfill_skips_when_users_table_is_empty(schema):
 # ---------------------------------------------------------------------------
 # Test #44 — idempotent after partial user growth
 # ---------------------------------------------------------------------------
+
 
 def test_migration_idempotency_after_partial_user_growth(schema):
     conn, schema_name = schema

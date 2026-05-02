@@ -34,26 +34,32 @@ import logging
 import os
 import time
 import uuid
-from collections import defaultdict, deque
+from collections import defaultdict
+from collections import deque
 from threading import Lock
 from typing import Deque
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
-
-import auth as _auth
 import services.users as users_svc
-from auth import (
-    UserContext,
-    access_token_ttl_seconds,
-    auth_enabled,
-    get_user,
-    mint_access_token,
-    mint_refresh_token,
-    refresh_token_ttl_seconds,
-    verify_refresh_token,
-)
-from csrf import _proxied_client_ip, require_same_origin
-from models.auth import LoginRequest, LoginResponse, UserPublic
+from auth import UserContext
+from auth import access_token_ttl_seconds
+from auth import auth_enabled
+from auth import get_user
+from auth import mint_access_token
+from auth import mint_refresh_token
+from auth import refresh_token_ttl_seconds
+from auth import verify_refresh_token
+from csrf import _proxied_client_ip
+from csrf import require_same_origin
+from fastapi import APIRouter
+from fastapi import Cookie
+from fastapi import Depends
+from fastapi import HTTPException
+from fastapi import Request
+from fastapi import Response
+from fastapi import status
+from models.auth import LoginRequest
+from models.auth import LoginResponse
+from models.auth import UserPublic
 
 _log = logging.getLogger(__name__)
 

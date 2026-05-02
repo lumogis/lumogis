@@ -37,25 +37,30 @@ import config
 
 _log = logging.getLogger(__name__)
 
-_ALLOWED_EDGE_TYPES = frozenset({
-    # Provenance edges — inserted by store_entities() on every ingest
-    "MENTIONED_IN_SESSION",
-    "MENTIONED_IN_DOCUMENT",
-    "RELATED_TO",
-    # Semantic edges — used by future passes and graph projection
-    "MENTIONS",
-    "RELATES_TO",
-    "DISCUSSED_IN",
-    "DERIVED_FROM",
-    "WORKED_ON",
-})
+_ALLOWED_EDGE_TYPES = frozenset(
+    {
+        # Provenance edges — inserted by store_entities() on every ingest
+        "MENTIONED_IN_SESSION",
+        "MENTIONED_IN_DOCUMENT",
+        "RELATED_TO",
+        # Semantic edges — used by future passes and graph projection
+        "MENTIONS",
+        "RELATES_TO",
+        "DISCUSSED_IN",
+        "DERIVED_FROM",
+        "WORKED_ON",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _insert_violation(ms, user_id: str, entity_id: str, rule_name: str, severity: str, detail: str) -> None:
+
+def _insert_violation(
+    ms, user_id: str, entity_id: str, rule_name: str, severity: str, detail: str
+) -> None:
     ms.execute(
         "INSERT INTO constraint_violations (user_id, entity_id, rule_name, severity, detail) "
         "VALUES (%s, %s, %s, %s, %s)",
@@ -89,6 +94,7 @@ def _open_violation_exists(ms, entity_id: str, rule_name: str) -> bool:
 # Responsible for both inserting new violations and auto-resolving stale ones.
 # ---------------------------------------------------------------------------
 
+
 def _check_person_name_required(ms, entity_id: str, user_id: str) -> bool:
     rule = "person_name_required"
     try:
@@ -104,9 +110,12 @@ def _check_person_name_required(ms, entity_id: str, user_id: str) -> bool:
         name = (row.get("name") or "").strip()
         if not name:
             if not _open_violation_exists(ms, entity_id, rule):
-                _insert_violation(ms, user_id, entity_id, rule, "CRITICAL",
-                                   "Person entity has empty or null name")
-                _log.critical("constraint_violation rule=%s entity_id=%s user_id=%s", rule, entity_id, user_id)
+                _insert_violation(
+                    ms, user_id, entity_id, rule, "CRITICAL", "Person entity has empty or null name"
+                )
+                _log.critical(
+                    "constraint_violation rule=%s entity_id=%s user_id=%s", rule, entity_id, user_id
+                )
             return True
         else:
             _resolve_violation(ms, entity_id, rule)
@@ -130,9 +139,17 @@ def _check_organisation_name_required(ms, entity_id: str, user_id: str) -> bool:
         name = (row.get("name") or "").strip()
         if not name:
             if not _open_violation_exists(ms, entity_id, rule):
-                _insert_violation(ms, user_id, entity_id, rule, "CRITICAL",
-                                   "Organisation entity has empty or null name")
-                _log.critical("constraint_violation rule=%s entity_id=%s user_id=%s", rule, entity_id, user_id)
+                _insert_violation(
+                    ms,
+                    user_id,
+                    entity_id,
+                    rule,
+                    "CRITICAL",
+                    "Organisation entity has empty or null name",
+                )
+                _log.critical(
+                    "constraint_violation rule=%s entity_id=%s user_id=%s", rule, entity_id, user_id
+                )
             return True
         else:
             _resolve_violation(ms, entity_id, rule)
@@ -160,15 +177,22 @@ def _check_no_self_loop(ms, entity_id: str, user_id: str) -> bool:
     rule = "no_self_loop"
     try:
         rows = ms.fetch_all(
-            "SELECT id FROM entity_relations "
-            "WHERE source_id = %s AND evidence_id = %s",
+            "SELECT id FROM entity_relations WHERE source_id = %s AND evidence_id = %s",
             (entity_id, entity_id),
         )
         if rows:
             if not _open_violation_exists(ms, entity_id, rule):
-                _insert_violation(ms, user_id, entity_id, rule, "CRITICAL",
-                                   f"Self-loop detected: source_id == evidence_id == {entity_id}")
-                _log.critical("constraint_violation rule=%s entity_id=%s user_id=%s", rule, entity_id, user_id)
+                _insert_violation(
+                    ms,
+                    user_id,
+                    entity_id,
+                    rule,
+                    "CRITICAL",
+                    f"Self-loop detected: source_id == evidence_id == {entity_id}",
+                )
+                _log.critical(
+                    "constraint_violation rule=%s entity_id=%s user_id=%s", rule, entity_id, user_id
+                )
             return True
         else:
             _resolve_violation(ms, entity_id, rule)
@@ -186,15 +210,19 @@ def _check_valid_edge_type(ms, entity_id: str, user_id: str) -> bool:
             (entity_id,),
         )
         invalid_types = [
-            r["relation_type"] for r in rows
-            if r.get("relation_type") not in _ALLOWED_EDGE_TYPES
+            r["relation_type"] for r in rows if r.get("relation_type") not in _ALLOWED_EDGE_TYPES
         ]
         if invalid_types:
             detail = f"Invalid edge type(s): {', '.join(sorted(invalid_types))}"
             if not _open_violation_exists(ms, entity_id, rule):
                 _insert_violation(ms, user_id, entity_id, rule, "CRITICAL", detail)
-                _log.critical("constraint_violation rule=%s entity_id=%s user_id=%s detail=%r",
-                               rule, entity_id, user_id, detail)
+                _log.critical(
+                    "constraint_violation rule=%s entity_id=%s user_id=%s detail=%r",
+                    rule,
+                    entity_id,
+                    user_id,
+                    detail,
+                )
             return True
         else:
             _resolve_violation(ms, entity_id, rule)
@@ -230,8 +258,9 @@ def _check_person_completeness(ms, entity_id: str, user_id: str) -> bool:
         )
         if mention_row is None:
             if not _open_violation_exists(ms, entity_id, rule):
-                _insert_violation(ms, user_id, entity_id, rule, "INFO",
-                                   "Person entity has zero MENTIONS edges")
+                _insert_violation(
+                    ms, user_id, entity_id, rule, "INFO", "Person entity has zero MENTIONS edges"
+                )
             return True
         else:
             _resolve_violation(ms, entity_id, rule)
@@ -245,6 +274,7 @@ def _check_person_completeness(ms, entity_id: str, user_id: str) -> bool:
 # Corpus-level rule checkers (not called on every ingest)
 # Called by the weekly job introduced in Pass 3.
 # ---------------------------------------------------------------------------
+
 
 def check_orphan_entities(user_id: str) -> int:
     """Corpus-level check: entity with zero edges AND created_at > 7 days ago.
@@ -275,8 +305,14 @@ def check_orphan_entities(user_id: str) -> int:
 
         for entity_id in orphan_ids:
             if not _open_violation_exists(ms, entity_id, rule):
-                _insert_violation(ms, user_id, entity_id, rule, "WARNING",
-                                   "Entity has zero edges and was created more than 7 days ago")
+                _insert_violation(
+                    ms,
+                    user_id,
+                    entity_id,
+                    rule,
+                    "WARNING",
+                    "Entity has zero edges and was created more than 7 days ago",
+                )
                 inserted += 1
 
         # SCOPE-EXEMPT: `constraint_violations` is in plan §2.10's
@@ -356,6 +392,7 @@ def check_alias_uniqueness(user_id: str) -> int:
 # ---------------------------------------------------------------------------
 # Public entry point — called at the tail of store_entities()
 # ---------------------------------------------------------------------------
+
 
 def run_batch_constraints(entity_ids: list[str], user_id: str) -> int:
     """Run all per-ingest constraint rules for the given entity IDs.

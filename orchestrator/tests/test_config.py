@@ -63,6 +63,7 @@ def test_get_graph_mode_lowercases_and_strips(monkeypatch):
 
 def test_get_graph_mode_unknown_falls_back_to_inprocess(monkeypatch, caplog):
     import logging
+
     monkeypatch.setenv("GRAPH_MODE", "remote")
     config.get_graph_mode.cache_clear()
     with caplog.at_level(logging.WARNING, logger="config"):

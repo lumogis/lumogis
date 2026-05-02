@@ -25,15 +25,17 @@ Three groups:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from dataclasses import field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal
-
-from pydantic import BaseModel, EmailStr, Field
+from typing import Any
+from typing import Literal
 
 from models.auth import Role
-
+from pydantic import BaseModel
+from pydantic import EmailStr
+from pydantic import Field
 
 # ─── Request models ─────────────────────────────────────────────────────────
 
@@ -144,9 +146,7 @@ class ArchiveInventoryEntry(BaseModel):
     archive_filename: str
     bytes: int
     mtime: datetime
-    manifest_status: Literal[
-        "valid", "unparseable", "missing_manifest", "unsupported_version"
-    ]
+    manifest_status: Literal["valid", "unparseable", "missing_manifest", "unsupported_version"]
     manifest_version: int | None = None
     exported_user_email: str | None = None
 

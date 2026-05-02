@@ -50,12 +50,14 @@ class _KgStore:
                     other_id = b if a == head else a
                     ent = next((e for e in self.entities if str(e["entity_id"]) == other_id), None)
                     if ent is not None:
-                        others.append({
-                            "entity_id": ent["entity_id"],
-                            "name": ent["name"],
-                            "relation": "CO_OCCURS",
-                            "weight": w,
-                        })
+                        others.append(
+                            {
+                                "entity_id": ent["entity_id"],
+                                "name": ent["name"],
+                                "relation": "CO_OCCURS",
+                                "weight": w,
+                            }
+                        )
             others.sort(key=lambda r: (r["weight"] is None, -(r["weight"] or 0)))
             return others[: p[-1]]
         if "from entities" in q and "ilike" in q:
@@ -82,6 +84,7 @@ class _KgStore:
 @pytest.fixture
 def kg_store(monkeypatch):
     import config as _config
+
     s = _KgStore()
     _config._instances["metadata_store"] = s
     yield s
@@ -91,20 +94,23 @@ def kg_store(monkeypatch):
 @pytest.fixture
 def client():
     import main
+
     with TestClient(main.app) as c:
         yield c
 
 
 def _seed_alice(store):
-    store.entities.append({
-        "entity_id": "11111111-1111-4111-9111-111111111111",
-        "name": "Alice",
-        "entity_type": "person",
-        "aliases": ["Al"],
-        "mention_count": 3,
-        "scope": "personal",
-        "user_id": "default",
-    })
+    store.entities.append(
+        {
+            "entity_id": "11111111-1111-4111-9111-111111111111",
+            "name": "Alice",
+            "entity_type": "person",
+            "aliases": ["Al"],
+            "mention_count": 3,
+            "scope": "personal",
+            "user_id": "default",
+        }
+    )
 
 
 def test_get_entity_returns_card(client, kg_store):
@@ -126,32 +132,32 @@ def test_get_entity_unknown_returns_404(client, kg_store):
 
 
 def test_related_unknown_entity_returns_404(client, kg_store):
-    resp = client.get(
-        "/api/v1/kg/entities/00000000-0000-4000-8000-000000000000/related"
-    )
+    resp = client.get("/api/v1/kg/entities/00000000-0000-4000-8000-000000000000/related")
     assert resp.status_code == 404
 
 
 def test_related_returns_co_occurs(client, kg_store):
     _seed_alice(kg_store)
     bob_id = "22222222-2222-4222-9222-222222222222"
-    kg_store.entities.append({
-        "entity_id": bob_id,
-        "name": "Bob",
-        "entity_type": "person",
-        "aliases": [],
-        "mention_count": 1,
-        "scope": "personal",
-        "user_id": "default",
-    })
-    kg_store.edges.append({
-        "a": "11111111-1111-4111-9111-111111111111",
-        "b": bob_id,
-        "w": 0.42,
-    })
-    resp = client.get(
-        "/api/v1/kg/entities/11111111-1111-4111-9111-111111111111/related"
+    kg_store.entities.append(
+        {
+            "entity_id": bob_id,
+            "name": "Bob",
+            "entity_type": "person",
+            "aliases": [],
+            "mention_count": 1,
+            "scope": "personal",
+            "user_id": "default",
+        }
     )
+    kg_store.edges.append(
+        {
+            "a": "11111111-1111-4111-9111-111111111111",
+            "b": bob_id,
+            "w": 0.42,
+        }
+    )
+    resp = client.get("/api/v1/kg/entities/11111111-1111-4111-9111-111111111111/related")
     assert resp.status_code == 200
     body = resp.json()
     assert len(body["related"]) == 1

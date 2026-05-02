@@ -49,13 +49,14 @@ Pass 5 — Polish and close-out (no new backend endpoints; frontend-only changes
 """
 
 import unittest
-from unittest.mock import MagicMock, patch
 from pathlib import Path
-
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_meta_store(
     *,
@@ -96,11 +97,11 @@ def _make_meta_store(
 # 1. GET /graph/mgm — file exists
 # ---------------------------------------------------------------------------
 
-class TestGraphMgmServe(unittest.TestCase):
 
+class TestGraphMgmServe(unittest.TestCase):
     def test_returns_200_with_html(self):
-        from routes.admin import graph_mgm
         from fastapi.responses import FileResponse
+        from routes.admin import graph_mgm
 
         fake_path = Path("/tmp/fake_graph_mgm.html")
         fake_path.write_text("<html><body>ok</body></html>")
@@ -113,8 +114,8 @@ class TestGraphMgmServe(unittest.TestCase):
             fake_path.unlink(missing_ok=True)
 
     def test_returns_404_when_file_missing(self):
-        from routes.admin import graph_mgm
         from fastapi import HTTPException
+        from routes.admin import graph_mgm
 
         missing_path = Path("/tmp/does_not_exist_graph_mgm.html")
         if missing_path.exists():
@@ -130,10 +131,11 @@ class TestGraphMgmServe(unittest.TestCase):
 # 2. GET /kg/job-status — correct shape
 # ---------------------------------------------------------------------------
 
-class TestKgJobStatusShape(unittest.TestCase):
 
+class TestKgJobStatusShape(unittest.TestCase):
     def _call(self, meta_store):
         from routes.admin import kg_job_status
+
         with patch("config.get_metadata_store", return_value=meta_store):
             return kg_job_status()
 
@@ -159,10 +161,11 @@ class TestKgJobStatusShape(unittest.TestCase):
 # 3. GET /kg/job-status — graceful nulls when no data
 # ---------------------------------------------------------------------------
 
-class TestKgJobStatusNulls(unittest.TestCase):
 
+class TestKgJobStatusNulls(unittest.TestCase):
     def _call(self, meta_store):
         from routes.admin import kg_job_status
+
         with patch("config.get_metadata_store", return_value=meta_store):
             return kg_job_status()
 
@@ -177,6 +180,7 @@ class TestKgJobStatusNulls(unittest.TestCase):
 
     def test_timestamps_populated_when_rows_exist(self):
         import datetime
+
         ts = "2026-04-15T02:00:00+00:00"
         ms = _make_meta_store(
             settings_rows=[
@@ -210,14 +214,13 @@ class TestKgJobStatusNulls(unittest.TestCase):
 # 4. GET /kg/job-status — partial data when one query fails
 # ---------------------------------------------------------------------------
 
-class TestKgJobStatusPartial(unittest.TestCase):
 
+class TestKgJobStatusPartial(unittest.TestCase):
     def test_dedup_failure_still_returns_timestamp_data(self):
         """If the deduplication_runs query fails, reconciliation/weekly still returned."""
         ts = "2026-04-15T02:00:00+00:00"
 
         ms = MagicMock()
-        call_count = [0]
 
         def _fetch_one(sql, *args, **kwargs):
             sql_lower = sql.lower()
@@ -232,6 +235,7 @@ class TestKgJobStatusPartial(unittest.TestCase):
         ms.fetch_one.side_effect = _fetch_one
 
         from routes.admin import kg_job_status
+
         with patch("config.get_metadata_store", return_value=ms):
             result = kg_job_status()
 
@@ -247,13 +251,13 @@ class TestKgJobStatusPartial(unittest.TestCase):
 # 5. POST /kg/trigger-weekly — 202 when no dedup job running
 # ---------------------------------------------------------------------------
 
-class TestKgTriggerWeekly202(unittest.TestCase):
 
+class TestKgTriggerWeekly202(unittest.TestCase):
     def test_returns_202_response_dict_when_clear(self):
         ms = _make_meta_store(dedup_running_row=None)
 
-        from routes.admin import kg_trigger_weekly
         from fastapi import BackgroundTasks
+        from routes.admin import kg_trigger_weekly
 
         bg = BackgroundTasks()
         with patch("config.get_metadata_store", return_value=ms):
@@ -265,8 +269,8 @@ class TestKgTriggerWeekly202(unittest.TestCase):
     def test_background_task_is_added(self):
         ms = _make_meta_store(dedup_running_row=None)
 
-        from routes.admin import kg_trigger_weekly
         from fastapi import BackgroundTasks
+        from routes.admin import kg_trigger_weekly
 
         bg = BackgroundTasks()
         with patch("config.get_metadata_store", return_value=ms):
@@ -279,13 +283,14 @@ class TestKgTriggerWeekly202(unittest.TestCase):
 # 6. POST /kg/trigger-weekly — 409 when dedup job is already running
 # ---------------------------------------------------------------------------
 
-class TestKgTriggerWeekly409(unittest.TestCase):
 
+class TestKgTriggerWeekly409(unittest.TestCase):
     def test_returns_409_when_dedup_running(self):
         ms = _make_meta_store(dedup_running_row={"run_id": "running-job-id"})
 
+        from fastapi import BackgroundTasks
+        from fastapi import HTTPException
         from routes.admin import kg_trigger_weekly
-        from fastapi import BackgroundTasks, HTTPException
 
         bg = BackgroundTasks()
         with patch("config.get_metadata_store", return_value=ms):
@@ -298,8 +303,8 @@ class TestKgTriggerWeekly409(unittest.TestCase):
     def test_no_background_task_added_on_409(self):
         ms = _make_meta_store(dedup_running_row={"run_id": "running-job-id"})
 
+        from fastapi import BackgroundTasks
         from routes.admin import kg_trigger_weekly
-        from fastapi import BackgroundTasks, HTTPException
 
         bg = BackgroundTasks()
         with patch("config.get_metadata_store", return_value=ms):
@@ -318,10 +323,8 @@ class TestKgTriggerWeekly409(unittest.TestCase):
 
 @unittest.skip("plugins.graph.viz_routes was removed from Core; HTTP lives in lumogis-graph.")
 class TestVizRoutesImportOsFix(unittest.TestCase):
-
     def test_require_auth_does_not_raise_name_error(self):
         """Calling _require_auth should not raise NameError due to missing import os."""
-        import importlib
         import sys
 
         # Force reimport of the module
@@ -366,8 +369,9 @@ class TestStopEntitiesGet(unittest.TestCase):
     """GET /kg/stop-entities"""
 
     def _call(self, path_exists=True, file_content=None, read_raises=None):
+        from unittest.mock import patch
+
         from routes.admin import kg_stop_entities_get
-        from unittest.mock import mock_open, patch
 
         fake_path = "/fake/stop_entities.txt"
         with patch("config.get_stop_entities_path", return_value=fake_path):
@@ -401,6 +405,7 @@ class TestStopEntitiesGet(unittest.TestCase):
 
     def test_500_when_file_unreadable(self):
         from fastapi import HTTPException
+
         with self.assertRaises(HTTPException) as ctx:
             self._call(read_raises=OSError("permission denied"))
         self.assertEqual(ctx.exception.status_code, 500)
@@ -416,16 +421,19 @@ class TestStopEntitiesPost(unittest.TestCase):
         return self._call("remove", phrase, existing or ["the meeting", "this project"])
 
     def _call(self, action, phrase, existing_lines):
-        from routes.admin import kg_stop_entities_post, StopEntityRequest
         from fastapi import HTTPException
+        from routes.admin import StopEntityRequest
+        from routes.admin import kg_stop_entities_post
 
         fake_path = "/fake/stop_entities.txt"
         body = StopEntityRequest(action=action, phrase=phrase)
 
-        with patch("config.get_stop_entities_path", return_value=fake_path), \
-             patch("routes.admin._read_stop_entity_file", return_value=list(existing_lines)), \
-             patch("routes.admin._write_stop_entity_file_atomic") as mock_write, \
-             patch("config.invalidate_settings_cache"):
+        with (
+            patch("config.get_stop_entities_path", return_value=fake_path),
+            patch("routes.admin._read_stop_entity_file", return_value=list(existing_lines)),
+            patch("routes.admin._write_stop_entity_file_atomic") as mock_write,
+            patch("config.invalidate_settings_cache"),
+        ):
             try:
                 result = kg_stop_entities_post(body)
                 return result, mock_write
@@ -440,6 +448,7 @@ class TestStopEntitiesPost(unittest.TestCase):
 
     def test_add_duplicate_returns_400(self):
         from fastapi import HTTPException
+
         with self.assertRaises(HTTPException) as ctx:
             self._add("the meeting", existing=["the meeting", "this project"])
         self.assertEqual(ctx.exception.status_code, 400)
@@ -453,14 +462,17 @@ class TestStopEntitiesPost(unittest.TestCase):
 
     def test_remove_not_found_returns_400(self):
         from fastapi import HTTPException
+
         with self.assertRaises(HTTPException) as ctx:
             self._remove("nonexistent phrase")
         self.assertEqual(ctx.exception.status_code, 400)
         self.assertIn("not found", ctx.exception.detail)
 
     def test_invalid_action_returns_400(self):
-        from routes.admin import kg_stop_entities_post, StopEntityRequest
         from fastapi import HTTPException
+        from routes.admin import StopEntityRequest
+        from routes.admin import kg_stop_entities_post
+
         body = StopEntityRequest(action="delete", phrase="something")
         fake_path = "/fake/stop_entities.txt"
         with patch("config.get_stop_entities_path", return_value=fake_path):
@@ -469,8 +481,10 @@ class TestStopEntitiesPost(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 400)
 
     def test_phrase_too_long_returns_400(self):
-        from routes.admin import kg_stop_entities_post, StopEntityRequest
         from fastapi import HTTPException
+        from routes.admin import StopEntityRequest
+        from routes.admin import kg_stop_entities_post
+
         body = StopEntityRequest(action="add", phrase="x" * 201)
         fake_path = "/fake/stop_entities.txt"
         with patch("config.get_stop_entities_path", return_value=fake_path):
@@ -481,8 +495,8 @@ class TestStopEntitiesPost(unittest.TestCase):
 
     def test_write_is_atomic(self):
         """Verify _write_stop_entity_file_atomic uses a temp file then os.replace."""
-        import tempfile as _tempfile
         import os as _os
+        import tempfile as _tempfile
 
         fake_dir = "/tmp/lumogis_test_stop_entities"
         _os.makedirs(fake_dir, exist_ok=True)
@@ -505,8 +519,10 @@ class TestStopEntitiesPost(unittest.TestCase):
             written_files.append(("replace", src, dst))
             original_replace(src, dst)
 
-        with patch("tempfile.mkstemp", side_effect=fake_mkstemp), \
-             patch("os.replace", side_effect=fake_replace):
+        with (
+            patch("tempfile.mkstemp", side_effect=fake_mkstemp),
+            patch("os.replace", side_effect=fake_replace),
+        ):
             _write_stop_entity_file_atomic(target, ["phrase one", "phrase two"])
 
         # mkstemp was called first, then os.replace

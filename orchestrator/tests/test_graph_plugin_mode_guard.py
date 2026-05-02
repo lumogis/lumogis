@@ -88,8 +88,7 @@ def test_plugin_does_not_register_hooks_in_service_mode(reloaded_plugin, monkeyp
     reloaded_plugin()
 
     listener_names = [
-        getattr(cb, "__name__", repr(cb))
-        for cb in hooks._listeners.get(Event.ENTITY_CREATED, [])
+        getattr(cb, "__name__", repr(cb)) for cb in hooks._listeners.get(Event.ENTITY_CREATED, [])
     ]
     assert "on_entity_created" not in listener_names, (
         f"plugin registered ENTITY_CREATED listener in service mode: {listener_names}"
@@ -107,8 +106,7 @@ def test_plugin_registers_hooks_in_inprocess_mode(reloaded_plugin, monkeypatch):
     reloaded_plugin()
 
     listener_names = [
-        getattr(cb, "__name__", repr(cb))
-        for cb in hooks._listeners.get(Event.ENTITY_CREATED, [])
+        getattr(cb, "__name__", repr(cb)) for cb in hooks._listeners.get(Event.ENTITY_CREATED, [])
     ]
     assert "on_entity_created" in listener_names, (
         f"plugin failed to register ENTITY_CREATED listener in inprocess mode: {listener_names}"

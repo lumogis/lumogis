@@ -18,9 +18,7 @@ def handle(*, user_id: str, payload: SessionEndPayload) -> None:
     from events import Event
 
     msg_dicts = [{"role": m.role, "content": m.content} for m in payload.messages]
-    summary = summarize_session(
-        msg_dicts, session_id=payload.session_id, user_id=user_id
-    )
+    summary = summarize_session(msg_dicts, session_id=payload.session_id, user_id=user_id)
 
     session_text = "\n".join(f"{m['role']}: {m['content']}" for m in msg_dicts)
     entities = extract_entities(session_text, user_id=user_id)

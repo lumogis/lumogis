@@ -125,10 +125,15 @@ class TestRestart:
     def test_secret_read_from_env_file(self, client, tmp_path):
         env_file = tmp_path / ".env"
         env_file.write_text("RESTART_SECRET=file-secret\n")
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = ""
+        mock_result.stderr = ""
         with patch("main._PROJECT_ENV_FILE", env_file):
-            resp = client.post(
-                "/restart",
-                headers={"X-Lumogis-Restart-Token": "file-secret"},
-            )
-        # token matches file secret — auth passes (compose will fail since not mocked)
-        assert resp.status_code != 403
+            with patch("main.subprocess.run", return_value=mock_result):
+                resp = client.post(
+                    "/restart",
+                    headers={"X-Lumogis-Restart-Token": "file-secret"},
+                )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "restarted"

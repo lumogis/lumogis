@@ -76,9 +76,7 @@ class RegisteredService(BaseModel):
     last_seen_healthy: datetime | None = None
     healthy: bool = False
 
-    async def check_health(
-        self, transport: httpx.AsyncBaseTransport | None = None
-    ) -> bool:
+    async def check_health(self, transport: httpx.AsyncBaseTransport | None = None) -> bool:
         """Probe the capability service's declared health endpoint.
 
         Returns True iff the endpoint responds with HTTP 200 within the
@@ -306,9 +304,7 @@ class CapabilityRegistry:
         with self._lock:
             return self._services.get(service_id)
 
-    def get_tools(
-        self, license_mode: CapabilityLicenseMode | None = None
-    ) -> list[CapabilityTool]:
+    def get_tools(self, license_mode: CapabilityLicenseMode | None = None) -> list[CapabilityTool]:
         with self._lock:
             services = list(self._services.values())
         tools: list[CapabilityTool] = []

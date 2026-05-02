@@ -21,17 +21,17 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import JSONResponse
-
 from auth import get_user
 from authz import require_user
-from models.api_v1 import (
-    MemorySearchHit,
-    MemorySearchResponse,
-    RecentSession,
-    RecentSessionsResponse,
-)
+from fastapi import APIRouter
+from fastapi import Depends
+from fastapi import Query
+from fastapi import Request
+from fastapi.responses import JSONResponse
+from models.api_v1 import MemorySearchHit
+from models.api_v1 import MemorySearchResponse
+from models.api_v1 import RecentSession
+from models.api_v1 import RecentSessionsResponse
 
 _log = logging.getLogger(__name__)
 
@@ -133,6 +133,7 @@ def _coerce_datetime(value: Optional[object]):
         return value
     try:
         from datetime import datetime
+
         return datetime.fromisoformat(str(value))
     except (ValueError, TypeError):
         return None

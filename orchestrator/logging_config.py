@@ -49,10 +49,9 @@ from __future__ import annotations
 import logging
 import logging.config
 import os
-from typing import Any, Iterable
+from typing import Any
 
 import structlog
-
 from correlation import _REQUEST_CTXVAR
 
 # Keys whose values must NEVER appear in stdout logs. Match is
@@ -223,8 +222,7 @@ def _resolve_renderer(raw: str):
     if fmt == "json":
         return structlog.processors.JSONRenderer()
     raise RuntimeError(
-        f"LOG_FORMAT={raw!r} is not a valid logging format "
-        "(expected 'console' or 'json')."
+        f"LOG_FORMAT={raw!r} is not a valid logging format (expected 'console' or 'json')."
     )
 
 
@@ -314,7 +312,8 @@ def configure_logging() -> None:
         ) from exc
 
     structlog.configure(
-        processors=shared + [
+        processors=shared
+        + [
             # ``wrap_for_formatter`` is the bridge: it bundles the
             # event_dict onto the stdlib LogRecord so the
             # ``ProcessorFormatter`` on the handler can render it.

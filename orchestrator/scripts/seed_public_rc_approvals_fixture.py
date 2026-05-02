@@ -12,9 +12,10 @@ import logging
 import os
 
 import auth as auth_mod
-import config
 import permissions as perm
 import services.users as users_svc
+
+import config
 
 _log = logging.getLogger("scripts.seed_public_rc_approvals_fixture")
 

@@ -47,9 +47,7 @@ from fastapi import Request
 # ``logging_config.py`` reads from this so logs emitted from any depth
 # inside the request handler can pick up ``user_id`` / ``mcp_token_id``
 # without the caller having to pass them explicitly.
-_REQUEST_CTXVAR: ContextVar[Optional[Request]] = ContextVar(
-    "lumogis_current_request", default=None
-)
+_REQUEST_CTXVAR: ContextVar[Optional[Request]] = ContextVar("lumogis_current_request", default=None)
 
 
 async def correlation_middleware(request: Request, call_next):

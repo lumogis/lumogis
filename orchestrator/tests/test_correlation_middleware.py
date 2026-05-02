@@ -20,12 +20,11 @@ import logging
 import re
 from typing import Optional
 
-import pytest
 import structlog
-from fastapi import FastAPI, Request
-from fastapi.testclient import TestClient
-
 from correlation import correlation_middleware
+from fastapi import FastAPI
+from fastapi import Request
+from fastapi.testclient import TestClient
 
 
 def _build_app(
@@ -50,8 +49,10 @@ def _build_app(
     async def _log_endpoint(request: Request):
         # Simulate what auth_middleware does in the real stack.
         if set_user_id is not None:
+
             class _U:
                 pass
+
             user = _U()
             user.user_id = set_user_id
             request.state.user = user

@@ -34,12 +34,18 @@ def main() -> int:
     existing = users_svc.get_user_by_email(email)
     if existing is None:
         user = users_svc.create_user(email=email, password=password, role="admin")
-        print(json.dumps({"ok": True, "created": True, "email": email, "id": user.id}, sort_keys=True))
+        print(
+            json.dumps({"ok": True, "created": True, "email": email, "id": user.id}, sort_keys=True)
+        )
         _log.info("created smoke admin user email=%s id=%s", email, user.id)
         return 0
 
     users_svc.cli_reset_password(email=email, user_id=None, new_password=password)
-    print(json.dumps({"ok": True, "password_reset": True, "email": email, "id": existing.id}, sort_keys=True))
+    print(
+        json.dumps(
+            {"ok": True, "password_reset": True, "email": email, "id": existing.id}, sort_keys=True
+        )
+    )
     _log.info("reset smoke user password email=%s id=%s", email, existing.id)
     return 0
 

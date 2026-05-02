@@ -18,9 +18,8 @@ from __future__ import annotations
 import logging
 from unittest.mock import patch
 
-import pytest
-
 import main
+import pytest
 
 
 @pytest.fixture
@@ -31,8 +30,10 @@ def patched_handlers():
     Both are MagicMock — failing-the-test behaviour is "this was called when
     it shouldn't have been" or the inverse, asserted at the call site.
     """
-    with patch("services.graph_webhook_dispatcher.register_core_callbacks") as cb, \
-         patch("services.tools.register_query_graph_proxy") as proxy:
+    with (
+        patch("services.graph_webhook_dispatcher.register_core_callbacks") as cb,
+        patch("services.tools.register_query_graph_proxy") as proxy,
+    ):
         yield cb, proxy
 
 

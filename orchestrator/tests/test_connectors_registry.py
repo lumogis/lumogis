@@ -15,14 +15,15 @@ The substrate-level tests for ``REGISTERED_CONNECTORS`` /
 ``require_registered()`` semantics live in
 ``test_connector_credentials_service.py`` and are not duplicated here.
 """
+
 from __future__ import annotations
 
 import dataclasses
 
 import pytest
-
 from connectors import registry as connectors_registry
-from connectors.registry import CONNECTORS, ConnectorSpec
+from connectors.registry import CONNECTORS
+from connectors.registry import ConnectorSpec
 
 
 def test_canonical_mapping_shape() -> None:
@@ -39,12 +40,10 @@ def test_canonical_mapping_shape() -> None:
     assert CONNECTORS, "CONNECTORS must declare at least one connector"
     for cid, spec in CONNECTORS.items():
         assert isinstance(spec, ConnectorSpec), (
-            f"CONNECTORS[{cid!r}] must be a ConnectorSpec, "
-            f"got {type(spec).__name__}"
+            f"CONNECTORS[{cid!r}] must be a ConnectorSpec, got {type(spec).__name__}"
         )
         assert spec.id == cid, (
-            f"ConnectorSpec.id must equal its CONNECTORS key; "
-            f"key={cid!r}, spec.id={spec.id!r}"
+            f"ConnectorSpec.id must equal its CONNECTORS key; key={cid!r}, spec.id={spec.id!r}"
         )
         assert isinstance(spec.description, str) and spec.description.strip(), (
             f"CONNECTORS[{cid!r}].description must be a non-empty string"
@@ -75,9 +74,7 @@ def test_registered_connectors_is_derived_from_canonical_mapping() -> None:
     load time (regression guard against someone re-introducing a
     parallel set literal).
     """
-    assert connectors_registry.REGISTERED_CONNECTORS == frozenset(
-        CONNECTORS.keys()
-    )
+    assert connectors_registry.REGISTERED_CONNECTORS == frozenset(CONNECTORS.keys())
 
 
 def test_iter_registered_with_descriptions_shape_and_sort_order() -> None:
@@ -102,9 +99,7 @@ def test_iter_registered_with_descriptions_shape_and_sort_order() -> None:
         assert isinstance(item["description"], str) and item["description"]
 
     ids = [item["id"] for item in items]
-    assert ids == sorted(ids), (
-        f"items must be sorted by id ASC; got {ids!r}"
-    )
+    assert ids == sorted(ids), f"items must be sorted by id ASC; got {ids!r}"
 
     by_id = {item["id"]: item["description"] for item in items}
     assert "testconnector" in by_id
@@ -130,9 +125,7 @@ def test_register_requires_description() -> None:
     assert "description" in str(excinfo.value)
 
     with pytest.raises(ValueError):
-        connectors_registry.register(
-            "brandnew_whitespace_desc", description="   "
-        )
+        connectors_registry.register("brandnew_whitespace_desc", description="   ")
 
     assert "brandnew_no_desc" not in CONNECTORS
     assert "brandnew_blank_desc" not in CONNECTORS
@@ -164,9 +157,7 @@ def test_register_then_iter_includes_new_connector() -> None:
         assert by_id.get(cid) == desc
     finally:
         CONNECTORS.pop(cid, None)
-        connectors_registry.REGISTERED_CONNECTORS = frozenset(
-            CONNECTORS.keys()
-        )
+        connectors_registry.REGISTERED_CONNECTORS = frozenset(CONNECTORS.keys())
 
 
 def test_direct_canonical_mutation_is_immediately_visible() -> None:

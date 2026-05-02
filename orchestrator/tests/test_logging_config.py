@@ -18,20 +18,16 @@ from __future__ import annotations
 import logging
 from types import SimpleNamespace
 
+import logging_config
 import pytest
 import structlog
-
-import logging_config
 from correlation import _REQUEST_CTXVAR
-from logging_config import (
-    _REDACTED,
-    _bind_request_user,
-    _redact,
-    _resolve_log_level,
-    _resolve_renderer,
-    configure_logging,
-)
-
+from logging_config import _REDACTED
+from logging_config import _bind_request_user
+from logging_config import _redact
+from logging_config import _resolve_log_level
+from logging_config import _resolve_renderer
+from logging_config import configure_logging
 
 # ---------------------------------------------------------------------------
 # Bootstrap: idempotency + fail-fast (D11)
@@ -53,16 +49,12 @@ class TestConfigureLogging:
         configure_logging()
         for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
             lg = logging.getLogger(name)
-            assert lg.propagate is False, (
-                f"{name} must not propagate (handlers attached directly)."
-            )
+            assert lg.propagate is False, f"{name} must not propagate (handlers attached directly)."
             assert len(lg.handlers) == 1, (
                 f"{name} expected exactly one handler, got {len(lg.handlers)}."
             )
             handler = lg.handlers[0]
-            assert isinstance(
-                handler.formatter, structlog.stdlib.ProcessorFormatter
-            ), (
+            assert isinstance(handler.formatter, structlog.stdlib.ProcessorFormatter), (
                 f"{name}'s handler formatter must be structlog.ProcessorFormatter "
                 f"so foreign (uvicorn) records flow through the shared processor chain."
             )
@@ -341,8 +333,6 @@ def test_reset_for_tests_clears_contextvars():
     logging_config.reset_for_tests()
     # After reset, a fresh log call has no leftover contextvars.
     # Easiest assertion: the merge processor sees an empty dict.
-    out = structlog.contextvars.merge_contextvars(
-        None, "info", {"event": "x"}
-    )
+    out = structlog.contextvars.merge_contextvars(None, "info", {"event": "x"})
     assert "request_id" not in out
     assert "user_id" not in out

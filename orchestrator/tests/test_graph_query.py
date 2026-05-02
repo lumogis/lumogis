@@ -36,16 +36,16 @@ Coverage:
 """
 
 import json
-from unittest.mock import MagicMock, patch
 
+import plugins.graph  # noqa: F401
 import pytest
-import config
 
 # services.tools must be imported BEFORE plugins.graph so that the
 # TOOL_REGISTERED hook handler (_add_plugin_tool) is registered before the
 # graph plugin fires Event.TOOL_REGISTERED during its module-level init.
 import services.tools  # noqa: F401
-import plugins.graph  # noqa: F401
+
+import config
 
 
 def _ensure_query_graph_in_tool_specs() -> None:
@@ -66,10 +66,10 @@ def _ensure_query_graph_in_tool_specs() -> None:
     is idempotent because the assertions below only check membership, not
     multiplicity.
     """
-    from services.tools import TOOL_SPECS, _add_plugin_tool
-    from models.tool_spec import ToolSpec
     import hooks as _hooks
     from events import Event
+    from services.tools import TOOL_SPECS
+    from services.tools import _add_plugin_tool
 
     if any(s.name == "query_graph" for s in TOOL_SPECS):
         return
@@ -78,12 +78,14 @@ def _ensure_query_graph_in_tool_specs() -> None:
         _hooks.register(Event.TOOL_REGISTERED, _add_plugin_tool)
 
     from plugins.graph import _register_query_handlers
+
     _register_query_handlers()
 
 
 # ---------------------------------------------------------------------------
 # Shared mocks
 # ---------------------------------------------------------------------------
+
 
 class MockGraphStore:
     """Minimal in-memory GraphStore for query tests."""
@@ -199,6 +201,7 @@ def meta_empty():
 # 1. Tool registration
 # ---------------------------------------------------------------------------
 
+
 class TestToolRegistration:
     @pytest.fixture(autouse=True)
     def _ensure_registered(self):
@@ -207,21 +210,25 @@ class TestToolRegistration:
     def test_query_graph_registered_in_tool_specs(self):
         """query_graph must appear in TOOL_SPECS after tools.py loads."""
         from services.tools import TOOL_SPECS
+
         names = [s.name for s in TOOL_SPECS]
         assert "query_graph" in names
 
     def test_query_graph_spec_is_readonly(self):
         from services.tools import TOOL_SPECS
+
         spec = next(s for s in TOOL_SPECS if s.name == "query_graph")
         assert spec.is_write is False
 
     def test_query_graph_connector(self):
         from services.tools import TOOL_SPECS
+
         spec = next(s for s in TOOL_SPECS if s.name == "query_graph")
         assert spec.connector == "lumogis-graph"
 
     def test_query_graph_definition_has_mode_enum(self):
         from services.tools import TOOL_SPECS
+
         spec = next(s for s in TOOL_SPECS if s.name == "query_graph")
         modes = spec.definition["parameters"]["properties"]["mode"]["enum"]
         assert set(modes) == {"ego", "path", "mentions"}
@@ -231,13 +238,19 @@ class TestToolRegistration:
 # 2. ego mode — entity found + edges returned
 # ---------------------------------------------------------------------------
 
+
 class TestEgoMode:
     def test_ego_returns_neighbors(self, mock_graph, meta_ada):
         mock_graph._query_results["RELATES_TO"] = [
-            {"neighbor_id": "eid-babbage", "neighbor_name": "Charles Babbage",
-             "neighbor_type": "PERSON", "strength": 4},
+            {
+                "neighbor_id": "eid-babbage",
+                "neighbor_name": "Charles Babbage",
+                "neighbor_type": "PERSON",
+                "strength": 4,
+            },
         ]
         from plugins.graph.query import query_graph_tool
+
         result = json.loads(query_graph_tool({"mode": "ego", "entity": "Ada Lovelace"}))
 
         assert result["found"] is True
@@ -250,6 +263,7 @@ class TestEgoMode:
     # 3. entity not found in Postgres
     def test_ego_entity_not_found(self, mock_graph, meta_empty):
         from plugins.graph.query import query_graph_tool
+
         result = json.loads(query_graph_tool({"mode": "ego", "entity": "Unknown Person"}))
 
         assert result["found"] is False
@@ -260,6 +274,7 @@ class TestEgoMode:
     def test_ego_no_qualifying_edges(self, mock_graph, meta_ada):
         mock_graph._query_results["RELATES_TO"] = []  # no edges above threshold
         from plugins.graph.query import query_graph_tool
+
         result = json.loads(query_graph_tool({"mode": "ego", "entity": "Ada Lovelace"}))
 
         assert result["found"] is True
@@ -270,10 +285,13 @@ class TestEgoMode:
         """depth_used must always be 1 regardless of what depth is requested."""
         mock_graph._query_results["RELATES_TO"] = []
         from plugins.graph.query import query_graph_tool
+
         for requested_depth in (1, 2, 10):
-            result = json.loads(query_graph_tool({
-                "mode": "ego", "entity": "Ada Lovelace", "depth": requested_depth
-            }))
+            result = json.loads(
+                query_graph_tool(
+                    {"mode": "ego", "entity": "Ada Lovelace", "depth": requested_depth}
+                )
+            )
             assert "error" not in result
             assert result.get("depth_used") == 1, (
                 f"Expected depth_used=1 for requested depth={requested_depth}, "
@@ -283,12 +301,19 @@ class TestEgoMode:
     def test_ego_limit_capped_at_20(self, mock_graph, meta_ada):
         # Supply 25 rows — only 20 should be requested from FalkorDB
         mock_graph._query_results["RELATES_TO"] = [
-            {"neighbor_id": f"eid-{i}", "neighbor_name": f"Entity {i}",
-             "neighbor_type": "CONCEPT", "strength": 3}
+            {
+                "neighbor_id": f"eid-{i}",
+                "neighbor_name": f"Entity {i}",
+                "neighbor_type": "CONCEPT",
+                "strength": 3,
+            }
             for i in range(25)
         ]
         from plugins.graph.query import query_graph_tool
-        result = json.loads(query_graph_tool({"mode": "ego", "entity": "Ada Lovelace", "limit": 100}))
+
+        result = json.loads(
+            query_graph_tool({"mode": "ego", "entity": "Ada Lovelace", "limit": 100})
+        )
         # The actual cap of 20 is enforced in the Cypher LIMIT clause
         assert result["found"] is True
         # At most 20 rows (the mock returns all 25, but real FalkorDB would cap at LIMIT 20)
@@ -298,9 +323,11 @@ class TestEgoMode:
 # 5–9. path mode
 # ---------------------------------------------------------------------------
 
+
 class TestPathMode:
     def _two_entity_meta(self):
         """MetadataStore with configurable per-call return values."""
+
         class TwoEntityStore(MockMetadataStore):
             def __init__(self):
                 self._calls = 0
@@ -321,16 +348,23 @@ class TestPathMode:
         ms = self._two_entity_meta()
         config._instances["metadata_store"] = ms
         mock_graph._query_results["algo.SPpaths"] = [
-            {"node_ids": ["eid-ada", "eid-babbage", "eid-projx"],
-             "node_names": ["Ada Lovelace", "Charles Babbage", "Project X"],
-             "path_length": 2},
+            {
+                "node_ids": ["eid-ada", "eid-babbage", "eid-projx"],
+                "node_names": ["Ada Lovelace", "Charles Babbage", "Project X"],
+                "path_length": 2,
+            },
         ]
         from plugins.graph.query import query_graph_tool
-        result = json.loads(query_graph_tool({
-            "mode": "path",
-            "from_entity": "Ada Lovelace",
-            "to_entity": "Project X",
-        }))
+
+        result = json.loads(
+            query_graph_tool(
+                {
+                    "mode": "path",
+                    "from_entity": "Ada Lovelace",
+                    "to_entity": "Project X",
+                }
+            )
+        )
 
         assert result["found"] is True
         assert result["path_length"] == 2
@@ -340,33 +374,45 @@ class TestPathMode:
     # 6. from_entity not found
     def test_path_from_entity_not_found(self, mock_graph, meta_empty):
         from plugins.graph.query import query_graph_tool
-        result = json.loads(query_graph_tool({
-            "mode": "path",
-            "from_entity": "Ghost",
-            "to_entity": "Project X",
-        }))
+
+        result = json.loads(
+            query_graph_tool(
+                {
+                    "mode": "path",
+                    "from_entity": "Ghost",
+                    "to_entity": "Project X",
+                }
+            )
+        )
         assert result["found"] is False
         assert "Ghost" in result["message"]
 
     # 7. to_entity not found
     def test_path_to_entity_not_found(self, mock_graph):
         call_count = [0]
+
         class OneFoundOneNot(MockMetadataStore):
             def fetch_one(self, query, params=None):
                 call_count[0] += 1
                 if call_count[0] == 1:
                     return _ADA
                 return None
+
             def fetch_all(self, query, params=None):
                 return []
 
         config._instances["metadata_store"] = OneFoundOneNot()
         from plugins.graph.query import query_graph_tool
-        result = json.loads(query_graph_tool({
-            "mode": "path",
-            "from_entity": "Ada Lovelace",
-            "to_entity": "Nobody",
-        }))
+
+        result = json.loads(
+            query_graph_tool(
+                {
+                    "mode": "path",
+                    "from_entity": "Ada Lovelace",
+                    "to_entity": "Nobody",
+                }
+            )
+        )
         assert result["found"] is False
         assert "Nobody" in result["message"]
 
@@ -377,12 +423,17 @@ class TestPathMode:
         mock_graph._query_results["algo.SPpaths"] = []  # no path
 
         from plugins.graph.query import query_graph_tool
-        result = json.loads(query_graph_tool({
-            "mode": "path",
-            "from_entity": "Ada Lovelace",
-            "to_entity": "Project X",
-            "max_depth": 2,
-        }))
+
+        result = json.loads(
+            query_graph_tool(
+                {
+                    "mode": "path",
+                    "from_entity": "Ada Lovelace",
+                    "to_entity": "Project X",
+                    "max_depth": 2,
+                }
+            )
+        )
 
         assert result["found"] is False
         assert "no connection" in result["summary"].lower()
@@ -391,11 +442,16 @@ class TestPathMode:
     # 9. same entity
     def test_path_same_entity(self, mock_graph, meta_ada):
         from plugins.graph.query import query_graph_tool
-        result = json.loads(query_graph_tool({
-            "mode": "path",
-            "from_entity": "Ada Lovelace",
-            "to_entity": "Ada",  # alias → same entity_id
-        }))
+
+        result = json.loads(
+            query_graph_tool(
+                {
+                    "mode": "path",
+                    "from_entity": "Ada Lovelace",
+                    "to_entity": "Ada",  # alias → same entity_id
+                }
+            )
+        )
         # Both resolve to _ADA (same fetch_one mock returns _ADA always)
         assert result["found"] is True
         assert result["path_length"] == 0
@@ -406,13 +462,19 @@ class TestPathMode:
 # 10–12. mentions mode
 # ---------------------------------------------------------------------------
 
+
 class TestMentionsMode:
     def test_mentions_sources_returned(self, mock_graph, meta_ada):
         mock_graph._query_results["MENTIONS"] = [
-            {"source_id": "/data/doc.pdf", "source_type": None,
-             "evidence_type": "DOCUMENT", "ts": "2026-01-01T00:00:00Z"},
+            {
+                "source_id": "/data/doc.pdf",
+                "source_type": None,
+                "evidence_type": "DOCUMENT",
+                "ts": "2026-01-01T00:00:00Z",
+            },
         ]
         from plugins.graph.query import query_graph_tool
+
         result = json.loads(query_graph_tool({"mode": "mentions", "entity": "Ada Lovelace"}))
 
         assert result["found"] is True
@@ -423,6 +485,7 @@ class TestMentionsMode:
     # 11. entity not found
     def test_mentions_entity_not_found(self, mock_graph, meta_empty):
         from plugins.graph.query import query_graph_tool
+
         result = json.loads(query_graph_tool({"mode": "mentions", "entity": "Unknown"}))
         assert result["found"] is False
 
@@ -430,6 +493,7 @@ class TestMentionsMode:
     def test_mentions_no_sources(self, mock_graph, meta_ada):
         mock_graph._query_results["MENTIONS"] = []
         from plugins.graph.query import query_graph_tool
+
         result = json.loads(query_graph_tool({"mode": "mentions", "entity": "Ada Lovelace"}))
         assert result["found"] is True
         assert result["sources"] == []
@@ -440,15 +504,18 @@ class TestMentionsMode:
 # 13–14. graph unavailable
 # ---------------------------------------------------------------------------
 
+
 class TestGraphUnavailable:
     def test_tool_returns_gracefully_when_no_graph(self, no_graph, meta_ada):
         from plugins.graph.query import query_graph_tool
+
         result = json.loads(query_graph_tool({"mode": "ego", "entity": "Ada Lovelace"}))
         assert result["available"] is False
         assert "not configured" in result["message"].lower()
 
     def test_context_building_skipped_when_no_graph(self, no_graph, meta_ada):
         from plugins.graph.query import on_context_building
+
         fragments: list = []
         on_context_building(query="Ada Lovelace project", context_fragments=fragments)
         assert fragments == []
@@ -458,13 +525,19 @@ class TestGraphUnavailable:
 # 15–19. CONTEXT_BUILDING injection
 # ---------------------------------------------------------------------------
 
+
 class TestContextBuilding:
     def test_injection_appends_fragment(self, mock_graph, meta_ada):
         mock_graph._query_results["RELATES_TO"] = [
-            {"neighbor_id": "eid-babbage", "neighbor_name": "Charles Babbage",
-             "neighbor_type": "PERSON", "strength": 4},
+            {
+                "neighbor_id": "eid-babbage",
+                "neighbor_name": "Charles Babbage",
+                "neighbor_type": "PERSON",
+                "strength": 4,
+            },
         ]
         from plugins.graph.query import on_context_building
+
         fragments: list = []
         on_context_building(query="Tell me about Ada Lovelace", context_fragments=fragments)
 
@@ -475,12 +548,12 @@ class TestContextBuilding:
 
     # 16. entity below MIN_MENTION_COUNT threshold
     def test_injection_skipped_below_threshold(self, mock_graph):
-        low_count_entity = {**_ADA, "mention_count": 1}  # below MIN_MENTION_COUNT=2
         ms = MockMetadataStore(entity_rows=[])
         ms.fetch_all = lambda q, p=None: []  # no candidates above threshold
         config._instances["metadata_store"] = ms
 
         from plugins.graph.query import on_context_building
+
         fragments: list = []
         on_context_building(query="Ada Lovelace project", context_fragments=fragments)
         assert fragments == []
@@ -489,6 +562,7 @@ class TestContextBuilding:
     def test_injection_skipped_when_no_edges(self, mock_graph, meta_ada):
         mock_graph._query_results["RELATES_TO"] = []
         from plugins.graph.query import on_context_building
+
         fragments: list = []
         on_context_building(query="Ada Lovelace project", context_fragments=fragments)
         assert fragments == []
@@ -496,18 +570,29 @@ class TestContextBuilding:
     # 18. max 3 entities injected
     def test_injection_max_3_entities(self, mock_graph):
         four_entities = [
-            {**_ADA, "entity_id": f"eid-{i}", "name": f"Entity {i}", "aliases": [], "mention_count": 5}
+            {
+                **_ADA,
+                "entity_id": f"eid-{i}",
+                "name": f"Entity {i}",
+                "aliases": [],
+                "mention_count": 5,
+            }
             for i in range(4)
         ]
         ms = MockMetadataStore(entity_rows=four_entities)
         config._instances["metadata_store"] = ms
 
         mock_graph._query_results["RELATES_TO"] = [
-            {"neighbor_id": "eid-x", "neighbor_name": "Neighbor",
-             "neighbor_type": "CONCEPT", "strength": 4}
+            {
+                "neighbor_id": "eid-x",
+                "neighbor_name": "Neighbor",
+                "neighbor_type": "CONCEPT",
+                "strength": 4,
+            }
         ]
 
         from plugins.graph.query import on_context_building
+
         fragments: list = []
         # All 4 entity names appear in the query
         query = "Entity 0 Entity 1 Entity 2 Entity 3"
@@ -521,10 +606,15 @@ class TestContextBuilding:
     # 19. alias detection
     def test_injection_detects_alias(self, mock_graph, meta_ada):
         mock_graph._query_results["RELATES_TO"] = [
-            {"neighbor_id": "eid-babbage", "neighbor_name": "Charles Babbage",
-             "neighbor_type": "PERSON", "strength": 4},
+            {
+                "neighbor_id": "eid-babbage",
+                "neighbor_name": "Charles Babbage",
+                "neighbor_type": "PERSON",
+                "strength": 4,
+            },
         ]
         from plugins.graph.query import on_context_building
+
         fragments: list = []
         # "Ada" is an alias for "Ada Lovelace" in _ADA
         on_context_building(query="Tell me about Ada and her work", context_fragments=fragments)
@@ -537,9 +627,11 @@ class TestContextBuilding:
 # 20–21. Deterministic entity lookup
 # ---------------------------------------------------------------------------
 
+
 class TestEntityResolution:
     def test_name_match_case_insensitive(self, meta_ada):
         from plugins.graph.query import resolve_entity_by_name
+
         entity = resolve_entity_by_name("ada lovelace", "default")
         # meta_ada returns _ADA from fetch_one regardless of query params
         assert entity is not None
@@ -549,11 +641,13 @@ class TestEntityResolution:
         ms = MockMetadataStore(entity_rows=[_ADA])
         config._instances["metadata_store"] = ms
         from plugins.graph.query import resolve_entity_by_name
+
         entity = resolve_entity_by_name("Ada", "default")
         assert entity is not None
 
     def test_returns_none_when_no_match(self, meta_empty):
         from plugins.graph.query import resolve_entity_by_name
+
         entity = resolve_entity_by_name("Nobody At All", "default")
         assert entity is None
 
@@ -562,10 +656,12 @@ class TestEntityResolution:
 # 22. Bounds enforcement
 # ---------------------------------------------------------------------------
 
+
 class TestBounds:
     def test_limit_bounded_in_ego(self, mock_graph, meta_ada):
         mock_graph._query_results["RELATES_TO"] = []
         from plugins.graph.query import ego_network
+
         # Should not raise regardless of extreme limit values
         result = ego_network(mock_graph, "eid-ada", "default", depth=1, limit=999)
         assert result["edges"] == []
@@ -573,7 +669,8 @@ class TestBounds:
     def test_max_depth_bounded_in_path(self, mock_graph, meta_ada):
         mock_graph._query_results["algo.SPpaths"] = []
         from plugins.graph.query import shortest_path
-        result = shortest_path(mock_graph, "eid-ada", "eid-babbage", "default", max_depth=999)
+
+        shortest_path(mock_graph, "eid-ada", "eid-babbage", "default", max_depth=999)
         # Query should still contain a bounded depth string
         executed = " ".join(mock_graph.executed_queries)
         assert "algo.SPpaths" in executed
@@ -582,16 +679,19 @@ class TestBounds:
 
     def test_unknown_mode_returns_error(self, mock_graph, meta_ada):
         from plugins.graph.query import query_graph_tool
+
         result = json.loads(query_graph_tool({"mode": "invalid"}))
         assert "error" in result
 
     def test_missing_entity_returns_error(self, mock_graph, meta_ada):
         from plugins.graph.query import query_graph_tool
+
         result = json.loads(query_graph_tool({"mode": "ego"}))
         assert "error" in result
 
     def test_path_missing_to_entity_returns_error(self, mock_graph, meta_ada):
         from plugins.graph.query import query_graph_tool
+
         result = json.loads(query_graph_tool({"mode": "path", "from_entity": "Ada"}))
         assert "error" in result
 
@@ -599,6 +699,7 @@ class TestBounds:
 # ---------------------------------------------------------------------------
 # 23–29. Hardening: word-boundary, depth, injection formatting
 # ---------------------------------------------------------------------------
+
 
 class TestWordBoundaryDetection:
     """A. Substring false positives are eliminated by word-boundary matching."""
@@ -613,6 +714,7 @@ class TestWordBoundaryDetection:
         ada_entity = {**_ADA, "name": "Ada", "aliases": []}
         self._candidates_with(ada_entity)
         from plugins.graph.query import on_context_building
+
         fragments: list = []
         on_context_building(query="What do you know about Canada?", context_fragments=fragments)
         assert fragments == [], (
@@ -624,6 +726,7 @@ class TestWordBoundaryDetection:
         ada_entity = {**_ADA, "name": "Ada", "aliases": []}
         self._candidates_with(ada_entity)
         from plugins.graph.query import on_context_building
+
         fragments: list = []
         on_context_building(query="Tell me about Cascade Falls", context_fragments=fragments)
         assert fragments == [], (
@@ -633,12 +736,17 @@ class TestWordBoundaryDetection:
     # 25. multi-word name still matches
     def test_multiword_name_matches(self, mock_graph):
         mock_graph._query_results["RELATES_TO"] = [
-            {"neighbor_id": "eid-babbage", "neighbor_name": "Charles Babbage",
-             "neighbor_type": "PERSON", "strength": 4}
+            {
+                "neighbor_id": "eid-babbage",
+                "neighbor_name": "Charles Babbage",
+                "neighbor_type": "PERSON",
+                "strength": 4,
+            }
         ]
         ms = MockMetadataStore(entity_rows=[_ADA])
         config._instances["metadata_store"] = ms
         from plugins.graph.query import on_context_building
+
         fragments: list = []
         on_context_building(
             query="Tell me about Ada Lovelace and her contributions.",
@@ -658,6 +766,7 @@ class TestWordBoundaryDetection:
         }
         self._candidates_with(ai_entity)
         from plugins.graph.query import on_context_building
+
         fragments: list = []
         on_context_building(query="What about training a model?", context_fragments=fragments)
         assert fragments == [], (
@@ -667,8 +776,12 @@ class TestWordBoundaryDetection:
     def test_alias_word_boundary_positive(self, mock_graph):
         """Alias "AI" SHOULD match when the word appears standalone."""
         mock_graph._query_results["RELATES_TO"] = [
-            {"neighbor_id": "eid-ml", "neighbor_name": "Machine Learning",
-             "neighbor_type": "CONCEPT", "strength": 3}
+            {
+                "neighbor_id": "eid-ml",
+                "neighbor_name": "Machine Learning",
+                "neighbor_type": "CONCEPT",
+                "strength": 3,
+            }
         ]
         ai_entity = {
             "entity_id": "eid-ai",
@@ -680,6 +793,7 @@ class TestWordBoundaryDetection:
         ms = MockMetadataStore(entity_rows=[ai_entity])
         config._instances["metadata_store"] = ms
         from plugins.graph.query import on_context_building
+
         fragments: list = []
         on_context_building(query="What is AI used for?", context_fragments=fragments)
         assert len(fragments) == 1
@@ -692,6 +806,7 @@ class TestEgoDepthHardening:
     def test_depth_used_field_present_and_correct(self, mock_graph, meta_ada):
         mock_graph._query_results["RELATES_TO"] = []
         from plugins.graph.query import query_graph_tool
+
         result = json.loads(query_graph_tool({"mode": "ego", "entity": "Ada Lovelace"}))
         assert "depth_used" in result
         assert result["depth_used"] == 1
@@ -700,6 +815,7 @@ class TestEgoDepthHardening:
     def test_tool_schema_max_depth_is_1(self):
         _ensure_query_graph_in_tool_specs()
         from services.tools import TOOL_SPECS
+
         spec = next(s for s in TOOL_SPECS if s.name == "query_graph")
         depth_schema = spec.definition["parameters"]["properties"]["depth"]
         assert depth_schema["maximum"] == 1, (
@@ -722,6 +838,7 @@ class TestStagedEntityExclusion:
 
         config._instances["metadata_store"] = CapturingMS()
         from plugins.graph.query import resolve_entity_by_name
+
         resolve_entity_by_name("The Client", "default")
 
         assert executed, "Expected fetch_one to be called"
@@ -734,6 +851,7 @@ class TestStagedEntityExclusion:
         ms = MockMetadataStore(entity_rows=[])  # empty → None returned
         config._instances["metadata_store"] = ms
         from plugins.graph.query import resolve_entity_by_name
+
         result = resolve_entity_by_name("The Client", "default")
         assert result is None
 
@@ -748,6 +866,7 @@ class TestStagedEntityExclusion:
 
         config._instances["metadata_store"] = CapturingMS()
         from plugins.graph.query import _detect_entities_in_query
+
         _detect_entities_in_query("Tell me about Ada Lovelace", "default")
 
         assert executed, "Expected fetch_all to be called"
@@ -757,10 +876,10 @@ class TestStagedEntityExclusion:
 
     def test_staged_entity_not_injected_in_context(self, mock_graph):
         """Staged entity must not appear in CONTEXT_BUILDING injection."""
-        staged_ada = {**_ADA, "is_staged": True}
         ms = MockMetadataStore(entity_rows=[])  # staged entity is filtered by SQL
         config._instances["metadata_store"] = ms
         from plugins.graph.query import on_context_building
+
         fragments: list = []
         on_context_building(query="Tell me about Ada Lovelace", context_fragments=fragments)
         assert fragments == []
@@ -772,24 +891,31 @@ class TestInjectionFormatting:
     # 28. strength included when present
     def test_injection_includes_strength(self, mock_graph, meta_ada):
         mock_graph._query_results["RELATES_TO"] = [
-            {"neighbor_id": "eid-babbage", "neighbor_name": "Charles Babbage",
-             "neighbor_type": "PERSON", "strength": 7},
+            {
+                "neighbor_id": "eid-babbage",
+                "neighbor_name": "Charles Babbage",
+                "neighbor_type": "PERSON",
+                "strength": 7,
+            },
         ]
         from plugins.graph.query import on_context_building
+
         fragments: list = []
         on_context_building(query="Tell me about Ada Lovelace", context_fragments=fragments)
         assert len(fragments) == 1
-        assert "(7)" in fragments[0], (
-            f"Expected '(7)' in injection line, got: {fragments[0]!r}"
-        )
+        assert "(7)" in fragments[0], f"Expected '(7)' in injection line, got: {fragments[0]!r}"
 
     # 29. strength absent — graceful omission (no crash, no "(None)")
     def test_injection_omits_strength_gracefully_when_absent(self, mock_graph, meta_ada):
         mock_graph._query_results["RELATES_TO"] = [
-            {"neighbor_id": "eid-babbage", "neighbor_name": "Charles Babbage",
-             "neighbor_type": "PERSON"},  # no "strength" key
+            {
+                "neighbor_id": "eid-babbage",
+                "neighbor_name": "Charles Babbage",
+                "neighbor_type": "PERSON",
+            },  # no "strength" key
         ]
         from plugins.graph.query import on_context_building
+
         fragments: list = []
         on_context_building(query="Tell me about Ada Lovelace", context_fragments=fragments)
         assert len(fragments) == 1

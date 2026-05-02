@@ -27,7 +27,6 @@ from __future__ import annotations
 import os
 import time
 from contextlib import contextmanager
-from datetime import datetime, timezone
 from pathlib import Path
 
 import jwt
@@ -35,13 +34,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 # Reuse the fakes + fixtures from Phase 1 — same in-memory MetadataStore.
-from tests.test_auth_phase1 import (  # noqa: F401
-    FakeUsersStore,
-    auth_env,
-    dev_env,
-    users_store,
-)
-
+from tests.test_auth_phase1 import FakeUsersStore  # noqa: F401
+from tests.test_auth_phase1 import auth_env  # noqa: F401
+from tests.test_auth_phase1 import dev_env  # noqa: F401
+from tests.test_auth_phase1 import users_store  # noqa: F401
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -67,9 +63,11 @@ def _client(users_store):
     """Boot the app with a single seeded admin so the consistency gate
     is satisfied even when the test re-enables it elsewhere."""
     import services.users as users_svc
+
     if users_svc.get_user_by_email("admin@home.lan") is None:
         users_svc.create_user("admin@home.lan", "verylongpassword12", "admin")
     import main
+
     with TestClient(main.app) as client:
         yield client
 
@@ -77,6 +75,7 @@ def _client(users_store):
 def _admin_headers(users_store) -> dict:
     """Return Authorization headers for the seeded admin."""
     import services.users as users_svc
+
     admin = users_svc.get_user_by_email("admin@home.lan")
     assert admin is not None
     return {"Authorization": f"Bearer {_mint(admin.id, 'admin')}"}
@@ -85,6 +84,7 @@ def _admin_headers(users_store) -> dict:
 def _user_headers(users_store) -> dict:
     """Create-or-reuse a non-admin user and return their auth headers."""
     import services.users as users_svc
+
     target = users_svc.get_user_by_email("bob@home.lan")
     if target is None:
         target = users_svc.create_user("bob@home.lan", "verylongpassword12", "user")
@@ -97,8 +97,8 @@ def _user_headers(users_store) -> dict:
 
 
 def test_require_admin_is_noop_in_dev_mode(dev_env):
-    from authz import require_admin
     from auth import UserContext
+    from authz import require_admin
 
     class _Req:
         state = type("S", (), {"user": UserContext()})()
@@ -109,8 +109,8 @@ def test_require_admin_is_noop_in_dev_mode(dev_env):
 
 
 def test_require_admin_raises_401_when_unauth(auth_env):
-    from authz import require_admin
     from auth import UserContext
+    from authz import require_admin
     from fastapi import HTTPException
 
     class _Req:
@@ -123,8 +123,8 @@ def test_require_admin_raises_401_when_unauth(auth_env):
 
 
 def test_require_admin_raises_403_when_user_role(auth_env):
-    from authz import require_admin
     from auth import UserContext
+    from authz import require_admin
     from fastapi import HTTPException
 
     class _Req:
@@ -139,8 +139,8 @@ def test_require_admin_raises_403_when_user_role(auth_env):
 
 
 def test_require_user_passes_for_user_role(auth_env):
-    from authz import require_user
     from auth import UserContext
+    from authz import require_user
 
     class _Req:
         state = type(
@@ -161,40 +161,40 @@ def test_require_user_passes_for_user_role(auth_env):
 # wired up. Paths that do not exist yet are deliberately omitted (e.g.
 # DELETE /sources/{id} — Phase 3).
 _EXPECTED_ADMIN_PATHS: tuple[tuple[str, str], ...] = (
-    ("PUT",    "/permissions/{connector}"),
-    ("POST",   "/settings/restart"),
-    ("GET",    "/settings"),
-    ("PUT",    "/settings"),
-    ("GET",    "/settings/root-preview"),
-    ("POST",   "/settings/prune"),
-    ("GET",    "/settings/ollama-discovery"),
-    ("POST",   "/settings/ollama-pull"),
-    ("POST",   "/settings/ollama-delete"),
-    ("POST",   "/backup"),
-    ("POST",   "/restore"),
-    ("POST",   "/entities/merge"),
-    ("POST",   "/entities/deduplicate"),
-    ("POST",   "/sources"),
+    ("PUT", "/permissions/{connector}"),
+    ("POST", "/settings/restart"),
+    ("GET", "/settings"),
+    ("PUT", "/settings"),
+    ("GET", "/settings/root-preview"),
+    ("POST", "/settings/prune"),
+    ("GET", "/settings/ollama-discovery"),
+    ("POST", "/settings/ollama-pull"),
+    ("POST", "/settings/ollama-delete"),
+    ("POST", "/backup"),
+    ("POST", "/restore"),
+    ("POST", "/entities/merge"),
+    ("POST", "/entities/deduplicate"),
+    ("POST", "/sources"),
     # POST /review-queue/decide moved from require_admin → require_user
     # in audit B9 (review_queue_per_user_approval_scope). Per-item
     # authorization now enforces "originating user OR admin" inside the
     # handler. Coverage moved to test_review_queue.py
     # (TestReviewQueuePerUserApprovalScope).
-    ("GET",    "/dashboard"),
-    ("GET",    "/kg/settings"),
-    ("POST",   "/kg/settings"),
+    ("GET", "/dashboard"),
+    ("GET", "/kg/settings"),
+    ("POST", "/kg/settings"),
     ("DELETE", "/kg/settings/{key}"),
-    ("GET",    "/graph/mgm"),
-    ("GET",    "/kg/job-status"),
-    ("POST",   "/kg/trigger-weekly"),
-    ("GET",    "/kg/stop-entities"),
-    ("POST",   "/kg/stop-entities"),
-    ("POST",   "/browse/mkdir"),
+    ("GET", "/graph/mgm"),
+    ("GET", "/kg/job-status"),
+    ("POST", "/kg/trigger-weekly"),
+    ("GET", "/kg/stop-entities"),
+    ("POST", "/kg/stop-entities"),
+    ("POST", "/browse/mkdir"),
     # /api/v1/admin/users — full CRUD via router-level dependency.
-    ("POST",   "/api/v1/admin/users"),
-    ("GET",    "/api/v1/admin/users"),
-    ("POST",   "/api/v1/admin/users/{user_id}/password"),
-    ("PATCH",  "/api/v1/admin/users/{user_id}"),
+    ("POST", "/api/v1/admin/users"),
+    ("GET", "/api/v1/admin/users"),
+    ("POST", "/api/v1/admin/users/{user_id}/password"),
+    ("PATCH", "/api/v1/admin/users/{user_id}"),
     ("DELETE", "/api/v1/admin/users/{user_id}"),
 )
 
@@ -244,19 +244,17 @@ def test_every_admin_path_has_require_admin_dependency(users_store, auth_env):
 @pytest.mark.parametrize(
     "method,path",
     [
-        ("GET",  "/dashboard"),
+        ("GET", "/dashboard"),
         ("POST", "/settings/restart"),
-        ("GET",  "/settings"),
+        ("GET", "/settings"),
         ("POST", "/backup"),
-        ("POST", "/sources"),                       # signals.py
-        ("POST", "/api/v1/admin/users"),            # admin_users.py
-        ("GET",  "/api/v1/admin/users"),            # admin_users.py
+        ("POST", "/sources"),  # signals.py
+        ("POST", "/api/v1/admin/users"),  # admin_users.py
+        ("GET", "/api/v1/admin/users"),  # admin_users.py
         ("POST", "/api/v1/admin/users/x/password"),
     ],
 )
-def test_admin_routes_return_401_when_unauthenticated(
-    users_store, auth_env, method, path
-):
+def test_admin_routes_return_401_when_unauthenticated(users_store, auth_env, method, path):
     """No bearer token → middleware returns 401 before the route runs."""
     with _client(users_store) as client:
         body: dict = {}
@@ -271,24 +269,25 @@ def test_admin_routes_return_401_when_unauthenticated(
 @pytest.mark.parametrize(
     "method,path",
     [
-        ("GET",  "/dashboard"),
+        ("GET", "/dashboard"),
         ("POST", "/settings/restart"),
-        ("GET",  "/settings"),
+        ("GET", "/settings"),
         ("POST", "/api/v1/admin/users"),
-        ("GET",  "/api/v1/admin/users"),
+        ("GET", "/api/v1/admin/users"),
         ("POST", "/api/v1/admin/users/x/password"),
     ],
 )
-def test_admin_routes_return_403_for_non_admin_user(
-    users_store, auth_env, method, path
-):
+def test_admin_routes_return_403_for_non_admin_user(users_store, auth_env, method, path):
     """Authenticated user without admin role → 403."""
     with _client(users_store) as client:
         body: dict = {}
         if method == "POST" and path.endswith("/password"):
             body = {"new_password": "validpassword12x"}
         resp = client.request(
-            method, path, headers=_user_headers(users_store), json=body,
+            method,
+            path,
+            headers=_user_headers(users_store),
+            json=body,
         )
     assert resp.status_code == 403, (
         f"{method} {path} should be 403, got {resp.status_code}: {resp.text[:200]}"
@@ -311,6 +310,7 @@ def test_admin_routes_open_in_dev_mode(users_store, dev_env):
     """``AUTH_ENABLED=false`` → admin gating is a no-op; admin endpoints
     are reachable without any token (preserves current dev experience)."""
     import main
+
     with TestClient(main.app) as client:
         # GET /dashboard is HTML; we just need a non-401/403.
         resp = client.get("/dashboard")
@@ -387,6 +387,7 @@ def test_admin_users_list_returns_admin_view_array(users_store, auth_env):
 
 def test_admin_users_patch_role_promotes_user_to_admin(users_store, auth_env):
     import services.users as users_svc
+
     with _client(users_store) as client:
         target = users_svc.create_user("eve@home.lan", "verylongpassword12", "user")
         resp = client.patch(
@@ -400,6 +401,7 @@ def test_admin_users_patch_role_promotes_user_to_admin(users_store, auth_env):
 
 def test_admin_users_patch_disables_user(users_store, auth_env):
     import services.users as users_svc
+
     with _client(users_store) as client:
         target = users_svc.create_user("eve@home.lan", "verylongpassword12", "user")
         resp = client.patch(
@@ -413,6 +415,7 @@ def test_admin_users_patch_disables_user(users_store, auth_env):
 
 def test_admin_users_patch_refuses_demoting_last_admin(users_store, auth_env):
     import services.users as users_svc
+
     with _client(users_store) as client:
         admin = users_svc.get_user_by_email("admin@home.lan")
         assert admin is not None
@@ -427,6 +430,7 @@ def test_admin_users_patch_refuses_demoting_last_admin(users_store, auth_env):
 
 def test_admin_users_patch_refuses_disabling_last_admin(users_store, auth_env):
     import services.users as users_svc
+
     with _client(users_store) as client:
         admin = users_svc.get_user_by_email("admin@home.lan")
         # Caller != target so the self-disable guard does not trigger first.
@@ -454,6 +458,7 @@ def test_admin_users_patch_refuses_disabling_last_admin(users_store, auth_env):
 
 def test_admin_users_patch_refuses_self_disable(users_store, auth_env):
     import services.users as users_svc
+
     with _client(users_store) as client:
         # Make a second admin so the last-admin guard isn't tripped first.
         second = users_svc.create_user("admin2@home.lan", "verylongpassword12", "admin")
@@ -469,6 +474,7 @@ def test_admin_users_patch_refuses_self_disable(users_store, auth_env):
 
 def test_admin_users_patch_requires_at_least_one_field(users_store, auth_env):
     import services.users as users_svc
+
     with _client(users_store) as client:
         target = users_svc.create_user("eve@home.lan", "verylongpassword12", "user")
         resp = client.patch(
@@ -481,6 +487,7 @@ def test_admin_users_patch_requires_at_least_one_field(users_store, auth_env):
 
 def test_admin_users_delete_removes_target(users_store, auth_env):
     import services.users as users_svc
+
     with _client(users_store) as client:
         target = users_svc.create_user("eve@home.lan", "verylongpassword12", "user")
         resp = client.delete(
@@ -499,6 +506,7 @@ def test_admin_users_delete_refuses_last_active_admin(users_store, auth_env):
     """Sole active admin tries to self-delete — last-admin guard fires
     before the self-delete guard (more informative message)."""
     import services.users as users_svc
+
     with _client(users_store) as client:
         admin = users_svc.get_user_by_email("admin@home.lan")
         assert admin is not None
@@ -512,6 +520,7 @@ def test_admin_users_delete_refuses_last_active_admin(users_store, auth_env):
 
 def test_admin_users_delete_refuses_self_delete(users_store, auth_env):
     import services.users as users_svc
+
     with _client(users_store) as client:
         # Need a second admin so the last-admin guard isn't tripped first.
         second = users_svc.create_user("admin2@home.lan", "verylongpassword12", "admin")
@@ -543,15 +552,14 @@ def test_dashboard_html_includes_auth_widget():
     offers a Logout link must be present. Pure file-content check; does
     not boot FastAPI.
     """
-    html = (
-        Path(__file__).resolve().parent.parent / "dashboard" / "index.html"
-    ).read_text(encoding="utf-8")
+    html = (Path(__file__).resolve().parent.parent / "dashboard" / "index.html").read_text(
+        encoding="utf-8"
+    )
     assert "/api/v1/auth/me" in html, "dashboard widget should fetch /api/v1/auth/me"
     assert "authWidget" in html, "dashboard widget DOM anchor missing"
     assert "lumogisLogout" in html or "/api/v1/auth/logout" in html, (
         "dashboard widget should expose a Logout action"
     )
     assert "Single-user mode" in html, (
-        "dashboard widget should render a dev-mode label "
-        "when AUTH_ENABLED=false"
+        "dashboard widget should render a dev-mode label when AUTH_ENABLED=false"
     )

@@ -19,13 +19,12 @@ Covers:
 
 from __future__ import annotations
 
-import datetime as _dt
 import os
 import time
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
-from unittest.mock import patch
+from datetime import datetime
+from datetime import timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -186,6 +185,7 @@ def auth_env(monkeypatch):
     # Reset rate limit state between tests so the per-IP bucket from one
     # test doesn't bleed into the next.
     from routes.auth import _reset_rate_limit_for_tests
+
     _reset_rate_limit_for_tests()
 
 
@@ -202,6 +202,7 @@ def dev_env(monkeypatch):
 
 def test_user_context_default_is_admin_in_dev_mode(dev_env):
     import auth
+
     ctx = auth.UserContext()
     assert ctx.user_id == "default"
     assert ctx.role == "admin"
@@ -210,6 +211,7 @@ def test_user_context_default_is_admin_in_dev_mode(dev_env):
 
 def test_mint_and_verify_access_token_round_trip(auth_env):
     import auth
+
     token = auth.mint_access_token("user-abc", "admin")
     payload = auth.verify_token(token)
     assert payload is not None
@@ -220,6 +222,7 @@ def test_mint_and_verify_access_token_round_trip(auth_env):
 
 def test_mint_and_verify_refresh_token_round_trip(auth_env):
     import auth
+
     jti = uuid.uuid4().hex
     token = auth.mint_refresh_token("user-abc", jti)
     payload = auth.verify_refresh_token(token)
@@ -230,6 +233,7 @@ def test_mint_and_verify_refresh_token_round_trip(auth_env):
 
 def test_verify_token_returns_none_on_bad_signature(auth_env, monkeypatch):
     import auth
+
     token = auth.mint_access_token("user-abc", "admin")
     monkeypatch.setenv("AUTH_SECRET", "different-secret")
     assert auth.verify_token(token) is None
@@ -237,6 +241,7 @@ def test_verify_token_returns_none_on_bad_signature(auth_env, monkeypatch):
 
 def test_invalid_role_in_jwt_returns_401(auth_env, users_store):
     import jwt
+
     bad = jwt.encode(
         {"sub": "alice", "role": "superuser", "iat": 0, "exp": int(time.time()) + 60},
         os.environ["AUTH_SECRET"],
@@ -251,6 +256,7 @@ def test_missing_role_claim_defaults_to_user(auth_env, users_store):
     """Legacy access tokens without a ``role`` claim must be honoured as ``user``."""
     import jwt
     import services.users as users_svc
+
     user = users_svc.create_user("alice@home.lan", "verylongpassword12", "user")
     legacy = jwt.encode(
         {"sub": user.id, "iat": 0, "exp": int(time.time()) + 60},
@@ -258,6 +264,7 @@ def test_missing_role_claim_defaults_to_user(auth_env, users_store):
         algorithm="HS256",
     )
     import main
+
     with TestClient(main.app) as client:
         resp = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {legacy}"})
     assert resp.status_code == 200
@@ -271,6 +278,7 @@ def test_missing_role_claim_defaults_to_user(auth_env, users_store):
 
 def test_create_user_password_hash_round_trip(users_store):
     import services.users as users_svc
+
     u = users_svc.create_user("alice@home.lan", "verylongpassword12", "user")
     assert u.email == "alice@home.lan"
     assert u.role == "user"
@@ -284,6 +292,7 @@ def test_create_user_password_hash_round_trip(users_store):
 
 def test_create_user_duplicate_email_raises(users_store):
     import services.users as users_svc
+
     users_svc.create_user("bob@home.lan", "verylongpassword12", "user")
     with pytest.raises(ValueError):
         users_svc.create_user("bob@home.lan", "anotherlongpassword", "user")
@@ -291,6 +300,7 @@ def test_create_user_duplicate_email_raises(users_store):
 
 def test_count_users_and_count_admins(users_store):
     import services.users as users_svc
+
     assert users_svc.count_users() == 0
     users_svc.create_user("a@home.lan", "verylongpassword12", "admin")
     users_svc.create_user("u@home.lan", "verylongpassword12", "user")
@@ -300,6 +310,7 @@ def test_count_users_and_count_admins(users_store):
 
 def test_set_disabled_clears_refresh_jti(users_store):
     import services.users as users_svc
+
     u = users_svc.create_user("alice@home.lan", "verylongpassword12", "admin")
     users_svc.set_refresh_jti(u.id, "abc123")
     assert users_svc.get_refresh_jti(u.id) == "abc123"
@@ -311,6 +322,7 @@ def test_set_disabled_clears_refresh_jti(users_store):
 
 def test_verify_credentials_disabled_user_returns_none(users_store):
     import services.users as users_svc
+
     u = users_svc.create_user("alice@home.lan", "verylongpassword12", "user")
     users_svc.set_disabled(u.id, True)
     assert users_svc.verify_credentials("alice@home.lan", "verylongpassword12") is None
@@ -318,6 +330,7 @@ def test_verify_credentials_disabled_user_returns_none(users_store):
 
 def test_bootstrap_if_empty_creates_admin_when_env_set(users_store, monkeypatch):
     import services.users as users_svc
+
     monkeypatch.setenv("LUMOGIS_BOOTSTRAP_ADMIN_EMAIL", "admin@home.lan")
     monkeypatch.setenv("LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD", "verylongpassword12")
     admin = users_svc.bootstrap_if_empty()
@@ -327,6 +340,7 @@ def test_bootstrap_if_empty_creates_admin_when_env_set(users_store, monkeypatch)
 
 def test_bootstrap_if_empty_noop_when_users_exist(users_store, monkeypatch):
     import services.users as users_svc
+
     users_svc.create_user("existing@home.lan", "verylongpassword12", "admin")
     monkeypatch.setenv("LUMOGIS_BOOTSTRAP_ADMIN_EMAIL", "admin@home.lan")
     monkeypatch.setenv("LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD", "verylongpassword12")
@@ -336,6 +350,7 @@ def test_bootstrap_if_empty_noop_when_users_exist(users_store, monkeypatch):
 
 def test_bootstrap_if_empty_refuses_short_password(users_store, monkeypatch):
     import services.users as users_svc
+
     monkeypatch.setenv("LUMOGIS_BOOTSTRAP_ADMIN_EMAIL", "admin@home.lan")
     monkeypatch.setenv("LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD", "short")
     assert users_svc.bootstrap_if_empty() is None
@@ -359,8 +374,9 @@ def no_skip_consistency(monkeypatch):
 def test_enforce_auth_consistency_refuses_dev_mode_with_multiple_users(
     users_store, dev_env, no_skip_consistency
 ):
-    import services.users as users_svc
     import main
+    import services.users as users_svc
+
     users_svc.create_user("a@home.lan", "verylongpassword12", "admin")
     users_svc.create_user("b@home.lan", "verylongpassword12", "user")
     with pytest.raises(RuntimeError, match="AUTH_ENABLED=false"):
@@ -371,6 +387,7 @@ def test_enforce_auth_consistency_refuses_true_mode_with_no_users(
     users_store, auth_env, no_skip_consistency
 ):
     import main
+
     with pytest.raises(RuntimeError, match="AUTH_ENABLED=true"):
         main._enforce_auth_consistency()
 
@@ -378,8 +395,9 @@ def test_enforce_auth_consistency_refuses_true_mode_with_no_users(
 def test_enforce_auth_consistency_passes_dev_mode_one_user(
     users_store, dev_env, no_skip_consistency
 ):
-    import services.users as users_svc
     import main
+    import services.users as users_svc
+
     users_svc.create_user("a@home.lan", "verylongpassword12", "admin")
     main._enforce_auth_consistency()
 
@@ -387,8 +405,9 @@ def test_enforce_auth_consistency_passes_dev_mode_one_user(
 def test_enforce_auth_consistency_passes_true_mode_with_admin(
     users_store, auth_env, no_skip_consistency
 ):
-    import services.users as users_svc
     import main
+    import services.users as users_svc
+
     users_svc.create_user("a@home.lan", "verylongpassword12", "admin")
     main._enforce_auth_consistency()
 
@@ -407,8 +426,9 @@ def test_enforce_auth_consistency_refuses_placeholder_auth_secret(
     The lifespan gate must catch this *before* uvicorn starts serving traffic
     even if the operator has otherwise seeded a real admin user.
     """
-    import services.users as users_svc
     import main
+    import services.users as users_svc
+
     users_svc.create_user("admin@home.lan", "verylongpassword12", "admin")
     monkeypatch.setenv("AUTH_SECRET", secret_value)
     with pytest.raises(RuntimeError, match="AUTH_SECRET"):
@@ -424,8 +444,9 @@ def test_enforce_auth_consistency_accepts_real_auth_secret(
     pins that contract so a future change to `auth_env` cannot silently make
     the placeholder-refusal test above pass for the wrong reason.
     """
-    import services.users as users_svc
     import main
+    import services.users as users_svc
+
     users_svc.create_user("admin@home.lan", "verylongpassword12", "admin")
     main._enforce_auth_consistency()
 
@@ -434,8 +455,9 @@ def test_enforce_auth_consistency_ignores_auth_secret_in_dev_mode(
     users_store, dev_env, no_skip_consistency, monkeypatch
 ):
     """AUTH_ENABLED=false → AUTH_SECRET is not consulted (no JWTs are minted)."""
-    import services.users as users_svc
     import main
+    import services.users as users_svc
+
     users_svc.create_user("solo@home.lan", "verylongpassword12", "admin")
     monkeypatch.setenv("AUTH_SECRET", "change-me-in-production")
     main._enforce_auth_consistency()
@@ -467,8 +489,9 @@ def test_enforce_auth_consistency_refuses_placeholder_credential_key(
     SAME widely-known string across every Lumogis install. The lifespan gate
     must catch this before uvicorn starts serving traffic.
     """
-    import services.users as users_svc
     import main
+    import services.users as users_svc
+
     users_svc.create_user("admin@home.lan", "verylongpassword12", "admin")
     monkeypatch.delenv("LUMOGIS_CREDENTIAL_KEYS", raising=False)
     monkeypatch.setenv("LUMOGIS_CREDENTIAL_KEY", key_value)
@@ -486,8 +509,9 @@ def test_enforce_auth_consistency_refuses_when_both_credential_envs_unset(
     `${LUMOGIS_CREDENTIAL_KEYS:-${LUMOGIS_CREDENTIAL_KEY:-}}` substitution
     falls back to empty when both are missing.
     """
-    import services.users as users_svc
     import main
+    import services.users as users_svc
+
     users_svc.create_user("admin@home.lan", "verylongpassword12", "admin")
     monkeypatch.delenv("LUMOGIS_CREDENTIAL_KEYS", raising=False)
     monkeypatch.delenv("LUMOGIS_CREDENTIAL_KEY", raising=False)
@@ -504,14 +528,14 @@ def test_enforce_auth_consistency_accepts_keys_csv_when_single_key_unset(
     A common rotation midpoint will have KEY unset (or stale) and KEYS
     holding the new+old pair — that must boot cleanly.
     """
-    import services.users as users_svc
     import main
+    import services.users as users_svc
+
     users_svc.create_user("admin@home.lan", "verylongpassword12", "admin")
     monkeypatch.delenv("LUMOGIS_CREDENTIAL_KEY", raising=False)
     monkeypatch.setenv(
         "LUMOGIS_CREDENTIAL_KEYS",
-        "OlGLYckGIbBSt54y8XVmgb441LgKJWvvYoHnpQ_cv9A=,"
-        "OlGLYckGIbBSt54y8XVmgb441LgKJWvvYoHnpQ_cv9A=",
+        "OlGLYckGIbBSt54y8XVmgb441LgKJWvvYoHnpQ_cv9A=,OlGLYckGIbBSt54y8XVmgb441LgKJWvvYoHnpQ_cv9A=",
     )
     main._enforce_auth_consistency()
 
@@ -526,8 +550,9 @@ def test_enforce_auth_consistency_ignores_credential_key_in_dev_mode(
     if the operator actually tries to use it (route returns 503), but boot
     must not refuse.
     """
-    import services.users as users_svc
     import main
+    import services.users as users_svc
+
     users_svc.create_user("solo@home.lan", "verylongpassword12", "admin")
     monkeypatch.delenv("LUMOGIS_CREDENTIAL_KEYS", raising=False)
     monkeypatch.setenv("LUMOGIS_CREDENTIAL_KEY", "change-me-in-production")
@@ -542,6 +567,7 @@ def test_skip_consistency_env_var_bypasses_gate(users_store, auth_env, monkeypat
         "true",
     )
     import main
+
     main._enforce_auth_consistency()
 
 
@@ -552,8 +578,9 @@ def test_skip_consistency_env_var_bypasses_gate(users_store, auth_env, monkeypat
 
 @contextmanager
 def _client_with_admin(users_store):
-    import services.users as users_svc
     import main
+    import services.users as users_svc
+
     if users_svc.get_user_by_email("alice@home.lan") is None:
         users_svc.create_user("alice@home.lan", "verylongpassword12", "admin")
     with TestClient(main.app) as client:
@@ -597,9 +624,11 @@ def test_login_unknown_email_returns_401_same_shape(users_store, auth_env):
 
 def test_login_disabled_user_returns_401_same_as_unknown(users_store, auth_env):
     import services.users as users_svc
+
     user = users_svc.create_user("alice@home.lan", "verylongpassword12", "admin")
     users_svc.set_disabled(user.id, True)
     import main
+
     with TestClient(main.app) as client:
         resp = client.post(
             "/api/v1/auth/login",
@@ -615,6 +644,7 @@ def test_login_unknown_email_takes_at_least_argon2_floor(users_store, auth_env):
     HTTP overhead (which dominates argon2 cost on fast hosts).
     """
     import services.users as users_svc
+
     users_svc.create_user("alice@home.lan", "verylongpassword12", "admin")
 
     samples = 5
@@ -633,12 +663,12 @@ def test_login_unknown_email_takes_at_least_argon2_floor(users_store, auth_env):
     # Both paths must hit argon2; ratios within 5x are acceptable. A bug
     # that returns instantly on unknown-email shows up as ratio >> 100.
     assert unknown_avg >= 0.001, (
-        f"unknown-email path is suspiciously fast ({unknown_avg*1000:.2f} ms)"
+        f"unknown-email path is suspiciously fast ({unknown_avg * 1000:.2f} ms)"
     )
     ratio = max(known_avg, unknown_avg) / max(min(known_avg, unknown_avg), 1e-6)
     assert ratio < 5.0, (
         f"timing diverges between known/unknown email paths "
-        f"(known={known_avg*1000:.2f} ms, unknown={unknown_avg*1000:.2f} ms, ratio={ratio:.1f})"
+        f"(known={known_avg * 1000:.2f} ms, unknown={unknown_avg * 1000:.2f} ms, ratio={ratio:.1f})"
     )
 
 
@@ -670,6 +700,7 @@ def test_login_rate_limit_per_ip(users_store, auth_env):
 
 def test_login_in_dev_mode_returns_503(users_store, dev_env):
     import main
+
     with TestClient(main.app) as client:
         resp = client.post(
             "/api/v1/auth/login",
@@ -680,6 +711,7 @@ def test_login_in_dev_mode_returns_503(users_store, dev_env):
 
 def test_me_in_dev_mode_returns_synthesised_admin(users_store, dev_env):
     import main
+
     with TestClient(main.app) as client:
         resp = client.get("/api/v1/auth/me")
     assert resp.status_code == 200
@@ -739,6 +771,7 @@ def test_refresh_rotates_jti_and_evicts_old_cookie(users_store, auth_env):
 
 def test_refresh_with_disabled_user_returns_401(users_store, auth_env):
     import services.users as users_svc
+
     with _client_with_admin(users_store) as client:
         login = client.post(
             "/api/v1/auth/login",
@@ -767,6 +800,7 @@ def test_refresh_without_cookie_returns_401(users_store, auth_env):
 
 def test_logout_clears_users_refresh_token_jti(users_store, auth_env):
     import services.users as users_svc
+
     with _client_with_admin(users_store) as client:
         client.post(
             "/api/v1/auth/login",

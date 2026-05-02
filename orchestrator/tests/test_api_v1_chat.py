@@ -22,6 +22,7 @@ def _single_user_dev_auth(monkeypatch):
 @pytest.fixture
 def client():
     import main
+
     with TestClient(main.app) as c:
         yield c
 
@@ -29,23 +30,28 @@ def client():
 @pytest.fixture
 def fake_models(monkeypatch):
     import config as _config
+
     monkeypatch.setattr(
-        _config, "get_all_models_config",
+        _config,
+        "get_all_models_config",
         lambda: {
             "claude": {"label": "Claude", "provider": "anthropic"},
             "ollama-mistral": {"label": "Mistral", "base_url": "http://ollama:11434"},
         },
     )
     monkeypatch.setattr(
-        _config, "get_model_config",
+        _config,
+        "get_model_config",
         lambda m: {"claude": {"tools": True}, "ollama-mistral": {}}.get(m, {}),
     )
     monkeypatch.setattr(
-        _config, "is_model_enabled",
+        _config,
+        "is_model_enabled",
         lambda model, *, user_id=None: True,
     )
     monkeypatch.setattr(
-        _config, "is_local_model",
+        _config,
+        "is_local_model",
         lambda m: m.startswith("ollama-"),
     )
 
@@ -110,8 +116,10 @@ def test_chat_rejects_system_message_not_first(client, fake_models):
 
 def test_chat_invalid_model_returns_400(client, fake_models, monkeypatch):
     import config as _config
+
     monkeypatch.setattr(
-        _config, "is_model_enabled",
+        _config,
+        "is_model_enabled",
         lambda model, *, user_id=None: False,
     )
     resp = client.post(
@@ -143,6 +151,7 @@ def test_chat_streaming_rejects_empty_even_with_rc_stub(client, fake_models, mon
 
 def test_chat_non_streaming_returns_assistant_message(client, fake_models, monkeypatch):
     import routes.api_v1.chat as v1_chat
+
     monkeypatch.setattr(v1_chat, "ask", lambda *a, **kw: "the answer")
 
     resp = client.post(
@@ -178,8 +187,8 @@ def test_chat_streaming_rc_stub_skips_llm(client, fake_models, monkeypatch):
 
 
 def test_chat_503_when_credential_unavailable(client, fake_models, monkeypatch):
-    from services.connector_credentials import CredentialUnavailable
     import routes.api_v1.chat as v1_chat
+    from services.connector_credentials import CredentialUnavailable
 
     def _boom(*a, **kw):
         raise CredentialUnavailable("no key")

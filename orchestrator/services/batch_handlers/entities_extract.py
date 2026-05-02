@@ -8,7 +8,6 @@ from typing import Literal
 
 from pydantic import BaseModel
 from pydantic import Field
-
 from services.batch_queue import register_batch_handler
 from services.entities import extract_entities
 from services.entities import store_entities

@@ -36,22 +36,23 @@ import logging
 from auth import get_user
 from authz import require_admin
 from csrf import require_same_origin
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter
+from fastapi import Depends
+from fastapi import HTTPException
+from fastapi import Request
+from fastapi import Response
+from fastapi import status
+from models.auth import AckOk
+from models.auth import AdminUserPasswordResetRequest
+from models.auth import UserAdminView
+from models.auth import UserCreateRequest
+from models.auth import UserPatchRequest
+from models.user_export import ArchiveInventoryEntry
+from models.user_export import ImportPlan
+from models.user_export import ImportReceipt
+from models.user_export import ImportRefused
+from models.user_export import ImportRequest
 
-from models.auth import (
-    AckOk,
-    AdminUserPasswordResetRequest,
-    UserAdminView,
-    UserCreateRequest,
-    UserPatchRequest,
-)
-from models.user_export import (
-    ArchiveInventoryEntry,
-    ImportPlan,
-    ImportReceipt,
-    ImportRefused,
-    ImportRequest,
-)
 from services import user_export as user_export_service
 from services import users as users_service
 
@@ -165,9 +166,7 @@ def patch_user(user_id: str, body: UserPatchRequest, request: Request) -> UserAd
 
     will_be_active_admin = (new_role == "admin") and (new_disabled is False)
     is_currently_last_admin = (
-        target.role == "admin"
-        and not target.disabled
-        and users_service.count_admins() == 1
+        target.role == "admin" and not target.disabled and users_service.count_admins() == 1
     )
 
     if is_currently_last_admin and not will_be_active_admin:
@@ -201,7 +200,10 @@ def patch_user(user_id: str, body: UserPatchRequest, request: Request) -> UserAd
 
     _log.info(
         "admin: patched user_id=%s role=%s disabled=%s by=%s",
-        updated.id, updated.role, updated.disabled, caller.user_id,
+        updated.id,
+        updated.role,
+        updated.disabled,
+        caller.user_id,
     )
     return _to_admin_view(updated)
 
@@ -218,9 +220,7 @@ def delete_user(user_id: str, request: Request) -> dict:
 
     caller = get_user(request)
     is_last_active_admin = (
-        target.role == "admin"
-        and not target.disabled
-        and users_service.count_admins() == 1
+        target.role == "admin" and not target.disabled and users_service.count_admins() == 1
     )
     if is_last_active_admin:
         # Check first — most informative when the sole admin tries to
@@ -278,12 +278,10 @@ _REFUSAL_TO_STATUS: dict[str, int] = {
 
 
 def _refusal_to_http(exc: ImportRefused) -> HTTPException:
-    code = _REFUSAL_TO_STATUS.get(exc.refusal_reason,
-                                  status.HTTP_400_BAD_REQUEST)
+    code = _REFUSAL_TO_STATUS.get(exc.refusal_reason, status.HTTP_400_BAD_REQUEST)
     return HTTPException(
         status_code=code,
-        detail={"refusal_reason": exc.refusal_reason,
-                "payload": exc.payload},
+        detail={"refusal_reason": exc.refusal_reason, "payload": exc.payload},
     )
 
 
@@ -292,7 +290,9 @@ def _refusal_to_http(exc: ImportRefused) -> HTTPException:
     dependencies=[Depends(require_same_origin)],
 )
 def create_user_import(
-    body: ImportRequest, request: Request, response: Response,
+    body: ImportRequest,
+    request: Request,
+    response: Response,
 ) -> ImportReceipt | ImportPlan:
     """Import an archive — ``dry_run=true`` returns an :class:`ImportPlan`
     without writing; ``dry_run=false`` mints a fresh user and returns
@@ -311,7 +311,8 @@ def create_user_import(
     try:
         if body.dry_run:
             plan = user_export_service.dry_run_import(
-                body.archive_path, str(body.new_user.email),
+                body.archive_path,
+                str(body.new_user.email),
             )
             return plan
         receipt = user_export_service.import_user(
@@ -322,7 +323,9 @@ def create_user_import(
         )
         _log.info(
             "admin: imported archive=%s new_user_id=%s by=%s",
-            body.archive_path, receipt.new_user_id, caller.user_id,
+            body.archive_path,
+            receipt.new_user_id,
+            caller.user_id,
         )
         # 201 + Location: the import minted a brand-new ``users`` row;
         # the canonical resource for that row is the

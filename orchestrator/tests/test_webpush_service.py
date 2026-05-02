@@ -49,14 +49,16 @@ class _MiniStore:
             rows = []
             for r in self.rows:
                 if r["user_id"] == uid:
-                    rows.append({
-                        "id": r["id"],
-                        "endpoint": r["endpoint"],
-                        "p256dh": r["p256dh"],
-                        "auth": r["auth"],
-                        "notify_on_signals": r["notify_on_signals"],
-                        "notify_on_shared_scope": r["notify_on_shared_scope"],
-                    })
+                    rows.append(
+                        {
+                            "id": r["id"],
+                            "endpoint": r["endpoint"],
+                            "p256dh": r["p256dh"],
+                            "auth": r["auth"],
+                            "notify_on_signals": r["notify_on_signals"],
+                            "notify_on_shared_scope": r["notify_on_shared_scope"],
+                        }
+                    )
             return rows
         return []
 
@@ -64,27 +66,21 @@ class _MiniStore:
         q = " ".join(query.split()).lower()
         params = params or ()
 
-        if q.startswith(
-            "update webpush_subscriptions set last_error = null where id = %s"
-        ):
+        if q.startswith("update webpush_subscriptions set last_error = null where id = %s"):
             sid = int(params[0])
             for row in self.rows:
                 if row["id"] == sid:
                     row["last_error"] = None
             return
 
-        if q.startswith(
-            "update webpush_subscriptions set last_error = %s where id = %s"
-        ):
+        if q.startswith("update webpush_subscriptions set last_error = %s where id = %s"):
             err, sid = params[0], int(params[1])
             for row in self.rows:
                 if row["id"] == sid:
                     row["last_error"] = err
             return
 
-        if q.startswith("delete from webpush_subscriptions where id = %s") and len(
-            params
-        ) == 1:
+        if q.startswith("delete from webpush_subscriptions where id = %s") and len(params) == 1:
             sid = int(params[0])
             self.rows = [r for r in self.rows if r["id"] != sid]
 
@@ -140,9 +136,7 @@ def test_no_subscriptions_empty_result(vp_env: None, fake_store: _MiniStore, mon
     assert result.sent == result.failed == result.pruned == 0
 
 
-def test_sends_only_for_target_user(
-    vp_env: None, fake_store: _MiniStore, monkeypatch
-) -> None:
+def test_sends_only_for_target_user(vp_env: None, fake_store: _MiniStore, monkeypatch) -> None:
     import services.webpush as w
 
     endpoints: list[str] = []
@@ -187,9 +181,7 @@ def test_410_prunes(vp_env: None, fake_store: _MiniStore, monkeypatch) -> None:
     assert fake_store.rows == []
 
 
-def test_non_prune_updates_last_error(
-    vp_env: None, fake_store: _MiniStore, monkeypatch
-) -> None:
+def test_non_prune_updates_last_error(vp_env: None, fake_store: _MiniStore, monkeypatch) -> None:
     import services.webpush as w
 
     class _Rsp:
@@ -227,12 +219,14 @@ def test_safe_builder_rejects_injected_fields() -> None:
     import services.webpush as w
 
     with pytest.raises(ValueError):
-        w.build_safe_push_json_from_dict({
-            "title": "ok",
-            "body": "ok",
-            "url": "/",
-            "secret": "nope",
-        })
+        w.build_safe_push_json_from_dict(
+            {
+                "title": "ok",
+                "body": "ok",
+                "url": "/",
+                "secret": "nope",
+            }
+        )
 
 
 def test_hook_ignores_raw_kwargs(vp_env: None, fake_store: _MiniStore, monkeypatch) -> None:

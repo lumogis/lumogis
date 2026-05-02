@@ -22,6 +22,7 @@ The fake store reuses the per-tier SQL pattern catalogue from
 exercises the full request → service → fake-store → response loop
 without hitting Postgres.
 """
+
 from __future__ import annotations
 
 import os
@@ -31,10 +32,8 @@ from contextlib import contextmanager
 import jwt
 import pytest
 from fastapi.testclient import TestClient
-
 from tests.test_auth_phase1 import FakeUsersStore  # noqa: E402
 from tests.test_credential_tiers_service import _TiersFakeStore as _BaseTiersStore
-
 
 # ---------------------------------------------------------------------------
 # Composite store: tiers SQL surface + users (admin-auth dependency).
@@ -140,6 +139,7 @@ def auth_env(monkeypatch):
     monkeypatch.delenv("LUMOGIS_CREDENTIAL_KEYS", raising=False)
     yield
     from routes.auth import _reset_rate_limit_for_tests
+
     _reset_rate_limit_for_tests()
 
 
@@ -159,12 +159,14 @@ def _mint_jwt(user_id: str, role: str) -> str:
 @contextmanager
 def _client():
     import main
+
     with TestClient(main.app) as client:
         yield client
 
 
 def _seed(store, *, email: str, role: str) -> str:
     import services.users as users_svc
+
     if users_svc.get_user_by_email(email) is None:
         users_svc.create_user(email, "verylongpassword12", role)
     user = users_svc.get_user_by_email(email)
@@ -367,21 +369,12 @@ def test_tier_delete_existing_returns_204(store, auth_env, tier):
 
 def test_household_and_system_admin_routes_are_in_openapi_spec():
     from main import app
+
     paths = set(app.openapi()["paths"].keys())
-    assert any(
-        p.endswith("/admin/connector-credentials/household") for p in paths
-    )
-    assert any(
-        p.endswith("/admin/connector-credentials/system") for p in paths
-    )
-    assert any(
-        "/admin/connector-credentials/household/{connector}" in p
-        for p in paths
-    )
-    assert any(
-        "/admin/connector-credentials/system/{connector}" in p
-        for p in paths
-    )
+    assert any(p.endswith("/admin/connector-credentials/household") for p in paths)
+    assert any(p.endswith("/admin/connector-credentials/system") for p in paths)
+    assert any("/admin/connector-credentials/household/{connector}" in p for p in paths)
+    assert any("/admin/connector-credentials/system/{connector}" in p for p in paths)
 
 
 # ---------------------------------------------------------------------------

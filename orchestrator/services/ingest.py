@@ -166,8 +166,7 @@ def ingest_file(file_path: str, *, user_id: str) -> IngestResult:
         UserContext(user_id=user_id), scope_filter="personal"
     )
     existing = meta.fetch_one(
-        "SELECT file_hash FROM file_index "
-        f"WHERE file_path = %s AND {where_clause}",
+        f"SELECT file_hash FROM file_index WHERE file_path = %s AND {where_clause}",
         (file_path, *where_params),
     )
     if existing and existing["file_hash"] == new_hash:
@@ -324,9 +323,7 @@ class _InboxHandler(FileSystemEventHandler):
     def __init__(self, owner_user_id: str) -> None:
         super().__init__()
         if not isinstance(owner_user_id, str) or not owner_user_id:
-            raise TypeError(
-                "_InboxHandler: owner_user_id is required (set INBOX_OWNER_USER_ID)"
-            )
+            raise TypeError("_InboxHandler: owner_user_id is required (set INBOX_OWNER_USER_ID)")
         self._owner_user_id = owner_user_id
 
     def on_created(self, event):
@@ -338,9 +335,7 @@ class _InboxHandler(FileSystemEventHandler):
         if ext not in extractors:
             return
         time.sleep(2)
-        _log.info(
-            "Watcher detected new file: %s (owner=%s)", path, self._owner_user_id
-        )
+        _log.info("Watcher detected new file: %s (owner=%s)", path, self._owner_user_id)
         try:
             ingest_file(path, user_id=self._owner_user_id)
         except Exception:
@@ -375,9 +370,7 @@ def start_watcher(inbox_path: str = "/workspace/inbox") -> None:
     _observer.schedule(_InboxHandler(owner_user_id=owner), inbox_path, recursive=True)
     _observer.daemon = True
     _observer.start()
-    _log.info(
-        "Filesystem watcher started on %s (owner_user_id=%s)", inbox_path, owner
-    )
+    _log.info("Filesystem watcher started on %s (owner_user_id=%s)", inbox_path, owner)
 
 
 def stop_watcher():

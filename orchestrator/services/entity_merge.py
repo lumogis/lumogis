@@ -34,7 +34,6 @@ and we hold the GIL during each statement.
 """
 
 import logging
-import uuid as _uuid
 
 import hooks
 from events import Event
@@ -48,6 +47,7 @@ _log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _run_phase_a(ms, winner_id: str, loser_id: str, user_id: str) -> dict:
     """Execute Phase A inside a single Postgres transaction.
@@ -101,8 +101,7 @@ def _run_phase_a(ms, winner_id: str, loser_id: str, user_id: str) -> dict:
 
     with conn.cursor() as cur:
         cur.execute(
-            "DELETE FROM entity_relations "
-            "WHERE source_id = %s AND user_id = %s",
+            "DELETE FROM entity_relations WHERE source_id = %s AND user_id = %s",
             (loser_id, user_id),
         )
         relations_dropped_as_duplicate = cur.rowcount
@@ -121,13 +120,13 @@ def _run_phase_a(ms, winner_id: str, loser_id: str, user_id: str) -> dict:
 
     # Step 4: Merge aliases, context_tags, mention_count onto winner
     winner_aliases = list(winner_row.get("aliases") or [])
-    loser_aliases  = list(loser_row.get("aliases") or [])
-    winner_tags    = list(winner_row.get("context_tags") or [])
-    loser_tags     = list(loser_row.get("context_tags") or [])
+    loser_aliases = list(loser_row.get("aliases") or [])
+    winner_tags = list(winner_row.get("context_tags") or [])
+    loser_tags = list(loser_row.get("context_tags") or [])
 
     merged_aliases = list(dict.fromkeys(winner_aliases + loser_aliases))
-    merged_tags    = list(dict.fromkeys(winner_tags + loser_tags))
-    merged_count   = (winner_row.get("mention_count") or 0) + (loser_row.get("mention_count") or 0)
+    merged_tags = list(dict.fromkeys(winner_tags + loser_tags))
+    merged_count = (winner_row.get("mention_count") or 0) + (loser_row.get("mention_count") or 0)
     aliases_merged = len(merged_aliases) - len(winner_aliases)
 
     with conn.cursor() as cur:
@@ -157,6 +156,7 @@ def _run_phase_a(ms, winner_id: str, loser_id: str, user_id: str) -> dict:
     # — without this remap, projection rows would be CASCADE-deleted
     # instead of being re-pointed to the survivor.
     from services.projection import remap_published_from
+
     remap_published_from(loser_id, winner_id)
     projections_remapped = True
 
@@ -168,15 +168,17 @@ def _run_phase_a(ms, winner_id: str, loser_id: str, user_id: str) -> dict:
         )
 
     return {
-        "relations_moved":  relations_moved,
+        "relations_moved": relations_moved,
         "sessions_updated": sessions_updated,
-        "aliases_merged":   max(0, aliases_merged),
+        "aliases_merged": max(0, aliases_merged),
         "relations_dropped_as_duplicate": relations_dropped_as_duplicate,
         "projections_remapped": projections_remapped,
     }
 
 
-def _run_phase_b(winner_id: str, loser_id: str, user_id: str, winner_name: str, merged_aliases: list[str]) -> bool:
+def _run_phase_b(
+    winner_id: str, loser_id: str, user_id: str, winner_name: str, merged_aliases: list[str]
+) -> bool:
     """Best-effort Qdrant cleanup.  Returns True on success, False on any failure.
 
     Never raises — Postgres commit is never rolled back from here.
@@ -201,11 +203,16 @@ def _run_phase_b(winner_id: str, loser_id: str, user_id: str, winner_name: str, 
         # Re-upsert winner with merged aliases
         try:
             import uuid as _uuid_mod
+
             embed_text = winner_name
             if merged_aliases:
                 embed_text += f": {', '.join(merged_aliases[:5])}"
             vector = embedder.embed(embed_text)
-            point_id = str(_uuid_mod.uuid5(_uuid_mod.NAMESPACE_URL, f"entity::{user_id}::{winner_name.lower()}"))
+            point_id = str(
+                _uuid_mod.uuid5(
+                    _uuid_mod.NAMESPACE_URL, f"entity::{user_id}::{winner_name.lower()}"
+                )
+            )
             vs.upsert(
                 collection="entities",
                 id=point_id,
@@ -237,6 +244,7 @@ def _run_phase_b(winner_id: str, loser_id: str, user_id: str, winner_name: str, 
 # ---------------------------------------------------------------------------
 # Public interface
 # ---------------------------------------------------------------------------
+
 
 def merge_entities(
     winner_id: str,
@@ -319,7 +327,7 @@ def merge_entities(
     )
 
     # Phase B — best-effort Qdrant cleanup
-    winner_name    = winner_row_cached.get("name", "")
+    winner_name = winner_row_cached.get("name", "")
     merged_aliases = list(winner_row_cached.get("aliases") or [])
     qdrant_cleaned = _run_phase_b(winner_id, loser_id, user_id, winner_name, merged_aliases)
     if not qdrant_cleaned:

@@ -38,10 +38,8 @@ Public interface:
 
 import json
 import logging
-import math
 import os
 import time
-import uuid as _uuid_mod
 from pathlib import Path
 
 import config
@@ -60,14 +58,13 @@ _ATTR_PREFIX_LEN = 2
 
 # SPLINK_MODEL_PATH: where the trained Splink model JSON is persisted.
 # Defaults to /workspace/splink_model.json inside the container.
-_SPLINK_MODEL_PATH = Path(
-    os.environ.get("SPLINK_MODEL_PATH", "/workspace/splink_model.json")
-)
+_SPLINK_MODEL_PATH = Path(os.environ.get("SPLINK_MODEL_PATH", "/workspace/splink_model.json"))
 
 
 # ---------------------------------------------------------------------------
 # Blocking helpers
 # ---------------------------------------------------------------------------
+
 
 def _normalise_name(name: str) -> str:
     return (name or "").lower().strip()
@@ -161,7 +158,7 @@ def _build_ann_blocks(
                 filter={
                     "must": [
                         {"key": "user_id", "match": {"value": user_id}},
-                        {"key": "scope",   "match": {"value": "personal"}},
+                        {"key": "scope", "match": {"value": "personal"}},
                     ]
                 },
             )
@@ -199,8 +196,8 @@ def _build_candidates(
     Skips pairs in known_distinct_entity_pairs.
     Returns (candidate_pairs, cos_sims).
     """
-    type_pairs  = _build_type_blocks(entities)
-    attr_pairs  = _build_attr_blocks(entities)
+    type_pairs = _build_type_blocks(entities)
+    attr_pairs = _build_attr_blocks(entities)
     ann_pairs, cos_sims = _build_ann_blocks(entities, vs, user_id)
 
     all_pairs = type_pairs | attr_pairs | ann_pairs
@@ -214,6 +211,7 @@ def _build_candidates(
 # ---------------------------------------------------------------------------
 # Scoring helpers (Jaro-Winkler, alias match, cosine)
 # ---------------------------------------------------------------------------
+
 
 def _jaro(s1: str, s2: str) -> float:
     """Jaro similarity."""
@@ -292,10 +290,10 @@ def _compute_pair_features(
     alias = 1.0 if _alias_match(e_a, e_b) else 0.0
 
     return {
-        "jaro_winkler_name":   jw,
-        "entity_type_match":   type_match,
-        "embedding_cosine":    cos_sim,
-        "alias_match":         alias,
+        "jaro_winkler_name": jw,
+        "entity_type_match": type_match,
+        "embedding_cosine": cos_sim,
+        "alias_match": alias,
     }
 
 
@@ -303,23 +301,22 @@ def _compute_pair_features(
 # Splink model load / train / save
 # ---------------------------------------------------------------------------
 
+
 def _load_or_train_splink_model(candidate_rows: list[dict], model_path: Path):
     """Return a trained Splink model.
 
     Tries to load from model_path.  Falls back to training via EM on candidate_rows.
     candidate_rows: list of dicts with keys unique_id_a, unique_id_b, and feature columns.
     """
-    import duckdb
-    import splink
-    from splink import DuckDBAPI, Linker, SettingsCreator
     import splink.comparison_library as cl
+    from splink import DuckDBAPI
+    from splink import Linker
+    from splink import SettingsCreator
 
     db_api = DuckDBAPI()
 
     comparisons = [
-        cl.JaroWinklerAtThresholds("name_a", "name_b").configure(
-            term_frequency_adjustments=False
-        ),
+        cl.JaroWinklerAtThresholds("name_a", "name_b").configure(term_frequency_adjustments=False),
         cl.ExactMatch("entity_type"),
         cl.ExactMatch("alias_match"),
     ]
@@ -407,21 +404,23 @@ def _score_candidates_with_splink(
             continue
         cos_sim = cos_sims.get((a_id, b_id), 0.0)
         features = _compute_pair_features(e_a, e_b, cos_sim)
-        records.append({
-            "unique_id_a":    a_id,
-            "unique_id_b":    b_id,
-            "entity_id_a":    a_id,
-            "entity_id_b":    b_id,
-            "name_a":         _normalise_name(e_a.get("name") or ""),
-            "name_b":         _normalise_name(e_b.get("name") or ""),
-            "entity_type_a":  e_a.get("entity_type") or "",
-            "entity_type_b":  e_b.get("entity_type") or "",
-            "entity_type":    e_a.get("entity_type") or "",
-            "alias_match_a":  str(int(_alias_match(e_a, e_b))),
-            "alias_match_b":  str(int(_alias_match(e_a, e_b))),
-            "alias_match":    str(int(_alias_match(e_a, e_b))),
-            "_features":      features,
-        })
+        records.append(
+            {
+                "unique_id_a": a_id,
+                "unique_id_b": b_id,
+                "entity_id_a": a_id,
+                "entity_id_b": b_id,
+                "name_a": _normalise_name(e_a.get("name") or ""),
+                "name_b": _normalise_name(e_b.get("name") or ""),
+                "entity_type_a": e_a.get("entity_type") or "",
+                "entity_type_b": e_b.get("entity_type") or "",
+                "entity_type": e_a.get("entity_type") or "",
+                "alias_match_a": str(int(_alias_match(e_a, e_b))),
+                "alias_match_b": str(int(_alias_match(e_a, e_b))),
+                "alias_match": str(int(_alias_match(e_a, e_b))),
+                "_features": features,
+            }
+        )
 
     if not records:
         return []
@@ -450,12 +449,14 @@ def _score_candidates_with_splink(
         )
         features = feat_rec["_features"] if feat_rec else {}
 
-        scored.append({
-            "entity_id_a":       a_id,
-            "entity_id_b":       b_id,
-            "match_probability": prob,
-            "features":          features,
-        })
+        scored.append(
+            {
+                "entity_id_a": a_id,
+                "entity_id_b": b_id,
+                "match_probability": prob,
+                "features": features,
+            }
+        )
 
     return scored
 
@@ -472,18 +473,21 @@ def _fallback_score(records: list[dict]) -> list[dict]:
             + 0.10 * feats.get("alias_match", 0.0)
         )
         prob = max(0.0, min(1.0, prob))
-        scored.append({
-            "entity_id_a":       r["entity_id_a"],
-            "entity_id_b":       r["entity_id_b"],
-            "match_probability": prob,
-            "features":          feats,
-        })
+        scored.append(
+            {
+                "entity_id_a": r["entity_id_a"],
+                "entity_id_b": r["entity_id_b"],
+                "match_probability": prob,
+                "features": feats,
+            }
+        )
     return scored
 
 
 # ---------------------------------------------------------------------------
 # Deduplication run lifecycle
 # ---------------------------------------------------------------------------
+
 
 def _insert_run(ms, user_id: str) -> str:
     """Insert a deduplication_runs row and return the run_id."""
@@ -532,6 +536,7 @@ def _update_run_error(ms, run_id: str, error_message: str) -> None:
 # Winner selection
 # ---------------------------------------------------------------------------
 
+
 def _select_winner(e_a: dict, e_b: dict) -> tuple[str, str]:
     """Return (winner_id, loser_id).
 
@@ -554,6 +559,7 @@ def _select_winner(e_a: dict, e_b: dict) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 # Route decisions
 # ---------------------------------------------------------------------------
+
 
 def _route_pair(
     ms,
@@ -578,16 +584,20 @@ def _route_pair(
             winner_id, loser_id = _select_winner(e_a, e_b)
             try:
                 from services.entity_merge import merge_entities
+
                 merge_entities(winner_id=winner_id, loser_id=loser_id, user_id=user_id)
                 _log.info(
                     "dedup: auto-merged winner=%s loser=%s prob=%.4f",
-                    winner_id, loser_id, prob,
+                    winner_id,
+                    loser_id,
+                    prob,
                 )
                 return "auto_merged"
             except Exception:
                 _log.exception(
                     "dedup: auto-merge failed winner=%s loser=%s — routing to review queue",
-                    winner_id, loser_id,
+                    winner_id,
+                    loser_id,
                 )
                 # Fall through to queue
 
@@ -645,6 +655,7 @@ def _insert_candidate_and_queue(
 # Public interface
 # ---------------------------------------------------------------------------
 
+
 def run_deduplication_job(user_id: str = "default") -> dict:
     """Run full deduplication pipeline for user.
 
@@ -657,11 +668,11 @@ def run_deduplication_job(user_id: str = "default") -> dict:
     vs = config.get_vector_store()
 
     summary: dict = {
-        "run_id":            None,
-        "candidate_count":   0,
-        "auto_merged":       0,
+        "run_id": None,
+        "candidate_count": 0,
+        "auto_merged": 0,
         "queued_for_review": 0,
-        "duration_ms":       0,
+        "duration_ms": 0,
     }
 
     try:
@@ -690,8 +701,7 @@ def run_deduplication_job(user_id: str = "default") -> dict:
         # excluded-from-scope list (no `scope` column); per-user filtering
         # is the correct visibility model for this table.
         distinct_rows = ms.fetch_all(
-            "SELECT entity_id_a, entity_id_b FROM known_distinct_entity_pairs "
-            "WHERE user_id = %s",
+            "SELECT entity_id_a, entity_id_b FROM known_distinct_entity_pairs WHERE user_id = %s",
             (user_id,),
         )
         known_distinct: set[tuple[str, str]] = set()
@@ -751,12 +761,14 @@ def run_deduplication_job(user_id: str = "default") -> dict:
         )
 
         duration_ms = int((time.monotonic() - t0) * 1000)
-        summary.update({
-            "candidate_count":   len(scored),
-            "auto_merged":       auto_merged,
-            "queued_for_review": queued_for_review,
-            "duration_ms":       duration_ms,
-        })
+        summary.update(
+            {
+                "candidate_count": len(scored),
+                "auto_merged": auto_merged,
+                "queued_for_review": queued_for_review,
+                "duration_ms": duration_ms,
+            }
+        )
 
         _log.info(
             "component=deduplication run_id=%s user_id=%s candidate_count=%d "

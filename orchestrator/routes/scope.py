@@ -42,15 +42,23 @@ v1 contract pins (plan §2.5):
 See also: ``.cursor/plans/personal_shared_system_memory_scopes.plan.md``
 ``orchestrator/services/projection.py``
 """
+
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Optional
+from typing import Any
+from typing import Callable
+from typing import Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response
+from auth import UserContext
+from auth import get_user
+from fastapi import APIRouter
+from fastapi import Body
+from fastapi import Depends
+from fastapi import HTTPException
+from fastapi import Response
 
 import config
-from auth import UserContext, get_user
 from services import projection as proj
 
 _log = logging.getLogger(__name__)
@@ -70,18 +78,20 @@ ResourceUnprojector = Callable[..., int]
 
 def _fetch_uuid_pk(table: str, pk_col: str) -> ResourceFetcher:
     """Return a fetcher that loads a personal-scoped row by UUID PK + owner."""
+
     def _fetch(pk: str, user_id: str) -> Optional[dict]:
         ms = config.get_metadata_store()
         return ms.fetch_one(
-            f"SELECT * FROM {table} "
-            f"WHERE {pk_col} = %s AND user_id = %s AND scope = 'personal'",
+            f"SELECT * FROM {table} WHERE {pk_col} = %s AND user_id = %s AND scope = 'personal'",
             (pk, user_id),
         )
+
     return _fetch
 
 
 def _fetch_int_pk(table: str, pk_col: str) -> ResourceFetcher:
     """Return a fetcher for INTEGER-PK resources (file_index)."""
+
     def _fetch(pk: str, user_id: str) -> Optional[dict]:
         try:
             pk_int = int(pk)
@@ -89,10 +99,10 @@ def _fetch_int_pk(table: str, pk_col: str) -> ResourceFetcher:
             return None
         ms = config.get_metadata_store()
         return ms.fetch_one(
-            f"SELECT * FROM {table} "
-            f"WHERE {pk_col} = %s AND user_id = %s AND scope = 'personal'",
+            f"SELECT * FROM {table} WHERE {pk_col} = %s AND user_id = %s AND scope = 'personal'",
             (pk_int, user_id),
         )
+
     return _fetch
 
 
@@ -225,7 +235,10 @@ def _publish_one(
     except Exception as exc:
         _log.exception(
             "publish %s/%s failed scope=%s actor=%s",
-            resource, pk, target_scope, actor.user_id,
+            resource,
+            pk,
+            target_scope,
+            actor.user_id,
         )
         raise HTTPException(
             status_code=502,
@@ -267,7 +280,9 @@ def _unpublish_one(
     except Exception as exc:
         _log.exception(
             "unpublish %s/%s failed actor=%s",
-            resource, pk, actor.user_id,
+            resource,
+            pk,
+            actor.user_id,
         )
         raise HTTPException(
             status_code=502,

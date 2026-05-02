@@ -7,12 +7,11 @@ from __future__ import annotations
 import json
 
 import pytest
-from fastapi.testclient import TestClient
-
 import services.users as users_svc
-from tests.test_auth_phase1 import auth_env
-from tests.test_auth_phase1 import dev_env
-from tests.test_auth_phase1 import users_store
+from fastapi.testclient import TestClient
+from tests.test_auth_phase1 import auth_env  # noqa: F401
+from tests.test_auth_phase1 import dev_env  # noqa: F401
+from tests.test_auth_phase1 import users_store  # noqa: F401
 from tests.test_auth_phase2 import _admin_headers
 from tests.test_auth_phase2 import _client
 from tests.test_auth_phase2 import _user_headers

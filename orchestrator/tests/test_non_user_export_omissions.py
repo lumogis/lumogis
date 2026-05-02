@@ -25,17 +25,15 @@ test contract (Test 14 / "non-user export omission registry") is:
     ``user_id`` column in the schema — that's the whole reason it's
     declared in the *non-user* registry rather than ``_OMITTED_USER_TABLES``.
 """
+
 from __future__ import annotations
 
 import re
 from pathlib import Path
 
-from services.user_export import (
-    _OMITTED_NON_USER_TABLES,
-    _OMITTED_USER_TABLES,
-    _USER_EXPORT_TABLES,
-)
-
+from services.user_export import _OMITTED_NON_USER_TABLES
+from services.user_export import _OMITTED_USER_TABLES
+from services.user_export import _USER_EXPORT_TABLES
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _INIT_SQL = _REPO_ROOT / "postgres" / "init.sql"
@@ -69,10 +67,12 @@ def _all_create_table_bodies() -> dict[str, str]:
 # explicitly here (rather than only relying on len(...) == 2) so a
 # future addition to the registry doesn't silently weaken these
 # regressions.
-_REQUIRED_OMITTED_TABLES: frozenset[str] = frozenset({
-    "household_connector_credentials",
-    "instance_system_connector_credentials",
-})
+_REQUIRED_OMITTED_TABLES: frozenset[str] = frozenset(
+    {
+        "household_connector_credentials",
+        "instance_system_connector_credentials",
+    }
+)
 
 
 def test_required_shared_tier_tables_are_in_omission_registry():
@@ -125,8 +125,7 @@ def test_omitted_non_user_tables_have_unique_non_empty_reason_strings():
     )
     for table, reason in _OMITTED_NON_USER_TABLES.items():
         assert reason and reason.strip(), (
-            f"_OMITTED_NON_USER_TABLES['{table}'] must have a non-empty "
-            "reason string."
+            f"_OMITTED_NON_USER_TABLES['{table}'] must have a non-empty reason string."
         )
 
 
@@ -188,7 +187,9 @@ def test_omitted_non_user_tables_have_no_user_id_column():
         if body is None:
             continue
         if re.search(
-            r"(?:^|,|\(|\n)\s*user_id\s+", body, re.IGNORECASE,
+            r"(?:^|,|\(|\n)\s*user_id\s+",
+            body,
+            re.IGNORECASE,
         ):
             offenders.append(table)
     assert not offenders, (

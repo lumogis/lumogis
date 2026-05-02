@@ -28,8 +28,10 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi import APIRouter
+from fastapi import HTTPException
+from fastapi.responses import FileResponse
+from fastapi.responses import RedirectResponse
 
 _log = logging.getLogger(__name__)
 

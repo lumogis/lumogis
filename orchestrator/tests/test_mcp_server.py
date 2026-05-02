@@ -19,14 +19,10 @@ Covers:
 
 import json
 
-import pytest
 from fastapi.testclient import TestClient
-
-import config as _config
 from models.capability import CapabilityManifest
 from models.memory import ContextHit
 from models.memory import SessionSummary
-
 
 # ---------------------------------------------------------------------------
 # Manifest contract

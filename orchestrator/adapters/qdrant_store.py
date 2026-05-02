@@ -121,9 +121,7 @@ class QdrantStore:
                 field_name=field,
                 field_schema=PayloadSchemaType.KEYWORD,
             )
-            _log.info(
-                "Created Qdrant keyword payload index '%s.%s'", collection, field
-            )
+            _log.info("Created Qdrant keyword payload index '%s.%s'", collection, field)
         except Exception as exc:
             msg = str(exc).lower()
             if "already" in msg or "exist" in msg:

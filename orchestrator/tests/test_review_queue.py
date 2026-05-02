@@ -21,8 +21,10 @@ Runs: docker compose -f docker-compose.test.yml run --rm orchestrator pytest
 
 import json
 import uuid
-from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from datetime import datetime
+from datetime import timezone
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import pytest
 from fastapi import FastAPI
@@ -33,9 +35,9 @@ from fastapi.testclient import TestClient
 # ---------------------------------------------------------------------------
 
 WINNER_ID = str(uuid.uuid4())
-LOSER_ID  = str(uuid.uuid4())
-RQ_ID     = "42"
-VIO_ID    = str(uuid.uuid4())
+LOSER_ID = str(uuid.uuid4())
+RQ_ID = "42"
+VIO_ID = str(uuid.uuid4())
 ENTITY_ID = str(uuid.uuid4())
 
 _TS = datetime(2026, 1, 15, 10, 0, tzinfo=timezone.utc)
@@ -93,8 +95,10 @@ def _orphan_row():
 # App fixture
 # ---------------------------------------------------------------------------
 
+
 def _make_app():
     from routes.admin import router
+
     app = FastAPI()
     app.include_router(router)
     return app
@@ -115,6 +119,7 @@ def _ms_returning(*side_effects):
 # ---------------------------------------------------------------------------
 # 1. Default GET /review-queue — backward compatibility
 # ---------------------------------------------------------------------------
+
 
 class TestDefaultReviewQueue:
     def test_returns_list_not_dict(self, client):
@@ -161,13 +166,14 @@ class TestDefaultReviewQueue:
 # 2. GET /review-queue?source=all — unified items
 # ---------------------------------------------------------------------------
 
+
 class TestUnifiedReviewQueue:
     def test_returns_items_and_next_cursor(self, client):
         ms = _ms_returning(
-            [_rq_row()],         # ambiguous_entity
-            [_vio_row()],        # constraint_violation
-            [_staged_row()],     # staged_entity
-            [_orphan_row()],     # orphan_entity
+            [_rq_row()],  # ambiguous_entity
+            [_vio_row()],  # constraint_violation
+            [_staged_row()],  # staged_entity
+            [_orphan_row()],  # orphan_entity
         )
         with patch("routes.admin.config.get_metadata_store", return_value=ms):
             resp = client.get("/review-queue?source=all")
@@ -187,7 +193,12 @@ class TestUnifiedReviewQueue:
         with patch("routes.admin.config.get_metadata_store", return_value=ms):
             resp = client.get("/review-queue?source=all")
         types = {i["item_type"] for i in resp.json()["items"]}
-        assert types == {"ambiguous_entity", "constraint_violation", "staged_entity", "orphan_entity"}
+        assert types == {
+            "ambiguous_entity",
+            "constraint_violation",
+            "staged_entity",
+            "orphan_entity",
+        }
 
     def test_ambiguous_entity_shape(self, client):
         ms = _ms_returning([_rq_row()], [], [], [])
@@ -236,11 +247,12 @@ class TestUnifiedReviewQueue:
 # 3. Priority ordering
 # ---------------------------------------------------------------------------
 
+
 class TestPriorityOrdering:
     def test_items_sorted_priority_desc(self, client):
         ms = _ms_returning(
-            [_rq_row()],      # priority 1.0
-            [_vio_row()],     # priority 0.9
+            [_rq_row()],  # priority 1.0
+            [_vio_row()],  # priority 0.9
             [_staged_row()],  # priority 0.7
             [_orphan_row()],  # priority 0.5
         )
@@ -255,6 +267,7 @@ class TestPriorityOrdering:
 # 5. Empty corpus
 # ---------------------------------------------------------------------------
 
+
 class TestEmptyCorpus:
     def test_empty_items(self, client):
         ms = _ms_returning([], [], [], [])
@@ -268,29 +281,40 @@ class TestEmptyCorpus:
 # 6. POST /review-queue/decide — merge
 # ---------------------------------------------------------------------------
 
+
 class TestDecideMerge:
     def test_merge_calls_merge_service(self, client):
         from models.entities import MergeResult
 
         ms = MagicMock()
-        ms.fetch_one.return_value = {"id": RQ_ID, "candidate_a_id": WINNER_ID, "candidate_b_id": LOSER_ID}
+        ms.fetch_one.return_value = {
+            "id": RQ_ID,
+            "candidate_a_id": WINNER_ID,
+            "candidate_b_id": LOSER_ID,
+        }
         ms.execute.return_value = None
 
         mock_result = MergeResult(
-            winner_id=WINNER_ID, loser_id=LOSER_ID,
-            aliases_merged=1, relations_moved=2,
-            sessions_updated=0, qdrant_cleaned=True,
+            winner_id=WINNER_ID,
+            loser_id=LOSER_ID,
+            aliases_merged=1,
+            relations_moved=2,
+            sessions_updated=0,
+            qdrant_cleaned=True,
         )
 
         with (
             patch("routes.admin.config.get_metadata_store", return_value=ms),
             patch("services.entity_merge.merge_entities", return_value=mock_result),
         ):
-            resp = client.post("/review-queue/decide", json={
-                "item_type": "ambiguous_entity",
-                "item_id":   RQ_ID,
-                "action":    "merge",
-            })
+            resp = client.post(
+                "/review-queue/decide",
+                json={
+                    "item_type": "ambiguous_entity",
+                    "item_id": RQ_ID,
+                    "action": "merge",
+                },
+            )
 
         assert resp.status_code == 200
         data = resp.json()
@@ -303,28 +327,39 @@ class TestDecideMerge:
 
         audit_sqls = []
         ms = MagicMock()
-        ms.fetch_one.return_value = {"id": RQ_ID, "candidate_a_id": WINNER_ID, "candidate_b_id": LOSER_ID}
+        ms.fetch_one.return_value = {
+            "id": RQ_ID,
+            "candidate_a_id": WINNER_ID,
+            "candidate_b_id": LOSER_ID,
+        }
 
         def _exec(sql, params=None):
             if "review_decisions" in (sql or ""):
                 audit_sqls.append(sql)
+
         ms.execute.side_effect = _exec
 
         mock_result = MergeResult(
-            winner_id=WINNER_ID, loser_id=LOSER_ID,
-            aliases_merged=0, relations_moved=0,
-            sessions_updated=0, qdrant_cleaned=True,
+            winner_id=WINNER_ID,
+            loser_id=LOSER_ID,
+            aliases_merged=0,
+            relations_moved=0,
+            sessions_updated=0,
+            qdrant_cleaned=True,
         )
 
         with (
             patch("routes.admin.config.get_metadata_store", return_value=ms),
             patch("services.entity_merge.merge_entities", return_value=mock_result),
         ):
-            client.post("/review-queue/decide", json={
-                "item_type": "ambiguous_entity",
-                "item_id":   RQ_ID,
-                "action":    "merge",
-            })
+            client.post(
+                "/review-queue/decide",
+                json={
+                    "item_type": "ambiguous_entity",
+                    "item_id": RQ_ID,
+                    "action": "merge",
+                },
+            )
 
         assert audit_sqls, "review_decisions not inserted on merge"
 
@@ -333,6 +368,7 @@ class TestDecideMerge:
 # 7. POST /review-queue/decide — promote
 # ---------------------------------------------------------------------------
 
+
 class TestDecidePromote:
     def test_promote_sets_is_staged_false(self, client):
         ms = MagicMock()
@@ -340,17 +376,22 @@ class TestDecidePromote:
         ms.execute.return_value = None
 
         update_sqls = []
+
         def _exec(sql, params=None):
             if "is_staged" in (sql or ""):
                 update_sqls.append(sql)
+
         ms.execute.side_effect = _exec
 
         with patch("routes.admin.config.get_metadata_store", return_value=ms):
-            resp = client.post("/review-queue/decide", json={
-                "item_type": "staged_entity",
-                "item_id":   ENTITY_ID,
-                "action":    "promote",
-            })
+            resp = client.post(
+                "/review-queue/decide",
+                json={
+                    "item_type": "staged_entity",
+                    "item_id": ENTITY_ID,
+                    "action": "promote",
+                },
+            )
 
         assert resp.status_code == 200
         assert update_sqls, "UPDATE with is_staged not called"
@@ -361,17 +402,22 @@ class TestDecidePromote:
         audit = []
         ms = MagicMock()
         ms.fetch_one.return_value = {"entity_id": ENTITY_ID}
+
         def _exec(sql, params=None):
             if "review_decisions" in (sql or ""):
                 audit.append(sql)
+
         ms.execute.side_effect = _exec
 
         with patch("routes.admin.config.get_metadata_store", return_value=ms):
-            client.post("/review-queue/decide", json={
-                "item_type": "staged_entity",
-                "item_id":   ENTITY_ID,
-                "action":    "promote",
-            })
+            client.post(
+                "/review-queue/decide",
+                json={
+                    "item_type": "staged_entity",
+                    "item_id": ENTITY_ID,
+                    "action": "promote",
+                },
+            )
 
         assert audit, "review_decisions not inserted on promote"
 
@@ -380,23 +426,32 @@ class TestDecidePromote:
 # 8. POST /review-queue/decide — distinct
 # ---------------------------------------------------------------------------
 
+
 class TestDecideDistinct:
     def test_distinct_inserts_known_distinct_pair(self, client):
         known_distinct_sqls = []
         ms = MagicMock()
-        ms.fetch_one.return_value = {"id": RQ_ID, "candidate_a_id": WINNER_ID, "candidate_b_id": LOSER_ID}
+        ms.fetch_one.return_value = {
+            "id": RQ_ID,
+            "candidate_a_id": WINNER_ID,
+            "candidate_b_id": LOSER_ID,
+        }
 
         def _exec(sql, params=None):
             if "known_distinct_entity_pairs" in (sql or ""):
                 known_distinct_sqls.append(sql)
+
         ms.execute.side_effect = _exec
 
         with patch("routes.admin.config.get_metadata_store", return_value=ms):
-            resp = client.post("/review-queue/decide", json={
-                "item_type": "ambiguous_entity",
-                "item_id":   RQ_ID,
-                "action":    "distinct",
-            })
+            resp = client.post(
+                "/review-queue/decide",
+                json={
+                    "item_type": "ambiguous_entity",
+                    "item_id": RQ_ID,
+                    "action": "distinct",
+                },
+            )
 
         assert resp.status_code == 200
         assert known_distinct_sqls, "known_distinct_entity_pairs INSERT not called"
@@ -404,19 +459,27 @@ class TestDecideDistinct:
     def test_distinct_removes_review_queue_row(self, client):
         delete_sqls = []
         ms = MagicMock()
-        ms.fetch_one.return_value = {"id": RQ_ID, "candidate_a_id": WINNER_ID, "candidate_b_id": LOSER_ID}
+        ms.fetch_one.return_value = {
+            "id": RQ_ID,
+            "candidate_a_id": WINNER_ID,
+            "candidate_b_id": LOSER_ID,
+        }
 
         def _exec(sql, params=None):
             if "DELETE FROM review_queue" in (sql or ""):
                 delete_sqls.append(sql)
+
         ms.execute.side_effect = _exec
 
         with patch("routes.admin.config.get_metadata_store", return_value=ms):
-            client.post("/review-queue/decide", json={
-                "item_type": "ambiguous_entity",
-                "item_id":   RQ_ID,
-                "action":    "distinct",
-            })
+            client.post(
+                "/review-queue/decide",
+                json={
+                    "item_type": "ambiguous_entity",
+                    "item_id": RQ_ID,
+                    "action": "distinct",
+                },
+            )
 
         assert delete_sqls, "DELETE FROM review_queue not called for distinct action"
 
@@ -425,21 +488,28 @@ class TestDecideDistinct:
 # 9. Unknown action returns 400
 # ---------------------------------------------------------------------------
 
+
 class TestUnknownAction:
     def test_unknown_item_type(self, client):
-        resp = client.post("/review-queue/decide", json={
-            "item_type": "unknown_type",
-            "item_id":   "123",
-            "action":    "merge",
-        })
+        resp = client.post(
+            "/review-queue/decide",
+            json={
+                "item_type": "unknown_type",
+                "item_id": "123",
+                "action": "merge",
+            },
+        )
         assert resp.status_code == 400
 
     def test_invalid_action_for_item_type(self, client):
-        resp = client.post("/review-queue/decide", json={
-            "item_type": "staged_entity",
-            "item_id":   ENTITY_ID,
-            "action":    "merge",  # not valid for staged_entity
-        })
+        resp = client.post(
+            "/review-queue/decide",
+            json={
+                "item_type": "staged_entity",
+                "item_id": ENTITY_ID,
+                "action": "merge",  # not valid for staged_entity
+            },
+        )
         assert resp.status_code == 400
 
     def test_valid_action_returns_not_400(self, client):
@@ -448,11 +518,14 @@ class TestUnknownAction:
         ms.execute.return_value = None
 
         with patch("routes.admin.config.get_metadata_store", return_value=ms):
-            resp = client.post("/review-queue/decide", json={
-                "item_type": "constraint_violation",
-                "item_id":   VIO_ID,
-                "action":    "suppress",
-            })
+            resp = client.post(
+                "/review-queue/decide",
+                json={
+                    "item_type": "constraint_violation",
+                    "item_id": VIO_ID,
+                    "action": "suppress",
+                },
+            )
         assert resp.status_code == 200
 
 
@@ -460,11 +533,15 @@ class TestUnknownAction:
 # 10. review_decisions for suppress/dismiss
 # ---------------------------------------------------------------------------
 
+
 class TestReviewDecisionsAllActions:
-    @pytest.mark.parametrize("item_type,action", [
-        ("constraint_violation", "suppress"),
-        ("orphan_entity",        "dismiss"),
-    ])
+    @pytest.mark.parametrize(
+        "item_type,action",
+        [
+            ("constraint_violation", "suppress"),
+            ("orphan_entity", "dismiss"),
+        ],
+    )
     def test_review_decision_inserted(self, client, item_type, action):
         audit = []
         ms = MagicMock()
@@ -473,14 +550,18 @@ class TestReviewDecisionsAllActions:
         def _exec(sql, params=None):
             if "review_decisions" in (sql or ""):
                 audit.append(sql)
+
         ms.execute.side_effect = _exec
 
         with patch("routes.admin.config.get_metadata_store", return_value=ms):
-            resp = client.post("/review-queue/decide", json={
-                "item_type": item_type,
-                "item_id":   VIO_ID,
-                "action":    action,
-            })
+            resp = client.post(
+                "/review-queue/decide",
+                json={
+                    "item_type": item_type,
+                    "item_id": VIO_ID,
+                    "action": action,
+                },
+            )
 
         assert resp.status_code == 200
         assert audit, f"review_decisions not inserted for {item_type}/{action}"
@@ -489,6 +570,7 @@ class TestReviewDecisionsAllActions:
 # ---------------------------------------------------------------------------
 # 11. Auth — no token required
 # ---------------------------------------------------------------------------
+
 
 class TestAuthPattern:
     def test_get_review_queue_no_token_needed(self, client):
@@ -509,11 +591,14 @@ class TestAuthPattern:
         ms.fetch_one.return_value = {"violation_id": VIO_ID}
         ms.execute.return_value = None
         with patch("routes.admin.config.get_metadata_store", return_value=ms):
-            resp = client.post("/review-queue/decide", json={
-                "item_type": "constraint_violation",
-                "item_id":   VIO_ID,
-                "action":    "suppress",
-            })
+            resp = client.post(
+                "/review-queue/decide",
+                json={
+                    "item_type": "constraint_violation",
+                    "item_id": VIO_ID,
+                    "action": "suppress",
+                },
+            )
         assert resp.status_code == 200
 
 
@@ -521,38 +606,48 @@ class TestAuthPattern:
 # 12. item not found returns 404
 # ---------------------------------------------------------------------------
 
+
 class TestItemNotFound:
     def test_review_queue_item_not_found(self, client):
         ms = MagicMock()
         ms.fetch_one.return_value = None  # rq_row not found
         with patch("routes.admin.config.get_metadata_store", return_value=ms):
-            resp = client.post("/review-queue/decide", json={
-                "item_type": "ambiguous_entity",
-                "item_id":   "99999",
-                "action":    "merge",
-            })
+            resp = client.post(
+                "/review-queue/decide",
+                json={
+                    "item_type": "ambiguous_entity",
+                    "item_id": "99999",
+                    "action": "merge",
+                },
+            )
         assert resp.status_code == 404
 
     def test_staged_entity_not_found(self, client):
         ms = MagicMock()
         ms.fetch_one.return_value = None
         with patch("routes.admin.config.get_metadata_store", return_value=ms):
-            resp = client.post("/review-queue/decide", json={
-                "item_type": "staged_entity",
-                "item_id":   ENTITY_ID,
-                "action":    "promote",
-            })
+            resp = client.post(
+                "/review-queue/decide",
+                json={
+                    "item_type": "staged_entity",
+                    "item_id": ENTITY_ID,
+                    "action": "promote",
+                },
+            )
         assert resp.status_code == 404
 
     def test_violation_not_found(self, client):
         ms = MagicMock()
         ms.fetch_one.return_value = None
         with patch("routes.admin.config.get_metadata_store", return_value=ms):
-            resp = client.post("/review-queue/decide", json={
-                "item_type": "constraint_violation",
-                "item_id":   VIO_ID,
-                "action":    "suppress",
-            })
+            resp = client.post(
+                "/review-queue/decide",
+                json={
+                    "item_type": "constraint_violation",
+                    "item_id": VIO_ID,
+                    "action": "suppress",
+                },
+            )
         assert resp.status_code == 404
 
 
@@ -596,6 +691,7 @@ def auth_client(auth_app):
 
 def _mint(user_id: str, role: str) -> str:
     from auth import mint_access_token
+
     return mint_access_token(user_id=user_id, role=role)
 
 
@@ -622,8 +718,8 @@ class TestReviewQueuePerUserApprovalScope:
                 headers={"Authorization": f"Bearer {token}"},
                 json={
                     "item_type": "constraint_violation",
-                    "item_id":   VIO_ID,
-                    "action":    "suppress",
+                    "item_id": VIO_ID,
+                    "action": "suppress",
                 },
             )
 
@@ -649,16 +745,14 @@ class TestReviewQueuePerUserApprovalScope:
                 headers={"Authorization": f"Bearer {token}"},
                 json={
                     "item_type": "constraint_violation",
-                    "item_id":   VIO_ID,
-                    "action":    "suppress",
+                    "item_id": VIO_ID,
+                    "action": "suppress",
                 },
             )
 
         assert resp.status_code == 403
         assert "different user" in resp.text
-        assert ms.execute.call_count == 0, (
-            "no DB writes should occur on an authorization failure"
-        )
+        assert ms.execute.call_count == 0, "no DB writes should occur on an authorization failure"
 
     def test_non_admin_cannot_act_on_behalf_via_body_user_id(self, auth_client):
         """Bob passes ``user_id: alice`` in the body trying to spoof
@@ -672,9 +766,9 @@ class TestReviewQueuePerUserApprovalScope:
                 headers={"Authorization": f"Bearer {token}"},
                 json={
                     "item_type": "constraint_violation",
-                    "item_id":   VIO_ID,
-                    "action":    "suppress",
-                    "user_id":   "alice",
+                    "item_id": VIO_ID,
+                    "action": "suppress",
+                    "user_id": "alice",
                 },
             )
 
@@ -703,8 +797,8 @@ class TestReviewQueuePerUserApprovalScope:
                 headers={"Authorization": f"Bearer {token}"},
                 json={
                     "item_type": "constraint_violation",
-                    "item_id":   VIO_ID,
-                    "action":    "suppress",
+                    "item_id": VIO_ID,
+                    "action": "suppress",
                 },
             )
 
@@ -720,9 +814,7 @@ class TestReviewQueuePerUserApprovalScope:
             "admin-on-behalf must be recorded in payload.acted_by_user_id"
         )
 
-    def test_admin_target_user_id_body_field_is_ignored_when_item_disagrees(
-        self, auth_client
-    ):
+    def test_admin_target_user_id_body_field_is_ignored_when_item_disagrees(self, auth_client):
         """Admin Carol passes body.user_id='bob' but the item belongs to
         alice. Originating user wins (DB writes scope to alice); the
         decision row attributes Carol via acted_by_user_id."""
@@ -741,9 +833,9 @@ class TestReviewQueuePerUserApprovalScope:
                 headers={"Authorization": f"Bearer {token}"},
                 json={
                     "item_type": "constraint_violation",
-                    "item_id":   VIO_ID,
-                    "action":    "suppress",
-                    "user_id":   "bob",
+                    "item_id": VIO_ID,
+                    "action": "suppress",
+                    "user_id": "bob",
                 },
             )
 
@@ -761,16 +853,14 @@ class TestReviewQueuePerUserApprovalScope:
                 "/review-queue/decide",
                 json={
                     "item_type": "constraint_violation",
-                    "item_id":   VIO_ID,
-                    "action":    "suppress",
+                    "item_id": VIO_ID,
+                    "action": "suppress",
                 },
             )
         assert resp.status_code == 401
         assert ms.fetch_one.call_count == 0
 
-    def test_item_not_found_returns_404_before_authorization_check(
-        self, auth_client
-    ):
+    def test_item_not_found_returns_404_before_authorization_check(self, auth_client):
         """Ownership lookup misses → 404. The 404 leaks no information
         about who owns the item (the lookup returned None)."""
         ms = MagicMock()
@@ -783,8 +873,8 @@ class TestReviewQueuePerUserApprovalScope:
                 headers={"Authorization": f"Bearer {token}"},
                 json={
                     "item_type": "constraint_violation",
-                    "item_id":   VIO_ID,
-                    "action":    "suppress",
+                    "item_id": VIO_ID,
+                    "action": "suppress",
                 },
             )
         assert resp.status_code == 404
@@ -802,8 +892,8 @@ class TestReviewQueuePerUserApprovalScope:
                 headers={"Authorization": f"Bearer {token}"},
                 json={
                     "item_type": "unknown_type",
-                    "item_id":   VIO_ID,
-                    "action":    "suppress",
+                    "item_id": VIO_ID,
+                    "action": "suppress",
                 },
             )
         assert resp.status_code == 400

@@ -180,7 +180,9 @@ def set_connector_mode(*, user_id: str, connector: str, mode: str) -> None:
     invalidate_cache(user_id, connector)
     _log.info(
         "permission_changed user_id=%s connector=%s mode=%s",
-        user_id, connector, mode,
+        user_id,
+        connector,
+        mode,
     )
 
 
@@ -198,7 +200,8 @@ def delete_user_permission(*, user_id: str, connector: str) -> None:
     invalidate_cache(user_id, connector)
     _log.info(
         "permission_deleted user_id=%s connector=%s",
-        user_id, connector,
+        user_id,
+        connector,
     )
 
 
@@ -250,7 +253,9 @@ def get_user_permissions(*, user_id: str) -> list[dict]:
 
 
 def get_user_effective_permissions(
-    *, user_id: str, known_connectors: list[str],
+    *,
+    user_id: str,
+    known_connectors: list[str],
 ) -> list[dict]:
     """Return one row per ``known_connector`` from the user's effective view.
 
@@ -260,32 +265,37 @@ def get_user_effective_permissions(
     updated_at=None``.
     """
     if not isinstance(user_id, str) or not user_id:
-        raise TypeError(
-            "get_user_effective_permissions: user_id (keyword-only) is required"
-        )
+        raise TypeError("get_user_effective_permissions: user_id (keyword-only) is required")
     explicit = {row["connector"]: row for row in get_user_permissions(user_id=user_id)}
     out: list[dict] = []
     for connector in sorted(set(known_connectors)):
         row = explicit.get(connector)
         if row is not None:
-            out.append({
-                "connector": connector,
-                "mode": row["mode"],
-                "is_default": False,
-                "updated_at": row.get("updated_at"),
-            })
+            out.append(
+                {
+                    "connector": connector,
+                    "mode": row["mode"],
+                    "is_default": False,
+                    "updated_at": row.get("updated_at"),
+                }
+            )
         else:
-            out.append({
-                "connector": connector,
-                "mode": _DEFAULT_MODE,
-                "is_default": True,
-                "updated_at": None,
-            })
+            out.append(
+                {
+                    "connector": connector,
+                    "mode": _DEFAULT_MODE,
+                    "is_default": True,
+                    "updated_at": None,
+                }
+            )
     return out
 
 
 def routine_check(
-    *, user_id: str, connector: str, action_type: str,
+    *,
+    user_id: str,
+    connector: str,
+    action_type: str,
 ) -> None:
     """Increment per-user approval count and fire ROUTINE_ELEVATION_READY.
 
@@ -330,17 +340,26 @@ def routine_check(
             )
             _log.info(
                 "Routine elevation ready: user_id=%s %s/%s (%d approvals, 0 edits)",
-                user_id, connector, action_type, row["approval_count"],
+                user_id,
+                connector,
+                action_type,
+                row["approval_count"],
             )
     except Exception as exc:
         _log.warning(
             "routine_check error for user_id=%s %s/%s: %s",
-            user_id, connector, action_type, exc,
+            user_id,
+            connector,
+            action_type,
+            exc,
         )
 
 
 def elevate_to_routine(
-    *, user_id: str, connector: str, action_type: str,
+    *,
+    user_id: str,
+    connector: str,
+    action_type: str,
 ) -> None:
     """Explicitly elevate an action_type to routine Do for one user."""
     if not isinstance(user_id, str) or not user_id:
@@ -356,5 +375,7 @@ def elevate_to_routine(
     )
     _log.info(
         "routine_elevated user_id=%s connector=%s action_type=%s",
-        user_id, connector, action_type,
+        user_id,
+        connector,
+        action_type,
     )

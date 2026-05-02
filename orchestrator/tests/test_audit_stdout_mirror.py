@@ -15,16 +15,15 @@ would dwarf application logs.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
+from datetime import timezone
 
-import pytest
-import structlog
-from structlog.testing import capture_logs
-
-import config
 import permissions
 from actions import audit as audit_module
 from models.actions import AuditEntry
+from structlog.testing import capture_logs
+
+import config
 
 
 def _make_entry(**overrides) -> AuditEntry:

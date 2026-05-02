@@ -47,9 +47,7 @@ def _mock_stream(*args, **kwargs):
 @patch("routes.chat.config.is_model_enabled", return_value=True)
 @patch("routes.chat.config.get_llm_provider", return_value=None)
 @patch("routes.chat.ask_stream", side_effect=_mock_stream)
-def test_chat_completions_stream(
-    mock_stream, mock_provider, mock_enabled, mock_cfg, mock_ctx
-):
+def test_chat_completions_stream(mock_stream, mock_provider, mock_enabled, mock_cfg, mock_ctx):
     with TestClient(main.app) as client:
         resp = client.post(
             "/v1/chat/completions",
@@ -117,11 +115,14 @@ def test_chat_completions_disabled_model_returns_404(mock_enabled):
     assert "not available" in resp.json()["detail"]
 
 
-@patch("routes.chat.config.get_all_models_config", return_value={
-    "claude": {"adapter": "anthropic", "api_key_env": "ANTHROPIC_API_KEY"},
-    "qwen": {"adapter": "openai", "base_url": "http://ollama:11434/v1"},
-    "chatgpt": {"adapter": "openai", "optional": True, "api_key_env": "OPENAI_API_KEY"},
-})
+@patch(
+    "routes.chat.config.get_all_models_config",
+    return_value={
+        "claude": {"adapter": "anthropic", "api_key_env": "ANTHROPIC_API_KEY"},
+        "qwen": {"adapter": "openai", "base_url": "http://ollama:11434/v1"},
+        "chatgpt": {"adapter": "openai", "optional": True, "api_key_env": "OPENAI_API_KEY"},
+    },
+)
 @patch(
     "routes.chat.config.is_model_enabled",
     side_effect=lambda n, **kwargs: n in ("claude", "qwen"),

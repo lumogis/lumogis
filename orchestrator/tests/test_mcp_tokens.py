@@ -19,10 +19,11 @@ import contextlib
 import logging
 import re
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
+from datetime import timedelta
+from datetime import timezone
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # In-memory store: knows about `mcp_tokens` rows and `audit_log` rows.
@@ -75,7 +76,9 @@ class _FakeStore:
 
         if q.startswith("insert into mcp_tokens"):
             if self._force_unique_violation_on_insert:
-                raise RuntimeError("duplicate key value violates unique constraint mcp_tokens_active_prefix_uniq")
+                raise RuntimeError(
+                    "duplicate key value violates unique constraint mcp_tokens_active_prefix_uniq"
+                )
             if self._fail_on_insert:
                 raise RuntimeError("simulated mcp_tokens insert failure")
             token_id, user_id, token_prefix, token_hash, label, scopes = p
@@ -100,7 +103,9 @@ class _FakeStore:
             }
             return
 
-        if q.startswith("update mcp_tokens set revoked_at = now() where id = %s and revoked_at is null"):
+        if q.startswith(
+            "update mcp_tokens set revoked_at = now() where id = %s and revoked_at is null"
+        ):
             (tid,) = p
             row = self.tokens.get(tid)
             if row is not None and row["revoked_at"] is None:
@@ -140,7 +145,9 @@ class _FakeStore:
         q = self._norm(query)
         p = params or ()
 
-        if q.startswith("update mcp_tokens set revoked_at = now() where user_id = %s and revoked_at is null returning *"):
+        if q.startswith(
+            "update mcp_tokens set revoked_at = now() where user_id = %s and revoked_at is null returning *"
+        ):
             (uid,) = p
             now = datetime.now(timezone.utc)
             updated: list[dict] = []
@@ -153,28 +160,35 @@ class _FakeStore:
         if q.startswith("select * from mcp_tokens where user_id = %s and revoked_at is null"):
             (uid,) = p
             return sorted(
-                (dict(r) for r in self.tokens.values()
-                 if r["user_id"] == uid and r["revoked_at"] is None),
-                key=lambda r: r["created_at"], reverse=True,
+                (
+                    dict(r)
+                    for r in self.tokens.values()
+                    if r["user_id"] == uid and r["revoked_at"] is None
+                ),
+                key=lambda r: r["created_at"],
+                reverse=True,
             )
 
         if q.startswith("select * from mcp_tokens where user_id = %s order by created_at"):
             (uid,) = p
             return sorted(
                 (dict(r) for r in self.tokens.values() if r["user_id"] == uid),
-                key=lambda r: r["created_at"], reverse=True,
+                key=lambda r: r["created_at"],
+                reverse=True,
             )
 
         if q.startswith("select * from mcp_tokens where revoked_at is null order by"):
             return sorted(
                 (dict(r) for r in self.tokens.values() if r["revoked_at"] is None),
-                key=lambda r: r["created_at"], reverse=True,
+                key=lambda r: r["created_at"],
+                reverse=True,
             )
 
         if q.startswith("select * from mcp_tokens order by created_at"):
             return sorted(
                 (dict(r) for r in self.tokens.values()),
-                key=lambda r: r["created_at"], reverse=True,
+                key=lambda r: r["created_at"],
+                reverse=True,
             )
 
         return []
@@ -192,16 +206,18 @@ class _AuditAwareStore(_FakeStore):
         q = self._norm(query)
         if q.startswith("insert into audit_log"):
             row_id = len(self.audit) + 1
-            self.audit.append({
-                "id": row_id,
-                "user_id": params[0],
-                "action_name": params[1],
-                "connector": params[2],
-                "mode": params[3],
-                "input_summary": params[4],
-                "result_summary": params[5],
-                # remaining fields ignored
-            })
+            self.audit.append(
+                {
+                    "id": row_id,
+                    "user_id": params[0],
+                    "action_name": params[1],
+                    "connector": params[2],
+                    "mode": params[3],
+                    "input_summary": params[4],
+                    "result_summary": params[5],
+                    # remaining fields ignored
+                }
+            )
             return {"id": row_id}
         return super().fetch_one(query, params)
 
@@ -242,7 +258,7 @@ def test_mint_returns_lmcp_prefixed_50_char_token(store):
 
     assert plaintext.startswith("lmcp_")
     assert len(plaintext) == 50
-    body = plaintext[len("lmcp_"):]
+    body = plaintext[len("lmcp_") :]
     assert len(body) == 45
     assert re.fullmatch(r"[a-z2-7]+", body), f"body must be base32 lowercase: {body!r}"
     assert "=" not in body, "no padding per D2"
@@ -257,7 +273,7 @@ def test_mint_token_prefix_is_first_16_chars_of_body(store):
     from services.mcp_tokens import mint
 
     row, plaintext = mint("alice", "lbl")
-    body = plaintext[len("lmcp_"):]
+    body = plaintext[len("lmcp_") :]
     assert row.token_prefix == body[:16]
     assert len(row.token_prefix) == 16
 
@@ -265,6 +281,7 @@ def test_mint_token_prefix_is_first_16_chars_of_body(store):
 def test_mcp_token_hash_is_sha256(store):
     """D9: token_hash = SHA-256 hex of the plaintext."""
     import hashlib
+
     from services.mcp_tokens import mint
 
     row, plaintext = mint("alice", "lbl")
@@ -279,7 +296,8 @@ def test_mint_inserts_scopes_as_null_not_empty_array(store):
 
     mint("alice", "lbl")
     inserts = [
-        (q, p) for (q, p) in store.exec_log
+        (q, p)
+        for (q, p) in store.exec_log
         if "insert into mcp_tokens" in " ".join(q.split()).lower()
     ]
     assert len(inserts) == 1
@@ -312,9 +330,7 @@ def test_mint_collision_regenerates(store, monkeypatch):
     # is sufficient; the remaining 18 bytes can be anything fresh.
     # 16 base32 chars decodes to exactly 10 bytes (16*5 = 80 bits) and is
     # already a multiple of 8 — no padding required.
-    seed_raw_first10 = svc.base64.b32decode(
-        seed.token_prefix.upper().encode("ascii")
-    )
+    seed_raw_first10 = svc.base64.b32decode(seed.token_prefix.upper().encode("ascii"))
     assert len(seed_raw_first10) == 10
     colliding = seed_raw_first10 + real_token_bytes(svc._TOKEN_BODY_BYTES - 10)
 
@@ -337,9 +353,7 @@ def test_mint_collision_budget_exhausts_loud(store, monkeypatch):
     """Every regeneration colliding raises RuntimeError, NOT an infinite loop."""
     import services.mcp_tokens as svc
 
-    monkeypatch.setattr(
-        store, "_force_unique_violation_on_insert", True, raising=False
-    )
+    monkeypatch.setattr(store, "_force_unique_violation_on_insert", True, raising=False)
     with pytest.raises(RuntimeError, match="collision retry budget exhausted"):
         svc.mint("alice", "lbl")
 
@@ -350,7 +364,8 @@ def test_mint_collision_budget_exhausts_loud(store, monkeypatch):
 
 
 def test_verify_returns_row_for_active_token(store):
-    from services.mcp_tokens import mint, verify
+    from services.mcp_tokens import mint
+    from services.mcp_tokens import verify
 
     row, plaintext = mint("alice", "lbl")
     got = verify(plaintext)
@@ -367,12 +382,13 @@ def test_verify_returns_none_for_unknown_prefix(store):
 
 def test_verify_returns_none_for_known_prefix_wrong_hash(store, caplog):
     """Known prefix + flipped char in the body returns None AND logs WARNING."""
-    from services.mcp_tokens import mint, verify
+    from services.mcp_tokens import mint
+    from services.mcp_tokens import verify
 
     _, plaintext = mint("alice", "lbl")
     # Flip a char AFTER the 16-char prefix so the prefix still hits but the
     # hash mismatches.
-    body = plaintext[len("lmcp_"):]
+    body = plaintext[len("lmcp_") :]
     head, tail = body[:16], body[16:]
     flipped = ("3" if tail[0] != "3" else "4") + tail[1:]
     bogus = "lmcp_" + head + flipped
@@ -385,7 +401,9 @@ def test_verify_returns_none_for_known_prefix_wrong_hash(store, caplog):
 
 def test_verify_returns_none_for_revoked_token(store):
     """Partial unique index hides revoked rows; `verify()` returns None."""
-    from services.mcp_tokens import mint, revoke, verify
+    from services.mcp_tokens import mint
+    from services.mcp_tokens import revoke
+    from services.mcp_tokens import verify
 
     row, plaintext = mint("alice", "lbl")
     revoke(row.id, by_user_id="alice", by_role="user")
@@ -394,10 +412,11 @@ def test_verify_returns_none_for_revoked_token(store):
 
 def test_verify_does_not_leak_plaintext_in_warning(store, caplog):
     """Mismatch WARNING never includes the bearer or its prefix."""
-    from services.mcp_tokens import mint, verify
+    from services.mcp_tokens import mint
+    from services.mcp_tokens import verify
 
     _, plaintext = mint("alice", "lbl")
-    body = plaintext[len("lmcp_"):]
+    body = plaintext[len("lmcp_") :]
     head, tail = body[:16], body[16:]
     bogus = "lmcp_" + head + ("4" if tail[0] != "4" else "5") + tail[1:]
 
@@ -426,7 +445,8 @@ def test_verify_returns_none_for_non_lmcp_bearer(store):
 
 def test_stamp_used_throttles_to_5_minutes(store):
     """Two verifies in quick succession produce exactly one UPDATE last_used_at."""
-    from services.mcp_tokens import mint, verify
+    from services.mcp_tokens import mint
+    from services.mcp_tokens import verify
 
     _, plaintext = mint("alice", "lbl")
     store.exec_log.clear()  # ignore the INSERT from mint
@@ -434,12 +454,12 @@ def test_stamp_used_throttles_to_5_minutes(store):
     verify(plaintext)
     verify(plaintext)
     updates = [
-        (q, p) for (q, p) in store.exec_log
+        (q, p)
+        for (q, p) in store.exec_log
         if "update mcp_tokens set last_used_at" in " ".join(q.split()).lower()
     ]
     assert len(updates) == 1, (
-        "throttle should suppress the second `last_used_at` UPDATE; "
-        f"got {len(updates)}"
+        f"throttle should suppress the second `last_used_at` UPDATE; got {len(updates)}"
     )
 
 
@@ -453,13 +473,12 @@ def test_stamp_used_writes_after_throttle_window(store, monkeypatch):
 
     # Backdate the cache entry by 6 minutes so the throttle window has passed.
     cache_key = next(iter(svc._LAST_STAMP_CACHE._data))
-    svc._LAST_STAMP_CACHE._data[cache_key] = (
-        datetime.now(timezone.utc) - timedelta(minutes=6)
-    )
+    svc._LAST_STAMP_CACHE._data[cache_key] = datetime.now(timezone.utc) - timedelta(minutes=6)
 
     svc.verify(plaintext)
     updates = [
-        (q, p) for (q, p) in store.exec_log
+        (q, p)
+        for (q, p) in store.exec_log
         if "update mcp_tokens set last_used_at" in " ".join(q.split()).lower()
     ]
     assert len(updates) == 2
@@ -467,7 +486,8 @@ def test_stamp_used_writes_after_throttle_window(store, monkeypatch):
 
 def test_stamp_used_failure_does_not_propagate(store, caplog):
     """A failing UPDATE is logged at WARNING; verify() still returns the row."""
-    from services.mcp_tokens import mint, verify
+    from services.mcp_tokens import mint
+    from services.mcp_tokens import verify
 
     row, plaintext = mint("alice", "lbl")
     store._fail_on_update_last_used = True
@@ -486,7 +506,9 @@ def test_stamp_used_failure_does_not_propagate(store, caplog):
 
 
 def test_list_for_user_excludes_revoked_by_default(store):
-    from services.mcp_tokens import list_for_user, mint, revoke
+    from services.mcp_tokens import list_for_user
+    from services.mcp_tokens import mint
+    from services.mcp_tokens import revoke
 
     a1, _ = mint("alice", "a1")
     a2, _ = mint("alice", "a2")
@@ -500,7 +522,8 @@ def test_list_for_user_excludes_revoked_by_default(store):
 
 
 def test_list_for_user_filters_by_user_id(store):
-    from services.mcp_tokens import list_for_user, mint
+    from services.mcp_tokens import list_for_user
+    from services.mcp_tokens import mint
 
     alice, _ = mint("alice", "a")
     bob, _ = mint("bob", "b")
@@ -511,7 +534,9 @@ def test_list_for_user_filters_by_user_id(store):
 
 def test_list_all_excludes_revoked_by_default(store):
     """`list_all` mirrors `list_for_user` semantics for the include_revoked toggle."""
-    from services.mcp_tokens import list_all, mint, revoke
+    from services.mcp_tokens import list_all
+    from services.mcp_tokens import mint
+    from services.mcp_tokens import revoke
 
     a, _ = mint("alice", "a")
     b, _ = mint("bob", "b")
@@ -523,7 +548,9 @@ def test_list_all_excludes_revoked_by_default(store):
 
 def test_get_by_id_returns_revoked_rows(store):
     """`get_by_id` does NOT filter by `revoked_at` (route-layer ownership check)."""
-    from services.mcp_tokens import get_by_id, mint, revoke
+    from services.mcp_tokens import get_by_id
+    from services.mcp_tokens import mint
+    from services.mcp_tokens import revoke
 
     row, _ = mint("alice", "a")
     revoke(row.id, by_user_id="alice", by_role="user")
@@ -542,7 +569,8 @@ def test_get_by_id_returns_none_for_unknown(store):
 
 def test_revoke_is_idempotent(store):
     """Re-revoking returns the same row with the original `revoked_at`."""
-    from services.mcp_tokens import mint, revoke
+    from services.mcp_tokens import mint
+    from services.mcp_tokens import revoke
 
     row, _ = mint("alice", "a")
 
@@ -564,12 +592,10 @@ def test_revoke_returns_none_for_unknown(store):
 
 def test_cascade_revoke_for_user_revokes_only_active_tokens(store):
     """Already-revoked rows are untouched; only active rows for the user flip."""
-    from services.mcp_tokens import (
-        cascade_revoke_for_user,
-        list_for_user,
-        mint,
-        revoke,
-    )
+    from services.mcp_tokens import cascade_revoke_for_user
+    from services.mcp_tokens import list_for_user
+    from services.mcp_tokens import mint
+    from services.mcp_tokens import revoke
 
     a1, _ = mint("alice", "a1")
     a2, _ = mint("alice", "a2")
@@ -589,9 +615,7 @@ def test_cascade_revoke_for_user_revokes_only_active_tokens(store):
     # Bob's token unaffected.
     assert list_for_user("bob")
     # Alice's earlier-revoked token's revoked_at unchanged.
-    a1_after = next(
-        t for t in list_for_user("alice", include_revoked=True) if t.id == a1.id
-    )
+    a1_after = next(t for t in list_for_user("alice", include_revoked=True) if t.id == a1.id)
     assert a1_after.revoked_at == a1_revoked_at
 
 
@@ -656,7 +680,8 @@ def test_emit_audit_failure_is_swallowed(store, monkeypatch, caplog):
 
 def test_pydantic_repr_does_not_leak_plaintext(store):
     """D15: token_hash, token_prefix, plaintext are `Field(repr=False)`."""
-    from models.mcp_token import McpTokenPublic, MintMcpTokenResponse
+    from models.mcp_token import McpTokenPublic
+    from models.mcp_token import MintMcpTokenResponse
     from services.mcp_tokens import mint
 
     row, plaintext = mint("alice", "lbl")
@@ -666,9 +691,13 @@ def test_pydantic_repr_does_not_leak_plaintext(store):
 
     response = MintMcpTokenResponse(
         token=McpTokenPublic(
-            id=row.id, label=row.label, scopes=row.scopes,
-            created_at=row.created_at, last_used_at=None,
-            expires_at=None, revoked_at=None,
+            id=row.id,
+            label=row.label,
+            scopes=row.scopes,
+            created_at=row.created_at,
+            last_used_at=None,
+            expires_at=None,
+            revoked_at=None,
         ),
         plaintext=plaintext,
     )
@@ -682,9 +711,8 @@ def test_pydantic_repr_does_not_leak_plaintext(store):
 
 def test_mint_request_rejects_expires_at_field():
     """D4 + D16: `expires_at` in the body is a 422 (Pydantic `extra_forbidden`)."""
-    from pydantic import ValidationError
-
     from models.mcp_token import MintMcpTokenRequest
+    from pydantic import ValidationError
 
     with pytest.raises(ValidationError) as exc_info:
         MintMcpTokenRequest(label="x", expires_at="2027-01-01T00:00:00Z")
@@ -694,9 +722,8 @@ def test_mint_request_rejects_expires_at_field():
 
 def test_mint_request_rejects_arbitrary_unknown_fields():
     """D16: any unknown field is 422 — defends D4 explicitly."""
-    from pydantic import ValidationError
-
     from models.mcp_token import MintMcpTokenRequest
+    from pydantic import ValidationError
 
     with pytest.raises(ValidationError) as exc_info:
         MintMcpTokenRequest(label="x", scopes=["memory.search"])
@@ -712,6 +739,7 @@ def test_mint_request_rejects_arbitrary_unknown_fields():
 def test_check_mcp_bearer_uses_compare_digest():
     """Regex against source: D9 mandates constant-time compare in verify()."""
     import inspect
+
     from services import mcp_tokens
 
     src = inspect.getsource(mcp_tokens)

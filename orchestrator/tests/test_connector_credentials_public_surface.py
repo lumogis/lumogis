@@ -8,8 +8,8 @@ re-export the names downstream callers historically imported from it.
 A missed re-export must surface as a unit-test failure here rather
 than as a downstream ``ImportError`` at request time.
 """
-from __future__ import annotations
 
+from __future__ import annotations
 
 EXPECTED_PUBLIC_SURFACE: set[str] = {
     "ACTION_CRED_PUT",
@@ -36,6 +36,4 @@ def test_connector_credentials_module_re_exports_full_historical_surface():
 
     public = {n for n in dir(ccs) if not n.startswith("_")}
     missing = EXPECTED_PUBLIC_SURFACE - public
-    assert not missing, (
-        f"public surface regressed; missing names: {sorted(missing)}"
-    )
+    assert not missing, f"public surface regressed; missing names: {sorted(missing)}"

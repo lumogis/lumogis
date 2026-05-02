@@ -13,28 +13,38 @@ paths (/text, /upload).
 
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Literal
+from typing import Optional
 
 from auth import UserContext
 from authz import require_user
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
+from fastapi import APIRouter
+from fastapi import Depends
+from fastapi import File
+from fastapi import Form
+from fastapi import HTTPException
+from fastapi import Query
+from fastapi import Response
+from fastapi import UploadFile
+from fastapi import status
 from fastapi.responses import FileResponse
+from models.api_v1 import CaptureAttachmentSummary
+from models.api_v1 import CaptureCreated
+from models.api_v1 import CaptureCreateRequest
+from models.api_v1 import CaptureDetail
+from models.api_v1 import CaptureListResponse
+from models.api_v1 import CapturePatchRequest
+from models.api_v1 import CaptureTextRequest
+from models.api_v1 import CaptureTranscribeRequest
+from models.api_v1 import CaptureTranscriptSummary
+from services.speech_to_text import SttDisabled
+from services.speech_to_text import SttProcessingError
+from services.speech_to_text import SttValidationError
+from services.speech_to_text import transcribe_blob
 from starlette.concurrency import run_in_threadpool
 
 import config
-from models.api_v1 import (
-    CaptureAttachmentSummary,
-    CaptureCreateRequest,
-    CaptureCreated,
-    CaptureDetail,
-    CaptureListResponse,
-    CapturePatchRequest,
-    CaptureTextRequest,
-    CaptureTranscribeRequest,
-    CaptureTranscriptSummary,
-)
 from services import captures as capture_svc
-from services.speech_to_text import SttDisabled, SttProcessingError, SttValidationError, transcribe_blob
 
 router = APIRouter(
     prefix="/api/v1/captures",
@@ -146,7 +156,9 @@ def create_capture_text(
 @router.post(
     "/upload",
     status_code=status.HTTP_501_NOT_IMPLEMENTED,
-    responses={501: {"description": "Deprecated upload surface — use POST /captures/{id}/attachments"}},
+    responses={
+        501: {"description": "Deprecated upload surface — use POST /captures/{id}/attachments"}
+    },
     summary="Legacy upload stub (501)",
     include_in_schema=True,
 )
@@ -223,7 +235,9 @@ def get_capture(capture_id: str, user: UserContext = Depends(require_user)):
     },
     summary="Update a pending capture",
 )
-def patch_capture(capture_id: str, body: CapturePatchRequest, user: UserContext = Depends(require_user)):
+def patch_capture(
+    capture_id: str, body: CapturePatchRequest, user: UserContext = Depends(require_user)
+):
     """Edit ``text``, ``title``, ``url``, or ``tags`` while status is ``pending``.
 
     Returns 409 when capture is ``indexed`` (plan §10).
@@ -427,9 +441,7 @@ async def transcribe_capture(
                 status.HTTP_415_UNSUPPORTED_MEDIA_TYPE
                 if exc.code == "stt_bad_mime"
                 else (
-                    status.HTTP_400_BAD_REQUEST
-                    if exc.code == "stt_duration_exceeded"
-                    else _STT_422
+                    status.HTTP_400_BAD_REQUEST if exc.code == "stt_duration_exceeded" else _STT_422
                 )
             )
         )

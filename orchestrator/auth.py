@@ -356,22 +356,16 @@ async def auth_middleware(request: Request, call_next):
         # re-verify against the database. The legacy ``_current_bearer``
         # ContextVar is preserved for the JWT and legacy MCP_AUTH_TOKEN
         # branches, which still need string-level access to the bearer.
-        from mcp_server import (
-            _reset_current_bearer,
-            _reset_current_mcp_token_id,
-            _reset_current_mcp_user_id,
-            _set_current_bearer,
-            _set_current_mcp_token_id,
-            _set_current_mcp_user_id,
-        )
+        from mcp_server import _reset_current_bearer
+        from mcp_server import _reset_current_mcp_token_id
+        from mcp_server import _reset_current_mcp_user_id
+        from mcp_server import _set_current_bearer
+        from mcp_server import _set_current_mcp_token_id
+        from mcp_server import _set_current_mcp_user_id
 
         bearer_reset = _set_current_bearer(presented or None)
-        token_id_reset = _set_current_mcp_token_id(
-            getattr(request.state, "mcp_token_id", None)
-        )
-        user_id_reset = _set_current_mcp_user_id(
-            getattr(request.state, "mcp_user_id", None)
-        )
+        token_id_reset = _set_current_mcp_token_id(getattr(request.state, "mcp_token_id", None))
+        user_id_reset = _set_current_mcp_user_id(getattr(request.state, "mcp_user_id", None))
         try:
             return await call_next(request)
         finally:

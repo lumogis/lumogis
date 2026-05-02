@@ -22,6 +22,8 @@ class NullNotifier:
     ) -> bool:
         _log.debug(
             "NullNotifier: dropped notification %r (priority=%.2f, user_id=%s)",
-            title, priority, user_id,
+            title,
+            priority,
+            user_id,
         )
         return True

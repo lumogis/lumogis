@@ -18,7 +18,6 @@ from pathlib import Path
 
 import pytest
 
-
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _GATE = _REPO_ROOT / "scripts" / "check_no_default_user.sh"
 
@@ -38,7 +37,5 @@ def test_no_default_user_id_in_hot_paths() -> None:
         check=False,
     )
     assert proc.returncode == 0, (
-        "Phase 3 grep gate failed:\n"
-        f"stdout:\n{proc.stdout}\n"
-        f"stderr:\n{proc.stderr}"
+        f"Phase 3 grep gate failed:\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
     )

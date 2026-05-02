@@ -65,6 +65,7 @@ Exit codes:
   1  could not reach Postgres after the boot timeout
   2  a migration file failed to apply
 """
+
 from __future__ import annotations
 
 import glob
@@ -103,7 +104,10 @@ def _wait_for_postgres() -> None:
         except Exception as exc:
             last_err = exc
             time.sleep(2)
-    print(f"[migrations] ERROR: Postgres unreachable after {WAIT_TIMEOUT_S}s: {last_err}", file=sys.stderr)
+    print(
+        f"[migrations] ERROR: Postgres unreachable after {WAIT_TIMEOUT_S}s: {last_err}",
+        file=sys.stderr,
+    )
     sys.exit(1)
 
 
@@ -179,7 +183,9 @@ def main() -> int:
                 return 2
 
         if new_count == 0:
-            print(f"[migrations] up to date ({len(files)} files, {len(applied)} previously applied)")
+            print(
+                f"[migrations] up to date ({len(files)} files, {len(applied)} previously applied)"
+            )
         else:
             print(f"[migrations] applied {new_count} new migration(s)")
 

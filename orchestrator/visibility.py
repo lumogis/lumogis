@@ -28,9 +28,11 @@ only their own personal rows, NOT cross-user personal data.
 See also: ``.cursor/plans/personal_shared_system_memory_scopes.plan.md``
 ``.cursor/adrs/personal_shared_system_memory_scopes.md``
 """
+
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Literal
+from typing import Optional
 
 from auth import UserContext
 
@@ -51,8 +53,7 @@ def _validate_scope_filter(scope_filter: Optional[str]) -> Optional[Scope]:
         return None
     if scope_filter not in _VALID_SCOPES:
         raise ValueError(
-            f"invalid scope_filter={scope_filter!r}; "
-            f"must be one of {sorted(_VALID_SCOPES)} or None"
+            f"invalid scope_filter={scope_filter!r}; must be one of {sorted(_VALID_SCOPES)} or None"
         )
     return scope_filter  # type: ignore[return-value]
 
@@ -213,8 +214,7 @@ def visible_cypher_fragment(
     if sf == "system":
         return (f"({a}.scope = 'system')", {})
     return (
-        f"(({a}.scope = 'personal' AND {a}.user_id = $vis_me) "
-        f"OR {a}.scope IN ['shared','system'])",
+        f"(({a}.scope = 'personal' AND {a}.user_id = $vis_me) OR {a}.scope IN ['shared','system'])",
         {"vis_me": me},
     )
 
@@ -281,9 +281,7 @@ def authored_by_qdrant_filter(user_id: str) -> dict:
     }
 
 
-def authored_by_cypher_fragment(
-    user_id: str, alias: str = "n"
-) -> tuple[str, dict]:
+def authored_by_cypher_fragment(user_id: str, alias: str = "n") -> tuple[str, dict]:
     """Cypher fragment + params dict for per-user FalkorDB extraction.
 
     Note: FalkorDB nodes/edges in v1 do NOT carry a ``scope`` property

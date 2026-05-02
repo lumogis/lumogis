@@ -23,18 +23,22 @@ from __future__ import annotations
 import logging
 import os
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from auth import UserContext
+from auth import get_user
+from authz import require_user
+from fastapi import APIRouter
+from fastapi import Depends
+from fastapi import HTTPException
+from fastapi import Query
+from fastapi import Request
+from fastapi import status
+from models.api_v1 import EntityCard
+from models.api_v1 import EntitySearchResponse
+from models.api_v1 import RelatedEntitiesResponse
+from models.api_v1 import RelatedEntity
+from visibility import visible_filter
 
 import config
-from auth import UserContext, get_user
-from authz import require_user
-from models.api_v1 import (
-    EntityCard,
-    EntitySearchResponse,
-    RelatedEntitiesResponse,
-    RelatedEntity,
-)
-from visibility import visible_filter
 
 _log = logging.getLogger(__name__)
 
@@ -85,9 +89,7 @@ def get_entity(entity_id: str, request: Request) -> EntityCard:
         row = ms.fetch_one(
             "SELECT entity_id, name, entity_type, aliases, context_tags, "
             "       mention_count, scope, user_id "
-            "FROM entities WHERE "
-            + where_clause
-            + " AND entity_id::text = %s "
+            "FROM entities WHERE " + where_clause + " AND entity_id::text = %s "
             "LIMIT 1",
             (*where_params, entity_id),
         )
@@ -130,7 +132,8 @@ def related_entities(
     except Exception:  # noqa: BLE001
         _log.warning(
             "kg.related_entities: head visibility query failed for entity_id=%s",
-            entity_id, exc_info=True,
+            entity_id,
+            exc_info=True,
         )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -156,9 +159,7 @@ def related_entities(
             "JOIN entities e ON e.entity_id::text = "
             "  CASE WHEN es.entity_id_a::text = %s THEN es.entity_id_b::text "
             "       ELSE es.entity_id_a::text END "
-            "WHERE (es.entity_id_a::text = %s OR es.entity_id_b::text = %s) AND "
-            + e_where
-            + " "
+            "WHERE (es.entity_id_a::text = %s OR es.entity_id_b::text = %s) AND " + e_where + " "
             "ORDER BY es.edge_quality DESC NULLS LAST "
             "LIMIT %s",
             (entity_id, entity_id, entity_id, *where_params, limit),
@@ -167,7 +168,8 @@ def related_entities(
         # Soft-fail with [] so the SPA renders an empty state, not a 500.
         _log.info(
             "kg.related_entities: edge_scores query failed; returning empty. entity_id=%s",
-            entity_id, exc_info=True,
+            entity_id,
+            exc_info=True,
         )
         return RelatedEntitiesResponse(related=[])
 
@@ -204,9 +206,7 @@ def search(
     try:
         rows = ms.fetch_all(
             "SELECT entity_id, name, entity_type, aliases, mention_count, scope, user_id "
-            "FROM entities WHERE "
-            + where_clause
-            + " AND name ILIKE %s "
+            "FROM entities WHERE " + where_clause + " AND name ILIKE %s "
             "ORDER BY mention_count DESC "
             "LIMIT %s",
             (*where_params, pattern, limit),

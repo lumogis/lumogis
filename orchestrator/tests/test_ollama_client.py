@@ -3,14 +3,12 @@
 """Tests for ollama_client helpers."""
 
 import json
-import os
-import tempfile
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import httpx
-import pytest
-
 import ollama_client
+import pytest
 
 
 class TestListLocalModels:
@@ -49,7 +47,13 @@ class TestFetchCatalog:
         fake_resp = MagicMock()
         fake_resp.raise_for_status = MagicMock()
         fake_resp.json.return_value = [
-            {"name": "llama3.2", "description": "Fast model", "tags": ["3b"], "pull_count": 1000, "updated_at": "2025-01-01"},
+            {
+                "name": "llama3.2",
+                "description": "Fast model",
+                "tags": ["3b"],
+                "pull_count": 1000,
+                "updated_at": "2025-01-01",
+            },
         ]
         with patch("ollama_client.httpx.get", return_value=fake_resp):
             result = ollama_client.fetch_catalog()
@@ -66,14 +70,30 @@ class TestFetchCatalog:
         fake_resp = MagicMock()
         fake_resp.raise_for_status = MagicMock()
         fake_resp.json.return_value = {
-            "models": [{"name": "gemma3", "description": "Google Gemma", "tags": [], "pull_count": 500, "updated_at": ""}]
+            "models": [
+                {
+                    "name": "gemma3",
+                    "description": "Google Gemma",
+                    "tags": [],
+                    "pull_count": 500,
+                    "updated_at": "",
+                }
+            ]
         }
         with patch("ollama_client.httpx.get", return_value=fake_resp):
             result = ollama_client.fetch_catalog()
         assert result[0]["name"] == "gemma3"
 
     def test_falls_back_on_network_error(self, tmp_path, monkeypatch):
-        fallback = [{"name": "fallback-model", "description": "fallback", "tags": [], "pulls": 0, "updated_at": ""}]
+        fallback = [
+            {
+                "name": "fallback-model",
+                "description": "fallback",
+                "tags": [],
+                "pulls": 0,
+                "updated_at": "",
+            }
+        ]
         fb_file = tmp_path / "fallback.json"
         fb_file.write_text(json.dumps(fallback))
         monkeypatch.setattr(ollama_client, "_FALLBACK_CATALOG_PATH", fb_file)
@@ -97,13 +117,15 @@ class TestFetchCatalog:
 
     def test_merges_capabilities_and_training_cutoff_from_fallback(self, tmp_path, monkeypatch):
         """Live registry rows must carry curated capabilities and training_cutoff from fallback."""
-        fallback = [{
-            "name": "qwen2.5",
-            "description": "Alibaba Qwen 2.5",
-            "capabilities": ["multilingual", "reasoning"],
-            "training_cutoff": "~Mid 2024",
-            "tags": ["7b", "14b"],
-        }]
+        fallback = [
+            {
+                "name": "qwen2.5",
+                "description": "Alibaba Qwen 2.5",
+                "capabilities": ["multilingual", "reasoning"],
+                "training_cutoff": "~Mid 2024",
+                "tags": ["7b", "14b"],
+            }
+        ]
         fb_file = tmp_path / "fallback.json"
         fb_file.write_text(json.dumps(fallback))
         monkeypatch.setattr(ollama_client, "_FALLBACK_CATALOG_PATH", fb_file)
@@ -111,7 +133,12 @@ class TestFetchCatalog:
         fake_resp = MagicMock()
         fake_resp.raise_for_status = MagicMock()
         fake_resp.json.return_value = [
-            {"name": "qwen2.5:7b", "description": "registry blurb", "pull_count": 9999, "updated_at": "2025-01-01"},
+            {
+                "name": "qwen2.5:7b",
+                "description": "registry blurb",
+                "pull_count": 9999,
+                "updated_at": "2025-01-01",
+            },
         ]
         with patch("ollama_client.httpx.get", return_value=fake_resp):
             result = ollama_client.fetch_catalog()

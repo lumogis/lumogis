@@ -61,13 +61,16 @@ import secrets
 import threading
 import uuid
 from collections import OrderedDict
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
+from datetime import timedelta
+from datetime import timezone
 from typing import Optional
 
-import config
 from actions.audit import write_audit
 from models.actions import AuditEntry
 from models.mcp_token import InternalMcpToken
+
+import config
 
 _log = logging.getLogger(__name__)
 
@@ -89,9 +92,9 @@ ACTION_CASCADE_REVOKED = "__mcp_token__.cascade_revoked"
 # ---------------------------------------------------------------------------
 
 _TOKEN_PREFIX_TAG = "lmcp_"
-_TOKEN_BODY_BYTES = 28           # 28 bytes CSPRNG → 45 base32 chars
-_TOKEN_BODY_LEN = 45             # base32(28 bytes) without padding
-_LOOKUP_PREFIX_LEN = 16          # D2: first 16 chars of the body
+_TOKEN_BODY_BYTES = 28  # 28 bytes CSPRNG → 45 base32 chars
+_TOKEN_BODY_LEN = 45  # base32(28 bytes) without padding
+_LOOKUP_PREFIX_LEN = 16  # D2: first 16 chars of the body
 _TOTAL_TOKEN_LEN = len(_TOKEN_PREFIX_TAG) + _TOKEN_BODY_LEN  # 5 + 45 = 50
 
 # Bounded retry budget on (astronomically improbable) prefix collisions.
@@ -214,15 +217,17 @@ def _emit_audit(
     keeps its 200/201 commitment regardless.
     """
     try:
-        write_audit(AuditEntry(
-            action_name=action,
-            connector="auth",
-            mode="system",
-            input_summary=json.dumps(input_summary or {}, default=str),
-            result_summary=json.dumps(result_summary or {}, default=str),
-            executed_at=datetime.now(timezone.utc),
-            user_id=user_id,
-        ))
+        write_audit(
+            AuditEntry(
+                action_name=action,
+                connector="auth",
+                mode="system",
+                input_summary=json.dumps(input_summary or {}, default=str),
+                result_summary=json.dumps(result_summary or {}, default=str),
+                executed_at=datetime.now(timezone.utc),
+                user_id=user_id,
+            )
+        )
     except Exception:
         _log.exception("audit write for %s failed", action)
 
@@ -292,15 +297,14 @@ def mint(user_id: str, label: str) -> tuple[InternalMcpToken, str]:
             if "mcp_tokens_active_prefix_uniq" in msg or "unique" in msg:
                 _log.info(
                     "mcp_token mint prefix collision on attempt %d/%d; regenerating",
-                    attempt + 1, _MINT_COLLISION_BUDGET,
+                    attempt + 1,
+                    _MINT_COLLISION_BUDGET,
                 )
                 continue
             raise
         row = ms.fetch_one("SELECT * FROM mcp_tokens WHERE id = %s", (token_id,))
         if row is None:
-            raise RuntimeError(
-                f"mcp_token mint: row not visible after insert id={token_id}"
-            )
+            raise RuntimeError(f"mcp_token mint: row not visible after insert id={token_id}")
         return _row_to_internal(row), plaintext
 
     raise RuntimeError(
@@ -327,7 +331,7 @@ def verify(presented: str) -> InternalMcpToken | None:
     """
     if not isinstance(presented, str) or not presented.startswith(_TOKEN_PREFIX_TAG):
         return None
-    body = presented[len(_TOKEN_PREFIX_TAG):]
+    body = presented[len(_TOKEN_PREFIX_TAG) :]
     if len(body) < _LOOKUP_PREFIX_LEN:
         return None
     token_prefix = body[:_LOOKUP_PREFIX_LEN]
@@ -335,8 +339,7 @@ def verify(presented: str) -> InternalMcpToken | None:
     ms = config.get_metadata_store()
     try:
         row = ms.fetch_one(
-            "SELECT * FROM mcp_tokens "
-            "WHERE token_prefix = %s AND revoked_at IS NULL",
+            "SELECT * FROM mcp_tokens WHERE token_prefix = %s AND revoked_at IS NULL",
             (token_prefix,),
         )
     except Exception:
@@ -356,8 +359,7 @@ def verify(presented: str) -> InternalMcpToken | None:
         # token id (NOT the bearer) so the operator can correlate without
         # the secret material reaching the log.
         _log.warning(
-            "mcp_token prefix hit with hash mismatch — possible token "
-            "leak / typo; token_id=%s",
+            "mcp_token prefix hit with hash mismatch — possible token leak / typo; token_id=%s",
             row["id"],
         )
         return None
@@ -385,8 +387,7 @@ def list_for_user(
     # contract for the table; visible_filter() does not apply.
     if include_revoked:
         rows = ms.fetch_all(
-            "SELECT * FROM mcp_tokens WHERE user_id = %s "
-            "ORDER BY created_at DESC",
+            "SELECT * FROM mcp_tokens WHERE user_id = %s ORDER BY created_at DESC",
             (user_id,),
         )
     else:
@@ -416,13 +417,10 @@ def list_all(*, include_revoked: bool = False) -> list[InternalMcpToken]:
     """
     ms = config.get_metadata_store()
     if include_revoked:
-        rows = ms.fetch_all(
-            "SELECT * FROM mcp_tokens ORDER BY created_at DESC"
-        )
+        rows = ms.fetch_all("SELECT * FROM mcp_tokens ORDER BY created_at DESC")
     else:
         rows = ms.fetch_all(
-            "SELECT * FROM mcp_tokens WHERE revoked_at IS NULL "
-            "ORDER BY created_at DESC"
+            "SELECT * FROM mcp_tokens WHERE revoked_at IS NULL ORDER BY created_at DESC"
         )
     return [_row_to_internal(r) for r in rows]
 
@@ -464,8 +462,7 @@ def revoke(
     del by_user_id, by_role  # consumed by the route's audit emission
     ms = config.get_metadata_store()
     ms.execute(
-        "UPDATE mcp_tokens SET revoked_at = NOW() "
-        "WHERE id = %s AND revoked_at IS NULL",
+        "UPDATE mcp_tokens SET revoked_at = NOW() WHERE id = %s AND revoked_at IS NULL",
         (token_id,),
     )
     row = ms.fetch_one("SELECT * FROM mcp_tokens WHERE id = %s", (token_id,))

@@ -23,12 +23,12 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import datetime
+from datetime import timezone
 from typing import Any
 
 import pytest
 from cryptography.fernet import Fernet
-
 
 # ---------------------------------------------------------------------------
 # In-memory store: knows about ``user_connector_credentials`` rows and
@@ -164,15 +164,17 @@ class _FakeStore:
 
         if q.startswith("insert into audit_log"):
             row_id = len(self.audit) + 1
-            self.audit.append({
-                "id": row_id,
-                "user_id": params[0],
-                "action_name": params[1],
-                "connector": params[2],
-                "mode": params[3],
-                "input_summary": params[4],
-                "result_summary": params[5],
-            })
+            self.audit.append(
+                {
+                    "id": row_id,
+                    "user_id": params[0],
+                    "action_name": params[1],
+                    "connector": params[2],
+                    "mode": params[3],
+                    "input_summary": params[4],
+                    "result_summary": params[5],
+                }
+            )
             return {"id": row_id}
 
         return None
@@ -187,16 +189,13 @@ class _FakeStore:
         ):
             (user_id,) = p
             rows = [
-                self._project_record(r)
-                for (uid, _conn), r in self.rows.items()
-                if uid == user_id
+                self._project_record(r) for (uid, _conn), r in self.rows.items() if uid == user_id
             ]
             rows.sort(key=lambda r: r["connector"])
             return rows
 
         if q.startswith(
-            "select user_id, connector, ciphertext, key_version "
-            "from user_connector_credentials"
+            "select user_id, connector, ciphertext, key_version from user_connector_credentials"
         ):
             rows = [
                 {
@@ -263,19 +262,18 @@ def store(monkeypatch, fernet_key: str):
 
 
 def test_put_then_get_roundtrip(store):
-    from services.connector_credentials import get_payload, put_payload
+    from services.connector_credentials import get_payload
+    from services.connector_credentials import put_payload
 
     put_payload("u1", "testconnector", {"k": "v"}, actor="self")
     assert get_payload("u1", "testconnector") == {"k": "v"}
 
 
 def test_put_returns_credential_record(store):
-    from services.connector_credentials import (
-        CredentialRecord,
-        _key_fingerprint,
-        _load_keys,
-        put_payload,
-    )
+    from services.connector_credentials import CredentialRecord
+    from services.connector_credentials import _key_fingerprint
+    from services.connector_credentials import _load_keys
+    from services.connector_credentials import put_payload
 
     record = put_payload("u1", "testconnector", {"k": "v"}, actor="self")
     assert isinstance(record, CredentialRecord)
@@ -288,11 +286,9 @@ def test_put_returns_credential_record(store):
 
 
 def test_get_record_returns_metadata_only_no_decrypt(store):
-    from services.connector_credentials import (
-        CredentialRecord,
-        get_record,
-        put_payload,
-    )
+    from services.connector_credentials import CredentialRecord
+    from services.connector_credentials import get_record
+    from services.connector_credentials import put_payload
 
     put_payload("u1", "testconnector", {"k": "v"}, actor="self")
     record = get_record("u1", "testconnector")
@@ -304,10 +300,8 @@ def test_get_record_returns_metadata_only_no_decrypt(store):
 
 def test_get_record_works_on_corrupt_ciphertext_without_decrypt(store):
     """Corrupt rows still yield metadata (proves no decrypt path)."""
-    from services.connector_credentials import (
-        _current_key_version,
-        get_record,
-    )
+    from services.connector_credentials import _current_key_version
+    from services.connector_credentials import get_record
 
     store.insert_raw(
         user_id="u1",
@@ -327,7 +321,8 @@ def test_get_record_missing_returns_none(store):
 
 
 def test_get_record_does_not_raise_connector_not_configured(store):
-    from services.connector_credentials import ConnectorNotConfigured, get_record
+    from services.connector_credentials import ConnectorNotConfigured
+    from services.connector_credentials import get_record
 
     try:
         result = get_record("u1", "testconnector")
@@ -338,7 +333,8 @@ def test_get_record_does_not_raise_connector_not_configured(store):
 
 def test_list_records_returns_user_rows_sorted(store):
     from connectors.registry import register
-    from services.connector_credentials import list_records, put_payload
+    from services.connector_credentials import list_records
+    from services.connector_credentials import put_payload
 
     register("aregisteredconnector", description="test fixture")
     try:
@@ -354,6 +350,7 @@ def test_list_records_returns_user_rows_sorted(store):
         assert all(r.user_id == "alice" for r in records)
     finally:
         from connectors import registry as reg
+
         reg.CONNECTORS.pop("aregisteredconnector", None)
         reg.REGISTERED_CONNECTORS = frozenset(reg.CONNECTORS.keys())
 
@@ -366,7 +363,8 @@ def test_list_records_empty_when_user_has_no_rows(store):
 
 def test_list_records_includes_unregistered_connectors(store):
     """Operator visibility: stale rows MUST appear in list_records."""
-    from services.connector_credentials import _current_key_version, list_records
+    from services.connector_credentials import _current_key_version
+    from services.connector_credentials import list_records
 
     store.insert_raw(
         user_id="alice",
@@ -384,11 +382,9 @@ def test_list_records_includes_unregistered_connectors(store):
 
 
 def test_put_persists_metadata(store):
-    from services.connector_credentials import (
-        _key_fingerprint,
-        _load_keys,
-        put_payload,
-    )
+    from services.connector_credentials import _key_fingerprint
+    from services.connector_credentials import _load_keys
+    from services.connector_credentials import put_payload
 
     put_payload("u1", "testconnector", {"k": "v"}, actor="self")
     row = store.rows[("u1", "testconnector")]
@@ -398,7 +394,8 @@ def test_put_persists_metadata(store):
 
 
 def test_put_overwrites_payload(store):
-    from services.connector_credentials import get_payload, put_payload
+    from services.connector_credentials import get_payload
+    from services.connector_credentials import put_payload
 
     put_payload("u1", "testconnector", {"k": "v1"}, actor="self")
     put_payload("u1", "testconnector", {"k": "v2"}, actor="self")
@@ -422,11 +419,9 @@ def test_get_missing_returns_none(store):
 
 
 def test_delete_existing_returns_true_and_audits(store):
-    from services.connector_credentials import (
-        ACTION_CRED_DELETED,
-        delete_payload,
-        put_payload,
-    )
+    from services.connector_credentials import ACTION_CRED_DELETED
+    from services.connector_credentials import delete_payload
+    from services.connector_credentials import put_payload
 
     put_payload("u1", "testconnector", {"k": "v"}, actor="self")
     audit_count_before = len(store.audit)
@@ -437,14 +432,12 @@ def test_delete_existing_returns_true_and_audits(store):
 
 
 def test_delete_missing_returns_false_no_audit(store):
-    from services.connector_credentials import ACTION_CRED_DELETED, delete_payload
+    from services.connector_credentials import ACTION_CRED_DELETED
+    from services.connector_credentials import delete_payload
 
     audit_before = len(store.audit)
     assert delete_payload("u1", "testconnector", actor="self") is False
-    assert all(
-        a["action_name"] != ACTION_CRED_DELETED
-        for a in store.audit[audit_before:]
-    )
+    assert all(a["action_name"] != ACTION_CRED_DELETED for a in store.audit[audit_before:])
 
 
 # ---------------------------------------------------------------------------
@@ -453,7 +446,8 @@ def test_delete_missing_returns_false_no_audit(store):
 
 
 def test_resolve_auth_enabled_true_no_row_raises(store, monkeypatch):
-    from services.connector_credentials import ConnectorNotConfigured, resolve
+    from services.connector_credentials import ConnectorNotConfigured
+    from services.connector_credentials import resolve
 
     monkeypatch.setenv("AUTH_ENABLED", "true")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-xxx")
@@ -472,7 +466,8 @@ def test_resolve_auth_enabled_false_uses_fallback(store, monkeypatch):
 
 
 def test_resolve_auth_enabled_false_no_fallback_raises(store, monkeypatch):
-    from services.connector_credentials import ConnectorNotConfigured, resolve
+    from services.connector_credentials import ConnectorNotConfigured
+    from services.connector_credentials import resolve
 
     monkeypatch.setenv("AUTH_ENABLED", "false")
     with pytest.raises(ConnectorNotConfigured):
@@ -480,7 +475,8 @@ def test_resolve_auth_enabled_false_no_fallback_raises(store, monkeypatch):
 
 
 def test_resolve_returns_decrypted_payload_when_row_present(store, monkeypatch):
-    from services.connector_credentials import put_payload, resolve
+    from services.connector_credentials import put_payload
+    from services.connector_credentials import resolve
 
     monkeypatch.setenv("AUTH_ENABLED", "true")
     put_payload("u1", "testconnector", {"k": "v"}, actor="self")
@@ -493,11 +489,9 @@ def test_resolve_returns_decrypted_payload_when_row_present(store, monkeypatch):
 
 
 def test_corrupt_ciphertext_raises_credential_unavailable(store):
-    from services.connector_credentials import (
-        CredentialUnavailable,
-        _current_key_version,
-        get_payload,
-    )
+    from services.connector_credentials import CredentialUnavailable
+    from services.connector_credentials import _current_key_version
+    from services.connector_credentials import get_payload
 
     store.insert_raw(
         user_id="u1",
@@ -539,11 +533,9 @@ def test_resolve_still_rejects_unregistered_connector(store):
 
 
 def test_get_record_returns_metadata_for_unregistered_connector(store):
-    from services.connector_credentials import (
-        CredentialRecord,
-        _current_key_version,
-        get_record,
-    )
+    from services.connector_credentials import CredentialRecord
+    from services.connector_credentials import _current_key_version
+    from services.connector_credentials import get_record
 
     store.insert_raw(
         user_id="u1",
@@ -564,11 +556,9 @@ def test_get_record_still_rejects_bad_format(store):
 
 
 def test_delete_payload_succeeds_for_unregistered_connector(store):
-    from services.connector_credentials import (
-        ACTION_CRED_DELETED,
-        _current_key_version,
-        delete_payload,
-    )
+    from services.connector_credentials import ACTION_CRED_DELETED
+    from services.connector_credentials import _current_key_version
+    from services.connector_credentials import delete_payload
 
     store.insert_raw(
         user_id="u1",
@@ -577,14 +567,11 @@ def test_delete_payload_succeeds_for_unregistered_connector(store):
         key_version=_current_key_version(),
     )
     audit_before = len(store.audit)
-    assert delete_payload(
-        "u1", "historic_connector", actor="admin:carol"
-    ) is True
+    assert delete_payload("u1", "historic_connector", actor="admin:carol") is True
     assert ("u1", "historic_connector") not in store.rows
     new_audits = store.audit[audit_before:]
     assert any(
-        a["action_name"] == ACTION_CRED_DELETED
-        and a["connector"] == "historic_connector"
+        a["action_name"] == ACTION_CRED_DELETED and a["connector"] == "historic_connector"
         for a in new_audits
     )
 
@@ -597,13 +584,11 @@ def test_delete_payload_still_rejects_bad_format(store):
 
 
 def test_list_records_full_operator_cleanup_roundtrip(store):
-    from services.connector_credentials import (
-        _current_key_version,
-        delete_payload,
-        get_record,
-        list_records,
-        put_payload,
-    )
+    from services.connector_credentials import _current_key_version
+    from services.connector_credentials import delete_payload
+    from services.connector_credentials import get_record
+    from services.connector_credentials import list_records
+    from services.connector_credentials import put_payload
 
     put_payload("u1", "testconnector", {"k": "v"}, actor="self")
     store.insert_raw(
@@ -654,7 +639,10 @@ def test_actor_admin_too_long_user_id_rejected(store):
 
     with pytest.raises(ValueError):
         put_payload(
-            "u1", "testconnector", {"k": "v"}, actor="admin:" + "x" * 65,
+            "u1",
+            "testconnector",
+            {"k": "v"},
+            actor="admin:" + "x" * 65,
         )
 
 
@@ -671,11 +659,10 @@ def test_payload_with_non_serialisable_raises(store):
 
 
 def test_multifernet_csv_takes_precedence(store, monkeypatch):
+    from services.connector_credentials import _key_fingerprint
+    from services.connector_credentials import put_payload
+
     from services import connector_credentials as svc
-    from services.connector_credentials import (
-        _key_fingerprint,
-        put_payload,
-    )
 
     k_old = Fernet.generate_key().decode()
     k_new1 = Fernet.generate_key().decode()
@@ -689,11 +676,10 @@ def test_multifernet_csv_takes_precedence(store, monkeypatch):
 
 
 def test_key_version_is_stable_across_list_reorder(store, monkeypatch):
+    from services.connector_credentials import _key_fingerprint
+    from services.connector_credentials import put_payload
+
     from services import connector_credentials as svc
-    from services.connector_credentials import (
-        _key_fingerprint,
-        put_payload,
-    )
 
     k1 = Fernet.generate_key().decode()
     monkeypatch.setenv("LUMOGIS_CREDENTIAL_KEYS", k1)
@@ -718,12 +704,11 @@ def test_key_version_is_stable_across_list_reorder(store, monkeypatch):
 
 
 def test_rotation_reencrypts_old_rows(store, monkeypatch):
+    from services.connector_credentials import _key_fingerprint
+    from services.connector_credentials import put_payload
+    from services.connector_credentials import reencrypt_all_to_current_version
+
     from services import connector_credentials as svc
-    from services.connector_credentials import (
-        _key_fingerprint,
-        put_payload,
-        reencrypt_all_to_current_version,
-    )
 
     k1 = Fernet.generate_key().decode()
     monkeypatch.setenv("LUMOGIS_CREDENTIAL_KEYS", k1)
@@ -749,18 +734,15 @@ def test_rotation_reencrypts_old_rows(store, monkeypatch):
 
     new_ct = bytes(store.rows[("u1", "testconnector")]["ciphertext"])
     assert new_ct != old_ct
-    assert (
-        store.rows[("u1", "testconnector")]["key_version"]
-        == _key_fingerprint(k2.encode("ascii"))
+    assert store.rows[("u1", "testconnector")]["key_version"] == _key_fingerprint(
+        k2.encode("ascii")
     )
 
 
 def test_rotation_skips_already_current(store):
-    from services.connector_credentials import (
-        ACTION_CRED_ROTATED,
-        put_payload,
-        reencrypt_all_to_current_version,
-    )
+    from services.connector_credentials import ACTION_CRED_ROTATED
+    from services.connector_credentials import put_payload
+    from services.connector_credentials import reencrypt_all_to_current_version
 
     put_payload("u1", "testconnector", {"k": "v"}, actor="self")
     ct_before = bytes(store.rows[("u1", "testconnector")]["ciphertext"])
@@ -772,20 +754,16 @@ def test_rotation_skips_already_current(store):
     assert summary["failed"] == 0
     assert summary["by_tier"]["user"] == {"rotated": 0, "skipped": 1, "failed": 0}
     assert bytes(store.rows[("u1", "testconnector")]["ciphertext"]) == ct_before
-    assert all(
-        a["action_name"] != ACTION_CRED_ROTATED
-        for a in store.audit[audit_before:]
-    )
+    assert all(a["action_name"] != ACTION_CRED_ROTATED for a in store.audit[audit_before:])
 
 
 def test_rotation_after_prepend_rotates_only_old_rows(store, monkeypatch):
     from connectors.registry import register
+    from services.connector_credentials import _key_fingerprint
+    from services.connector_credentials import put_payload
+    from services.connector_credentials import reencrypt_all_to_current_version
+
     from services import connector_credentials as svc
-    from services.connector_credentials import (
-        _key_fingerprint,
-        put_payload,
-        reencrypt_all_to_current_version,
-    )
 
     register("conn_a", description="test fixture")
     register("conn_b", description="test fixture")
@@ -818,27 +796,39 @@ def test_rotation_after_prepend_rotates_only_old_rows(store, monkeypatch):
 
         fp_k2 = _key_fingerprint(k2.encode("ascii"))
         for c in [
-            "conn_a", "conn_b", "conn_c", "conn_d", "conn_e",
-            "conn_f", "conn_g", "conn_h",
+            "conn_a",
+            "conn_b",
+            "conn_c",
+            "conn_d",
+            "conn_e",
+            "conn_f",
+            "conn_g",
+            "conn_h",
         ]:
             assert store.rows[("u1", c)]["key_version"] == fp_k2
     finally:
         from connectors import registry as reg
+
         for c in [
-            "conn_a", "conn_b", "conn_c", "conn_d", "conn_e",
-            "conn_f", "conn_g", "conn_h",
+            "conn_a",
+            "conn_b",
+            "conn_c",
+            "conn_d",
+            "conn_e",
+            "conn_f",
+            "conn_g",
+            "conn_h",
         ]:
             reg.CONNECTORS.pop(c, None)
         reg.REGISTERED_CONNECTORS = frozenset(reg.CONNECTORS.keys())
 
 
 def test_rotation_failed_row_left_untouched(store, monkeypatch, caplog):
+    from services.connector_credentials import _key_fingerprint
+    from services.connector_credentials import put_payload
+    from services.connector_credentials import reencrypt_all_to_current_version
+
     from services import connector_credentials as svc
-    from services.connector_credentials import (
-        _key_fingerprint,
-        put_payload,
-        reencrypt_all_to_current_version,
-    )
 
     k1 = Fernet.generate_key().decode()
     monkeypatch.setenv("LUMOGIS_CREDENTIAL_KEYS", k1)
@@ -872,12 +862,11 @@ def test_rotation_failed_row_left_untouched(store, monkeypatch, caplog):
 
 
 def test_audit_row_carries_no_ciphertext_or_plaintext(store):
-    from services.connector_credentials import ACTION_CRED_PUT, put_payload
+    from services.connector_credentials import ACTION_CRED_PUT
+    from services.connector_credentials import put_payload
 
     put_payload("u1", "testconnector", {"secret": "shh-do-not-leak"}, actor="self")
-    put_audits = [
-        a for a in store.audit if a["action_name"] == ACTION_CRED_PUT
-    ]
+    put_audits = [a for a in store.audit if a["action_name"] == ACTION_CRED_PUT]
     assert put_audits, "expected at least one __connector_credential__.put audit"
     a = put_audits[-1]
     inp = json.loads(a["input_summary"])
@@ -893,12 +882,11 @@ def test_audit_row_carries_no_ciphertext_or_plaintext(store):
 
 
 def test_audit_mode_is_do(store):
-    from services.connector_credentials import ACTION_CRED_PUT, put_payload
+    from services.connector_credentials import ACTION_CRED_PUT
+    from services.connector_credentials import put_payload
 
     put_payload("u1", "testconnector", {"k": "v"}, actor="self")
-    put_audits = [
-        a for a in store.audit if a["action_name"] == ACTION_CRED_PUT
-    ]
+    put_audits = [a for a in store.audit if a["action_name"] == ACTION_CRED_PUT]
     assert put_audits[-1]["mode"] == "DO"
 
 
@@ -984,9 +972,7 @@ def test_listener_fires_on_put_with_action_put(store):
     )
     try:
         svc.put_payload("alice", "testconnector", {"k": "v"}, actor="self")
-        assert events == [
-            {"user_id": "alice", "connector": "testconnector", "action": "put"}
-        ]
+        assert events == [{"user_id": "alice", "connector": "testconnector", "action": "put"}]
     finally:
         svc.reset_listeners_for_tests()
 
@@ -1005,9 +991,7 @@ def test_listener_fires_on_delete_with_action_delete(store):
     )
     try:
         assert svc.delete_payload("alice", "testconnector", actor="self") is True
-        assert events == [
-            {"user_id": "alice", "connector": "testconnector", "action": "delete"}
-        ]
+        assert events == [{"user_id": "alice", "connector": "testconnector", "action": "delete"}]
     finally:
         svc.reset_listeners_for_tests()
 
@@ -1017,9 +1001,7 @@ def test_listener_does_not_fire_on_delete_miss(store):
 
     events: list[dict] = []
     svc.reset_listeners_for_tests()
-    svc.register_change_listener(
-        lambda *, user_id, connector, action: events.append(action)
-    )
+    svc.register_change_listener(lambda *, user_id, connector, action: events.append(action))
     try:
         assert svc.delete_payload("alice", "testconnector", actor="self") is False
         assert events == []

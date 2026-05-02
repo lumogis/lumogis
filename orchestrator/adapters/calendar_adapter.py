@@ -36,11 +36,12 @@ from connectors.registry import CALDAV
 from connectors.registry import UnknownConnector
 from models.signals import Signal
 from models.signals import SourceConfig
-from services import caldav_credentials
 from services.caldav_credentials import CaldavConnection
 from services.connector_credentials import ConnectorNotConfigured
 from services.connector_credentials import CredentialUnavailable
 from services.point_ids import caldav_signal_id
+
+from services import caldav_credentials
 
 _log = logging.getLogger(__name__)
 

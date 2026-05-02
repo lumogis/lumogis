@@ -10,9 +10,10 @@ user-scoped fanout — we delegate directly to
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
-
 from authz import require_user
+from fastapi import APIRouter
+from fastapi import Depends
+from fastapi import Request
 from routes.events import sse_stream
 
 router = APIRouter(prefix="/api/v1", tags=["v1-events"])

@@ -72,9 +72,9 @@ _log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _GRANULARITY_WEIGHTS: dict[str, float] = {
-    "sentence":  1.0,
+    "sentence": 1.0,
     "paragraph": 0.7,
-    "document":  0.4,
+    "document": 0.4,
 }
 _DEFAULT_GRANULARITY_WEIGHT = 0.4  # matches 'document' default for pre-Pass-3 rows
 
@@ -86,6 +86,7 @@ def _half_life_relates_to() -> float:
 # ---------------------------------------------------------------------------
 # Temporal decay
 # ---------------------------------------------------------------------------
+
 
 def compute_decay_factor(last_evidence_at: datetime | None, half_life_days: float) -> float:
     """Return 0.5^(elapsed_days / half_life_days).
@@ -110,6 +111,7 @@ def compute_decay_factor(last_evidence_at: datetime | None, half_life_days: floa
 # PPMI computation
 # ---------------------------------------------------------------------------
 
+
 def compute_ppmi(
     pair_count: int,
     count_a: int,
@@ -130,8 +132,8 @@ def compute_ppmi(
     if total_evidence <= 0 or pair_count <= 0 or count_a <= 0 or count_b <= 0:
         return 0.0
     p_xy = pair_count / total_evidence
-    p_x  = count_a   / total_evidence
-    p_y  = count_b   / total_evidence
+    p_x = count_a / total_evidence
+    p_y = count_b / total_evidence
     denom = p_x * p_y
     if denom <= 0:
         return 0.0
@@ -142,6 +144,7 @@ def compute_ppmi(
 # ---------------------------------------------------------------------------
 # Data fetching helpers
 # ---------------------------------------------------------------------------
+
 
 def _fetch_cooccurrence_data(ms, user_id: str) -> dict:
     """Fetch all co-occurrence data needed for PPMI from Postgres.
@@ -163,8 +166,7 @@ def _fetch_cooccurrence_data(ms, user_id: str) -> dict:
         # Quality scoring computes per-user statistics on the user's own
         # relations; cross-user joins would corrupt the score.
         row = ms.fetch_one(
-            "SELECT COUNT(DISTINCT evidence_id) AS cnt "
-            "FROM entity_relations WHERE user_id = %s",
+            "SELECT COUNT(DISTINCT evidence_id) AS cnt FROM entity_relations WHERE user_id = %s",
             (user_id,),
         )
         total_evidence = int(row["cnt"]) if row and row.get("cnt") else 0
@@ -264,6 +266,7 @@ def _fetch_cooccurrence_data(ms, user_id: str) -> dict:
 # Score computation
 # ---------------------------------------------------------------------------
 
+
 def _compute_scores(cooc: dict) -> list[dict]:
     """Convert co-occurrence data into a list of scored pair dicts.
 
@@ -287,23 +290,25 @@ def _compute_scores(cooc: dict) -> list[dict]:
         count_b = entity_counts.get(eid_b, 0)
         ppmi = compute_ppmi(entry["count"], count_a, count_b, total_evidence)
         decay = compute_decay_factor(entry.get("last_evidence_at"), half_life)
-        raw_pairs.append({
-            "entity_id_a": eid_a,
-            "entity_id_b": eid_b,
-            "raw_count": entry["count"],
-            "weighted_count": entry["weighted_count"],
-            "ppmi_score": ppmi,
-            "decay_factor": decay,
-            "window_weight": entry.get("window_weight", _DEFAULT_GRANULARITY_WEIGHT),
-            "last_evidence_at": entry.get("last_evidence_at"),
-        })
+        raw_pairs.append(
+            {
+                "entity_id_a": eid_a,
+                "entity_id_b": eid_b,
+                "raw_count": entry["count"],
+                "weighted_count": entry["weighted_count"],
+                "ppmi_score": ppmi,
+                "decay_factor": decay,
+                "window_weight": entry.get("window_weight", _DEFAULT_GRANULARITY_WEIGHT),
+                "last_evidence_at": entry.get("last_evidence_at"),
+            }
+        )
 
     if not raw_pairs:
         return []
 
     # Normalisation denominators (max across all pairs for this user)
     max_count = max(p["raw_count"] for p in raw_pairs)
-    max_ppmi  = max(p["ppmi_score"] for p in raw_pairs)
+    max_ppmi = max(p["ppmi_score"] for p in raw_pairs)
 
     scored: list[dict] = []
     for p in raw_pairs:
@@ -319,15 +324,17 @@ def _compute_scores(cooc: dict) -> list[dict]:
         )
         edge_quality = max(0.0, min(1.0, edge_quality))
 
-        scored.append({
-            "entity_id_a":    p["entity_id_a"],
-            "entity_id_b":    p["entity_id_b"],
-            "ppmi_score":     p["ppmi_score"],
-            "edge_quality":   edge_quality,
-            "decay_factor":   p["decay_factor"],
-            "window_weight":  p["window_weight"],
-            "last_evidence_at": p["last_evidence_at"],
-        })
+        scored.append(
+            {
+                "entity_id_a": p["entity_id_a"],
+                "entity_id_b": p["entity_id_b"],
+                "ppmi_score": p["ppmi_score"],
+                "edge_quality": edge_quality,
+                "decay_factor": p["decay_factor"],
+                "window_weight": p["window_weight"],
+                "last_evidence_at": p["last_evidence_at"],
+            }
+        )
 
     return scored
 
@@ -335,6 +342,7 @@ def _compute_scores(cooc: dict) -> list[dict]:
 # ---------------------------------------------------------------------------
 # FalkorDB update
 # ---------------------------------------------------------------------------
+
 
 def _update_falkordb(scored_pairs: list[dict], user_id: str) -> int:
     """Push edge_quality scores to RELATES_TO edges in FalkorDB.
@@ -368,15 +376,18 @@ def _update_falkordb(scored_pairs: list[dict], user_id: str) -> int:
             )
             last_at = p["last_evidence_at"]
             last_at_iso = last_at.isoformat() if last_at is not None else None
-            gs.query(cypher, {
-                "a_id":   p["entity_id_a"],
-                "b_id":   p["entity_id_b"],
-                "uid":    user_id,
-                "ppmi":   p["ppmi_score"],
-                "eq":     p["edge_quality"],
-                "decay":  p["decay_factor"],
-                "last_at": last_at_iso,
-            })
+            gs.query(
+                cypher,
+                {
+                    "a_id": p["entity_id_a"],
+                    "b_id": p["entity_id_b"],
+                    "uid": user_id,
+                    "ppmi": p["ppmi_score"],
+                    "eq": p["edge_quality"],
+                    "decay": p["decay_factor"],
+                    "last_at": last_at_iso,
+                },
+            )
             updated += 1
         except Exception:
             _log.exception(
@@ -390,6 +401,7 @@ def _update_falkordb(scored_pairs: list[dict], user_id: str) -> int:
 # ---------------------------------------------------------------------------
 # Postgres upsert
 # ---------------------------------------------------------------------------
+
 
 def _upsert_edge_scores(ms, scored_pairs: list[dict], user_id: str) -> int:
     """Upsert scored pairs into edge_scores table.  Returns count upserted."""
@@ -431,6 +443,7 @@ def _upsert_edge_scores(ms, scored_pairs: list[dict], user_id: str) -> int:
 # Public entry point — edge scoring job
 # ---------------------------------------------------------------------------
 
+
 def run_edge_quality_job(user_id: str = "default") -> dict:
     """Compute PPMI + decay + edge_quality for all co-occurring entity pairs.
 
@@ -462,10 +475,10 @@ def run_edge_quality_job(user_id: str = "default") -> dict:
             duration_ms,
         )
         return {
-            "pairs_computed":    pairs_computed,
-            "pairs_upserted":    pairs_upserted,
-            "falkordb_updated":  falkordb_updated,
-            "duration_ms":       duration_ms,
+            "pairs_computed": pairs_computed,
+            "pairs_upserted": pairs_upserted,
+            "falkordb_updated": falkordb_updated,
+            "duration_ms": duration_ms,
         }
     except Exception:
         _log.error(
@@ -479,6 +492,7 @@ def run_edge_quality_job(user_id: str = "default") -> dict:
 # ---------------------------------------------------------------------------
 # Weekly maintenance job
 # ---------------------------------------------------------------------------
+
 
 def run_weekly_quality_job() -> dict:
     """Weekly KG quality maintenance. Runs in order:
@@ -498,7 +512,12 @@ def run_weekly_quality_job() -> dict:
     _log.info("component=quality_maintenance starting weekly quality job")
 
     # 1. Edge quality scoring
-    edge_summary: dict = {"pairs_computed": 0, "pairs_upserted": 0, "falkordb_updated": 0, "duration_ms": 0}
+    edge_summary: dict = {
+        "pairs_computed": 0,
+        "pairs_upserted": 0,
+        "falkordb_updated": 0,
+        "duration_ms": 0,
+    }
     try:
         edge_summary = run_edge_quality_job(user_id="default")
     except Exception:
@@ -509,12 +528,14 @@ def run_weekly_quality_job() -> dict:
     alias_violations = 0
     try:
         from services.entity_constraints import check_orphan_entities
+
         orphan_violations = check_orphan_entities(user_id="default")
     except Exception:
         _log.error("run_weekly_quality_job: orphan_entity check failed", exc_info=True)
 
     try:
         from services.entity_constraints import check_alias_uniqueness
+
         alias_violations = check_alias_uniqueness(user_id="default")
     except Exception:
         _log.error("run_weekly_quality_job: alias_uniqueness check failed", exc_info=True)
@@ -524,6 +545,7 @@ def run_weekly_quality_job() -> dict:
     dedup_queued_for_review = 0
     try:
         from services.deduplication import run_deduplication_job
+
         dedup_summary = run_deduplication_job(user_id="default")
         dedup_auto_merged = dedup_summary.get("auto_merged", 0)
         dedup_queued_for_review = dedup_summary.get("queued_for_review", 0)
@@ -546,7 +568,9 @@ def run_weekly_quality_job() -> dict:
     )
 
     # Write completion timestamp to kg_settings for the job-status endpoint.
-    from datetime import datetime, timezone
+    from datetime import datetime
+    from datetime import timezone
+
     try:
         ms = config.get_metadata_store()
         now_iso = datetime.now(timezone.utc).isoformat()
@@ -562,12 +586,12 @@ def run_weekly_quality_job() -> dict:
         )
 
     return {
-        "pairs_computed":       edge_summary.get("pairs_computed", 0),
-        "pairs_upserted":       edge_summary.get("pairs_upserted", 0),
-        "falkordb_updated":     edge_summary.get("falkordb_updated", 0),
-        "orphan_violations":    orphan_violations,
-        "alias_violations":     alias_violations,
-        "auto_merged":          dedup_auto_merged,
-        "queued_for_review":    dedup_queued_for_review,
-        "duration_ms":          duration_ms,
+        "pairs_computed": edge_summary.get("pairs_computed", 0),
+        "pairs_upserted": edge_summary.get("pairs_upserted", 0),
+        "falkordb_updated": edge_summary.get("falkordb_updated", 0),
+        "orphan_violations": orphan_violations,
+        "alias_violations": alias_violations,
+        "auto_merged": dedup_auto_merged,
+        "queued_for_review": dedup_queued_for_review,
+        "duration_ms": duration_ms,
     }

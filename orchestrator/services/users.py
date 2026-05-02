@@ -34,14 +34,13 @@ from __future__ import annotations
 import logging
 import os
 import uuid
-from datetime import datetime
-from typing import Literal
 
 from argon2 import PasswordHasher
 from argon2.exceptions import VerificationError
+from models.auth import InternalUser
+from models.auth import Role
 
 import config
-from models.auth import InternalUser, Role
 
 _log = logging.getLogger(__name__)
 
@@ -183,8 +182,7 @@ def set_disabled(
 
         with ms.transaction():
             ms.execute(
-                "UPDATE users SET disabled = TRUE, refresh_token_jti = NULL "
-                "WHERE id = %s",
+                "UPDATE users SET disabled = TRUE, refresh_token_jti = NULL WHERE id = %s",
                 (user_id,),
             )
             cascaded = _mcp_tokens.cascade_revoke_for_user(
@@ -222,6 +220,7 @@ def set_disabled(
         # import to avoid the ``services.users`` ↔ ``permissions`` import
         # cycle at module load.
         from permissions import clear_cache_for_user
+
         clear_cache_for_user(user_id)
     else:
         ms.execute("UPDATE users SET disabled = FALSE WHERE id = %s", (user_id,))
@@ -249,6 +248,7 @@ def delete_user(user_id: str) -> bool:
     # leaves a benign cold cache (next read repopulates from DB) rather
     # than a stale hot cache that grants disabled access.
     from permissions import clear_cache_for_user
+
     clear_cache_for_user(user_id)
     ms.execute("DELETE FROM users WHERE id = %s", (user_id,))
     return True
@@ -265,9 +265,7 @@ def count_users() -> int:
 
 def count_admins() -> int:
     ms = config.get_metadata_store()
-    row = ms.fetch_one(
-        "SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND disabled = FALSE"
-    )
+    row = ms.fetch_one("SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND disabled = FALSE")
     if row is None:
         return 0
     n = row.get("n") or row.get("count") or 0

@@ -19,9 +19,14 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
+# Line length is not enforced as a hard gate (historical long log/SQL strings).
+ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
 "orchestrator/main.py" = ["E402"]
+# Tests: intentional late imports after env/sys.modules setup; pytest fixtures
+# share names with symbols imported for re-export from sibling modules.
+"orchestrator/tests/**" = ["E402", "F811"]
 
 [tool.ruff.lint.isort]
 force-single-line = true

@@ -54,25 +54,25 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime
+from datetime import timezone
 from typing import Callable
 
+import hooks
 import httpx
-from pydantic import BaseModel, ValidationError
+from events import Event
+from models.webhook import AudioTranscribedPayload
+from models.webhook import DocumentIngestedPayload
+from models.webhook import EntityCreatedPayload
+from models.webhook import EntityMergedPayload
+from models.webhook import NoteCapturedPayload
+from models.webhook import SessionEndedPayload
+from models.webhook import WebhookEnvelope
+from models.webhook import WebhookEvent
+from pydantic import BaseModel
+from pydantic import ValidationError
 
 import config
-import hooks
-from events import Event
-from models.webhook import (
-    AudioTranscribedPayload,
-    DocumentIngestedPayload,
-    EntityCreatedPayload,
-    EntityMergedPayload,
-    NoteCapturedPayload,
-    SessionEndedPayload,
-    WebhookEnvelope,
-    WebhookEvent,
-)
 
 _log = logging.getLogger(__name__)
 
@@ -118,6 +118,7 @@ def _user_agent_version() -> str:
     """Best-effort core version string for outbound User-Agent."""
     try:
         from __version__ import __version__  # type: ignore[import-not-found]
+
         return str(__version__)
     except Exception:
         return "unknown"
@@ -199,7 +200,9 @@ def post_webhook(event: WebhookEvent, payload: BaseModel) -> None:
     except httpx.HTTPError as exc:
         _log.warning(
             "graph_webhook_dispatcher: POST %s failed (%s) — event %s dropped, will reconcile",
-            url, type(exc).__name__, event.value,
+            url,
+            type(exc).__name__,
+            event.value,
         )
         return
     except Exception:
@@ -209,7 +212,10 @@ def post_webhook(event: WebhookEvent, payload: BaseModel) -> None:
     if resp.status_code >= 300:
         _log.warning(
             "graph_webhook_dispatcher: KG %s returned %d for event %s — body=%r",
-            url, resp.status_code, event.value, _truncate_body(resp.text),
+            url,
+            resp.status_code,
+            event.value,
+            _truncate_body(resp.text),
         )
 
 
@@ -271,7 +277,8 @@ def get_context_sync(
     if resp.status_code != 200:
         _log.warning(
             "graph_webhook_dispatcher: KG /context returned %d — body=%r",
-            resp.status_code, _truncate_body(resp.text),
+            resp.status_code,
+            _truncate_body(resp.text),
         )
         return []
 
@@ -311,13 +318,14 @@ def make_callback(event: WebhookEvent, payload_cls: type[BaseModel]) -> Callable
 
     def _callback(**kwargs) -> None:
         try:
-            payload = payload_cls(**{
-                k: v for k, v in kwargs.items() if k in payload_cls.model_fields
-            })
+            payload = payload_cls(
+                **{k: v for k, v in kwargs.items() if k in payload_cls.model_fields}
+            )
         except ValidationError as exc:
             _log.warning(
                 "graph_webhook_dispatcher: %s payload validation failed — event dropped (%s)",
-                event.value, exc,
+                event.value,
+                exc,
             )
             return
         post_webhook(event, payload)
@@ -335,10 +343,10 @@ def make_callback(event: WebhookEvent, payload_cls: type[BaseModel]) -> Callable
 # `test_register_core_callbacks_covers_every_event` enforces it.
 _EVENT_REGISTRATION: list[tuple[str, WebhookEvent, type[BaseModel]]] = [
     (Event.DOCUMENT_INGESTED, WebhookEvent.DOCUMENT_INGESTED, DocumentIngestedPayload),
-    (Event.ENTITY_CREATED,    WebhookEvent.ENTITY_CREATED,    EntityCreatedPayload),
-    (Event.SESSION_ENDED,     WebhookEvent.SESSION_ENDED,     SessionEndedPayload),
-    (Event.ENTITY_MERGED,     WebhookEvent.ENTITY_MERGED,     EntityMergedPayload),
-    (Event.NOTE_CAPTURED,     WebhookEvent.NOTE_CAPTURED,     NoteCapturedPayload),
+    (Event.ENTITY_CREATED, WebhookEvent.ENTITY_CREATED, EntityCreatedPayload),
+    (Event.SESSION_ENDED, WebhookEvent.SESSION_ENDED, SessionEndedPayload),
+    (Event.ENTITY_MERGED, WebhookEvent.ENTITY_MERGED, EntityMergedPayload),
+    (Event.NOTE_CAPTURED, WebhookEvent.NOTE_CAPTURED, NoteCapturedPayload),
     (Event.AUDIO_TRANSCRIBED, WebhookEvent.AUDIO_TRANSCRIBED, AudioTranscribedPayload),
 ]
 

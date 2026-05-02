@@ -17,6 +17,7 @@ and the tests run.
 Each test sets up an isolated schema (``test_mig018_<uuid>``) so
 parallel runs do not collide.
 """
+
 from __future__ import annotations
 
 import os
@@ -65,9 +66,7 @@ def _pg_available() -> bool:
     try:
         conn = psycopg2.connect(**_conn_kwargs())
     except Exception as exc:  # noqa: BLE001 — diagnostic skip
-        pytest.skip(
-            f"Postgres not reachable for migration regression test: {exc}"
-        )
+        pytest.skip(f"Postgres not reachable for migration regression test: {exc}")
     conn.close()
     return True
 
@@ -99,8 +98,7 @@ def _apply_migration(conn, schema_name: str) -> None:
 def _table_exists(conn, schema_name: str, table_name: str) -> bool:
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT 1 FROM information_schema.tables "
-            "WHERE table_schema = %s AND table_name = %s",
+            "SELECT 1 FROM information_schema.tables WHERE table_schema = %s AND table_name = %s",
             (schema_name, table_name),
         )
         return cur.fetchone() is not None
@@ -176,7 +174,8 @@ def test_migration_018_creates_expected_columns_per_table(schema, table_name):
 
 @pytest.mark.parametrize("table_name", [_HOUSEHOLD_TABLE, _SYSTEM_TABLE])
 def test_migration_018_check_constraint_rejects_self_actor(
-    schema, table_name,
+    schema,
+    table_name,
 ):
     conn, schema_name = schema
     _apply_migration(conn, schema_name)
@@ -209,7 +208,8 @@ def test_migration_018_check_constraint_rejects_self_actor(
 
 @pytest.mark.parametrize("table_name", [_HOUSEHOLD_TABLE, _SYSTEM_TABLE])
 def test_migration_018_check_constraint_rejects_bad_connector_format(
-    schema, table_name,
+    schema,
+    table_name,
 ):
     conn, schema_name = schema
     _apply_migration(conn, schema_name)
@@ -233,7 +233,8 @@ def test_migration_018_check_constraint_rejects_bad_connector_format(
 
 @pytest.mark.parametrize("table_name", [_HOUSEHOLD_TABLE, _SYSTEM_TABLE])
 def test_migration_018_check_constraint_accepts_admin_actor(
-    schema, table_name,
+    schema,
+    table_name,
 ):
     conn, schema_name = schema
     _apply_migration(conn, schema_name)

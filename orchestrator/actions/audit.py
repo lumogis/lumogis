@@ -16,7 +16,6 @@ from datetime import timezone
 from typing import Optional
 
 import structlog
-
 from models.actions import AuditEntry
 
 import config

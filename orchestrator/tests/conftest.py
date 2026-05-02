@@ -31,12 +31,24 @@ if "apscheduler" not in sys.modules:
 
     class _MockBGScheduler:
         running = False
-        def __init__(self, **kwargs): pass
-        def start(self): self.running = True
-        def shutdown(self, wait=True): self.running = False
-        def add_job(self, *a, **kw): return None
-        def get_job(self, job_id): return None
-        def get_jobs(self): return []
+
+        def __init__(self, **kwargs):
+            pass
+
+        def start(self):
+            self.running = True
+
+        def shutdown(self, wait=True):
+            self.running = False
+
+        def add_job(self, *a, **kw):
+            return None
+
+        def get_job(self, job_id):
+            return None
+
+        def get_jobs(self):
+            return []
 
     _aps_bg.BackgroundScheduler = _MockBGScheduler
     sys.modules["apscheduler"] = _aps_pkg
@@ -138,10 +150,7 @@ class MockVectorStore:
     ) -> list[dict]:
         items = self._collections.get(collection, [])
         if filter:
-            items = [
-                i for i in items
-                if _matches_qdrant_filter(i.get("payload", {}), filter)
-            ]
+            items = [i for i in items if _matches_qdrant_filter(i.get("payload", {}), filter)]
         return [{"id": i["id"], "score": 1.0, "payload": i["payload"]} for i in items[:limit]]
 
     def delete(self, collection: str, id: str) -> None:
@@ -151,8 +160,7 @@ class MockVectorStore:
     def delete_where(self, collection: str, filter: dict) -> None:
         items = self._collections.get(collection, [])
         self._collections[collection] = [
-            i for i in items
-            if not _matches_qdrant_filter(i.get("payload", {}), filter)
+            i for i in items if not _matches_qdrant_filter(i.get("payload", {}), filter)
         ]
 
     def count(self, collection: str) -> int:
@@ -244,7 +252,9 @@ def mock_scheduler():
 
 
 @pytest.fixture(autouse=True)
-def _override_config(mock_vector_store, mock_metadata_store, mock_embedder, mock_scheduler, monkeypatch):
+def _override_config(
+    mock_vector_store, mock_metadata_store, mock_embedder, mock_scheduler, monkeypatch
+):
     """Replace config singletons with mocks for every test.
 
     Also sets RERANKER_BACKEND=none so the lifespan never tries to import
@@ -299,6 +309,7 @@ def _logging_reset():
     function.
     """
     from logging_config import reset_for_tests
+
     reset_for_tests()
     yield
     reset_for_tests()

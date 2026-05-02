@@ -32,11 +32,7 @@ Any break in the chain shows up here as a cross-user leak.
 
 from __future__ import annotations
 
-import json
 import os
-import sys
-import tempfile
-import types
 from contextlib import contextmanager
 from datetime import datetime
 from datetime import timezone
@@ -44,7 +40,6 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-
 
 # ---------------------------------------------------------------------------
 # Fake metadata store: handles users + file_index, no-ops everything else.
@@ -151,17 +146,14 @@ class _IsolationStore:
             }
             return
         if q.startswith(
-            "update mcp_tokens set revoked_at = now() where id = %s "
-            "and revoked_at is null"
+            "update mcp_tokens set revoked_at = now() where id = %s and revoked_at is null"
         ):
             (tid,) = p
             row = self.mcp_tokens.get(tid)
             if row is not None and row["revoked_at"] is None:
                 row["revoked_at"] = datetime.now(timezone.utc)
             return
-        if q.startswith(
-            "update mcp_tokens set last_used_at = now() where id = %s"
-        ):
+        if q.startswith("update mcp_tokens set last_used_at = now() where id = %s"):
             (tid,) = p
             row = self.mcp_tokens.get(tid)
             if row is not None:
@@ -169,9 +161,7 @@ class _IsolationStore:
             return
 
         # ---- per-user connector permissions (plan per_user_connector_permissions)
-        if q.startswith(
-            "insert into connector_permissions (user_id, connector, mode)"
-        ):
+        if q.startswith("insert into connector_permissions (user_id, connector, mode)"):
             user_id, connector, mode = p
             now = datetime.now(timezone.utc)
             existing = self.connector_perms.get((user_id, connector))
@@ -187,9 +177,7 @@ class _IsolationStore:
                 existing["mode"] = mode
                 existing["updated_at"] = now
             return
-        if q.startswith(
-            "delete from connector_permissions where user_id = %s and connector = %s"
-        ):
+        if q.startswith("delete from connector_permissions where user_id = %s and connector = %s"):
             user_id, connector = p
             self.connector_perms.pop((user_id, connector), None)
             return
@@ -276,21 +264,13 @@ class _IsolationStore:
                     return dict(row)
             return None
         if q.startswith("select count(*) as n from users where role = 'admin'"):
-            n = sum(
-                1
-                for r in self.users.values()
-                if r["role"] == "admin" and not r["disabled"]
-            )
+            n = sum(1 for r in self.users.values() if r["role"] == "admin" and not r["disabled"])
             return {"n": n}
         if q.startswith("select count(*) as n from users"):
             return {"n": len(self.users)}
         if q.startswith("select id from users where role = 'admin'"):
             admins = sorted(
-                (
-                    r
-                    for r in self.users.values()
-                    if r["role"] == "admin" and not r["disabled"]
-                ),
+                (r for r in self.users.values() if r["role"] == "admin" and not r["disabled"]),
                 key=lambda r: r["created_at"],
             )
             return {"id": admins[0]["id"]} if admins else None
@@ -302,10 +282,7 @@ class _IsolationStore:
             (tid,) = p
             row = self.mcp_tokens.get(tid)
             return dict(row) if row else None
-        if q.startswith(
-            "select * from mcp_tokens where token_prefix = %s "
-            "and revoked_at is null"
-        ):
+        if q.startswith("select * from mcp_tokens where token_prefix = %s and revoked_at is null"):
             (prefix,) = p
             for row in self.mcp_tokens.values():
                 if row["token_prefix"] == prefix and row["revoked_at"] is None:
@@ -313,11 +290,13 @@ class _IsolationStore:
             return None
         if q.startswith("insert into audit_log"):
             row_id = len(self.audit) + 1
-            self.audit.append({
-                "id": row_id,
-                "user_id": p[0],
-                "action_name": p[1],
-            })
+            self.audit.append(
+                {
+                    "id": row_id,
+                    "user_id": p[0],
+                    "action_name": p[1],
+                }
+            )
             return {"id": row_id}
 
         if q.startswith("select file_hash from file_index"):
@@ -431,34 +410,32 @@ class _IsolationStore:
                     row["revoked_at"] = now
                     updated.append(dict(row))
             return updated
-        if q.startswith(
-            "select * from mcp_tokens where user_id = %s "
-            "and revoked_at is null"
-        ):
+        if q.startswith("select * from mcp_tokens where user_id = %s and revoked_at is null"):
             (uid,) = p
             return sorted(
-                (dict(r) for r in self.mcp_tokens.values()
-                 if r["user_id"] == uid and r["revoked_at"] is None),
-                key=lambda r: r["created_at"], reverse=True,
+                (
+                    dict(r)
+                    for r in self.mcp_tokens.values()
+                    if r["user_id"] == uid and r["revoked_at"] is None
+                ),
+                key=lambda r: r["created_at"],
+                reverse=True,
             )
-        if q.startswith(
-            "select * from mcp_tokens where user_id = %s order by created_at"
-        ):
+        if q.startswith("select * from mcp_tokens where user_id = %s order by created_at"):
             (uid,) = p
             return sorted(
-                (dict(r) for r in self.mcp_tokens.values()
-                 if r["user_id"] == uid),
-                key=lambda r: r["created_at"], reverse=True,
+                (dict(r) for r in self.mcp_tokens.values() if r["user_id"] == uid),
+                key=lambda r: r["created_at"],
+                reverse=True,
             )
         # --- per-user connector permissions ---
-        if q.startswith(
-            "select connector, mode from connector_permissions where user_id = %s"
-        ):
+        if q.startswith("select connector, mode from connector_permissions where user_id = %s"):
             (user_id,) = p
             return sorted(
                 (
                     {"connector": r["connector"], "mode": r["mode"]}
-                    for (u, _c), r in self.connector_perms.items() if u == user_id
+                    for (u, _c), r in self.connector_perms.items()
+                    if u == user_id
                 ),
                 key=lambda r: r["connector"],
             )
@@ -498,7 +475,8 @@ class _SearchOnceProvider:
         self.calls: list[list[dict]] = []
 
     def chat(self, messages, tools=None, system=None, max_tokens=4096):
-        from models.llm import LLMResponse, LLMToolCall
+        from models.llm import LLMResponse
+        from models.llm import LLMToolCall
 
         self.calls.append(list(messages))
 
@@ -521,7 +499,8 @@ class _SearchOnceProvider:
         return LLMResponse(text=last_tool_msg["content"], stop_reason="stop")
 
     def chat_stream(self, messages, tools=None, system=None, max_tokens=4096):
-        from models.llm import LLMEvent, LLMToolCall
+        from models.llm import LLMEvent
+        from models.llm import LLMToolCall
 
         last_tool_msg = next(
             (m for m in reversed(messages) if m.get("role") == "tool"),
@@ -581,13 +560,9 @@ def fake_provider(monkeypatch):
 
     monkeypatch.setattr(_config, "get_llm_provider", lambda *_a, **_kw: provider)
     monkeypatch.setattr(_config, "is_model_enabled", lambda *_a, **_kw: True)
-    monkeypatch.setattr(
-        _config, "get_model_config", lambda *_a, **_kw: {"tools": True}
-    )
+    monkeypatch.setattr(_config, "get_model_config", lambda *_a, **_kw: {"tools": True})
     monkeypatch.setattr(_config, "is_local_model", lambda *_a, **_kw: False)
-    monkeypatch.setattr(
-        _config, "get_all_models_config", lambda: {"isolation-test-model": {}}
-    )
+    monkeypatch.setattr(_config, "get_all_models_config", lambda: {"isolation-test-model": {}})
     return provider
 
 
@@ -622,9 +597,7 @@ def _login(client: TestClient, email: str) -> str:
         "/api/v1/auth/login",
         json={"email": email, "password": "verylongpassword12"},
     )
-    assert resp.status_code == 200, (
-        f"login for {email} failed: {resp.status_code} {resp.text}"
-    )
+    assert resp.status_code == 200, f"login for {email} failed: {resp.status_code} {resp.text}"
     return resp.json()["access_token"]
 
 
@@ -668,13 +641,9 @@ def test_alice_and_bob_have_no_cross_user_document_leakage(
     bob_id = _create_user("bob@home.lan", "user")
 
     alice_doc = tmp_path / "alice.txt"
-    alice_doc.write_text(
-        "ALICESECRETSENTINEL — only Alice should ever see this string."
-    )
+    alice_doc.write_text("ALICESECRETSENTINEL — only Alice should ever see this string.")
     bob_doc = tmp_path / "bob.txt"
-    bob_doc.write_text(
-        "BOBSECRETSENTINEL — only Bob should ever see this string."
-    )
+    bob_doc.write_text("BOBSECRETSENTINEL — only Bob should ever see this string.")
 
     with _booted_client() as client:
         # Ingest happens INSIDE the boot context: the lifespan calls
@@ -711,9 +680,7 @@ def test_alice_and_bob_have_no_cross_user_document_leakage(
         f"DATA LEAK: Alice's chat saw Bob's document: {alice_text!r}"
     )
 
-    assert "BOBSECRETSENTINEL" in bob_text, (
-        f"Bob's chat lost his own document: {bob_text!r}"
-    )
+    assert "BOBSECRETSENTINEL" in bob_text, f"Bob's chat lost his own document: {bob_text!r}"
     assert "ALICESECRETSENTINEL" not in bob_text, (
         f"DATA LEAK: Bob's chat saw Alice's document: {bob_text!r}"
     )
@@ -854,31 +821,25 @@ def test_two_users_can_ingest_same_path(
     # ------------------------------------------------------------------
     # B12 — Postgres-side rows: two rows for the same path, distinct users.
     # ------------------------------------------------------------------
-    rows = [
-        (uid, fp)
-        for (uid, fp) in isolation_store.file_index.keys()
-        if fp == str(shared_path)
-    ]
+    rows = [(uid, fp) for (uid, fp) in isolation_store.file_index.keys() if fp == str(shared_path)]
     alice_rows = [r for r in rows if r[0] == alice_id]
     bob_rows = [r for r in rows if r[0] == bob_id]
-    assert len(alice_rows) == 1, (
-        f"Alice's file_index row missing: rows for {shared_path}: {rows!r}"
-    )
-    assert len(bob_rows) == 1, (
-        f"Bob's file_index row missing: rows for {shared_path}: {rows!r}"
-    )
+    assert len(alice_rows) == 1, f"Alice's file_index row missing: rows for {shared_path}: {rows!r}"
+    assert len(bob_rows) == 1, f"Bob's file_index row missing: rows for {shared_path}: {rows!r}"
 
     # ------------------------------------------------------------------
     # B11 — Qdrant-side: each user has at least one chunk; payloads
     # are not cross-leaked at the payload-filter layer.
     # ------------------------------------------------------------------
     alice_chunks = [
-        d for d in documents
+        d
+        for d in documents
         if d["payload"].get("file_path") == str(shared_path)
         and d["payload"].get("user_id") == alice_id
     ]
     bob_chunks = [
-        d for d in documents
+        d
+        for d in documents
         if d["payload"].get("file_path") == str(shared_path)
         and d["payload"].get("user_id") == bob_id
     ]
@@ -911,15 +872,11 @@ def test_two_users_can_ingest_same_path(
     # ------------------------------------------------------------------
     alice_text = " ".join(d["payload"].get("text", "") for d in alice_chunks)
     bob_text = " ".join(d["payload"].get("text", "") for d in bob_chunks)
-    assert "ALICE-CONTENT" in alice_text, (
-        f"Alice's chunk content overwritten: {alice_text!r}"
-    )
+    assert "ALICE-CONTENT" in alice_text, f"Alice's chunk content overwritten: {alice_text!r}"
     assert "BOB-CONTENT" not in alice_text, (
         f"DATA LEAK: Alice's chunks contain Bob's content: {alice_text!r}"
     )
-    assert "BOB-CONTENT" in bob_text, (
-        f"Bob's chunk content missing: {bob_text!r}"
-    )
+    assert "BOB-CONTENT" in bob_text, f"Bob's chunk content missing: {bob_text!r}"
     assert "ALICE-CONTENT" not in bob_text, (
         f"DATA LEAK: Bob's chunks contain Alice's content: {bob_text!r}"
     )
@@ -944,7 +901,8 @@ def test_two_users_can_ingest_same_path(
 
 
 def test_alice_and_bob_mcp_tokens_are_user_scoped(
-    isolation_env, isolation_store,
+    isolation_env,
+    isolation_store,
 ):
     """Per-user MCP tokens are minted, listed, and revoked per-caller.
 
@@ -991,18 +949,18 @@ def test_alice_and_bob_mcp_tokens_are_user_scoped(
         bob_plaintext = b_mint.json()["plaintext"]
 
         a_list = client.get(
-            "/api/v1/me/mcp-tokens", headers=_hdr(alice_id),
+            "/api/v1/me/mcp-tokens",
+            headers=_hdr(alice_id),
         ).json()
         b_list = client.get(
-            "/api/v1/me/mcp-tokens", headers=_hdr(bob_id),
+            "/api/v1/me/mcp-tokens",
+            headers=_hdr(bob_id),
         ).json()
         assert {t["label"] for t in a_list} == {"alice-claude-desktop"}, (
-            f"DATA LEAK: Alice's MCP token list saw Bob's tokens: "
-            f"{a_list!r}"
+            f"DATA LEAK: Alice's MCP token list saw Bob's tokens: {a_list!r}"
         )
         assert {t["label"] for t in b_list} == {"bob-thunderbolt"}, (
-            f"DATA LEAK: Bob's MCP token list saw Alice's tokens: "
-            f"{b_list!r}"
+            f"DATA LEAK: Bob's MCP token list saw Alice's tokens: {b_list!r}"
         )
 
         # Cross-user DELETE — 404, not 403 (information-leak guard).
@@ -1026,12 +984,10 @@ def test_alice_and_bob_mcp_tokens_are_user_scoped(
         )
         assert own.status_code == 200, own.text
         assert mcp_tokens_service.verify(alice_plaintext) is None, (
-            "Revoked tokens MUST NOT continue to authenticate against "
-            "/mcp/*"
+            "Revoked tokens MUST NOT continue to authenticate against /mcp/*"
         )
         assert mcp_tokens_service.verify(bob_plaintext) is not None, (
-            "Bob's untouched token MUST keep authenticating after "
-            "Alice's revoke"
+            "Bob's untouched token MUST keep authenticating after Alice's revoke"
         )
         # Bob's token id is referenced to make the assertion's intent
         # explicit — Bob's row is the unaffected one.
@@ -1060,7 +1016,9 @@ def test_alice_and_bob_mcp_tokens_are_user_scoped(
 
 
 def test_two_users_have_independent_caldav_credentials(
-    isolation_env, isolation_store, monkeypatch,
+    isolation_env,
+    isolation_store,
+    monkeypatch,
 ):
     """Alice's and Bob's CalDAV credentials never cross-contaminate."""
     import jwt
@@ -1222,7 +1180,9 @@ def test_two_users_have_independent_caldav_credentials(
 
 
 def test_alice_and_bob_have_independent_connector_modes(
-    isolation_env, isolation_store, monkeypatch,
+    isolation_env,
+    isolation_store,
+    monkeypatch,
 ):
     """Audit A2 closure: Alice flipping filesystem-mcp:DO does not flip Bob's.
 
@@ -1279,6 +1239,7 @@ def test_alice_and_bob_have_independent_connector_modes(
         # Preflight — registry must be non-empty for the list-endpoint
         # assertion to mean anything (critique D3.2/D6.3 fix).
         from actions import registry
+
         assert registry.list_actions(), (
             "registry empty in test environment — connector_permissions "
             "headline test cannot validate per-connector behaviour. "
@@ -1290,9 +1251,7 @@ def test_alice_and_bob_have_independent_connector_modes(
         r2 = client.get("/api/v1/me/permissions", headers=_hdr(bob_id))
         assert r1.status_code == 200, r1.text
         assert r2.status_code == 200, r2.text
-        assert r1.json(), (
-            "list endpoint returned empty body — registry preflight failed silently"
-        )
+        assert r1.json(), "list endpoint returned empty body — registry preflight failed silently"
         assert all(p["mode"] == "ASK" and p["is_default"] for p in r1.json())
         assert all(p["mode"] == "ASK" and p["is_default"] for p in r2.json())
 
@@ -1329,7 +1288,8 @@ def test_alice_and_bob_have_independent_connector_modes(
 
 
 def test_alice_routine_approvals_do_not_elevate_bob(
-    isolation_env, isolation_store,
+    isolation_env,
+    isolation_store,
 ):
     """Audit A2 closure for ``routine_do_tracking``.
 
@@ -1346,11 +1306,10 @@ def test_alice_routine_approvals_do_not_elevate_bob(
     per-user the test additionally calls :func:`elevate_to_routine`
     for Alice and asserts Bob's row is unaffected.
     """
-    from permissions import (
-        elevate_to_routine,
-        routine_check,
-        set_connector_mode,
-    )
+    from permissions import elevate_to_routine
+    from permissions import routine_check
+    from permissions import set_connector_mode
+
     from config import get_metadata_store
 
     alice_id = _create_user("alice@home.lan", "user")
@@ -1358,10 +1317,14 @@ def test_alice_routine_approvals_do_not_elevate_bob(
 
     # Both must be in DO first for routine_check to even count.
     set_connector_mode(
-        user_id=alice_id, connector="filesystem-mcp", mode="DO",
+        user_id=alice_id,
+        connector="filesystem-mcp",
+        mode="DO",
     )
     set_connector_mode(
-        user_id=bob_id, connector="filesystem-mcp", mode="DO",
+        user_id=bob_id,
+        connector="filesystem-mcp",
+        mode="DO",
     )
 
     for _ in range(15):
@@ -1372,7 +1335,9 @@ def test_alice_routine_approvals_do_not_elevate_bob(
         )
 
     elevate_to_routine(
-        user_id=alice_id, connector="filesystem-mcp", action_type="write_file",
+        user_id=alice_id,
+        connector="filesystem-mcp",
+        action_type="write_file",
     )
 
     ms = get_metadata_store()
@@ -1388,16 +1353,12 @@ def test_alice_routine_approvals_do_not_elevate_bob(
         "-- SCOPE-EXEMPT: routine_do_tracking has no scope column",
         (bob_id, "filesystem-mcp", "write_file"),
     )
-    assert alice_row is not None, (
-        "Alice's routine row missing after 15 approvals + elevation"
-    )
+    assert alice_row is not None, "Alice's routine row missing after 15 approvals + elevation"
     assert alice_row["approval_count"] == 15, (
-        f"Alice's approval_count off after 15 routine_check calls: "
-        f"{alice_row!r}"
+        f"Alice's approval_count off after 15 routine_check calls: {alice_row!r}"
     )
     assert alice_row["auto_approved"] is True, (
-        f"Alice did not reach auto_approved after explicit elevate: "
-        f"{alice_row!r}"
+        f"Alice did not reach auto_approved after explicit elevate: {alice_row!r}"
     )
     assert bob_row is None, (
         f"AUDIT A2 REGRESSION: Bob's routine_do_tracking row exists "

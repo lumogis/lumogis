@@ -6,7 +6,6 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 from pydantic import Field
-
 from services.batch_queue import register_batch_handler
 from services.ingest import ingest_folder
 

@@ -61,28 +61,30 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-
 from auth import get_user
-from authz import require_admin, require_user
+from authz import require_admin
+from authz import require_user
+from connectors.registry import UnknownConnector
+from connectors.registry import iter_registered_with_descriptions
 from csrf import require_same_origin
-from models.connector_credential import (
-    ConnectorCredentialList,
-    ConnectorCredentialPublic,
-    HouseholdConnectorCredentialList,
-    HouseholdConnectorCredentialPublic,
-    InstanceSystemConnectorCredentialList,
-    InstanceSystemConnectorCredentialPublic,
-    PutConnectorCredentialRequest,
-)
+from fastapi import APIRouter
+from fastapi import Depends
+from fastapi import HTTPException
+from fastapi import Request
+from fastapi import Response
+from fastapi import status
+from models.connector_credential import ConnectorCredentialList
+from models.connector_credential import ConnectorCredentialPublic
+from models.connector_credential import HouseholdConnectorCredentialList
+from models.connector_credential import HouseholdConnectorCredentialPublic
+from models.connector_credential import InstanceSystemConnectorCredentialList
+from models.connector_credential import InstanceSystemConnectorCredentialPublic
+from models.connector_credential import PutConnectorCredentialRequest
+from services.llm_connector_map import LLM_CONNECTOR_BY_ENV
+
 from services import connector_credentials as ccs
 from services import credential_tiers as cts
 from services import users as users_service
-from connectors.registry import (
-    UnknownConnector,
-    iter_registered_with_descriptions,
-)
-from services.llm_connector_map import LLM_CONNECTOR_BY_ENV
 
 _log = logging.getLogger(__name__)
 
@@ -222,16 +224,13 @@ def _validate_llm_payload(connector: str, payload: dict) -> None:
     extra = set(payload.keys()) - {"api_key"}
     if extra:
         raise _bad(
-            f"payload must contain exactly one key 'api_key'; "
-            f"unexpected keys: {sorted(extra)}"
+            f"payload must contain exactly one key 'api_key'; unexpected keys: {sorted(extra)}"
         )
     if "api_key" not in payload:
         raise _bad("payload missing required key 'api_key'")
     api_key = payload["api_key"]
     if not isinstance(api_key, str):
-        raise _bad(
-            f"payload['api_key'] must be a string (got {type(api_key).__name__})"
-        )
+        raise _bad(f"payload['api_key'] must be a string (got {type(api_key).__name__})")
     if not api_key.strip():
         raise _bad("payload['api_key'] must be a non-empty string after strip()")
 

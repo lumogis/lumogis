@@ -43,17 +43,21 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response
-
 import permissions
 from auth import get_user
-from authz import require_admin, require_user
+from authz import require_admin
+from authz import require_user
 from csrf import require_same_origin
-from models.connector_permission import (
-    ConnectorPermissionAdminView,
-    ConnectorPermissionPublic,
-    ConnectorPermissionUpdate,
-)
+from fastapi import APIRouter
+from fastapi import Depends
+from fastapi import HTTPException
+from fastapi import Path
+from fastapi import Request
+from fastapi import Response
+from models.connector_permission import ConnectorPermissionAdminView
+from models.connector_permission import ConnectorPermissionPublic
+from models.connector_permission import ConnectorPermissionUpdate
+
 from services import users as users_service
 
 _log = logging.getLogger(__name__)
@@ -91,9 +95,7 @@ _CONNECTOR_PATH = Path(
     pattern=r"^[a-z][a-z0-9_-]*$",
 )
 
-_ACTION_REGISTRY_UNAVAILABLE_HEADER = (
-    '199 - "action registry unavailable; connector unvalidated"'
-)
+_ACTION_REGISTRY_UNAVAILABLE_HEADER = '199 - "action registry unavailable; connector unvalidated"'
 
 
 # ---------------------------------------------------------------------------
@@ -110,16 +112,17 @@ def _known_connectors() -> set[str] | None:
     try:
         from actions.registry import list_actions
 
-        return {
-            spec["connector"] for spec in list_actions() if spec.get("connector")
-        }
+        return {spec["connector"] for spec in list_actions() if spec.get("connector")}
     except Exception:  # noqa: BLE001 — degrade-allow per OQ #4
         _log.warning("action_registry_unavailable_at_permission_validation")
         return None
 
 
 def _validate_connector_or_warn(
-    connector: str, response: Response, *, write_path: bool,
+    connector: str,
+    response: Response,
+    *,
+    write_path: bool,
 ) -> None:
     """Validate ``connector`` against the live registry.
 
@@ -138,9 +141,7 @@ def _validate_connector_or_warn(
         response.headers["Warning"] = _ACTION_REGISTRY_UNAVAILABLE_HEADER
         return
     if connector not in known:
-        _log.warning(
-            "unknown_connector_in_user_put connector=%s", connector
-        )
+        _log.warning("unknown_connector_in_user_put connector=%s", connector)
         raise HTTPException(
             status_code=404,
             detail={"error": "unknown_connector", "connector": connector},
@@ -157,7 +158,10 @@ def _public_from_effective(row: dict[str, Any]) -> ConnectorPermissionPublic:
 
 
 def _admin_view_from_effective(
-    row: dict[str, Any], *, user_id: str, email: str | None,
+    row: dict[str, Any],
+    *,
+    user_id: str,
+    email: str | None,
 ) -> ConnectorPermissionAdminView:
     return ConnectorPermissionAdminView(
         user_id=user_id,
@@ -170,7 +174,9 @@ def _admin_view_from_effective(
 
 
 def _effective_row_for(
-    *, user_id: str, connector: str,
+    *,
+    user_id: str,
+    connector: str,
 ) -> dict[str, Any]:
     """Return the single-connector effective row for ``user_id``.
 
@@ -179,7 +185,8 @@ def _effective_row_for(
     explicit-row branches share one shape.
     """
     rows = permissions.get_user_effective_permissions(
-        user_id=user_id, known_connectors=[connector],
+        user_id=user_id,
+        known_connectors=[connector],
     )
     return rows[0]
 
@@ -242,7 +249,8 @@ def list_my_permissions(request: Request) -> list[ConnectorPermissionPublic]:
         # logs. The single-connector GET below DOES return the header.
         return out
     effective = permissions.get_user_effective_permissions(
-        user_id=caller.user_id, known_connectors=sorted(known),
+        user_id=caller.user_id,
+        known_connectors=sorted(known),
     )
     return [_public_from_effective(r) for r in effective]
 
@@ -289,7 +297,9 @@ def put_my_permission(
     caller = get_user(request)
     _validate_connector_or_warn(connector, response, write_path=True)
     permissions.set_connector_mode(
-        user_id=caller.user_id, connector=connector, mode=body.mode,
+        user_id=caller.user_id,
+        connector=connector,
+        mode=body.mode,
     )
     row = _effective_row_for(user_id=caller.user_id, connector=connector)
     return _public_from_effective(row)
@@ -314,7 +324,8 @@ def delete_my_permission(
     caller = get_user(request)
     _validate_connector_or_warn(connector, response, write_path=True)
     permissions.delete_user_permission(
-        user_id=caller.user_id, connector=connector,
+        user_id=caller.user_id,
+        connector=connector,
     )
     row = _effective_row_for(user_id=caller.user_id, connector=connector)
     return _public_from_effective(row)
@@ -339,12 +350,10 @@ def admin_list_user_permissions(user_id: str) -> list[ConnectorPermissionAdminVi
     email = _email_for(user_id)
     known = _known_connectors() or set()
     effective = permissions.get_user_effective_permissions(
-        user_id=user_id, known_connectors=sorted(known),
+        user_id=user_id,
+        known_connectors=sorted(known),
     )
-    return [
-        _admin_view_from_effective(r, user_id=user_id, email=email)
-        for r in effective
-    ]
+    return [_admin_view_from_effective(r, user_id=user_id, email=email) for r in effective]
 
 
 @admin_router.get(
@@ -380,12 +389,15 @@ def admin_put_user_permission(
     if users_service.get_user_by_id(user_id) is None:
         _log.warning(
             "admin_put_permission_unknown_user user_id=%s connector=%s",
-            user_id, connector,
+            user_id,
+            connector,
         )
         raise HTTPException(status_code=404, detail="user not found")
     _validate_connector_or_warn(connector, response, write_path=True)
     permissions.set_connector_mode(
-        user_id=user_id, connector=connector, mode=body.mode,
+        user_id=user_id,
+        connector=connector,
+        mode=body.mode,
     )
     # Race: user could be hard-deleted between the existence check and
     # the read-back. Return the email lookup result; if the user is gone,
@@ -394,9 +406,11 @@ def admin_put_user_permission(
     row = _effective_row_for(user_id=user_id, connector=connector)
     caller = get_user(request)
     _log.info(
-        "permission_changed_by_admin admin_user_id=%s target_user_id=%s "
-        "connector=%s mode=%s",
-        caller.user_id, user_id, connector, body.mode,
+        "permission_changed_by_admin admin_user_id=%s target_user_id=%s connector=%s mode=%s",
+        caller.user_id,
+        user_id,
+        connector,
+        body.mode,
     )
     return _admin_view_from_effective(row, user_id=user_id, email=email)
 
@@ -416,15 +430,17 @@ def admin_delete_user_permission(
     _require_user_exists(user_id)
     _validate_connector_or_warn(connector, response, write_path=True)
     permissions.delete_user_permission(
-        user_id=user_id, connector=connector,
+        user_id=user_id,
+        connector=connector,
     )
     email = _email_for(user_id)
     row = _effective_row_for(user_id=user_id, connector=connector)
     caller = get_user(request)
     _log.info(
-        "permission_deleted_by_admin admin_user_id=%s target_user_id=%s "
-        "connector=%s",
-        caller.user_id, user_id, connector,
+        "permission_deleted_by_admin admin_user_id=%s target_user_id=%s connector=%s",
+        caller.user_id,
+        user_id,
+        connector,
     )
     return _admin_view_from_effective(row, user_id=user_id, email=email)
 

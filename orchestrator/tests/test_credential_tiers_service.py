@@ -32,17 +32,17 @@ fake that recognises every SQL prefix the service emits and **raises
 AssertionError on unknown SQL** (mandatory dispatch fallthrough rule;
 prevents the silent-no-op cascade flagged in the plan critique).
 """
+
 from __future__ import annotations
 
 import contextlib
 import json
-import re
-from datetime import datetime, timezone
+from datetime import datetime
+from datetime import timezone
 from typing import Any
 
 import pytest
 from cryptography.fernet import Fernet
-
 
 # ---------------------------------------------------------------------------
 # `_TiersFakeStore` — see plan §`_TiersFakeStore` SQL pattern catalogue.
@@ -145,9 +145,7 @@ class _TiersFakeStore:
                 row["updated_at"] = datetime.now(timezone.utc)
             return 1 if row else 0
 
-        if q.startswith(
-            "update instance_system_connector_credentials set ciphertext"
-        ):
+        if q.startswith("update instance_system_connector_credentials set ciphertext"):
             ciphertext, key_version, updated_by, connector = p
             row = self.system.get(connector)
             if row is not None:
@@ -167,9 +165,7 @@ class _TiersFakeStore:
                 row["updated_at"] = datetime.now(timezone.utc)
             return 1 if row else 0
 
-        raise AssertionError(
-            f"_TiersFakeStore: unhandled SQL in execute(): {query!r} params={p!r}"
-        )
+        raise AssertionError(f"_TiersFakeStore: unhandled SQL in execute(): {query!r} params={p!r}")
 
     def fetch_one(self, query: str, params: tuple | None = None) -> dict | None:
         self.exec_log.append((query, params or ()))
@@ -185,9 +181,7 @@ class _TiersFakeStore:
             row = self.household.get(connector)
             return self._project_household(row) if row else None
 
-        if q.startswith(
-            "select ciphertext from household_connector_credentials"
-        ):
+        if q.startswith("select ciphertext from household_connector_credentials"):
             (connector,) = p
             row = self.household.get(connector)
             return {"ciphertext": row["ciphertext"]} if row else None
@@ -230,9 +224,7 @@ class _TiersFakeStore:
             row = self.system.get(connector)
             return self._project_system(row) if row else None
 
-        if q.startswith(
-            "select ciphertext from instance_system_connector_credentials"
-        ):
+        if q.startswith("select ciphertext from instance_system_connector_credentials"):
             (connector,) = p
             row = self.system.get(connector)
             return {"ciphertext": row["ciphertext"]} if row else None
@@ -312,15 +304,17 @@ class _TiersFakeStore:
         # Audit insert (canonical path through actions.audit.write_audit).
         if q.startswith("insert into audit_log"):
             row_id = len(self.audit_log_rows) + 1
-            self.audit_log_rows.append({
-                "id": row_id,
-                "user_id": p[0],
-                "action_name": p[1],
-                "connector": p[2],
-                "mode": p[3],
-                "input_summary": p[4],
-                "result_summary": p[5],
-            })
+            self.audit_log_rows.append(
+                {
+                    "id": row_id,
+                    "user_id": p[0],
+                    "action_name": p[1],
+                    "connector": p[2],
+                    "mode": p[3],
+                    "input_summary": p[4],
+                    "result_summary": p[5],
+                }
+            )
             return {"id": row_id}
 
         raise AssertionError(
@@ -356,11 +350,14 @@ class _TiersFakeStore:
             "from household_connector_credentials" in q
         ):
             return sorted(
-                ({
-                    "connector": r["connector"],
-                    "ciphertext": r["ciphertext"],
-                    "key_version": r["key_version"],
-                } for r in self.household.values()),
+                (
+                    {
+                        "connector": r["connector"],
+                        "ciphertext": r["ciphertext"],
+                        "key_version": r["key_version"],
+                    }
+                    for r in self.household.values()
+                ),
                 key=lambda r: r["connector"],
             )
 
@@ -368,22 +365,28 @@ class _TiersFakeStore:
             "from instance_system_connector_credentials" in q
         ):
             return sorted(
-                ({
-                    "connector": r["connector"],
-                    "ciphertext": r["ciphertext"],
-                    "key_version": r["key_version"],
-                } for r in self.system.values()),
+                (
+                    {
+                        "connector": r["connector"],
+                        "ciphertext": r["ciphertext"],
+                        "key_version": r["key_version"],
+                    }
+                    for r in self.system.values()
+                ),
                 key=lambda r: r["connector"],
             )
 
         if q.startswith("select user_id, connector, ciphertext, key_version"):
             return sorted(
-                ({
-                    "user_id": r["user_id"],
-                    "connector": r["connector"],
-                    "ciphertext": r["ciphertext"],
-                    "key_version": r["key_version"],
-                } for r in self.user.values()),
+                (
+                    {
+                        "user_id": r["user_id"],
+                        "connector": r["connector"],
+                        "ciphertext": r["ciphertext"],
+                        "key_version": r["key_version"],
+                    }
+                    for r in self.user.values()
+                ),
                 key=lambda r: (r["user_id"], r["connector"]),
             )
 
@@ -395,8 +398,7 @@ class _TiersFakeStore:
         ):
             (user_id,) = p
             return sorted(
-                (self._project_user(r) for r in self.user.values()
-                 if r["user_id"] == user_id),
+                (self._project_user(r) for r in self.user.values() if r["user_id"] == user_id),
                 key=lambda r: r["connector"],
             )
 
@@ -406,10 +408,7 @@ class _TiersFakeStore:
             counts: dict[int, int] = {}
             for row in self.household.values():
                 counts[row["key_version"]] = counts.get(row["key_version"], 0) + 1
-            return [
-                {"key_version": k, "n": v}
-                for k, v in sorted(counts.items())
-            ]
+            return [{"key_version": k, "n": v} for k, v in sorted(counts.items())]
 
         if q.startswith("select key_version, count") and (
             "from instance_system_connector_credentials" in q
@@ -417,10 +416,7 @@ class _TiersFakeStore:
             counts: dict[int, int] = {}
             for row in self.system.values():
                 counts[row["key_version"]] = counts.get(row["key_version"], 0) + 1
-            return [
-                {"key_version": k, "n": v}
-                for k, v in sorted(counts.items())
-            ]
+            return [{"key_version": k, "n": v} for k, v in sorted(counts.items())]
 
         raise AssertionError(
             f"_TiersFakeStore: unhandled SQL in fetch_all(): {query!r} params={p!r}"
@@ -439,7 +435,9 @@ def _captured_audits(store: _TiersFakeStore) -> list[dict[str, Any]]:
 
 
 def _assert_one_audit(
-    store: _TiersFakeStore, *, before: int = 0,
+    store: _TiersFakeStore,
+    *,
+    before: int = 0,
 ) -> dict[str, Any]:
     """Count-first audit assertion (D6.2 silent-no-op killer).
 
@@ -452,8 +450,7 @@ def _assert_one_audit(
     audits = _captured_audits(store)
     new = audits[before:]
     assert len(new) == 1, (
-        f"expected exactly 1 new audit row since index {before}, "
-        f"got {len(new)}: {new!r}"
+        f"expected exactly 1 new audit row since index {before}, got {len(new)}: {new!r}"
     )
     return new[0]
 
@@ -498,47 +495,50 @@ _TIER_LABELS = ("household", "system")
 
 def _put_payload_for(tier: str):
     from services import credential_tiers as cts
+
     return cts.household_put_payload if tier == "household" else cts.system_put_payload
 
 
 def _get_payload_for(tier: str):
     from services import credential_tiers as cts
+
     return cts.household_get_payload if tier == "household" else cts.system_get_payload
 
 
 def _get_record_for(tier: str):
     from services import credential_tiers as cts
+
     return cts.household_get_record if tier == "household" else cts.system_get_record
 
 
 def _list_records_for(tier: str):
     from services import credential_tiers as cts
-    return (
-        cts.household_list_records if tier == "household"
-        else cts.system_list_records
-    )
+
+    return cts.household_list_records if tier == "household" else cts.system_list_records
 
 
 def _delete_payload_for(tier: str):
     from services import credential_tiers as cts
-    return (
-        cts.household_delete_payload if tier == "household"
-        else cts.system_delete_payload
-    )
+
+    return cts.household_delete_payload if tier == "household" else cts.system_delete_payload
 
 
 def _count_for(tier: str):
     from services import credential_tiers as cts
+
     return (
-        cts.household_count_rows_by_key_version if tier == "household"
+        cts.household_count_rows_by_key_version
+        if tier == "household"
         else cts.system_count_rows_by_key_version
     )
 
 
 def _reencrypt_for(tier: str):
     from services import credential_tiers as cts
+
     return (
-        cts.reencrypt_household_to_current_version if tier == "household"
+        cts.reencrypt_household_to_current_version
+        if tier == "household"
         else cts.reencrypt_system_to_current_version
     )
 
@@ -552,7 +552,9 @@ def test_tier_put_payload_inserts_and_returns_record(store, tier):
     from services._credential_internals import _current_key_version
 
     record = _put_payload_for(tier)(
-        "testconnector", {"k": "v"}, actor="admin:alice",
+        "testconnector",
+        {"k": "v"},
+        actor="admin:alice",
     )
     assert record.connector == "testconnector"
     assert record.created_by == "admin:alice"
@@ -615,7 +617,9 @@ def test_tier_put_payload_unknown_connector_raises_unknown_connector(store, tier
 
     with pytest.raises(UnknownConnector):
         _put_payload_for(tier)(
-            "definitely_not_registered", {"k": "v"}, actor="admin:alice",
+            "definitely_not_registered",
+            {"k": "v"},
+            actor="admin:alice",
         )
 
 
@@ -625,7 +629,9 @@ def test_tier_put_payload_bad_format_raises_value_error(store, tier):
 
     with pytest.raises((ValueError, UnknownConnector)):
         _put_payload_for(tier)(
-            "BAD CONNECTOR", {"k": "v"}, actor="admin:alice",
+            "BAD CONNECTOR",
+            {"k": "v"},
+            actor="admin:alice",
         )
 
 
@@ -650,12 +656,11 @@ def test_tier_get_payload_returns_none_on_miss(store, tier):
 
 @pytest.mark.parametrize("tier", _TIER_LABELS)
 def test_tier_get_payload_invalid_token_raises_credential_unavailable(
-    store, tier,
+    store,
+    tier,
 ):
-    from services._credential_internals import (
-        CredentialUnavailable,
-        _current_key_version,
-    )
+    from services._credential_internals import CredentialUnavailable
+    from services._credential_internals import _current_key_version
 
     backing = _store_dict_for(store, tier)
     backing["testconnector"] = {
@@ -674,11 +679,14 @@ def test_tier_get_payload_invalid_token_raises_credential_unavailable(
 @pytest.mark.parametrize("tier", _TIER_LABELS)
 def test_tier_list_records_orders_by_connector_asc(store, tier):
     from connectors import registry as reg
+
     reg.register("aregisteredconnector", description="test fixture")
     try:
         _put_payload_for(tier)("testconnector", {"k": 1}, actor="admin:alice")
         _put_payload_for(tier)(
-            "aregisteredconnector", {"k": 2}, actor="admin:alice",
+            "aregisteredconnector",
+            {"k": 2},
+            actor="admin:alice",
         )
         records = _list_records_for(tier)()
         assert [r.connector for r in records] == [
@@ -705,10 +713,7 @@ def test_tier_delete_payload_returns_true_and_audits(store, tier):
 @pytest.mark.parametrize("tier", _TIER_LABELS)
 def test_tier_delete_payload_returns_false_on_miss_and_no_audit(store, tier):
     before = len(store.audit_log_rows)
-    assert (
-        _delete_payload_for(tier)("testconnector", actor="admin:alice")
-        is False
-    )
+    assert _delete_payload_for(tier)("testconnector", actor="admin:alice") is False
     assert len(store.audit_log_rows) == before
 
 
@@ -730,7 +735,10 @@ def test_tier_reencrypt_skips_when_key_version_matches_current(store, tier):
 
 @pytest.mark.parametrize("tier", _TIER_LABELS)
 def test_tier_reencrypt_rotates_when_key_version_differs(
-    store, tier, monkeypatch, fernet_key,
+    store,
+    tier,
+    monkeypatch,
+    fernet_key,
 ):
     """Seed under key K1; introduce K2 as primary; rotate; assert
     one row rotated and the new ciphertext decrypts to the original
@@ -861,7 +869,8 @@ def test_audit_per_user_put_still_uses_target_user_id_and_tier_user(store):
 
 def test_audit_per_user_delete_still_uses_target_user_id_and_tier_user(store):
     """Regression on the per-user DELETE path (D5.2 / D6.3)."""
-    from services.connector_credentials import delete_payload, put_payload
+    from services.connector_credentials import delete_payload
+    from services.connector_credentials import put_payload
 
     put_payload("alice", "testconnector", {"k": "v"}, actor="admin:bob")
     before = len(store.audit_log_rows)
@@ -873,12 +882,16 @@ def test_audit_per_user_delete_still_uses_target_user_id_and_tier_user(store):
 
 
 def test_audit_per_user_rotate_still_uses_target_user_id(
-    store, monkeypatch, fernet_key,
+    store,
+    monkeypatch,
+    fernet_key,
 ):
     """Per-user rotation preserves the row's owner identity in
     audit (NOT the rotation actor "system")."""
+    from services.connector_credentials import put_payload
+    from services.connector_credentials import reencrypt_all_to_current_version
+
     from services import _credential_internals as ci
-    from services.connector_credentials import put_payload, reencrypt_all_to_current_version
 
     put_payload("alice", "testconnector", {"k": "v"}, actor="self")
 
@@ -891,16 +904,15 @@ def test_audit_per_user_rotate_still_uses_target_user_id(
     reencrypt_all_to_current_version(actor="system")
 
     rotation_audits = [
-        a for a in store.audit_log_rows[before:]
+        a
+        for a in store.audit_log_rows[before:]
         if a["action_name"] == "__connector_credential__.rotated"
     ]
     user_rotation = [
-        a for a in rotation_audits
-        if json.loads(a["input_summary"]).get("tier") == "user"
+        a for a in rotation_audits if json.loads(a["input_summary"]).get("tier") == "user"
     ]
     assert len(user_rotation) == 1, (
-        f"expected exactly 1 per-user rotation audit, got "
-        f"{len(user_rotation)}: {user_rotation!r}"
+        f"expected exactly 1 per-user rotation audit, got {len(user_rotation)}: {user_rotation!r}"
     )
     assert user_rotation[0]["user_id"] == "alice"
 
@@ -919,17 +931,18 @@ def test_extract_admin_caller_user_id_normalises_actors():
 
 
 def test_audit_rotation_actor_system_uses_default_user_id_per_tier(
-    store, monkeypatch, fernet_key,
+    store,
+    monkeypatch,
+    fernet_key,
 ):
     """D5.2 / D6.3 sister test for tier rotation:
     ``actor="system"`` ⇒ ``audit.user_id == "default"`` for both tiers."""
+    from services.credential_tiers import household_put_payload
+    from services.credential_tiers import reencrypt_household_to_current_version
+    from services.credential_tiers import reencrypt_system_to_current_version
+    from services.credential_tiers import system_put_payload
+
     from services import _credential_internals as ci
-    from services.credential_tiers import (
-        household_put_payload,
-        reencrypt_household_to_current_version,
-        reencrypt_system_to_current_version,
-        system_put_payload,
-    )
 
     household_put_payload("testconnector", {"k": "h"}, actor="admin:alice")
     system_put_payload("testconnector", {"k": "s"}, actor="admin:alice")
@@ -944,16 +957,17 @@ def test_audit_rotation_actor_system_uses_default_user_id_per_tier(
     reencrypt_system_to_current_version(actor="system")
 
     rotation_audits = [
-        a for a in store.audit_log_rows[before:]
+        a
+        for a in store.audit_log_rows[before:]
         if a["action_name"] == "__connector_credential__.rotated"
     ]
     tier_rotations = [
-        a for a in rotation_audits
+        a
+        for a in rotation_audits
         if json.loads(a["input_summary"]).get("tier") in {"household", "system"}
     ]
     assert len(tier_rotations) == 2, (
-        f"expected 2 tier rotation audits, got {len(tier_rotations)}: "
-        f"{tier_rotations!r}"
+        f"expected 2 tier rotation audits, got {len(tier_rotations)}: {tier_rotations!r}"
     )
     for a in tier_rotations:
         assert a["user_id"] == "default"

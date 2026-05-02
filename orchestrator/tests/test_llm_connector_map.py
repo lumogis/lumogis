@@ -31,7 +31,6 @@ import pytest
 import yaml
 from cryptography.fernet import Fernet
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -78,7 +77,10 @@ class _FakeStore:
             user_id, connector = p
             row = self.rows.get((user_id, connector))
             return {"ciphertext": row["ciphertext"]} if row else None
-        if q.startswith("select user_id, connector,") and "where user_id = %s and connector = %s" in q:
+        if (
+            q.startswith("select user_id, connector,")
+            and "where user_id = %s and connector = %s" in q
+        ):
             user_id, connector = p
             row = self.rows.get((user_id, connector))
             if row is None:
@@ -103,10 +105,7 @@ class _FakeStore:
         # The literal SQL uses ``LIKE 'llm\\_%%' ESCAPE '\\'`` so psycopg's
         # ``%`` substitution emits ``LIKE 'llm\_%' ESCAPE '\'`` — the
         # ``llm\_`` token is the stable thing to look for.
-        if (
-            q.startswith("select connector from user_connector_credentials")
-            and "like 'llm\\_" in q
-        ):
+        if q.startswith("select connector from user_connector_credentials") and "like 'llm\\_" in q:
             (user_id,) = p
             return [
                 {"connector": conn}
@@ -136,10 +135,9 @@ def store(monkeypatch, fernet_key):
 
 def _seed_payload(store: _FakeStore, *, user_id: str, connector: str, payload: dict) -> None:
     """Encrypt ``payload`` with the live MultiFernet and seed a row."""
-    from services.connector_credentials import (
-        _current_key_version,
-        _encrypt_payload,
-    )
+    from services.connector_credentials import _current_key_version
+    from services.connector_credentials import _encrypt_payload
+
     store.rows[(user_id, connector)] = {
         "ciphertext": _encrypt_payload(payload),
         "key_version": _current_key_version(),
@@ -165,14 +163,12 @@ def test_mapping_contains_all_six_known_envs():
 
 
 def test_mapping_values_match_registry_constants():
-    from connectors.registry import (
-        LLM_ANTHROPIC,
-        LLM_GEMINI,
-        LLM_MISTRAL,
-        LLM_OPENAI,
-        LLM_PERPLEXITY,
-        LLM_XAI,
-    )
+    from connectors.registry import LLM_ANTHROPIC
+    from connectors.registry import LLM_GEMINI
+    from connectors.registry import LLM_MISTRAL
+    from connectors.registry import LLM_OPENAI
+    from connectors.registry import LLM_PERPLEXITY
+    from connectors.registry import LLM_XAI
     from services.llm_connector_map import LLM_CONNECTOR_BY_ENV
 
     assert LLM_CONNECTOR_BY_ENV["ANTHROPIC_API_KEY"] == LLM_ANTHROPIC
@@ -273,7 +269,9 @@ def test_snapshot_returns_set_of_llm_connectors(store):
     _seed_payload(store, user_id="alice", connector="llm_anthropic", payload={"api_key": "x"})
     _seed_payload(store, user_id="alice", connector="llm_openai", payload={"api_key": "y"})
     # Non-llm row must NOT appear.
-    _seed_payload(store, user_id="alice", connector="ntfy", payload={"url": "https://n", "topic": "t"})
+    _seed_payload(
+        store, user_id="alice", connector="ntfy", payload={"url": "https://n", "topic": "t"}
+    )
 
     snap = get_user_credentials_snapshot("alice")
     assert snap == {"llm_anthropic", "llm_openai"}
@@ -313,7 +311,9 @@ def test_snapshot_uses_single_query(store):
 def test_effective_api_key_per_user_row_under_auth_on(store):
     from services.llm_connector_map import effective_api_key
 
-    _seed_payload(store, user_id="alice", connector="llm_anthropic", payload={"api_key": "  sk-secret  "})
+    _seed_payload(
+        store, user_id="alice", connector="llm_anthropic", payload={"api_key": "  sk-secret  "}
+    )
     assert effective_api_key("alice", "ANTHROPIC_API_KEY") == "sk-secret"
 
 
@@ -356,7 +356,9 @@ def test_effective_api_key_unmapped_env_under_auth_on_raises_not_configured(monk
         effective_api_key("alice", "FUTURE_VENDOR_KEY")
 
 
-def test_effective_api_key_unmapped_env_under_auth_off_blank_raises_not_configured(monkeypatch, store):
+def test_effective_api_key_unmapped_env_under_auth_off_blank_raises_not_configured(
+    monkeypatch, store
+):
     from services.connector_credentials import ConnectorNotConfigured
     from services.llm_connector_map import effective_api_key
 
@@ -394,7 +396,9 @@ def test_effective_api_key_missing_api_key_field_raises_unavailable(store):
     from services.connector_credentials import CredentialUnavailable
     from services.llm_connector_map import effective_api_key
 
-    _seed_payload(store, user_id="alice", connector="llm_anthropic", payload={"wrong_field": "sk-x"})
+    _seed_payload(
+        store, user_id="alice", connector="llm_anthropic", payload={"wrong_field": "sk-x"}
+    )
     with pytest.raises(CredentialUnavailable):
         effective_api_key("alice", "ANTHROPIC_API_KEY")
 

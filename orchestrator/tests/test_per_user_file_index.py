@@ -17,16 +17,10 @@ from __future__ import annotations
 
 import types
 import uuid
-from unittest.mock import MagicMock
 
-import pytest
-
-from services.point_ids import (
-    caldav_signal_id,
-    document_chunk_point_id,
-    session_conversation_point_id,
-)
-
+from services.point_ids import caldav_signal_id
+from services.point_ids import document_chunk_point_id
+from services.point_ids import session_conversation_point_id
 
 # ---------------------------------------------------------------------------
 # Helper unit tests (8) — pin the namespace shape.
@@ -108,17 +102,16 @@ def test_store_session_uses_user_namespaced_point_id(monkeypatch):
     re-introduce cross-user overwrite for session summaries. The
     documents-side integration test does NOT cover this code path.
     """
-    import config as _config
     import services.memory as memory_mod
     from models.memory import SessionSummary
+
+    import config as _config
 
     captured_upserts: list[dict] = []
 
     class _CapturingVS:
         def upsert(self, *, collection: str, id: str, vector, payload: dict) -> None:
-            captured_upserts.append(
-                {"collection": collection, "id": id, "payload": payload}
-            )
+            captured_upserts.append({"collection": collection, "id": id, "payload": payload})
 
     class _StubEmbedder:
         def embed(self, text: str):
@@ -212,8 +205,10 @@ def test_caldav_adapter_passes_source_user_id_to_signal_id_helper():
     CalDAV is an explicit accepted-CI-risk for this chunk (no Radicale
     container in CI; no plan-level commitment to add one).
     """
+    from datetime import datetime
+    from datetime import timezone
+
     from adapters.calendar_adapter import CalendarAdapter
-    from datetime import datetime, timezone
 
     alice_cfg = _build_source_config("alice")
     bob_cfg = _build_source_config("bob")

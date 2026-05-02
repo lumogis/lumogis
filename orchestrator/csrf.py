@@ -47,11 +47,14 @@ import logging
 import os
 from functools import lru_cache
 
-from fastapi import HTTPException, Request, status
+from fastapi import HTTPException
+from fastapi import Request
+from fastapi import status
 
 _log = logging.getLogger(__name__)
 
 _BYPASS_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
 
 def _public_origin() -> str:
     """Return the configured public origin (no trailing slash) or ``""``."""

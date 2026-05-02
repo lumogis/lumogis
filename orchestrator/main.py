@@ -25,6 +25,7 @@ from logging_config import configure_logging  # noqa: E402
 configure_logging()
 
 import hooks
+import mcp_server
 from auth import auth_middleware
 from correlation import correlation_middleware
 from fastapi import FastAPI
@@ -37,9 +38,6 @@ from routes.admin_users import router as admin_users_router
 from routes.auth import router as auth_router
 from routes.capabilities import router as capabilities_router
 from routes.chat import router as chat_router
-from routes.data import router as data_router
-from routes.events import register_hooks as register_sse_hooks
-from routes.events import router as events_router
 from routes.connector_credentials import admin_router as connector_credentials_admin_router
 from routes.connector_credentials import (
     household_admin_router as connector_credentials_household_admin_router,
@@ -48,6 +46,9 @@ from routes.connector_credentials import router as connector_credentials_router
 from routes.connector_credentials import (
     system_admin_router as connector_credentials_system_admin_router,
 )
+from routes.data import router as data_router
+from routes.events import register_hooks as register_sse_hooks
+from routes.events import router as events_router
 from routes.mcp_tokens import admin_router as mcp_tokens_admin_router
 from routes.mcp_tokens import router as mcp_tokens_router
 from routes.me import router as me_router
@@ -56,7 +57,6 @@ from routes.signals import router as signals_router
 from routes.web import router as web_router
 
 import config
-import mcp_server
 
 _log = logging.getLogger(__name__)
 
@@ -129,8 +129,8 @@ def _enforce_auth_consistency() -> None:
       and didn't create anyone — env unset or password too short) — the
       LAN would have no way in. Refuse with a remediation hint.
     """
-    from auth import auth_enabled
     import services.users as users_svc
+    from auth import auth_enabled
 
     # Test-only escape hatch — NEVER set in production, NEVER read from
     # any other module. Allows tests that exercise AUTH_ENABLED=true
@@ -139,9 +139,11 @@ def _enforce_auth_consistency() -> None:
     # leading underscore + `_TEST_` segment + `_DO_NOT_SET_IN_PRODUCTION`
     # suffix flag the variable as private to the test harness; it lives
     # only in `orchestrator/tests/conftest.py` (autouse fixture).
-    _test_skip = os.environ.get(
-        "_LUMOGIS_TEST_SKIP_AUTH_CONSISTENCY_DO_NOT_SET_IN_PRODUCTION", ""
-    ).strip().lower()
+    _test_skip = (
+        os.environ.get("_LUMOGIS_TEST_SKIP_AUTH_CONSISTENCY_DO_NOT_SET_IN_PRODUCTION", "")
+        .strip()
+        .lower()
+    )
     if _test_skip == "true":
         return
 
@@ -175,8 +177,8 @@ def _enforce_auth_consistency() -> None:
             raise RuntimeError(
                 "AUTH_ENABLED=true but AUTH_SECRET is unset or a placeholder — "
                 "refusing to boot. Generate a real secret with "
-                "`openssl rand -hex 32` (or `python3 -c \"import secrets; "
-                "print(secrets.token_hex(32))\"`) and set it as AUTH_SECRET in "
+                '`openssl rand -hex 32` (or `python3 -c "import secrets; '
+                'print(secrets.token_hex(32))"`) and set it as AUTH_SECRET in '
                 ".env, then restart. The entrypoint auto-rotates JWT_SECRET / "
                 "JWT_REFRESH_SECRET / RESTART_SECRET but intentionally does NOT "
                 "auto-rotate AUTH_SECRET — operators flip family-LAN mode on "
@@ -210,8 +212,8 @@ def _enforce_auth_consistency() -> None:
             raise RuntimeError(
                 "AUTH_ENABLED=true but LUMOGIS_CREDENTIAL_KEY[S] is unset or a "
                 "placeholder — refusing to boot. Generate a real key with "
-                "`python3 -c \"from cryptography.fernet import Fernet; "
-                "print(Fernet.generate_key().decode())\"` and set it as "
+                '`python3 -c "from cryptography.fernet import Fernet; '
+                'print(Fernet.generate_key().decode())"` and set it as '
                 "LUMOGIS_CREDENTIAL_KEY in .env (or LUMOGIS_CREDENTIAL_KEYS "
                 "for a CSV during rotation), then restart. The entrypoint "
                 "intentionally does NOT auto-rotate this key — losing it "
@@ -243,6 +245,7 @@ async def lifespan(app: FastAPI):
     # gate refuses to boot when env contradicts the live table.
     try:
         from services.users import bootstrap_if_empty
+
         bootstrap_if_empty()
     except Exception:
         _log.exception("Bootstrap admin creation hit an unexpected error")
@@ -354,14 +357,15 @@ async def lifespan(app: FastAPI):
     if scheduler and _batch_queue_enabled:
         from uuid import uuid4
 
-        from services import batch_handlers as _batch_handlers_registered  # noqa: F401
         from services.batch_queue import BATCH_QUEUE_MAX_ATTEMPTS
         from services.batch_queue import BATCH_QUEUE_STUCK_AFTER_SECONDS
         from services.batch_queue import BATCH_QUEUE_STUCK_SWEEPER_SECONDS
         from services.batch_queue import BATCH_QUEUE_TICK_DRAIN_LIMIT
         from services.batch_queue import BATCH_QUEUE_TICK_SECONDS
-        from services.batch_queue import reset_stuck
         from services.batch_queue import _run_one_tick
+        from services.batch_queue import reset_stuck
+
+        from services import batch_handlers as _batch_handlers_registered  # noqa: F401
 
         _worker_id = f"orch-{os.getpid()}-{uuid4().hex[:8]}"
 
@@ -645,10 +649,11 @@ app.include_router(signals_router)
 app.include_router(scope_router)
 app.include_router(actions_router)
 from routes.connector_permissions import (
-    router as connector_permissions_router,
-    admin_router as connector_permissions_admin_router,
     admin_list_router as connector_permissions_admin_list_router,
 )
+from routes.connector_permissions import admin_router as connector_permissions_admin_router
+from routes.connector_permissions import router as connector_permissions_router
+
 app.include_router(connector_permissions_router)
 app.include_router(connector_permissions_admin_router)
 app.include_router(connector_permissions_admin_list_router)

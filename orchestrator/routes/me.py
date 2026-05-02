@@ -40,11 +40,11 @@ from fastapi import HTTPException
 from fastapi import Request
 from fastapi import status
 from fastapi.responses import StreamingResponse
-from models.auth import AckOk
-from models.auth import MePasswordChangeRequest
 from models.api_v1 import MeLlmProvidersResponse
 from models.api_v1 import MeNotificationsResponse
 from models.api_v1 import MeToolsResponse
+from models.auth import AckOk
+from models.auth import MePasswordChangeRequest
 from models.user_export import ExportRequest
 from models.user_export import SectionSummary
 
@@ -95,8 +95,7 @@ def export_self(
         if users_service.get_user_by_id(target_id) is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail={"error": "user not found",
-                        "target_user_id": target_id},
+                detail={"error": "user not found", "target_user_id": target_id},
             )
         effective_id = target_id
     else:
@@ -217,7 +216,9 @@ def change_my_password(body: MePasswordChangeRequest, request: Request) -> AckOk
     except users_service.PasswordPolicyViolationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except LookupError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found") from None
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="user not found"
+        ) from None
     except PermissionError:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

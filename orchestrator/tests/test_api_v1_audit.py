@@ -4,7 +4,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
+from datetime import timezone
 from types import SimpleNamespace
 
 import pytest
@@ -14,6 +15,7 @@ from fastapi.testclient import TestClient
 @pytest.fixture
 def client():
     import main
+
     with TestClient(main.app) as c:
         yield c
 
@@ -21,6 +23,7 @@ def client():
 @pytest.fixture(autouse=True)
 def _reset_reverse_bucket():
     from routes.api_v1.audit import _reverse_calls
+
     _reverse_calls.clear()
     yield
     _reverse_calls.clear()
@@ -51,6 +54,7 @@ def test_list_audit_returns_rows(client, monkeypatch):
         return rows
 
     import actions.audit as audit_module
+
     monkeypatch.setattr(audit_module, "get_audit", _get)
 
     resp = client.get("/api/v1/audit")
@@ -65,12 +69,15 @@ def test_list_audit_as_user_requires_admin(client, monkeypatch):
     by simulating a non-admin caller."""
 
     import auth
+
     monkeypatch.setattr(
-        auth, "get_user",
+        auth,
+        "get_user",
         lambda req: auth.UserContext(user_id="bob", role="user", is_authenticated=True),
     )
     # routes/api_v1/audit imports get_user directly into its module namespace
     import routes.api_v1.audit as v1_audit
+
     monkeypatch.setattr(v1_audit, "get_user", auth.get_user)
 
     resp = client.get("/api/v1/audit", params={"as_user": "alice"})
@@ -83,13 +90,23 @@ def test_reverse_unknown_token_returns_404(client, monkeypatch):
     (not 403) so a malicious caller can't enumerate other users' tokens."""
 
     class _MS:
-        def fetch_one(self, q, p): return None
-        def execute(self, *a, **k): pass
-        def fetch_all(self, *a, **k): return []
-        def close(self): pass
-        def ping(self): return True
+        def fetch_one(self, q, p):
+            return None
+
+        def execute(self, *a, **k):
+            pass
+
+        def fetch_all(self, *a, **k):
+            return []
+
+        def close(self):
+            pass
+
+        def ping(self):
+            return True
 
     import config as _config
+
     _config._instances["metadata_store"] = _MS()
 
     resp = client.post("/api/v1/audit/nonexistent-token/reverse")
@@ -101,12 +118,21 @@ def test_reverse_already_reversed_returns_400(client, monkeypatch):
     class _MS:
         def fetch_one(self, q, p):
             return {"id": 5, "reversed_at": datetime.now(timezone.utc)}
-        def execute(self, *a, **k): pass
-        def fetch_all(self, *a, **k): return []
-        def close(self): pass
-        def ping(self): return True
+
+        def execute(self, *a, **k):
+            pass
+
+        def fetch_all(self, *a, **k):
+            return []
+
+        def close(self):
+            pass
+
+        def ping(self):
+            return True
 
     import config as _config
+
     _config._instances["metadata_store"] = _MS()
 
     resp = client.post("/api/v1/audit/tok-1/reverse")
@@ -118,17 +144,28 @@ def test_reverse_success(client, monkeypatch):
     class _MS:
         def fetch_one(self, q, p):
             return {"id": 5, "reversed_at": None}
-        def execute(self, *a, **k): pass
-        def fetch_all(self, *a, **k): return []
-        def close(self): pass
-        def ping(self): return True
+
+        def execute(self, *a, **k):
+            pass
+
+        def fetch_all(self, *a, **k):
+            return []
+
+        def close(self):
+            pass
+
+        def ping(self):
+            return True
 
     import config as _config
+
     _config._instances["metadata_store"] = _MS()
 
     import routes.api_v1.audit as v1_audit
+
     monkeypatch.setattr(
-        v1_audit, "attempt_reverse",
+        v1_audit,
+        "attempt_reverse",
         lambda token, *, user_id: SimpleNamespace(success=True, error=None),
     )
     resp = client.post("/api/v1/audit/tok-1/reverse")

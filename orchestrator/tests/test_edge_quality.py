@@ -22,22 +22,18 @@ from datetime import timezone
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
-import pytest
+from services.edge_quality import _compute_scores
 
 # Tested module imports — only pure-Python, no Postgres/FalkorDB required
-from services.edge_quality import (
-    compute_decay_factor,
-    compute_ppmi,
-    run_edge_quality_job,
-    run_weekly_quality_job,
-    _compute_scores,
-    _fetch_cooccurrence_data,
-)
-
+from services.edge_quality import compute_decay_factor
+from services.edge_quality import compute_ppmi
+from services.edge_quality import run_edge_quality_job
+from services.edge_quality import run_weekly_quality_job
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -50,6 +46,7 @@ def _days_ago(n: float) -> datetime:
 # ---------------------------------------------------------------------------
 # 1. PPMI computation
 # ---------------------------------------------------------------------------
+
 
 class TestComputePpmi:
     def test_zero_when_matches_independence(self):
@@ -107,6 +104,7 @@ class TestComputePpmi:
 # PPMI(A,B) = max(0, log2( (1/3) / ((2/3)*(2/3)) )) = max(0, log2(3/4)) < 0 → 0
 # PPMI(A,D) = max(0, log2( (1/3) / ((2/3)*(1/3)) )) = max(0, log2(3/2)) > 0
 
+
 class TestPpmiGoldenValues:
     TOTAL = 3
 
@@ -132,6 +130,7 @@ class TestPpmiGoldenValues:
 # 3. Temporal decay
 # ---------------------------------------------------------------------------
 
+
 class TestComputeDecayFactor:
     def test_one_when_evidence_today(self):
         result = compute_decay_factor(_now(), half_life_days=365)
@@ -150,7 +149,7 @@ class TestComputeDecayFactor:
         assert result == 1.0
 
     def test_shorter_half_life_decays_faster(self):
-        long_decay  = compute_decay_factor(_days_ago(30), half_life_days=365)
+        long_decay = compute_decay_factor(_days_ago(30), half_life_days=365)
         short_decay = compute_decay_factor(_days_ago(30), half_life_days=30)
         assert short_decay < long_decay
 
@@ -164,6 +163,7 @@ class TestComputeDecayFactor:
 # 4. Composite score
 # ---------------------------------------------------------------------------
 
+
 def _make_cooc(pairs: dict) -> dict:
     """Build a minimal cooc dict suitable for _compute_scores."""
     entity_counts: dict = {}
@@ -175,9 +175,9 @@ def _make_cooc(pairs: dict) -> dict:
         "entity_counts": entity_counts,
         "pair_data": {
             (a, b): {
-                "count":          info["count"],
+                "count": info["count"],
                 "weighted_count": float(info["count"]),
-                "window_weight":  info.get("window_weight", 0.4),
+                "window_weight": info.get("window_weight", 0.4),
                 "last_evidence_at": info.get("last_evidence_at"),
                 "total_gran_weight": float(info["count"]) * info.get("window_weight", 0.4),
                 "gran_rows": info["count"],
@@ -189,19 +189,23 @@ def _make_cooc(pairs: dict) -> dict:
 
 class TestCompositeScore:
     def test_score_between_zero_and_one(self):
-        cooc = _make_cooc({
-            ("a", "b"): {"count": 3, "window_weight": 0.4, "last_evidence_at": _days_ago(10)},
-            ("a", "c"): {"count": 1, "window_weight": 0.4, "last_evidence_at": _days_ago(100)},
-        })
+        cooc = _make_cooc(
+            {
+                ("a", "b"): {"count": 3, "window_weight": 0.4, "last_evidence_at": _days_ago(10)},
+                ("a", "c"): {"count": 1, "window_weight": 0.4, "last_evidence_at": _days_ago(100)},
+            }
+        )
         scored = _compute_scores(cooc)
         for p in scored:
             assert 0.0 <= p["edge_quality"] <= 1.0
 
     def test_higher_ppmi_and_fresher_evidence_increases_score(self):
-        cooc = _make_cooc({
-            ("a", "b"): {"count": 5, "window_weight": 1.0, "last_evidence_at": _days_ago(1)},
-            ("a", "c"): {"count": 1, "window_weight": 0.4, "last_evidence_at": _days_ago(500)},
-        })
+        cooc = _make_cooc(
+            {
+                ("a", "b"): {"count": 5, "window_weight": 1.0, "last_evidence_at": _days_ago(1)},
+                ("a", "c"): {"count": 1, "window_weight": 0.4, "last_evidence_at": _days_ago(500)},
+            }
+        )
         scored = _compute_scores(cooc)
         assert len(scored) == 2
         ab = next(p for p in scored if p["entity_id_a"] == "a" and p["entity_id_b"] == "b")
@@ -209,9 +213,11 @@ class TestCompositeScore:
         assert ab["edge_quality"] > ac["edge_quality"]
 
     def test_single_pair_no_division_by_zero(self):
-        cooc = _make_cooc({
-            ("x", "y"): {"count": 2, "window_weight": 0.4, "last_evidence_at": _days_ago(5)},
-        })
+        cooc = _make_cooc(
+            {
+                ("x", "y"): {"count": 2, "window_weight": 0.4, "last_evidence_at": _days_ago(5)},
+            }
+        )
         scored = _compute_scores(cooc)
         assert len(scored) == 1
         # When only one pair exists, normalised_frequency and ppmi_normalised are both 0.
@@ -226,6 +232,7 @@ class TestCompositeScore:
 # ---------------------------------------------------------------------------
 # 5. Weekly job
 # ---------------------------------------------------------------------------
+
 
 def _make_ms_mock(pairs_computed: int = 0) -> MagicMock:
     """Return a minimal mock MetadataStore that returns no co-occurrence data."""
@@ -242,7 +249,12 @@ class TestRunWeeklyQualityJob:
             patch("services.entity_constraints.check_orphan_entities") as mock_orphan,
             patch("services.entity_constraints.check_alias_uniqueness") as mock_alias,
         ):
-            mock_edge.return_value = {"pairs_computed": 3, "pairs_upserted": 3, "falkordb_updated": 0, "duration_ms": 5}
+            mock_edge.return_value = {
+                "pairs_computed": 3,
+                "pairs_upserted": 3,
+                "falkordb_updated": 0,
+                "duration_ms": 5,
+            }
             mock_orphan.return_value = 1
             mock_alias.return_value = 2
 
@@ -285,8 +297,19 @@ class TestRunWeeklyQualityJob:
 
     def test_exception_in_orphan_check_does_not_prevent_alias_check(self):
         with (
-            patch("services.edge_quality.run_edge_quality_job", return_value={"pairs_computed": 0, "pairs_upserted": 0, "falkordb_updated": 0, "duration_ms": 0}),
-            patch("services.entity_constraints.check_orphan_entities", side_effect=RuntimeError("orphan fail")),
+            patch(
+                "services.edge_quality.run_edge_quality_job",
+                return_value={
+                    "pairs_computed": 0,
+                    "pairs_upserted": 0,
+                    "falkordb_updated": 0,
+                    "duration_ms": 0,
+                },
+            ),
+            patch(
+                "services.entity_constraints.check_orphan_entities",
+                side_effect=RuntimeError("orphan fail"),
+            ),
             patch("services.entity_constraints.check_alias_uniqueness") as mock_alias,
         ):
             mock_alias.return_value = 3
@@ -297,7 +320,15 @@ class TestRunWeeklyQualityJob:
 
     def test_structured_log_contains_expected_fields(self, caplog):
         with (
-            patch("services.edge_quality.run_edge_quality_job", return_value={"pairs_computed": 5, "pairs_upserted": 5, "falkordb_updated": 2, "duration_ms": 100}),
+            patch(
+                "services.edge_quality.run_edge_quality_job",
+                return_value={
+                    "pairs_computed": 5,
+                    "pairs_upserted": 5,
+                    "falkordb_updated": 2,
+                    "duration_ms": 100,
+                },
+            ),
             patch("services.entity_constraints.check_orphan_entities", return_value=1),
             patch("services.entity_constraints.check_alias_uniqueness", return_value=2),
         ):
@@ -316,9 +347,12 @@ class TestRunWeeklyQualityJob:
 # 6. run_edge_quality_job — never raises
 # ---------------------------------------------------------------------------
 
+
 class TestRunEdgeQualityJob:
     def test_never_raises_on_db_exception(self):
-        with patch("services.edge_quality.config.get_metadata_store", side_effect=RuntimeError("db gone")):
+        with patch(
+            "services.edge_quality.config.get_metadata_store", side_effect=RuntimeError("db gone")
+        ):
             result = run_edge_quality_job(user_id="default")
         assert result["pairs_computed"] == 0
         assert "duration_ms" in result
@@ -338,10 +372,12 @@ class TestRunEdgeQualityJob:
 # 7. Scheduler registration guard
 # ---------------------------------------------------------------------------
 
+
 class TestSchedulerRegistration:
     def test_weekly_job_registered_with_correct_schedule(self):
         """Verify the expected job registration arguments: cron Sunday 02:00, replace_existing."""
         from unittest.mock import MagicMock
+
         from services.edge_quality import run_weekly_quality_job
 
         # conftest stubs BackgroundScheduler with a mock that always returns None from add_job.

@@ -21,11 +21,10 @@ Splink outputs are mocked — no real Splink model is required.
 Runs: docker compose -f docker-compose.test.yml run --rm orchestrator pytest
 """
 
-import json
 import uuid
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
-import pytest
 from fastapi.testclient import TestClient
 
 # ---------------------------------------------------------------------------
@@ -41,24 +40,24 @@ USER_ID = "default"
 ID_A, ID_B, ID_C = sorted([ID_A, ID_B, ID_C])
 
 _ENTITY_A = {
-    "entity_id":   ID_A,
-    "name":        "Alice Smith",
+    "entity_id": ID_A,
+    "name": "Alice Smith",
     "entity_type": "PERSON",
-    "aliases":     ["A. Smith"],
+    "aliases": ["A. Smith"],
     "mention_count": 3,
 }
 _ENTITY_B = {
-    "entity_id":   ID_B,
-    "name":        "Alice Sm",
+    "entity_id": ID_B,
+    "name": "Alice Sm",
     "entity_type": "PERSON",
-    "aliases":     [],
+    "aliases": [],
     "mention_count": 2,
 }
 _ENTITY_C = {
-    "entity_id":   ID_C,
-    "name":        "Acme Corp",
+    "entity_id": ID_C,
+    "name": "Acme Corp",
     "entity_type": "ORG",
-    "aliases":     [],
+    "aliases": [],
     "mention_count": 4,
 }
 
@@ -66,6 +65,7 @@ _ENTITY_C = {
 # ---------------------------------------------------------------------------
 # Helper: build a minimal mock metadata store
 # ---------------------------------------------------------------------------
+
 
 def _make_ms(
     entities=None,
@@ -93,10 +93,7 @@ def _make_ms(
         if "from entities" in sql_lower:
             return entities
         if "known_distinct_entity_pairs" in sql_lower:
-            return [
-                {"entity_id_a": a, "entity_id_b": b}
-                for (a, b) in distinct_pairs
-            ]
+            return [{"entity_id_a": a, "entity_id_b": b} for (a, b) in distinct_pairs]
         return []
 
     ms.fetch_one.side_effect = _fetch_one
@@ -113,6 +110,7 @@ def _make_ms(
 class TestTypeBlocking:
     def test_same_type_entities_are_candidates(self):
         from services.deduplication import _build_type_blocks
+
         entities = [_ENTITY_A, _ENTITY_B, _ENTITY_C]
         pairs = _build_type_blocks(entities)
         # A and B are both PERSON → should be a candidate pair
@@ -123,6 +121,7 @@ class TestTypeBlocking:
 
     def test_different_type_entities_not_in_type_pairs(self):
         from services.deduplication import _build_type_blocks
+
         entities = [_ENTITY_A, _ENTITY_C]
         pairs = _build_type_blocks(entities)
         # A is PERSON, C is ORG → not in type pairs
@@ -131,16 +130,19 @@ class TestTypeBlocking:
 
     def test_no_entities_returns_empty(self):
         from services.deduplication import _build_type_blocks
+
         assert _build_type_blocks([]) == set()
 
     def test_single_entity_returns_empty(self):
         from services.deduplication import _build_type_blocks
+
         assert _build_type_blocks([_ENTITY_A]) == set()
 
 
 class TestAttributeBlocking:
     def test_shared_prefix_creates_candidate(self):
         from services.deduplication import _build_attr_blocks
+
         # "alice smith" and "alice sm" share prefix "al"
         pairs = _build_attr_blocks([_ENTITY_A, _ENTITY_B])
         canonical = tuple(sorted([ID_A, ID_B]))
@@ -148,6 +150,7 @@ class TestAttributeBlocking:
 
     def test_different_prefix_not_candidate(self):
         from services.deduplication import _build_attr_blocks
+
         pairs = _build_attr_blocks([_ENTITY_A, _ENTITY_C])
         # "alice smith" → "al", "acme corp" → "ac" — no shared prefix
         canonical_ac = tuple(sorted([ID_A, ID_C]))
@@ -155,6 +158,7 @@ class TestAttributeBlocking:
 
     def test_short_name_skipped(self):
         from services.deduplication import _build_attr_blocks
+
         e_short = {**_ENTITY_A, "entity_id": str(uuid.uuid4()), "name": "A"}
         pairs = _build_attr_blocks([e_short, _ENTITY_B])
         # "a" has len < 2 → skipped
@@ -164,6 +168,7 @@ class TestAttributeBlocking:
 class TestKnownDistinctFiltering:
     def test_known_distinct_pair_excluded(self):
         from services.deduplication import _build_candidates
+
         known_distinct = {(ID_A, ID_B)}
         vs = MagicMock()
         vs.search.return_value = []
@@ -180,6 +185,7 @@ class TestKnownDistinctFiltering:
 
     def test_unknown_pair_included(self):
         from services.deduplication import _build_candidates
+
         known_distinct: set = set()
         vs = MagicMock()
         vs.search.return_value = []
@@ -196,6 +202,7 @@ class TestKnownDistinctFiltering:
 
     def test_pair_via_multiple_blockers_counted_once(self):
         from services.deduplication import _build_candidates
+
         vs = MagicMock()
         vs.search.return_value = []
         with patch("services.deduplication.config") as mock_cfg:
@@ -242,7 +249,8 @@ class TestAnnUserIdFilter:
             assert f is not None, "search called without filter"
             must = f.get("must", [])
             user_id_conditions = [
-                c for c in must
+                c
+                for c in must
                 if c.get("key") == "user_id" and c.get("match", {}).get("value") == USER_ID
             ]
             assert len(user_id_conditions) >= 1, (
@@ -253,11 +261,11 @@ class TestAnnUserIdFilter:
         from services.deduplication import _build_ann_blocks
 
         hit = {
-            "id":    "some-point-id",
+            "id": "some-point-id",
             "score": 0.92,
             "payload": {
                 "entity_id": ID_B,
-                "user_id":   USER_ID,
+                "user_id": USER_ID,
             },
         }
 
@@ -288,10 +296,10 @@ def _make_scored_pair(prob, entity_a=None, entity_b=None):
     if a_id > b_id:
         a_id, b_id = b_id, a_id
     return {
-        "entity_id_a":       a_id,
-        "entity_id_b":       b_id,
+        "entity_id_a": a_id,
+        "entity_id_b": b_id,
         "match_probability": prob,
-        "features":          {},
+        "features": {},
     }
 
 
@@ -389,19 +397,19 @@ class TestWinnerSelection:
         from services.deduplication import _select_winner
 
         e_high = {**_ENTITY_A, "entity_id": ID_A, "mention_count": 5}
-        e_low  = {**_ENTITY_B, "entity_id": ID_B, "mention_count": 1}
+        e_low = {**_ENTITY_B, "entity_id": ID_B, "mention_count": 1}
         winner, loser = _select_winner(e_high, e_low)
         assert winner == ID_A
-        assert loser  == ID_B
+        assert loser == ID_B
 
     def test_higher_mention_count_wins_reversed_input(self):
         from services.deduplication import _select_winner
 
         e_high = {**_ENTITY_A, "entity_id": ID_A, "mention_count": 5}
-        e_low  = {**_ENTITY_B, "entity_id": ID_B, "mention_count": 1}
+        e_low = {**_ENTITY_B, "entity_id": ID_B, "mention_count": 1}
         winner, loser = _select_winner(e_low, e_high)
         assert winner == ID_A
-        assert loser  == ID_B
+        assert loser == ID_B
 
     def test_tie_lower_uuid_wins(self):
         from services.deduplication import _select_winner
@@ -411,7 +419,7 @@ class TestWinnerSelection:
         e_b = {**_ENTITY_B, "entity_id": ID_B, "mention_count": 3}
         winner, loser = _select_winner(e_a, e_b)
         assert winner == ID_A
-        assert loser  == ID_B
+        assert loser == ID_B
 
 
 # ---------------------------------------------------------------------------
@@ -435,12 +443,12 @@ class TestRunLifecycle:
             mock_score.return_value = []
 
             from services.deduplication import run_deduplication_job
+
             result = run_deduplication_job(user_id=USER_ID)
 
         # fetch_one called to insert run row
         insert_calls = [
-            c for c in ms.fetch_one.call_args_list
-            if "INSERT INTO deduplication_runs" in str(c)
+            c for c in ms.fetch_one.call_args_list if "INSERT INTO deduplication_runs" in str(c)
         ]
         assert len(insert_calls) >= 1
         assert result["run_id"] == run_id
@@ -460,11 +468,11 @@ class TestRunLifecycle:
             mock_score.return_value = []
 
             from services.deduplication import run_deduplication_job
+
             run_deduplication_job(user_id=USER_ID)
 
         update_calls = [
-            c for c in ms.execute.call_args_list
-            if "UPDATE deduplication_runs" in str(c)
+            c for c in ms.execute.call_args_list if "UPDATE deduplication_runs" in str(c)
         ]
         assert len(update_calls) >= 1
 
@@ -481,13 +489,15 @@ class TestRunLifecycle:
             mock_block.side_effect = RuntimeError("simulated failure")
 
             from services.deduplication import run_deduplication_job
+
             result = run_deduplication_job(user_id=USER_ID)
 
         # Must not raise
         assert result["run_id"] == run_id
         # Error update must have been attempted
         error_updates = [
-            c for c in ms.execute.call_args_list
+            c
+            for c in ms.execute.call_args_list
             if "error_message" in str(c) and "finished_at" in str(c)
         ]
         assert len(error_updates) >= 1
@@ -505,6 +515,7 @@ class TestRunLifecycle:
             mock_block.side_effect = RuntimeError("simulated failure")
 
             from services.deduplication import run_deduplication_job
+
             # Should return a dict, not raise
             result = run_deduplication_job(user_id=USER_ID)
         assert isinstance(result, dict)
@@ -537,6 +548,7 @@ class TestInterruptedRun:
             mock_score.return_value = []
 
             from services.deduplication import run_deduplication_job
+
             result = run_deduplication_job(user_id=USER_ID)
 
         assert result["run_id"] == run_id_new
@@ -554,9 +566,16 @@ def _make_app_with_mocked_stores(ms_mock, vs_mock=None):
     # Minimal mock modules so main.py imports don't fail
     mocks = {}
     for mod in [
-        "hooks", "events", "adapters.postgres_store", "adapters.qdrant_store",
-        "adapters.ollama_embedder", "services.ingest", "signals",
-        "librechat_config", "services.routines", "permissions",
+        "hooks",
+        "events",
+        "adapters.postgres_store",
+        "adapters.qdrant_store",
+        "adapters.ollama_embedder",
+        "services.ingest",
+        "signals",
+        "librechat_config",
+        "services.routines",
+        "permissions",
     ]:
         if mod not in sys.modules:
             mocks[mod] = MagicMock()
@@ -643,11 +662,22 @@ class TestWeeklyJobIntegration:
 
         def mock_edge_job(user_id="default"):
             call_order.append("edge")
-            return {"pairs_computed": 1, "pairs_upserted": 1, "falkordb_updated": 0, "duration_ms": 10}
+            return {
+                "pairs_computed": 1,
+                "pairs_upserted": 1,
+                "falkordb_updated": 0,
+                "duration_ms": 10,
+            }
 
         def mock_dedup_job(user_id="default"):
             call_order.append("dedup")
-            return {"run_id": "r1", "candidate_count": 2, "auto_merged": 1, "queued_for_review": 1, "duration_ms": 50}
+            return {
+                "run_id": "r1",
+                "candidate_count": 2,
+                "auto_merged": 1,
+                "queued_for_review": 1,
+                "duration_ms": 50,
+            }
 
         def mock_orphan_check(user_id="default"):
             call_order.append("orphan")
@@ -659,12 +689,17 @@ class TestWeeklyJobIntegration:
 
         with (
             patch("services.edge_quality.run_edge_quality_job", side_effect=mock_edge_job),
-            patch("services.entity_constraints.check_orphan_entities", side_effect=mock_orphan_check),
-            patch("services.entity_constraints.check_alias_uniqueness", side_effect=mock_alias_check),
+            patch(
+                "services.entity_constraints.check_orphan_entities", side_effect=mock_orphan_check
+            ),
+            patch(
+                "services.entity_constraints.check_alias_uniqueness", side_effect=mock_alias_check
+            ),
             patch("services.deduplication.run_deduplication_job", side_effect=mock_dedup_job),
         ):
             from services.edge_quality import run_weekly_quality_job
-            result = run_weekly_quality_job()
+
+            run_weekly_quality_job()
 
         assert call_order.index("edge") < call_order.index("dedup")
         assert call_order.index("dedup") == len(call_order) - 1
@@ -677,7 +712,12 @@ class TestWeeklyJobIntegration:
 
         def mock_edge_job(user_id="default"):
             edge_called.append(True)
-            return {"pairs_computed": 0, "pairs_upserted": 0, "falkordb_updated": 0, "duration_ms": 0}
+            return {
+                "pairs_computed": 0,
+                "pairs_upserted": 0,
+                "falkordb_updated": 0,
+                "duration_ms": 0,
+            }
 
         def mock_orphan_check(user_id="default"):
             orphan_called.append(True)
@@ -692,12 +732,19 @@ class TestWeeklyJobIntegration:
 
         with (
             patch("services.edge_quality.run_edge_quality_job", side_effect=mock_edge_job),
-            patch("services.entity_constraints.check_orphan_entities", side_effect=mock_orphan_check),
-            patch("services.entity_constraints.check_alias_uniqueness", side_effect=mock_alias_check),
-            patch("services.deduplication.run_deduplication_job", side_effect=mock_dedup_job_raises),
+            patch(
+                "services.entity_constraints.check_orphan_entities", side_effect=mock_orphan_check
+            ),
+            patch(
+                "services.entity_constraints.check_alias_uniqueness", side_effect=mock_alias_check
+            ),
+            patch(
+                "services.deduplication.run_deduplication_job", side_effect=mock_dedup_job_raises
+            ),
         ):
             from services.edge_quality import run_weekly_quality_job
-            result = run_weekly_quality_job()
+
+            run_weekly_quality_job()
 
         assert edge_called, "edge quality job must have run"
         assert orphan_called, "orphan check must have run"
@@ -707,10 +754,21 @@ class TestWeeklyJobIntegration:
         """Summary dict includes auto_merged and queued_for_review."""
 
         def mock_edge_job(user_id="default"):
-            return {"pairs_computed": 5, "pairs_upserted": 5, "falkordb_updated": 0, "duration_ms": 100}
+            return {
+                "pairs_computed": 5,
+                "pairs_upserted": 5,
+                "falkordb_updated": 0,
+                "duration_ms": 100,
+            }
 
         def mock_dedup_job(user_id="default"):
-            return {"run_id": "r1", "candidate_count": 3, "auto_merged": 2, "queued_for_review": 1, "duration_ms": 200}
+            return {
+                "run_id": "r1",
+                "candidate_count": 3,
+                "auto_merged": 2,
+                "queued_for_review": 1,
+                "duration_ms": 200,
+            }
 
         with (
             patch("services.edge_quality.run_edge_quality_job", side_effect=mock_edge_job),
@@ -719,6 +777,7 @@ class TestWeeklyJobIntegration:
             patch("services.deduplication.run_deduplication_job", side_effect=mock_dedup_job),
         ):
             from services.edge_quality import run_weekly_quality_job
+
             result = run_weekly_quality_job()
 
         assert "auto_merged" in result
@@ -730,7 +789,12 @@ class TestWeeklyJobIntegration:
         """If dedup raises, auto_merged and queued_for_review default to 0."""
 
         def mock_edge_job(user_id="default"):
-            return {"pairs_computed": 0, "pairs_upserted": 0, "falkordb_updated": 0, "duration_ms": 0}
+            return {
+                "pairs_computed": 0,
+                "pairs_upserted": 0,
+                "falkordb_updated": 0,
+                "duration_ms": 0,
+            }
 
         with (
             patch("services.edge_quality.run_edge_quality_job", side_effect=mock_edge_job),
@@ -739,6 +803,7 @@ class TestWeeklyJobIntegration:
             patch("services.deduplication.run_deduplication_job", side_effect=RuntimeError("boom")),
         ):
             from services.edge_quality import run_weekly_quality_job
+
             result = run_weekly_quality_job()
 
         assert result["auto_merged"] == 0

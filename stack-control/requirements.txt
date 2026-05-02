@@ -1,3 +1,4 @@
-fastapi==0.115.12
+# FastAPI >=0.123 required for Starlette >=0.49.1 (CVE-2025-54121, CVE-2025-62727); 0.115.x capped starlette<0.47.
+fastapi==0.123.10
 uvicorn[standard]==0.34.0
 pydantic==2.11.1

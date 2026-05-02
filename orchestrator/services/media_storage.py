@@ -27,29 +27,27 @@ from typing import Literal
 # ---------------------------------------------------------------------------
 
 _DATA_DIR = Path(os.environ.get("LUMOGIS_DATA_DIR", "/opt/lumogis/data"))
-_CAPTURE_MEDIA_ROOT: Path = Path(
-    os.environ.get("CAPTURE_MEDIA_ROOT", str(_DATA_DIR / "captures"))
-)
+_CAPTURE_MEDIA_ROOT: Path = Path(os.environ.get("CAPTURE_MEDIA_ROOT", str(_DATA_DIR / "captures")))
 
-_IMAGE_MAX_BYTES: int = int(
-    os.environ.get("CAPTURE_MAX_IMAGE_BYTES", str(10 * 1024 * 1024))
-)
-_AUDIO_MAX_BYTES: int = int(
-    os.environ.get("CAPTURE_MAX_AUDIO_BYTES", str(25 * 1024 * 1024))
-)
+_IMAGE_MAX_BYTES: int = int(os.environ.get("CAPTURE_MAX_IMAGE_BYTES", str(10 * 1024 * 1024)))
+_AUDIO_MAX_BYTES: int = int(os.environ.get("CAPTURE_MAX_AUDIO_BYTES", str(25 * 1024 * 1024)))
 
 # Frozen MVP allowlists (plan §12.2).
-_IMAGE_MIME_ALLOWLIST: frozenset[str] = frozenset({
-    "image/jpeg",
-    "image/png",
-    "image/webp",
-})
-_AUDIO_MIME_ALLOWLIST: frozenset[str] = frozenset({
-    "audio/webm",
-    "audio/mp4",
-    "audio/mpeg",
-    "audio/wav",
-})
+_IMAGE_MIME_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+    }
+)
+_AUDIO_MIME_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        "audio/webm",
+        "audio/mp4",
+        "audio/mpeg",
+        "audio/wav",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -165,8 +163,7 @@ def safe_attachment_path(
     candidate = (_root / user_id / capture_id / attachment_id / filename).resolve()
     if not candidate.is_relative_to(_root):
         raise ValueError(
-            f"path traversal detected: resolved path {candidate!r} "
-            f"is outside root {_root!r}"
+            f"path traversal detected: resolved path {candidate!r} is outside root {_root!r}"
         )
     return candidate
 
@@ -194,9 +191,7 @@ def validate_attachment(
     FileTooLargeError
         ``size_bytes`` exceeds the configured limit for ``attachment_type``.
     """
-    allowlist = (
-        _IMAGE_MIME_ALLOWLIST if attachment_type == "image" else _AUDIO_MIME_ALLOWLIST
-    )
+    allowlist = _IMAGE_MIME_ALLOWLIST if attachment_type == "image" else _AUDIO_MIME_ALLOWLIST
     if mime_type not in allowlist:
         raise MimeNotAllowedError(mime_type)
 

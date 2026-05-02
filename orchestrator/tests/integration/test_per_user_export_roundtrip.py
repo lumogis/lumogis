@@ -44,11 +44,11 @@ import json
 import re
 import zipfile
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime
+from datetime import timezone
 
 import pytest
 from fastapi.testclient import TestClient
-
 
 # ---------------------------------------------------------------------------
 # Fake metadata store: handles users + a small, configurable per-user table
@@ -57,8 +57,15 @@ from fastapi.testclient import TestClient
 
 
 _PER_USER_TABLES_WITH_SCOPE = {
-    "notes", "file_index", "entities", "sessions", "audio_memos",
-    "signals", "review_queue", "action_log", "audit_log",
+    "notes",
+    "file_index",
+    "entities",
+    "sessions",
+    "audio_memos",
+    "signals",
+    "review_queue",
+    "action_log",
+    "audit_log",
 }
 
 
@@ -158,17 +165,13 @@ class _RoundtripStore:
                     return dict(row)
             return None
         if q.startswith("select count(*) as n from users where role = 'admin'"):
-            n = sum(
-                1 for r in self.users.values()
-                if r["role"] == "admin" and not r["disabled"]
-            )
+            n = sum(1 for r in self.users.values() if r["role"] == "admin" and not r["disabled"])
             return {"n": n}
         if q.startswith("select count(*) as n from users"):
             return {"n": len(self.users)}
         if q.startswith("select id from users where role = 'admin'"):
             admins = sorted(
-                (r for r in self.users.values()
-                 if r["role"] == "admin" and not r["disabled"]),
+                (r for r in self.users.values() if r["role"] == "admin" and not r["disabled"]),
                 key=lambda r: r["created_at"],
             )
             return {"id": admins[0]["id"]} if admins else None
@@ -206,11 +209,7 @@ class _RoundtripStore:
             pk_col = m.group(1)
             table = m.group(2)
             ids = list(p[0]) if p and p[0] is not None else []
-            return [
-                {"pk": r[pk_col]}
-                for r in self.tables.get(table, [])
-                if r.get(pk_col) in ids
-            ]
+            return [{"pk": r[pk_col]} for r in self.tables.get(table, []) if r.get(pk_col) in ids]
 
         # Generic SELECT * FROM <table> WHERE …
         m = re.match(r"select \* from (\w+)", q)
@@ -223,7 +222,10 @@ class _RoundtripStore:
     # --- helpers ------------------------------------------------------
 
     def _filter_table_rows(
-        self, table: str, query_lower: str, params: tuple,
+        self,
+        table: str,
+        query_lower: str,
+        params: tuple,
     ) -> list[dict]:
         """Apply the ``authored_by_filter`` / user_id filter in Python.
 
@@ -248,9 +250,9 @@ class _RoundtripStore:
         user_id = params[-1]
         if "scope in" in query_lower:
             return [
-                r for r in rows
-                if r.get("user_id") == user_id
-                and r.get("scope") in ("personal", "shared")
+                r
+                for r in rows
+                if r.get("user_id") == user_id and r.get("scope") in ("personal", "shared")
             ]
         return [r for r in rows if r.get("user_id") == user_id]
 
@@ -271,6 +273,7 @@ def auth_env(monkeypatch):
     monkeypatch.setenv("LUMOGIS_REFRESH_COOKIE_SECURE", "false")
     yield
     from routes.auth import _reset_rate_limit_for_tests
+
     _reset_rate_limit_for_tests()
 
 
@@ -297,6 +300,7 @@ def export_dir(tmp_path, monkeypatch):
 def store(monkeypatch):
     """Install the in-memory metadata store as the global singleton."""
     import config as _config
+
     s = _RoundtripStore()
     _config._instances["metadata_store"] = s
     yield s
@@ -307,12 +311,14 @@ def store(monkeypatch):
 def _booted_client():
     """TestClient over the live FastAPI app (lifespan executes)."""
     import main
+
     with TestClient(main.app) as client:
         yield client
 
 
 def _create_user(email: str, role: str) -> str:
     import services.users as users_svc
+
     user = users_svc.create_user(email, "verylongpassword12", role)
     return user.id
 
@@ -322,9 +328,7 @@ def _login(client: TestClient, email: str) -> str:
         "/api/v1/auth/login",
         json={"email": email, "password": "verylongpassword12"},
     )
-    assert resp.status_code == 200, (
-        f"login for {email} failed: {resp.status_code} {resp.text}"
-    )
+    assert resp.status_code == 200, f"login for {email} failed: {resp.status_code} {resp.text}"
     return resp.json()["access_token"]
 
 
@@ -334,7 +338,9 @@ def _login(client: TestClient, email: str) -> str:
 
 
 def test_per_user_export_roundtrip_full_route_stack(
-    auth_env, store, export_dir,
+    auth_env,
+    store,
+    export_dir,
 ):
     """Full route-stack roundtrip — see module docstring for invariants."""
     # ------------------------------------------------------------------
@@ -346,20 +352,36 @@ def test_per_user_export_roundtrip_full_route_stack(
     bob_id = _create_user("bob@home.lan", "user")
 
     store.tables["notes"] = [
-        {"note_id": "note-a-1", "user_id": alice_id,
-         "scope": "personal", "title": "alice secret 1",
-         "body": "ALICE-PERSONAL-1"},
-        {"note_id": "note-a-2", "user_id": alice_id,
-         "scope": "personal", "title": "alice secret 2",
-         "body": "ALICE-PERSONAL-2"},
-        {"note_id": "note-a-shared", "user_id": alice_id,
-         "scope": "shared", "title": "alice shared note",
-         "body": "ALICE-SHARED-NOTE"},
+        {
+            "note_id": "note-a-1",
+            "user_id": alice_id,
+            "scope": "personal",
+            "title": "alice secret 1",
+            "body": "ALICE-PERSONAL-1",
+        },
+        {
+            "note_id": "note-a-2",
+            "user_id": alice_id,
+            "scope": "personal",
+            "title": "alice secret 2",
+            "body": "ALICE-PERSONAL-2",
+        },
+        {
+            "note_id": "note-a-shared",
+            "user_id": alice_id,
+            "scope": "shared",
+            "title": "alice shared note",
+            "body": "ALICE-SHARED-NOTE",
+        },
         # Bob's note — must NOT appear in alice's archive even though
         # it lives in the same table; the per-user filter is the gate.
-        {"note_id": "note-b-1", "user_id": bob_id,
-         "scope": "personal", "title": "bob secret",
-         "body": "BOB-PERSONAL-DO-NOT-LEAK"},
+        {
+            "note_id": "note-b-1",
+            "user_id": bob_id,
+            "scope": "personal",
+            "title": "bob secret",
+            "body": "BOB-PERSONAL-DO-NOT-LEAK",
+        },
     ]
 
     with _booted_client() as client:
@@ -387,8 +409,7 @@ def test_per_user_export_roundtrip_full_route_stack(
         alice_dir = export_dir / alice_id
         archives_on_disk = sorted(alice_dir.glob("export_*.zip"))
         assert len(archives_on_disk) == 1, (
-            f"expected exactly one persisted archive under {alice_dir}, "
-            f"got {archives_on_disk!r}"
+            f"expected exactly one persisted archive under {alice_dir}, got {archives_on_disk!r}"
         )
         archive_on_disk = archives_on_disk[0]
 
@@ -414,8 +435,7 @@ def test_per_user_export_roundtrip_full_route_stack(
         # ``alice-imported@home.lan`` yet.
         # ----------------------------------------------------------------
         store.tables["notes"] = [
-            r for r in store.tables.get("notes", [])
-            if r.get("user_id") != alice_id
+            r for r in store.tables.get("notes", []) if r.get("user_id") != alice_id
         ]
 
         # --------------------------------------------------------------
@@ -437,7 +457,9 @@ def test_per_user_export_roundtrip_full_route_stack(
 
         archive_note_ids = {n["note_id"] for n in notes_in_archive}
         assert archive_note_ids == {
-            "note-a-1", "note-a-2", "note-a-shared",
+            "note-a-1",
+            "note-a-2",
+            "note-a-shared",
         }, (
             f"per-user export filter regression: archive notes = "
             f"{archive_note_ids!r}; expected exactly alice's 3 notes "
@@ -474,10 +496,9 @@ def test_per_user_export_roundtrip_full_route_stack(
         assert plan["preconditions"]["no_parent_pk_collisions"] is True
         # Non-mutation: the new email must STILL be unminted on the
         # destination after dry-run (no users row, no notes rows).
-        assert all(
-            r["email"] != "alice-imported@home.lan"
-            for r in store.users.values()
-        ), "dry-run minted a users row — it must be non-mutating"
+        assert all(r["email"] != "alice-imported@home.lan" for r in store.users.values()), (
+            "dry-run minted a users row — it must be non-mutating"
+        )
 
         # --------------------------------------------------------------
         # 5. Real import — 201 Created + Location header.
@@ -515,12 +536,13 @@ def test_per_user_export_roundtrip_full_route_stack(
         #    move; we pin that contract here.
         # --------------------------------------------------------------
         imported_notes = [
-            r for r in store.tables.get("notes", [])
-            if r.get("user_id") == new_user_id
+            r for r in store.tables.get("notes", []) if r.get("user_id") == new_user_id
         ]
         imported_note_ids = {r["note_id"] for r in imported_notes}
         assert imported_note_ids == {
-            "note-a-1", "note-a-2", "note-a-shared",
+            "note-a-1",
+            "note-a-2",
+            "note-a-shared",
         }, (
             f"imported notes for new user = {imported_note_ids!r}; "
             "expected the same 3 alice notes the archive contained."
@@ -537,10 +559,7 @@ def test_per_user_export_roundtrip_full_route_stack(
         #    or overwrite. (`note-b-1` is the only row owned by bob,
         #    and it must remain owned by bob with its original body.)
         # --------------------------------------------------------------
-        bob_notes = [
-            r for r in store.tables.get("notes", [])
-            if r.get("user_id") == bob_id
-        ]
+        bob_notes = [r for r in store.tables.get("notes", []) if r.get("user_id") == bob_id]
         assert len(bob_notes) == 1
         assert bob_notes[0]["note_id"] == "note-b-1"
         assert bob_notes[0]["body"] == "BOB-PERSONAL-DO-NOT-LEAK"

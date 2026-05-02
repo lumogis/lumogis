@@ -96,9 +96,7 @@ def _probe_duration_sec(audio_bytes: bytes) -> float | None:
 
     tmp_path: str | None = None
     try:
-        with tempfile.NamedTemporaryFile(
-            prefix="lumogis_stt_", delete=False, suffix=".bin"
-        ) as tmp:
+        with tempfile.NamedTemporaryFile(prefix="lumogis_stt_", delete=False, suffix=".bin") as tmp:
             tmp.write(audio_bytes)
             tmp_path = tmp.name
 
@@ -167,9 +165,7 @@ def transcribe_blob(
 
     mime_n = _normalize_mime(mime_type)
     if mime_n not in _ALLOWED_MIME:
-        raise SttValidationError(
-            "stt_bad_mime", f"MIME type not allowed: {mime_type!r}"
-        )
+        raise SttValidationError("stt_bad_mime", f"MIME type not allowed: {mime_type!r}")
     _log_declared_mime_once(mime_n)
 
     if len(audio_bytes) > max_bytes:

@@ -47,18 +47,12 @@ def _isolate_tool_state(monkeypatch):
     """
     monkeypatch.setenv("KG_SERVICE_URL", "http://kg-test.local:8001")
     monkeypatch.delenv("GRAPH_WEBHOOK_SECRET", raising=False)
-    if services_tools._add_plugin_tool not in hooks._listeners.get(
-        Event.TOOL_REGISTERED, []
-    ):
+    if services_tools._add_plugin_tool not in hooks._listeners.get(Event.TOOL_REGISTERED, []):
         hooks.register(Event.TOOL_REGISTERED, services_tools._add_plugin_tool)
     snapshot = list(hooks._listeners.get(Event.TOOL_REGISTERED, []))
     yield
-    services_tools.TOOL_SPECS[:] = [
-        s for s in services_tools.TOOL_SPECS if s.name != "query_graph"
-    ]
-    services_tools.TOOLS[:] = [
-        d for d in services_tools.TOOLS if d.get("name") != "query_graph"
-    ]
+    services_tools.TOOL_SPECS[:] = [s for s in services_tools.TOOL_SPECS if s.name != "query_graph"]
+    services_tools.TOOLS[:] = [d for d in services_tools.TOOLS if d.get("name") != "query_graph"]
     hooks._listeners[Event.TOOL_REGISTERED] = snapshot
 
 
@@ -115,8 +109,13 @@ def test_register_query_graph_proxy_schema_matches_plugin():
 
     assert params["required"] == ["mode"]
     assert set(params["properties"]) == {
-        "mode", "entity", "from_entity", "to_entity",
-        "depth", "max_depth", "limit",
+        "mode",
+        "entity",
+        "from_entity",
+        "to_entity",
+        "depth",
+        "max_depth",
+        "limit",
     }
     assert params["properties"]["mode"]["enum"] == ["ego", "path", "mentions"]
     assert params["properties"]["max_depth"]["maximum"] == 4
@@ -207,6 +206,7 @@ def test_proxy_handler_returns_error_string_on_kg_504_timeout(monkeypatch, caplo
 def test_proxy_handler_returns_error_string_on_network_error(monkeypatch):
     def boom(_req):
         raise httpx.ConnectError("no route")
+
     _patch_proxy_client(monkeypatch, boom)
 
     out = services_tools._query_graph_proxy_handler(
@@ -243,9 +243,7 @@ def test_proxy_handler_attaches_bearer(monkeypatch):
         lambda _req: httpx.Response(200, json={"results": []}),
     )
 
-    services_tools._query_graph_proxy_handler(
-        {"mode": "ego", "entity": "Ada"}, user_id="alice"
-    )
+    services_tools._query_graph_proxy_handler({"mode": "ego", "entity": "Ada"}, user_id="alice")
 
     assert captured[0].headers["authorization"] == "Bearer qg-secret"
 
@@ -256,8 +254,6 @@ def test_proxy_handler_omits_bearer_when_secret_unset(monkeypatch):
         lambda _req: httpx.Response(200, json={"results": []}),
     )
 
-    services_tools._query_graph_proxy_handler(
-        {"mode": "ego", "entity": "Ada"}, user_id="alice"
-    )
+    services_tools._query_graph_proxy_handler({"mode": "ego", "entity": "Ada"}, user_id="alice")
 
     assert "authorization" not in captured[0].headers

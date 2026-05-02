@@ -36,6 +36,7 @@ Exit codes:
      (logs the symptom + remediation env var names; entrypoint warns
      but continues)
 """
+
 from __future__ import annotations
 
 import logging
@@ -165,9 +166,7 @@ def _resolve_target_user_id(conn) -> str | None:
             bootstrap_email,
         )
 
-    auth_enabled = (
-        os.environ.get("AUTH_ENABLED", "false").strip().lower() == "true"
-    )
+    auth_enabled = os.environ.get("AUTH_ENABLED", "false").strip().lower() == "true"
     if not auth_enabled:
         if not _users_table_exists(conn) or _users_is_empty(conn):
             _log.info(

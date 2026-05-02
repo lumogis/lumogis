@@ -4,7 +4,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
+from datetime import timezone
 from types import SimpleNamespace
 
 import pytest
@@ -14,6 +15,7 @@ from fastapi.testclient import TestClient
 @pytest.fixture
 def client():
     import main
+
     with TestClient(main.app) as c:
         c.app.state.embedding_ready = True
         yield c
@@ -44,6 +46,7 @@ def test_search_returns_hits_from_semantic_search(client, monkeypatch):
         return [fake_hit]
 
     import services.search as ss
+
     monkeypatch.setattr(ss, "semantic_search", _fake_search)
 
     resp = client.get("/api/v1/memory/search", params={"q": "hello", "limit": 5})
@@ -72,6 +75,7 @@ def test_search_degrades_when_vector_store_raises(client, monkeypatch):
         raise RuntimeError("qdrant down")
 
     import services.search as ss
+
     monkeypatch.setattr(ss, "semantic_search", _boom)
 
     resp = client.get("/api/v1/memory/search", params={"q": "x"})
@@ -94,6 +98,7 @@ def test_recent_returns_sessions(client, monkeypatch):
         return [sess]
 
     import services.memory as mem
+
     monkeypatch.setattr(mem, "recent_sessions", _fake_recent)
 
     resp = client.get("/api/v1/memory/recent", params={"limit": 3})
@@ -110,6 +115,7 @@ def test_recent_skips_sessions_without_timestamp(client, monkeypatch):
         return [sess]
 
     import services.memory as mem
+
     monkeypatch.setattr(mem, "recent_sessions", _fake_recent)
 
     resp = client.get("/api/v1/memory/recent")

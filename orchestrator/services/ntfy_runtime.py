@@ -32,8 +32,9 @@ import os
 from typing import TypedDict
 
 from auth import auth_enabled
-from services import connector_credentials as ccs
 from connectors.registry import NTFY
+
+from services import connector_credentials as ccs
 
 _log = logging.getLogger(__name__)
 
@@ -65,17 +66,14 @@ def load_ntfy_runtime_config(user_id: str) -> NtfyRuntimeConfig:
         topic = (payload.get("topic") or "").strip()
         if not topic:
             raise ccs.ConnectorNotConfigured(
-                f"ntfy credential row for user_id={user_id!r} is missing "
-                "the required 'topic' field"
+                f"ntfy credential row for user_id={user_id!r} is missing the required 'topic' field"
             )
         url = (payload.get("url") or os.environ.get("NTFY_URL", _DEFAULT_URL)).rstrip("/")
         token = (payload.get("token") or "").strip()
         return NtfyRuntimeConfig(url=url, topic=topic, token=token)
 
     if auth_enabled():
-        raise ccs.ConnectorNotConfigured(
-            f"no ntfy credential row for user_id={user_id!r}"
-        )
+        raise ccs.ConnectorNotConfigured(f"no ntfy credential row for user_id={user_id!r}")
 
     topic = os.environ.get("NTFY_TOPIC", "").strip()
     if not topic:

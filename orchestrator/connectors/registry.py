@@ -253,13 +253,9 @@ def validate_format(name: str) -> None:
     if not isinstance(name, str) or not name:
         raise ValueError("connector must be a non-empty string")
     if len(name) > CONNECTOR_MAX_LEN:
-        raise ValueError(
-            f"connector exceeds max length {CONNECTOR_MAX_LEN}: {len(name)}"
-        )
+        raise ValueError(f"connector exceeds max length {CONNECTOR_MAX_LEN}: {len(name)}")
     if not CONNECTOR_FORMAT.match(name):
-        raise ValueError(
-            f"connector must match {CONNECTOR_FORMAT.pattern}: {name!r}"
-        )
+        raise ValueError(f"connector must match {CONNECTOR_FORMAT.pattern}: {name!r}")
 
 
 def is_registered(name: str) -> bool:

@@ -474,9 +474,7 @@ class TestStoreEntities:
         # `filter={"must": [{"key": "user_id", "match": {"value": ...}}]}`
         # being re-introduced under the `else:` branch.
         flat = re.sub(r"\s+", "", source)
-        legacy_shape = (
-            'filter={"must":[{"key":"user_id","match":{"value":user_id}}]}'
-        )
+        legacy_shape = 'filter={"must":[{"key":"user_id","match":{"value":user_id}}]}'
         assert legacy_shape not in flat, (
             "services/tools.py:_query_entity Qdrant fallback re-introduced "
             "the legacy user_id-only payload filter — this breaks the "
@@ -528,7 +526,10 @@ class TestEntitiesExtractRoute:
         import main
         from fastapi.testclient import TestClient
 
-        with patch("routes.data.enqueue", return_value=1) as mock_enq, TestClient(main.app) as client:
+        with (
+            patch("routes.data.enqueue", return_value=1) as mock_enq,
+            TestClient(main.app) as client,
+        ):
             resp = client.post(
                 "/entities/extract",
                 json={
@@ -603,9 +604,7 @@ class TestSessionEndTriggersExtraction:
         assert any(m["content"] == "Got it." for m in msgs)
 
     @patch("routes.data.enqueue", return_value=1)
-    def test_session_end_enqueues_session_id_for_downstream_evidence(
-        self, mock_enqueue
-    ):
+    def test_session_end_enqueues_session_id_for_downstream_evidence(self, mock_enqueue):
         import main
         from fastapi.testclient import TestClient
 
@@ -844,6 +843,7 @@ class TestIngestEntityExtraction:
 class TestGetEntitiesEndpoint:
     def _setup_ms(self, rows: list[dict]):
         ms = MockMetadataStore()
+
         def _fetch_all(q, p=None):
             # Return entity rows only for entity queries.  Other queries fired
             # during lifespan startup (e.g. feed_monitor loading FROM sources)
@@ -851,6 +851,7 @@ class TestGetEntitiesEndpoint:
             if "FROM entities" in q:
                 return rows
             return []
+
         ms.fetch_all = _fetch_all
         _config._instances["metadata_store"] = ms
         return ms

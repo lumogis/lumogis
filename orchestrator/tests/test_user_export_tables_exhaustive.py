@@ -25,7 +25,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from services.user_export import _OMITTED_USER_TABLES, _USER_EXPORT_TABLES
+from services.user_export import _OMITTED_USER_TABLES
+from services.user_export import _USER_EXPORT_TABLES
 
 # Global / per-instance tables that intentionally do NOT travel with
 # per-user exports. Update with a comment when adding a new entry.
@@ -35,20 +36,22 @@ from services.user_export import _OMITTED_USER_TABLES, _USER_EXPORT_TABLES
 # ``services.user_export._OMITTED_USER_TABLES`` (canonical owner) and
 # merged in below — keeping the test in lock-step with the service
 # without two places to update.
-_INTENTIONAL_EXCLUSIONS: frozenset[str] = frozenset({
-    # Postgres-side users table — re-created via NewUserSpec on import,
-    # not bulk-copied from the archive.
-    "users",
-    # MCP tokens table (plan ``mcp_token_user_map`` D9): rows store the
-    # SHA-256 of an opaque bearer credential. Exporting the hashes would
-    # leak operationally useful material (collision search, replay if a
-    # client cached the plaintext); exporting the row metadata without the
-    # hash would be confusing dead state at the destination since the
-    # plaintext was shown exactly once at mint time on the source. Per-
-    # user MCP integrations are reconfigured at the destination — the
-    # archive intentionally carries no token state.
-    "mcp_tokens",
-}) | frozenset(_OMITTED_USER_TABLES)
+_INTENTIONAL_EXCLUSIONS: frozenset[str] = frozenset(
+    {
+        # Postgres-side users table — re-created via NewUserSpec on import,
+        # not bulk-copied from the archive.
+        "users",
+        # MCP tokens table (plan ``mcp_token_user_map`` D9): rows store the
+        # SHA-256 of an opaque bearer credential. Exporting the hashes would
+        # leak operationally useful material (collision search, replay if a
+        # client cached the plaintext); exporting the row metadata without the
+        # hash would be confusing dead state at the destination since the
+        # plaintext was shown exactly once at mint time on the source. Per-
+        # user MCP integrations are reconfigured at the destination — the
+        # archive intentionally carries no token state.
+        "mcp_tokens",
+    }
+) | frozenset(_OMITTED_USER_TABLES)
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _INIT_SQL = _REPO_ROOT / "postgres" / "init.sql"
@@ -130,8 +133,7 @@ def test_omitted_user_tables_have_unique_reason_strings():
     )
     for table, reason in _OMITTED_USER_TABLES.items():
         assert reason and reason.strip(), (
-            f"_OMITTED_USER_TABLES['{table}'] must have a non-empty "
-            "reason string."
+            f"_OMITTED_USER_TABLES['{table}'] must have a non-empty reason string."
         )
 
 

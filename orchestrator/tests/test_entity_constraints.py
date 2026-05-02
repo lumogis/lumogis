@@ -22,17 +22,17 @@ Coverage:
 """
 
 import uuid
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 import config as _config
 from services import entity_constraints
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _eid() -> str:
     return str(uuid.uuid4())
@@ -71,6 +71,7 @@ def _make_ms(fetch_one_map: dict | None = None, fetch_all_map: dict | None = Non
 # 1. person_name_required — fires for empty name
 # ---------------------------------------------------------------------------
 
+
 def test_person_name_required_fires_for_empty_name():
     entity_id = _eid()
     user_id = "default"
@@ -86,13 +87,16 @@ def test_person_name_required_fires_for_empty_name():
 
     assert result is True
     assert ms.execute.called
-    insert_calls = [c for c in ms.execute.call_args_list if "INSERT INTO constraint_violations" in c[0][0]]
+    insert_calls = [
+        c for c in ms.execute.call_args_list if "INSERT INTO constraint_violations" in c[0][0]
+    ]
     assert len(insert_calls) == 1
 
 
 # ---------------------------------------------------------------------------
 # 2. person_name_required — does NOT fire for valid name
 # ---------------------------------------------------------------------------
+
 
 def test_person_name_required_clean_entity():
     entity_id = _eid()
@@ -101,13 +105,16 @@ def test_person_name_required_clean_entity():
     result = entity_constraints._check_person_name_required(ms, entity_id, "default")
 
     assert result is False
-    insert_calls = [c for c in ms.execute.call_args_list if "INSERT INTO constraint_violations" in c[0][0]]
+    insert_calls = [
+        c for c in ms.execute.call_args_list if "INSERT INTO constraint_violations" in c[0][0]
+    ]
     assert len(insert_calls) == 0
 
 
 # ---------------------------------------------------------------------------
 # 3. organisation_name_required — fires for empty name
 # ---------------------------------------------------------------------------
+
 
 def test_organisation_name_required_fires_for_empty_name():
     entity_id = _eid()
@@ -121,13 +128,16 @@ def test_organisation_name_required_fires_for_empty_name():
     result = entity_constraints._check_organisation_name_required(ms, entity_id, "default")
 
     assert result is True
-    insert_calls = [c for c in ms.execute.call_args_list if "INSERT INTO constraint_violations" in c[0][0]]
+    insert_calls = [
+        c for c in ms.execute.call_args_list if "INSERT INTO constraint_violations" in c[0][0]
+    ]
     assert len(insert_calls) == 1
 
 
 # ---------------------------------------------------------------------------
 # 4. organisation_name_required — does NOT fire for valid name
 # ---------------------------------------------------------------------------
+
 
 def test_organisation_name_required_clean():
     entity_id = _eid()
@@ -146,6 +156,7 @@ def test_organisation_name_required_clean():
 # the document/session that produced it — a data wiring error).
 # ---------------------------------------------------------------------------
 
+
 def test_no_self_loop_fires_when_entity_is_its_own_evidence():
     entity_id = _eid()
     ms = _make_ms(
@@ -156,13 +167,16 @@ def test_no_self_loop_fires_when_entity_is_its_own_evidence():
     result = entity_constraints._check_no_self_loop(ms, entity_id, "default")
 
     assert result is True
-    insert_calls = [c for c in ms.execute.call_args_list if "INSERT INTO constraint_violations" in c[0][0]]
+    insert_calls = [
+        c for c in ms.execute.call_args_list if "INSERT INTO constraint_violations" in c[0][0]
+    ]
     assert len(insert_calls) == 1
 
 
 # ---------------------------------------------------------------------------
 # 6. no_self_loop — does NOT fire for normal provenance rows
 # ---------------------------------------------------------------------------
+
 
 def test_no_self_loop_clean_when_no_self_referencing_rows():
     entity_id = _eid()
@@ -177,6 +191,7 @@ def test_no_self_loop_clean_when_no_self_referencing_rows():
 # ---------------------------------------------------------------------------
 # 7. valid_edge_type — fires for unknown edge type
 # ---------------------------------------------------------------------------
+
 
 def test_valid_edge_type_fires_for_unknown_type():
     entity_id = _eid()
@@ -194,9 +209,17 @@ def test_valid_edge_type_fires_for_unknown_type():
 # 8. valid_edge_type — does NOT fire for allowed semantic edge types
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("edge_type", [
-    "MENTIONS", "RELATES_TO", "DISCUSSED_IN", "DERIVED_FROM", "WORKED_ON",
-])
+
+@pytest.mark.parametrize(
+    "edge_type",
+    [
+        "MENTIONS",
+        "RELATES_TO",
+        "DISCUSSED_IN",
+        "DERIVED_FROM",
+        "WORKED_ON",
+    ],
+)
 def test_valid_edge_type_clean_for_semantic_types(edge_type):
     entity_id = _eid()
     ms = _make_ms(fetch_all_map={"FROM entity_relations": [{"relation_type": edge_type}]})
@@ -214,11 +237,15 @@ def test_valid_edge_type_clean_for_semantic_types(edge_type):
 # an immediate false-positive CRITICAL violation.
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("edge_type", [
-    "MENTIONED_IN_SESSION",
-    "MENTIONED_IN_DOCUMENT",
-    "RELATED_TO",
-])
+
+@pytest.mark.parametrize(
+    "edge_type",
+    [
+        "MENTIONED_IN_SESSION",
+        "MENTIONED_IN_DOCUMENT",
+        "RELATED_TO",
+    ],
+)
 def test_valid_edge_type_clean_for_provenance_types(edge_type):
     entity_id = _eid()
     ms = _make_ms(fetch_all_map={"FROM entity_relations": [{"relation_type": edge_type}]})
@@ -231,6 +258,7 @@ def test_valid_edge_type_clean_for_provenance_types(edge_type):
 # ---------------------------------------------------------------------------
 # 10. Auto-resolution: violation resolved when condition clears
 # ---------------------------------------------------------------------------
+
 
 def test_auto_resolve_when_condition_clears():
     entity_id = _eid()
@@ -249,6 +277,7 @@ def test_auto_resolve_when_condition_clears():
 # ---------------------------------------------------------------------------
 # 11. run_batch_constraints never raises
 # ---------------------------------------------------------------------------
+
 
 def test_run_batch_constraints_never_raises(monkeypatch):
     """An exception inside any rule checker must not propagate out of run_batch_constraints."""
@@ -274,6 +303,7 @@ def test_run_batch_constraints_never_raises(monkeypatch):
 # ---------------------------------------------------------------------------
 # 12. Orphan rule — fires only for entities older than 7 days
 # ---------------------------------------------------------------------------
+
 
 def test_orphan_entity_only_fires_for_old_entities(monkeypatch):
     entity_id_old = _eid()
@@ -305,7 +335,9 @@ def test_orphan_entity_only_fires_for_old_entities(monkeypatch):
     inserted = entity_constraints.check_orphan_entities("default")
 
     assert inserted == 1
-    insert_calls = [c for c in ms.execute.call_args_list if "INSERT INTO constraint_violations" in c[0][0]]
+    insert_calls = [
+        c for c in ms.execute.call_args_list if "INSERT INTO constraint_violations" in c[0][0]
+    ]
     assert len(insert_calls) == 1
 
 
@@ -332,6 +364,7 @@ def test_orphan_entity_does_not_fire_for_new_entity(monkeypatch):
 # ---------------------------------------------------------------------------
 # 13. Alias uniqueness — flags two entities sharing an alias, not a single one
 # ---------------------------------------------------------------------------
+
 
 def test_alias_uniqueness_flags_two_entities_sharing_alias(monkeypatch):
     eid_a = _eid()
@@ -362,7 +395,9 @@ def test_alias_uniqueness_flags_two_entities_sharing_alias(monkeypatch):
 
     # Two violations inserted (one per entity)
     assert inserted == 2
-    insert_calls = [c for c in ms.execute.call_args_list if "INSERT INTO constraint_violations" in c[0][0]]
+    insert_calls = [
+        c for c in ms.execute.call_args_list if "INSERT INTO constraint_violations" in c[0][0]
+    ]
     assert len(insert_calls) == 2
 
 
@@ -389,16 +424,17 @@ def test_alias_uniqueness_no_violation_when_alias_is_unique(monkeypatch):
 # 14. person_completeness — fires for Person with zero MENTIONS edges
 # ---------------------------------------------------------------------------
 
+
 def test_person_completeness_fires_for_person_with_no_mentions():
     entity_id = _eid()
 
     def _fetch_one(query, params=None):
         if "entity_type = 'PERSON'" in query:
-            return {"entity_id": entity_id}          # is a Person
+            return {"entity_id": entity_id}  # is a Person
         if "relation_type = 'MENTIONS'" in query:
-            return None                               # zero MENTIONS edges
+            return None  # zero MENTIONS edges
         if "FROM constraint_violations" in query:
-            return None                               # no open violation yet
+            return None  # no open violation yet
         return None
 
     ms = MagicMock()
@@ -408,7 +444,9 @@ def test_person_completeness_fires_for_person_with_no_mentions():
     result = entity_constraints._check_person_completeness(ms, entity_id, "default")
 
     assert result is True
-    insert_calls = [c for c in ms.execute.call_args_list if "INSERT INTO constraint_violations" in c[0][0]]
+    insert_calls = [
+        c for c in ms.execute.call_args_list if "INSERT INTO constraint_violations" in c[0][0]
+    ]
     assert len(insert_calls) == 1
     # Verify INFO severity — call_args[0] is SQL, call_args[1] is the params tuple
     call_args = insert_calls[0][0]
@@ -419,6 +457,7 @@ def test_person_completeness_fires_for_person_with_no_mentions():
 # 15. person_completeness — does NOT fire when Person has a MENTIONS edge
 # ---------------------------------------------------------------------------
 
+
 def test_person_completeness_clean_when_mentions_edge_exists():
     entity_id = _eid()
 
@@ -426,7 +465,7 @@ def test_person_completeness_clean_when_mentions_edge_exists():
         if "entity_type = 'PERSON'" in query:
             return {"entity_id": entity_id}
         if "relation_type = 'MENTIONS'" in query:
-            return {"id": 99}                         # has a MENTIONS edge
+            return {"id": 99}  # has a MENTIONS edge
         return None
 
     ms = MagicMock()
@@ -436,7 +475,9 @@ def test_person_completeness_clean_when_mentions_edge_exists():
     result = entity_constraints._check_person_completeness(ms, entity_id, "default")
 
     assert result is False
-    insert_calls = [c for c in ms.execute.call_args_list if "INSERT INTO constraint_violations" in c[0][0]]
+    insert_calls = [
+        c for c in ms.execute.call_args_list if "INSERT INTO constraint_violations" in c[0][0]
+    ]
     assert len(insert_calls) == 0
 
 
@@ -444,12 +485,13 @@ def test_person_completeness_clean_when_mentions_edge_exists():
 # 16. person_completeness — does NOT fire for non-Person entities
 # ---------------------------------------------------------------------------
 
+
 def test_person_completeness_skips_non_person_entities():
     entity_id = _eid()
 
     def _fetch_one(query, params=None):
         if "entity_type = 'PERSON'" in query:
-            return None   # not a Person (e.g. ORG or CONCEPT)
+            return None  # not a Person (e.g. ORG or CONCEPT)
         return None
 
     ms = MagicMock()
@@ -459,5 +501,7 @@ def test_person_completeness_skips_non_person_entities():
     result = entity_constraints._check_person_completeness(ms, entity_id, "default")
 
     assert result is False
-    insert_calls = [c for c in ms.execute.call_args_list if "INSERT INTO constraint_violations" in c[0][0]]
+    insert_calls = [
+        c for c in ms.execute.call_args_list if "INSERT INTO constraint_violations" in c[0][0]
+    ]
     assert len(insert_calls) == 0

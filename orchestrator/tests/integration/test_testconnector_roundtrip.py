@@ -38,19 +38,13 @@ end: PUT → GET → resolve → DELETE for the synthetic ``testconnector``").
 
 from __future__ import annotations
 
-import os
 import time
 from contextlib import contextmanager
-from datetime import datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
-
-from tests.test_connector_credentials_routes import (  # noqa: E402
-    _RoutesFakeStore,
-    _TEST_FERNET_KEY,
-)
-
+from tests.test_connector_credentials_routes import _TEST_FERNET_KEY  # noqa: E402
+from tests.test_connector_credentials_routes import _RoutesFakeStore  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Fixtures — single-user dev mode (caller is "default", role="admin"). The
@@ -121,6 +115,7 @@ def env(monkeypatch):
 def _client():
     """Boot the live FastAPI app inside a TestClient (lifespan executes)."""
     import main
+
     with TestClient(main.app) as client:
         yield client
 
@@ -137,8 +132,9 @@ def test_testconnector_full_roundtrip_put_get_resolve_delete(store, env):
     Asserting at each step rather than only at the end keeps failures
     localisable when a single layer regresses.
     """
-    from services import connector_credentials as ccs
     from connectors.registry import TESTCONNECTOR
+
+    from services import connector_credentials as ccs
 
     secret_payload = {
         "api_key": "sk-roundtrip-abc-123",
@@ -193,7 +189,9 @@ def test_testconnector_full_roundtrip_put_get_resolve_delete(store, env):
 
     # 4. Audit — exactly one PUT row, no DELETE row yet.
     put_audits = [a for a in store.audit if a["action_name"] == "__connector_credential__.put"]
-    delete_audits = [a for a in store.audit if a["action_name"] == "__connector_credential__.deleted"]
+    delete_audits = [
+        a for a in store.audit if a["action_name"] == "__connector_credential__.deleted"
+    ]
     assert len(put_audits) == 1
     assert delete_audits == []
     assert "self" in put_audits[0]["input_summary"]
@@ -219,7 +217,9 @@ def test_testconnector_full_roundtrip_put_get_resolve_delete(store, env):
     # 6. Audit after delete — exactly one PUT and one DELETE row, in
     #    that order, both for the same connector.
     put_audits = [a for a in store.audit if a["action_name"] == "__connector_credential__.put"]
-    delete_audits = [a for a in store.audit if a["action_name"] == "__connector_credential__.deleted"]
+    delete_audits = [
+        a for a in store.audit if a["action_name"] == "__connector_credential__.deleted"
+    ]
     assert len(put_audits) == 1
     assert len(delete_audits) == 1
     assert delete_audits[0]["connector"] == TESTCONNECTOR

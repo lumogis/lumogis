@@ -42,17 +42,20 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-
 from auth import get_user
-from authz import require_admin, require_user
+from authz import require_admin
+from authz import require_user
 from csrf import require_same_origin
-from models.mcp_token import (
-    McpTokenAdminView,
-    McpTokenPublic,
-    MintMcpTokenRequest,
-    MintMcpTokenResponse,
-)
+from fastapi import APIRouter
+from fastapi import Depends
+from fastapi import HTTPException
+from fastapi import Request
+from fastapi import status
+from models.mcp_token import McpTokenAdminView
+from models.mcp_token import McpTokenPublic
+from models.mcp_token import MintMcpTokenRequest
+from models.mcp_token import MintMcpTokenResponse
+
 from services import mcp_tokens as mcp_tokens_service
 from services import users as users_service
 
@@ -164,7 +167,8 @@ def mint_my_token(
     )
     _log.info(
         "mcp_tokens: minted token_id=%s for user_id=%s",
-        internal.id, caller.user_id,
+        internal.id,
+        caller.user_id,
     )
     return MintMcpTokenResponse(
         token=_to_public(internal),
@@ -211,7 +215,8 @@ def revoke_my_token(
     )
     _log.info(
         "mcp_tokens: revoked token_id=%s by user_id=%s",
-        token_id, caller.user_id,
+        token_id,
+        caller.user_id,
     )
     return _to_public(revoked)
 
@@ -295,6 +300,8 @@ def admin_revoke_user_token(
     )
     _log.info(
         "mcp_tokens: admin user_id=%s revoked token_id=%s (owner=%s)",
-        caller.user_id, token_id, user_id,
+        caller.user_id,
+        token_id,
+        user_id,
     )
     return _to_admin_view(revoked)

@@ -71,9 +71,7 @@ def execute(
     from permissions import check_permission
     from permissions import routine_check
 
-    allowed = check_permission(
-        spec.connector, spec.action_type, spec.is_write, user_id=user_id
-    )
+    allowed = check_permission(spec.connector, spec.action_type, spec.is_write, user_id=user_id)
     if not allowed:
         result = ActionResult(
             success=False,

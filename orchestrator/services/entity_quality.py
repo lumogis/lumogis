@@ -15,15 +15,14 @@ Caller: services/entities.py store_entities() — this is the only call site.
 import logging
 import re
 
-import config
 from models.entities import ExtractedEntity
+
+import config
 
 _log = logging.getLogger(__name__)
 
 # Leading determiners that significantly lower the quality of an entity name.
-_DETERMINERS = frozenset(
-    {"the", "a", "an", "this", "that", "these", "those"}
-)
+_DETERMINERS = frozenset({"the", "a", "an", "this", "that", "these", "those"})
 
 # Sentence-initial capital: first token only is title-case and length > 1
 _RE_WORD = re.compile(r"\S+")
@@ -32,6 +31,7 @@ _RE_WORD = re.compile(r"\S+")
 # ---------------------------------------------------------------------------
 # Signal sub-scorers
 # ---------------------------------------------------------------------------
+
 
 def _score_stop_absence(name_lower: str) -> float:
     """1.0 if name is not in the stop set; else 0.0."""
@@ -130,6 +130,7 @@ def _compute_quality(name: str) -> float:
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
+
 
 def score_and_filter_entities(
     entities: list[ExtractedEntity],

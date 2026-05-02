@@ -23,30 +23,31 @@ from __future__ import annotations
 
 import logging
 import os
-import time
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import StreamingResponse
-
-import config
 from auth import get_user
 from authz import require_user
-from loop import ask, ask_stream
+from fastapi import APIRouter
+from fastapi import Depends
+from fastapi import HTTPException
+from fastapi import Request
+from fastapi import status
+from fastapi.responses import StreamingResponse
+from loop import ask
+from loop import ask_stream
+from models.api_v1 import ChatCompletionRequest
+from models.api_v1 import ChatCompletionResponse
+from models.api_v1 import ChatMessageDTO
+from models.api_v1 import ModelDescriptor
+from models.api_v1 import ModelsResponse
 from models.stream import StreamEvent
-from models.api_v1 import (
-    ChatCompletionRequest,
-    ChatCompletionResponse,
-    ChatMessageDTO,
-    ModelDescriptor,
-    ModelsResponse,
-)
-from routes.chat import should_prepend_local_loading_note, stream_completion
-from services.connector_credentials import (
-    ConnectorNotConfigured,
-    CredentialUnavailable,
-)
+from routes.chat import should_prepend_local_loading_note
+from routes.chat import stream_completion
+from services.connector_credentials import ConnectorNotConfigured
+from services.connector_credentials import CredentialUnavailable
+
+import config
 
 _log = logging.getLogger(__name__)
 
@@ -148,7 +149,8 @@ def chat_completions(body: ChatCompletionRequest, request: Request) -> Any:
         except Exception as exc:  # noqa: BLE001 — chat hot path, must surface
             _log.exception(
                 "api_v1.chat.stream pre-flight failed model=%s user=%s",
-                body.model, user_id,
+                body.model,
+                user_id,
             )
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -192,7 +194,8 @@ def chat_completions(body: ChatCompletionRequest, request: Request) -> Any:
     except Exception as exc:  # noqa: BLE001
         _log.exception(
             "api_v1.chat.completions failed model=%s user=%s",
-            body.model, user_id,
+            body.model,
+            user_id,
         )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -208,7 +211,9 @@ def chat_completions(body: ChatCompletionRequest, request: Request) -> Any:
 
 
 def _utcnow():
-    from datetime import datetime, timezone
+    from datetime import datetime
+    from datetime import timezone
+
     return datetime.now(timezone.utc)
 
 

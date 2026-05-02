@@ -20,6 +20,7 @@ on output shape AND on actually issuing the GROUP BY for **every**
 tier (the D-OK regression test for plan §"Test 11" + arbitration
 round 1, generalised to per-tier).
 """
+
 from __future__ import annotations
 
 import os
@@ -28,11 +29,8 @@ from contextlib import contextmanager
 
 import jwt
 import pytest
-from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
-
 from tests.test_auth_phase1 import FakeUsersStore  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Diagnostic-only fake store. We deliberately do NOT inherit from the
@@ -81,10 +79,7 @@ class _DiagFakeStore(FakeUsersStore):
         # directly (the pre-tier shape) still work; the new tests assign
         # to the explicit per-tier attribute.
         src = self.user_rows_by_key_version or self.rows_by_key_version
-        return [
-            {"key_version": int(k), "n": int(v)}
-            for k, v in sorted(src.items())
-        ]
+        return [{"key_version": int(k), "n": int(v)} for k, v in sorted(src.items())]
 
     def _household_aggregate(self) -> list[dict]:
         return [
@@ -168,6 +163,7 @@ def auth_env(monkeypatch):
     monkeypatch.delenv("LUMOGIS_CREDENTIAL_KEYS", raising=False)
     yield
     from routes.auth import _reset_rate_limit_for_tests
+
     _reset_rate_limit_for_tests()
 
 
@@ -188,6 +184,7 @@ def _mint_jwt(user_id: str, role: str) -> str:
 def _client():
     """Boot the live FastAPI app inside a TestClient (lifespan executes)."""
     import main
+
     with TestClient(main.app) as client:
         yield client
 
@@ -195,6 +192,7 @@ def _client():
 def _seed(store, *, email: str, role: str) -> str:
     """Create a user via the real service and return their id."""
     import services.users as users_svc
+
     if users_svc.get_user_by_email(email) is None:
         users_svc.create_user(email, "verylongpassword12", role)
     user = users_svc.get_user_by_email(email)
@@ -227,7 +225,8 @@ def test_fingerprint_unauthenticated_rejected(store, auth_env):
 
 
 def test_fingerprint_empty_tables_returns_current_with_per_tier_empty_dicts(
-    store, auth_env,
+    store,
+    auth_env,
 ):
     """All three tiers empty → every tier key present with empty inner dict.
 
@@ -303,9 +302,7 @@ def test_fingerprint_groups_rows_by_key_version(store, auth_env):
     # table — guards against someone collapsing all three into a
     # single union query (which would still produce a structurally-
     # valid response but lose the per-version breakdown).
-    joined = " ".join(
-        " ".join(q.split()).lower() for q in store.queries
-    )
+    joined = " ".join(" ".join(q.split()).lower() for q in store.queries)
     assert "group by key_version" in joined
     assert "from user_connector_credentials" in joined
     assert "from household_connector_credentials" in joined
@@ -373,7 +370,9 @@ def test_fingerprint_503_when_credential_key_missing(monkeypatch, store, auth_en
 
 @pytest.mark.parametrize("failing_tier", ["user", "household", "system"])
 def test_fingerprint_503_when_any_tier_counter_fails(
-    store, auth_env, failing_tier,
+    store,
+    auth_env,
+    failing_tier,
 ):
     """Per-tier counter raises → 503 ``diagnostic_unavailable`` (fail-fast).
 
@@ -420,17 +419,16 @@ def test_fingerprint_does_not_emit_audit_row(store, auth_env):
     assert resp.status_code == 200, resp.text
 
     audit_writes = [
-        q for q in store.queries
-        if "insert into audit_log" in " ".join(q.split()).lower()
+        q for q in store.queries if "insert into audit_log" in " ".join(q.split()).lower()
     ]
     assert audit_writes == [], (
-        f"fingerprint GET wrote {len(audit_writes)} unexpected audit "
-        f"row(s); SQL: {audit_writes!r}"
+        f"fingerprint GET wrote {len(audit_writes)} unexpected audit row(s); SQL: {audit_writes!r}"
     )
 
 
 def test_fingerprint_response_never_carries_ciphertext_or_plaintext_strings(
-    store, auth_env,
+    store,
+    auth_env,
 ):
     """Belt-and-braces: response body has no ``ciphertext`` / ``payload`` keys.
 

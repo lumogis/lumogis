@@ -25,18 +25,14 @@ Routes covered:
 
 from __future__ import annotations
 
-import os
-
 import pytest
 
 # Reuse the FakeUsersStore + auth_env / dev_env fixtures from the Phase 1
 # test module — they're tagged @pytest.fixture there, not in conftest.
-from tests.test_auth_phase1 import (  # noqa: F401 — re-exported as fixtures
-    FakeUsersStore,
-    auth_env,
-    dev_env,
-    users_store,
-)
+from tests.test_auth_phase1 import FakeUsersStore  # noqa: F401 — re-exported as fixtures
+from tests.test_auth_phase1 import auth_env  # noqa: F401 — re-exported as fixtures
+from tests.test_auth_phase1 import dev_env  # noqa: F401 — re-exported as fixtures
+from tests.test_auth_phase1 import users_store  # noqa: F401 — re-exported as fixtures
 
 PUBLIC_ORIGIN = "https://lumogis.lan"
 
@@ -52,8 +48,9 @@ def origin_unset(monkeypatch):
 
 
 def _make_client():
-    from fastapi.testclient import TestClient
     import main
+    from fastapi.testclient import TestClient
+
     return TestClient(main.app)
 
 
@@ -61,6 +58,7 @@ def _seed_admin(users_store) -> dict:
     """Create one admin user. Return the matching access-token kwargs."""
     import services.users as users_svc
     from auth import mint_access_token
+
     user = users_svc.create_user("admin@home.lan", "verylongpassword12", "admin")
     return {
         "access_token": mint_access_token(user.id, "admin"),
@@ -109,9 +107,7 @@ def test_refresh_200_when_origin_matches(users_store, auth_env, origin_pinned):
     assert "access_token" in resp.json()
 
 
-def test_refresh_403_when_origin_missing_and_pinned(
-    users_store, auth_env, origin_pinned
-):
+def test_refresh_403_when_origin_missing_and_pinned(users_store, auth_env, origin_pinned):
     """No Origin header at all + pinned origin → refuse.
 
     Modern browsers always send Origin on POST. A POST with no Origin
@@ -126,9 +122,7 @@ def test_refresh_403_when_origin_missing_and_pinned(
     assert resp.status_code == 403
 
 
-def test_refresh_passthrough_when_public_origin_unset(
-    users_store, auth_env, origin_unset
-):
+def test_refresh_passthrough_when_public_origin_unset(users_store, auth_env, origin_unset):
     """Without ``LUMOGIS_PUBLIC_ORIGIN`` set, the check is a no-op."""
     _seed_admin(users_store)
     client = _make_client()
@@ -146,9 +140,7 @@ def test_refresh_passthrough_when_public_origin_unset(
 # ---------------------------------------------------------------------------
 
 
-def test_admin_users_post_unauthenticated_rejected_outright(
-    users_store, auth_env, origin_pinned
-):
+def test_admin_users_post_unauthenticated_rejected_outright(users_store, auth_env, origin_pinned):
     """No Bearer on an admin route → 401 from the auth middleware, full stop.
 
     The admin/users routes are Bearer-only today; ``auth.auth_middleware``

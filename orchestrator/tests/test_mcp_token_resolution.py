@@ -42,13 +42,14 @@ exercised end-to-end.
 
 from __future__ import annotations
 
-import pytest
-from datetime import datetime, timezone
+from datetime import datetime
+from datetime import timezone
 
-from fastapi import APIRouter, FastAPI
+import pytest
+from fastapi import APIRouter
+from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
-
 
 _TEST_SECRET = "mcp-resolution-test-secret-please-32-bytes-minimum"
 
@@ -99,9 +100,7 @@ class _ResolutionStore:
                 "expires_at": None,
                 "revoked_at": None,
             }
-        elif q.startswith(
-            "update mcp_tokens set last_used_at = now() where id = %s"
-        ):
+        elif q.startswith("update mcp_tokens set last_used_at = now() where id = %s"):
             (tid,) = p
             row = self.tokens.get(tid)
             if row is not None:
@@ -110,10 +109,7 @@ class _ResolutionStore:
     def fetch_one(self, query: str, params: tuple | None = None) -> dict | None:
         q = self._norm(query)
         p = params or ()
-        if q.startswith(
-            "select * from mcp_tokens where token_prefix = %s "
-            "and revoked_at is null"
-        ):
+        if q.startswith("select * from mcp_tokens where token_prefix = %s and revoked_at is null"):
             self.verify_calls += 1
             (prefix,) = p
             for row in self.tokens.values():
@@ -126,11 +122,13 @@ class _ResolutionStore:
             return dict(row) if row else None
         if q.startswith("insert into audit_log"):
             row_id = len(self.audit) + 1
-            self.audit.append({
-                "id": row_id,
-                "user_id": p[0],
-                "action_name": p[1],
-            })
+            self.audit.append(
+                {
+                    "id": row_id,
+                    "user_id": p[0],
+                    "action_name": p[1],
+                }
+            )
             return {"id": row_id}
         return None
 
@@ -193,12 +191,10 @@ def mini_app():
 
     @router.get("/mcp/probe")
     def probe():
-        from mcp_server import (
-            _current_bearer_token,
-            _current_mcp_token_id,
-            _current_mcp_user_id,
-            _resolve_user_id,
-        )
+        from mcp_server import _current_bearer_token
+        from mcp_server import _current_mcp_token_id
+        from mcp_server import _current_mcp_user_id
+        from mcp_server import _resolve_user_id
 
         try:
             resolved = _resolve_user_id()
@@ -206,13 +202,15 @@ def mini_app():
         except RuntimeError as exc:
             resolved = None
             error = str(exc)
-        return JSONResponse({
-            "bearer": _current_bearer_token(),
-            "cached_user_id": _current_mcp_user_id.get(),
-            "cached_token_id": _current_mcp_token_id.get(),
-            "resolved_user_id": resolved,
-            "error": error,
-        })
+        return JSONResponse(
+            {
+                "bearer": _current_bearer_token(),
+                "cached_user_id": _current_mcp_user_id.get(),
+                "cached_token_id": _current_mcp_token_id.get(),
+                "resolved_user_id": resolved,
+                "error": error,
+            }
+        )
 
     app.include_router(router)
     return app
@@ -220,12 +218,14 @@ def mini_app():
 
 def _mint_jwt(user_id: str, role: str = "user") -> str:
     from auth import mint_access_token
+
     return mint_access_token(user_id=user_id, role=role)
 
 
 def _mint_lmcp(user_id: str, label: str = "k") -> str:
     """Mint an ``lmcp_…`` token via the real service (uses ``store`` fixture)."""
     from services import mcp_tokens
+
     _, plaintext = mcp_tokens.mint(user_id, label)
     return plaintext
 
@@ -236,7 +236,10 @@ def _mint_lmcp(user_id: str, label: str = "k") -> str:
 
 
 def test_no_bearer_in_dev_mode_falls_back_to_default_user(
-    store, dev_env, mini_app, monkeypatch,
+    store,
+    dev_env,
+    mini_app,
+    monkeypatch,
 ):
     monkeypatch.setenv("MCP_DEFAULT_USER_ID", "shared-default")
     client = TestClient(mini_app)
@@ -259,7 +262,10 @@ def test_no_bearer_in_multi_user_returns_401(store, auth_env, mini_app):
 
 @pytest.mark.parametrize("env_fixture", ["dev_env", "auth_env"])
 def test_lmcp_token_resolves_to_owner_in_both_modes(
-    store, mini_app, request, env_fixture,
+    store,
+    mini_app,
+    request,
+    env_fixture,
 ):
     """``lmcp_…`` is the one path that gives real per-user MCP isolation.
 
@@ -285,7 +291,9 @@ def test_lmcp_token_resolves_to_owner_in_both_modes(
 
 
 def test_lmcp_token_single_verify_cache_avoids_second_db_lookup(
-    store, dev_env, mini_app,
+    store,
+    dev_env,
+    mini_app,
 ):
     """D8: ``_resolve_user_id`` MUST NOT re-run ``verify()`` per request.
 
@@ -316,7 +324,11 @@ def test_lmcp_token_single_verify_cache_avoids_second_db_lookup(
 
 @pytest.mark.parametrize("env_fixture", ["dev_env", "auth_env"])
 def test_invalid_lmcp_fails_closed_no_rescue(
-    store, mini_app, request, monkeypatch, env_fixture,
+    store,
+    mini_app,
+    request,
+    monkeypatch,
+    env_fixture,
 ):
     """An ``lmcp_…``-shaped bearer that doesn't verify is ALWAYS 401.
 
@@ -344,7 +356,10 @@ def test_invalid_lmcp_fails_closed_no_rescue(
 
 
 def test_legacy_mcp_auth_token_accepted_in_dev_mode(
-    store, dev_env, mini_app, monkeypatch,
+    store,
+    dev_env,
+    mini_app,
+    monkeypatch,
 ):
     """Single-user dev: legacy shared secret rescues, resolver → DEFAULT."""
     monkeypatch.setenv("MCP_AUTH_TOKEN", "shared-secret")
@@ -360,7 +375,11 @@ def test_legacy_mcp_auth_token_accepted_in_dev_mode(
 
 
 def test_legacy_mcp_auth_token_rejected_in_multi_user(
-    store, auth_env, mini_app, monkeypatch, caplog,
+    store,
+    auth_env,
+    mini_app,
+    monkeypatch,
+    caplog,
 ):
     """D6 regression pin: ``MCP_AUTH_TOKEN`` MUST NOT silently rescue
     a multi-user ``/mcp/*`` call.
@@ -374,6 +393,7 @@ def test_legacy_mcp_auth_token_rejected_in_multi_user(
     # Reset the one-shot latch so this test can observe the log line
     # regardless of which other resolution test happens to run first.
     import auth
+
     auth._warned_legacy_fallback_in_multi_user = False
 
     monkeypatch.setenv("MCP_AUTH_TOKEN", "shared-secret")
@@ -400,7 +420,10 @@ def test_legacy_mcp_auth_token_rejected_in_multi_user(
 
 
 def test_jwt_branch_wins_before_legacy_compare_in_multi_user(
-    store, auth_env, mini_app, monkeypatch,
+    store,
+    auth_env,
+    mini_app,
+    monkeypatch,
 ):
     """JWT detection in ``_check_mcp_bearer`` step 4 MUST run BEFORE
     the ``MCP_AUTH_TOKEN`` compare in step 5.

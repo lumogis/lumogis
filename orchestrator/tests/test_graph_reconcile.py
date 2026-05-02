@@ -20,20 +20,19 @@ Test coverage:
 """
 
 import pytest
-import config
-from plugins.graph.reconcile import (
-    reconcile_audio,
-    reconcile_documents,
-    reconcile_entities,
-    reconcile_notes,
-    reconcile_sessions,
-    run_reconciliation,
-)
+from plugins.graph.reconcile import reconcile_audio
+from plugins.graph.reconcile import reconcile_documents
+from plugins.graph.reconcile import reconcile_entities
+from plugins.graph.reconcile import reconcile_notes
+from plugins.graph.reconcile import reconcile_sessions
+from plugins.graph.reconcile import run_reconciliation
 
+import config
 
 # ---------------------------------------------------------------------------
 # Shared mocks
 # ---------------------------------------------------------------------------
+
 
 class MockGraphStore:
     """Minimal in-memory GraphStore for reconciliation tests."""
@@ -108,6 +107,7 @@ class StampTrackingStore:
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def mock_graph(monkeypatch):
     gs = MockGraphStore()
@@ -132,41 +132,32 @@ def tracking_ms():
 # 1. Stale-row selection: no stale rows → scanned=0
 # ---------------------------------------------------------------------------
 
+
 class TestNoStaleRows:
     def test_documents_no_stale(self, mock_graph):
-        config._instances["metadata_store"] = StampTrackingStore(
-            rows_by_query={"file_index": []}
-        )
+        config._instances["metadata_store"] = StampTrackingStore(rows_by_query={"file_index": []})
         result = reconcile_documents()
         assert result["scanned"] == 0
         assert result["projected_ok"] == 0
         assert result["projected_failed"] == 0
 
     def test_entities_no_stale(self, mock_graph):
-        config._instances["metadata_store"] = StampTrackingStore(
-            rows_by_query={"entities": []}
-        )
+        config._instances["metadata_store"] = StampTrackingStore(rows_by_query={"entities": []})
         result = reconcile_entities()
         assert result["scanned"] == 0
 
     def test_sessions_no_stale(self, mock_graph):
-        config._instances["metadata_store"] = StampTrackingStore(
-            rows_by_query={"sessions": []}
-        )
+        config._instances["metadata_store"] = StampTrackingStore(rows_by_query={"sessions": []})
         result = reconcile_sessions()
         assert result["scanned"] == 0
 
     def test_notes_no_stale(self, mock_graph):
-        config._instances["metadata_store"] = StampTrackingStore(
-            rows_by_query={"notes": []}
-        )
+        config._instances["metadata_store"] = StampTrackingStore(rows_by_query={"notes": []})
         result = reconcile_notes()
         assert result["scanned"] == 0
 
     def test_audio_no_stale(self, mock_graph):
-        config._instances["metadata_store"] = StampTrackingStore(
-            rows_by_query={"audio_memos": []}
-        )
+        config._instances["metadata_store"] = StampTrackingStore(rows_by_query={"audio_memos": []})
         result = reconcile_audio()
         assert result["scanned"] == 0
 
@@ -174,6 +165,7 @@ class TestNoStaleRows:
 # ---------------------------------------------------------------------------
 # 2. Successful projection + stamp
 # ---------------------------------------------------------------------------
+
 
 class TestSuccessfulProjection:
     def test_document_projected_and_stamped(self, mock_graph):
@@ -195,9 +187,7 @@ class TestSuccessfulProjection:
 
     def test_note_projected_and_stamped(self, mock_graph):
         ms = StampTrackingStore(
-            rows_by_query={
-                "notes": [{"note_id": "note-111", "user_id": "default"}]
-            }
+            rows_by_query={"notes": [{"note_id": "note-111", "user_id": "default"}]}
         )
         config._instances["metadata_store"] = ms
         result = reconcile_notes()
@@ -249,6 +239,7 @@ class TestSuccessfulProjection:
         """reconcile_sessions passes entity_ids from DB row directly to project_session."""
         captured = {}
         import plugins.graph.writer as writer_mod
+
         orig = writer_mod.project_session
 
         def capturing_project_session(gs, *, entity_ids, **kwargs):
@@ -271,6 +262,7 @@ class TestSuccessfulProjection:
         )
         config._instances["metadata_store"] = ms
         import plugins.graph.writer as writer_mod  # noqa: F811
+
         writer_mod.project_session = capturing_project_session
         try:
             reconcile_sessions()
@@ -282,6 +274,7 @@ class TestSuccessfulProjection:
         """Historical rows with empty entity_ids pass None → name-string fallback."""
         captured = {}
         import plugins.graph.writer as writer_mod
+
         orig = writer_mod.project_session
 
         def capturing_project_session(gs, *, entity_ids, **kwargs):
@@ -345,6 +338,7 @@ class TestSuccessfulProjection:
 # 3. No stamp when projection fails
 # ---------------------------------------------------------------------------
 
+
 class TestNoStampOnFailure:
     def test_document_failure_no_stamp(self, mock_graph):
         mock_graph.fail_on_create = True
@@ -365,9 +359,7 @@ class TestNoStampOnFailure:
     def test_note_failure_no_stamp(self, mock_graph):
         mock_graph.fail_on_create = True
         ms = StampTrackingStore(
-            rows_by_query={
-                "notes": [{"note_id": "note-fail", "user_id": "default"}]
-            }
+            rows_by_query={"notes": [{"note_id": "note-fail", "user_id": "default"}]}
         )
         config._instances["metadata_store"] = ms
         result = reconcile_notes()
@@ -398,6 +390,7 @@ class TestNoStampOnFailure:
 # 4. Idempotency: second pass finds no stale rows
 # ---------------------------------------------------------------------------
 
+
 class TestIdempotency:
     def test_reconcile_twice_second_is_empty(self, mock_graph):
         """After a successful first pass, a second pass should scan 0 rows.
@@ -406,9 +399,7 @@ class TestIdempotency:
         (as Postgres would after stamping).
         """
         ms1 = StampTrackingStore(
-            rows_by_query={
-                "notes": [{"note_id": "note-idem", "user_id": "default"}]
-            }
+            rows_by_query={"notes": [{"note_id": "note-idem", "user_id": "default"}]}
         )
         config._instances["metadata_store"] = ms1
         r1 = reconcile_notes()
@@ -451,6 +442,7 @@ class TestIdempotency:
 # 5. Graph unavailable → graceful no-op
 # ---------------------------------------------------------------------------
 
+
 class TestGraphUnavailable:
     def test_all_passes_succeed_with_no_graph(self, no_graph):
         result = run_reconciliation()
@@ -473,6 +465,7 @@ class TestGraphUnavailable:
 # ---------------------------------------------------------------------------
 # 6. Deliberate failure recovery scenario
 # ---------------------------------------------------------------------------
+
 
 class TestFailureRecovery:
     def test_failure_then_recovery(self, mock_graph):
@@ -513,6 +506,7 @@ class TestFailureRecovery:
 # Pass 1: staged entity exclusion
 # ---------------------------------------------------------------------------
 
+
 class TestStagedEntityExclusion:
     def test_staged_entity_excluded_from_stale_query(self, mock_graph):
         """reconcile_entities must not project entities where is_staged IS TRUE.
@@ -542,6 +536,7 @@ class TestStagedEntityExclusion:
         """A row returned from fetch_all with is_staged=TRUE must not reach project_entity."""
         projected_ids: list[str] = []
         import plugins.graph.writer as writer_mod
+
         orig = writer_mod.project_entity
 
         def capturing_project(gs, *, entity_id, **kwargs):
@@ -571,6 +566,7 @@ class TestStagedEntityExclusion:
 # ---------------------------------------------------------------------------
 # 10. Limit parameter is passed through to SQL query
 # ---------------------------------------------------------------------------
+
 
 class TestLimitParam:
     def test_limit_clause_in_query(self, mock_graph):

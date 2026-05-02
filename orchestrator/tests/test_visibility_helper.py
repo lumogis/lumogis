@@ -8,20 +8,18 @@ plan §6 all rely on these literals, so any drift here is a drift
 across the entire scope contract — these tests are the single
 source of truth for the helper output.
 """
+
 from __future__ import annotations
 
 import pytest
-
 from auth import UserContext
-from visibility import (
-    DEFAULT_SCOPE,
-    admin_unfiltered_cypher_fragment,
-    admin_unfiltered_filter,
-    admin_unfiltered_qdrant_filter,
-    visible_cypher_fragment,
-    visible_filter,
-    visible_qdrant_filter,
-)
+from visibility import DEFAULT_SCOPE
+from visibility import admin_unfiltered_cypher_fragment
+from visibility import admin_unfiltered_filter
+from visibility import admin_unfiltered_qdrant_filter
+from visibility import visible_cypher_fragment
+from visibility import visible_filter
+from visibility import visible_qdrant_filter
 
 
 @pytest.fixture
@@ -43,9 +41,7 @@ def test_default_scope_is_personal():
 
 def test_visible_filter_default_household_union(user):
     clause, params = visible_filter(user)
-    assert clause == (
-        "((scope = 'personal' AND user_id = %s) OR scope IN ('shared','system'))"
-    )
+    assert clause == ("((scope = 'personal' AND user_id = %s) OR scope IN ('shared','system'))")
     assert params == ("alice",)
 
 
@@ -149,8 +145,7 @@ def test_admin_unfiltered_qdrant_filter_with_scope():
 def test_visible_cypher_fragment_default_household_union(user):
     fragment, params = visible_cypher_fragment(user)
     assert fragment == (
-        "((n.scope = 'personal' AND n.user_id = $vis_me) "
-        "OR n.scope IN ['shared','system'])"
+        "((n.scope = 'personal' AND n.user_id = $vis_me) OR n.scope IN ['shared','system'])"
     )
     assert params == {"vis_me": "alice"}
 
@@ -158,8 +153,7 @@ def test_visible_cypher_fragment_default_household_union(user):
 def test_visible_cypher_fragment_custom_alias(user):
     fragment, params = visible_cypher_fragment(user, alias="e")
     assert fragment == (
-        "((e.scope = 'personal' AND e.user_id = $vis_me) "
-        "OR e.scope IN ['shared','system'])"
+        "((e.scope = 'personal' AND e.user_id = $vis_me) OR e.scope IN ['shared','system'])"
     )
     assert params == {"vis_me": "alice"}
 

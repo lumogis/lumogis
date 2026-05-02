@@ -8,13 +8,12 @@ can rely on it for `min_core_version` compatibility checks.
 """
 
 import pytest
-from pydantic import ValidationError
-
 from models.capability import CapabilityLicenseMode
 from models.capability import CapabilityManifest
 from models.capability import CapabilityMaturity
 from models.capability import CapabilityTool
 from models.capability import CapabilityTransport
+from pydantic import ValidationError
 
 
 def _sample_tool(

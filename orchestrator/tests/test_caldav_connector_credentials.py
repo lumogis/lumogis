@@ -33,14 +33,14 @@ caldav-specific surface.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
+from datetime import timezone
 from typing import Any
 
 import pytest
-
 from connectors import registry
-from services import connector_credentials as ccs
 
+from services import connector_credentials as ccs
 
 _TEST_FERNET_KEY = "OlGLYckGIbBSt54y8XVmgb441LgKJWvvYoHnpQ_cv9A="
 
@@ -359,6 +359,7 @@ def test_load_connection_payload_empty_string_raises_value_error(store, monkeypa
     # service would otherwise refuse — test the resolver-side guard,
     # not the put-side one.
     import json
+
     from cryptography.fernet import Fernet
 
     fernet = Fernet(_TEST_FERNET_KEY.encode())
@@ -457,6 +458,7 @@ def test_adapter_get_connection_returns_none_on_value_error(store, monkeypatch, 
     payload = dict(_GOOD_PAYLOAD)
     payload["password"] = ""
     import json
+
     from cryptography.fernet import Fernet
 
     fernet = Fernet(_TEST_FERNET_KEY.encode())
@@ -555,18 +557,22 @@ def test_calendar_monitor_refuses_to_schedule_under_auth_enabled(store, monkeypa
     monkeypatch.setenv("AUTH_ENABLED", "true")
     monkeypatch.setenv("CALENDAR_CALDAV_URL", "https://should-be-ignored.example/dav/")
 
-    import config as _config
     from signals import calendar_monitor
+
+    import config as _config
 
     calendar_monitor._AUTH_DISABLED_LOGGED = False  # reset between cases
     captured_jobs: list[tuple] = []
 
     class _CapturingScheduler:
         running = True
+
         def add_job(self, *a, **kw):
             captured_jobs.append((a, kw))
+
         def get_job(self, _id):
             return None
+
         def get_jobs(self):
             return []
 
@@ -578,7 +584,8 @@ def test_calendar_monitor_refuses_to_schedule_under_auth_enabled(store, monkeypa
 
     assert captured_jobs == []
     info_lines = [
-        r for r in caplog.records
+        r
+        for r in caplog.records
         if r.name == "signals.calendar_monitor" and r.levelno == logging.INFO
     ]
     deprecations = [r for r in info_lines if "AUTH_ENABLED=true" in r.getMessage()]
@@ -591,15 +598,18 @@ def test_calendar_monitor_env_reads_are_call_time(store, monkeypatch):
     monkeypatch.setenv("AUTH_ENABLED", "false")
     monkeypatch.delenv("CALENDAR_CALDAV_URL", raising=False)
 
-    import config as _config
     from signals import calendar_monitor
+
+    import config as _config
 
     captured: list[tuple] = []
 
     class _CapturingScheduler:
         running = True
+
         def add_job(self, *a, **kw):
             captured.append((a, kw))
+
         def get_job(self, _id):
             return None
 
@@ -633,8 +643,10 @@ def test_calendar_monitor_poll_uses_legacy_user_id(store, monkeypatch):
     class _StubAdapter:
         def __init__(self, source):
             captured_sources.append(source)
+
         def poll(self):
             from models.signals import Signal
+
             return [
                 Signal(
                     signal_id="caldav:default:abc",

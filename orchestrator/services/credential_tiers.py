@@ -74,26 +74,24 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any
+from typing import Literal
+
+from connectors import registry as connectors_registry
+from services._credential_internals import ConnectorNotConfigured
+from services._credential_internals import CredentialUnavailable
+from services._credential_internals import _actor_str_tiered
+from services._credential_internals import _current_key_version
+from services._credential_internals import _decrypt_payload
+from services._credential_internals import _emit_audit
+from services._credential_internals import _encrypt_payload
+from services._credential_internals import _get_multifernet
+from services._credential_internals import _resolve_env_fallback
+from services.connector_credentials import ACTION_CRED_DELETED
+from services.connector_credentials import ACTION_CRED_PUT
+from services.connector_credentials import ACTION_CRED_ROTATED
 
 import config
-from connectors import registry as connectors_registry
-from services._credential_internals import (
-    ConnectorNotConfigured,
-    CredentialUnavailable,
-    _actor_str_tiered,
-    _current_key_version,
-    _decrypt_payload,
-    _emit_audit,
-    _encrypt_payload,
-    _get_multifernet,
-    _resolve_env_fallback,
-)
-from services.connector_credentials import (
-    ACTION_CRED_DELETED,
-    ACTION_CRED_PUT,
-    ACTION_CRED_ROTATED,
-)
 
 _log = logging.getLogger(__name__)
 
@@ -166,10 +164,7 @@ class ResolvedCredential:
     tier: Literal["user", "household", "system", "env"]
 
     def __repr__(self) -> str:  # pragma: no cover — trivial format
-        return (
-            f"ResolvedCredential(tier={self.tier!r}, "
-            f"payload=<redacted len={len(self.payload)}>)"
-        )
+        return f"ResolvedCredential(tier={self.tier!r}, payload=<redacted len={len(self.payload)}>)"
 
 
 # ---------------------------------------------------------------------------
@@ -177,9 +172,7 @@ class ResolvedCredential:
 # ---------------------------------------------------------------------------
 
 
-_HOUSEHOLD_SELECT_COLS = (
-    "connector, created_at, updated_at, created_by, updated_by, key_version"
-)
+_HOUSEHOLD_SELECT_COLS = "connector, created_at, updated_at, created_by, updated_by, key_version"
 _SYSTEM_SELECT_COLS = _HOUSEHOLD_SELECT_COLS  # same shape, distinct name kept for grep
 
 
@@ -261,7 +254,8 @@ def _validate_tier_actor(actor: str, *, call_site: str) -> str:
     except ValueError:
         _log.warning(
             "credential_tiers.invalid_actor actor_repr=%r call_site=%s",
-            repr(actor)[:64], call_site,
+            repr(actor)[:64],
+            call_site,
         )
         raise
 
@@ -314,8 +308,7 @@ def household_get_payload(connector: str) -> dict[str, Any] | None:
     connectors_registry.require_registered(connector)
     ms = config.get_metadata_store()
     row = ms.fetch_one(
-        "SELECT ciphertext FROM household_connector_credentials "
-        "WHERE connector = %s",
+        "SELECT ciphertext FROM household_connector_credentials WHERE connector = %s",
         (connector,),
     )
     if row is None:
@@ -356,8 +349,7 @@ def household_put_payload(
     )
     if row is None:
         raise RuntimeError(
-            f"household_put_payload: row not visible after upsert "
-            f"connector={connector!r}"
+            f"household_put_payload: row not visible after upsert connector={connector!r}"
         )
     record = _household_record_from_row(row)
     _emit_audit(
@@ -370,7 +362,8 @@ def household_put_payload(
     )
     _log.info(
         "credential_tiers: household put connector=%s actor=%s",
-        connector, actor_clean,
+        connector,
+        actor_clean,
     )
     return record
 
@@ -387,9 +380,7 @@ def household_delete_payload(connector: str, *, actor: str) -> bool:
 
     ms = config.get_metadata_store()
     row = ms.fetch_one(
-        "DELETE FROM household_connector_credentials "
-        "WHERE connector = %s "
-        "RETURNING key_version",
+        "DELETE FROM household_connector_credentials WHERE connector = %s RETURNING key_version",
         (connector,),
     )
     if row is None:
@@ -404,7 +395,8 @@ def household_delete_payload(connector: str, *, actor: str) -> bool:
     )
     _log.info(
         "credential_tiers: household deleted connector=%s actor=%s",
-        connector, actor_clean,
+        connector,
+        actor_clean,
     )
     return True
 
@@ -453,8 +445,7 @@ def system_get_payload(connector: str) -> dict[str, Any] | None:
     connectors_registry.require_registered(connector)
     ms = config.get_metadata_store()
     row = ms.fetch_one(
-        "SELECT ciphertext FROM instance_system_connector_credentials "
-        "WHERE connector = %s",
+        "SELECT ciphertext FROM instance_system_connector_credentials WHERE connector = %s",
         (connector,),
     )
     if row is None:
@@ -490,8 +481,7 @@ def system_put_payload(
     )
     if row is None:
         raise RuntimeError(
-            f"system_put_payload: row not visible after upsert "
-            f"connector={connector!r}"
+            f"system_put_payload: row not visible after upsert connector={connector!r}"
         )
     record = _system_record_from_row(row)
     _emit_audit(
@@ -504,7 +494,8 @@ def system_put_payload(
     )
     _log.info(
         "credential_tiers: system put connector=%s actor=%s",
-        connector, actor_clean,
+        connector,
+        actor_clean,
     )
     return record
 
@@ -534,7 +525,8 @@ def system_delete_payload(connector: str, *, actor: str) -> bool:
     )
     _log.info(
         "credential_tiers: system deleted connector=%s actor=%s",
-        connector, actor_clean,
+        connector,
+        actor_clean,
     )
     return True
 
@@ -578,9 +570,7 @@ def _reencrypt_tier_table(
 
     ms = config.get_metadata_store()
     rows = ms.fetch_all(
-        f"SELECT connector, ciphertext, key_version "
-        f"FROM {table} "
-        f"ORDER BY connector ASC"
+        f"SELECT connector, ciphertext, key_version FROM {table} ORDER BY connector ASC"
     )
 
     rotated = 0
@@ -599,9 +589,10 @@ def _reencrypt_tier_table(
             new_token = mf.rotate(old_ciphertext)
         except Exception as exc:
             _log.error(
-                "rotate failed for %s connector=%s "
-                "(%s); ciphertext bytes NOT logged",
-                tier_label, connector, exc.__class__.__name__,
+                "rotate failed for %s connector=%s (%s); ciphertext bytes NOT logged",
+                tier_label,
+                connector,
+                exc.__class__.__name__,
             )
             failed += 1
             continue
@@ -610,9 +601,10 @@ def _reencrypt_tier_table(
             mf.decrypt(new_token)
         except Exception as exc:
             _log.error(
-                "rotate verify failed for %s connector=%s "
-                "(%s); ciphertext bytes NOT logged",
-                tier_label, connector, exc.__class__.__name__,
+                "rotate verify failed for %s connector=%s (%s); ciphertext bytes NOT logged",
+                tier_label,
+                connector,
+                exc.__class__.__name__,
             )
             failed += 1
             continue
@@ -628,7 +620,9 @@ def _reencrypt_tier_table(
         except Exception as exc:
             _log.error(
                 "rotate UPDATE failed for %s connector=%s (%s)",
-                tier_label, connector, exc.__class__.__name__,
+                tier_label,
+                connector,
+                exc.__class__.__name__,
             )
             failed += 1
             continue
@@ -658,7 +652,8 @@ def reencrypt_household_to_current_version(
     into the cross-tier ``by_tier`` summary.
     """
     actor_clean = _validate_tier_actor(
-        actor, call_site="reencrypt_household_to_current_version",
+        actor,
+        call_site="reencrypt_household_to_current_version",
     )
     return _reencrypt_tier_table(
         table="household_connector_credentials",
@@ -673,7 +668,8 @@ def reencrypt_system_to_current_version(
 ) -> dict[str, int]:
     """Re-encrypt instance/system rows to the current primary key."""
     actor_clean = _validate_tier_actor(
-        actor, call_site="reencrypt_system_to_current_version",
+        actor,
+        call_site="reencrypt_system_to_current_version",
     )
     return _reencrypt_tier_table(
         table="instance_system_connector_credentials",
@@ -756,16 +752,21 @@ def resolve_runtime_credential(
 
     # Tier 1 — per-user. Delegate to the existing service module so
     # the SQL stays in one place.
-    from services import connector_credentials as ccs  # local to keep import direction one-way at top
+    from services import (
+        connector_credentials as ccs,  # local to keep import direction one-way at top
+    )
+
     try:
         user_payload = ccs.get_payload(caller_clean, connector)
     except _RESOLVER_DOMAIN_EXCEPTIONS:
         raise
     except Exception as exc:
         _log.error(
-            "resolve_runtime_credential.unexpected_exception tier=%s "
-            "connector=%s exc_class=%s",
-            "user", connector, exc.__class__.__name__, exc_info=True,
+            "resolve_runtime_credential.unexpected_exception tier=%s connector=%s exc_class=%s",
+            "user",
+            connector,
+            exc.__class__.__name__,
+            exc_info=True,
         )
         raise
     if user_payload is not None:
@@ -778,9 +779,11 @@ def resolve_runtime_credential(
         raise
     except Exception as exc:
         _log.error(
-            "resolve_runtime_credential.unexpected_exception tier=%s "
-            "connector=%s exc_class=%s",
-            "household", connector, exc.__class__.__name__, exc_info=True,
+            "resolve_runtime_credential.unexpected_exception tier=%s connector=%s exc_class=%s",
+            "household",
+            connector,
+            exc.__class__.__name__,
+            exc_info=True,
         )
         raise
     if household_payload is not None:
@@ -793,9 +796,11 @@ def resolve_runtime_credential(
         raise
     except Exception as exc:
         _log.error(
-            "resolve_runtime_credential.unexpected_exception tier=%s "
-            "connector=%s exc_class=%s",
-            "system", connector, exc.__class__.__name__, exc_info=True,
+            "resolve_runtime_credential.unexpected_exception tier=%s connector=%s exc_class=%s",
+            "system",
+            connector,
+            exc.__class__.__name__,
+            exc_info=True,
         )
         raise
     if system_payload is not None:

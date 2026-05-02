@@ -22,7 +22,6 @@ from visibility import visible_filter
 
 import config
 
-
 _ALLOWED_SCOPE_FILTERS = {None, "personal", "shared", "system"}
 
 
@@ -42,6 +41,7 @@ def _coerce_scope_filter(value: Optional[str]) -> Optional[str]:
             detail=f"scope must be one of personal|shared|system, got {value!r}",
         )
     return value
+
 
 router = APIRouter()
 
@@ -181,6 +181,7 @@ def list_entities(
     Used by the dashboard Entities panel.
     """
     import logging as _logging
+
     _log = _logging.getLogger(__name__)
 
     user = get_user(request)

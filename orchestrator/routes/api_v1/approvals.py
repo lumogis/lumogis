@@ -24,29 +24,35 @@ from __future__ import annotations
 import json
 import logging
 import time
-from collections import defaultdict, deque
+from collections import defaultdict
+from collections import deque
 from typing import Deque
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-
-import config
-from auth import get_user
-from authz import require_user
 from actions import audit as audit_module
 from actions import registry as actions_registry
 from actions.executor import is_hard_limited
+from auth import get_user
+from authz import require_user
+from fastapi import APIRouter
+from fastapi import Depends
+from fastapi import HTTPException
+from fastapi import Query
+from fastapi import Request
+from fastapi import status
 from models.actions import AuditEntry
-from models.api_v1 import (
-    ConnectorModeRequest,
-    ConnectorModeResponse,
-    DeniedActionItem,
-    ElevateRequest,
-    ElevateResponse,
-    ElevationCandidateItem,
-    PendingApprovalsResponse,
-)
-from permissions import elevate_to_routine, set_connector_mode
-from services.api_v1_risk import elevation_eligible, risk_tier_for
+from models.api_v1 import ConnectorModeRequest
+from models.api_v1 import ConnectorModeResponse
+from models.api_v1 import DeniedActionItem
+from models.api_v1 import ElevateRequest
+from models.api_v1 import ElevateResponse
+from models.api_v1 import ElevationCandidateItem
+from models.api_v1 import PendingApprovalsResponse
+from permissions import elevate_to_routine
+from permissions import set_connector_mode
+from services.api_v1_risk import elevation_eligible
+from services.api_v1_risk import risk_tier_for
+
+import config
 
 _log = logging.getLogger(__name__)
 
@@ -246,7 +252,9 @@ def set_mode(
     except Exception as exc:  # noqa: BLE001
         _log.exception(
             "approvals.set_mode failed user=%s connector=%s mode=%s",
-            caller.user_id, connector, body.mode,
+            caller.user_id,
+            connector,
+            body.mode,
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -258,9 +266,7 @@ def set_mode(
             action_name=f"__permissions_change__.{connector}",
             connector="__permissions_change__",
             mode="ask",
-            input_summary=json.dumps(
-                {"new_mode": body.mode, "changed_by": caller.user_id}
-            ),
+            input_summary=json.dumps({"new_mode": body.mode, "changed_by": caller.user_id}),
             result_summary=json.dumps({"ok": True}),
             user_id=caller.user_id,
         )
@@ -308,7 +314,9 @@ def elevate(body: ElevateRequest, request: Request) -> ElevateResponse:
     except Exception as exc:  # noqa: BLE001
         _log.exception(
             "approvals.elevate failed user=%s connector=%s action_type=%s",
-            caller.user_id, body.connector, body.action_type,
+            caller.user_id,
+            body.connector,
+            body.action_type,
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

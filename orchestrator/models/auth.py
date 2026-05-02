@@ -16,13 +16,16 @@ also live here so the route module stays thin.
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel
+from pydantic import EmailStr
+from pydantic import Field
 
 
 class AckOk(BaseModel):
     """Generic success ack for mutating endpoints that return no resource body."""
 
     ok: Literal[True] = True
+
 
 Role = Literal["admin", "user"]
 

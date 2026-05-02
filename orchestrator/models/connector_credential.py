@@ -14,9 +14,13 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import Any, ClassVar
+from typing import Any
+from typing import ClassVar
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel
+from pydantic import ConfigDict
+from pydantic import Field
+from pydantic import field_validator
 
 
 class ConnectorCredentialPublic(BaseModel):
@@ -67,8 +71,7 @@ class PutConnectorCredentialRequest(BaseModel):
         encoded = json.dumps(v, sort_keys=True, ensure_ascii=False).encode("utf-8")
         if len(encoded) > cls.PAYLOAD_MAX_BYTES:
             raise ValueError(
-                f"payload exceeds max {cls.PAYLOAD_MAX_BYTES} bytes "
-                f"(got {len(encoded)})"
+                f"payload exceeds max {cls.PAYLOAD_MAX_BYTES} bytes (got {len(encoded)})"
             )
         return v
 

@@ -51,13 +51,12 @@ import os
 from contextvars import ContextVar
 from typing import Any
 
+from __version__ import __version__ as CORE_VERSION
 from models.capability import CapabilityLicenseMode
 from models.capability import CapabilityManifest
 from models.capability import CapabilityMaturity
 from models.capability import CapabilityTool
 from models.capability import CapabilityTransport
-
-from __version__ import __version__ as CORE_VERSION
 
 _log = logging.getLogger(__name__)
 
@@ -133,19 +132,13 @@ def _resolve_user_id() -> str:
     )
 
 
-_current_bearer: ContextVar[str | None] = ContextVar(
-    "lumogis_mcp_bearer", default=None
-)
+_current_bearer: ContextVar[str | None] = ContextVar("lumogis_mcp_bearer", default=None)
 # Plan D8 — populated by ``auth.auth_middleware`` from the
 # ``lmcp_…`` verify result that ``_check_mcp_bearer`` already produced.
 # Reading these ContextVars MUST NOT trigger a second DB lookup; the
 # middleware is the ONLY writer.
-_current_mcp_token_id: ContextVar[str | None] = ContextVar(
-    "lumogis_mcp_token_id", default=None
-)
-_current_mcp_user_id: ContextVar[str | None] = ContextVar(
-    "lumogis_mcp_user_id", default=None
-)
+_current_mcp_token_id: ContextVar[str | None] = ContextVar("lumogis_mcp_token_id", default=None)
+_current_mcp_user_id: ContextVar[str | None] = ContextVar("lumogis_mcp_user_id", default=None)
 
 
 def _current_bearer_token() -> str | None:

@@ -38,21 +38,18 @@ import logging
 import os
 from typing import Any
 
-import config
 from auth import auth_enabled
-from connectors.registry import (
-    LLM_ANTHROPIC,
-    LLM_GEMINI,
-    LLM_MISTRAL,
-    LLM_OPENAI,
-    LLM_PERPLEXITY,
-    LLM_XAI,
-)
+from connectors.registry import LLM_ANTHROPIC
+from connectors.registry import LLM_GEMINI
+from connectors.registry import LLM_MISTRAL
+from connectors.registry import LLM_OPENAI
+from connectors.registry import LLM_PERPLEXITY
+from connectors.registry import LLM_XAI
+from services.connector_credentials import ConnectorNotConfigured  # re-exported for callers
+from services.connector_credentials import CredentialUnavailable  # re-exported for callers
+
+import config
 from services import connector_credentials as ccs
-from services.connector_credentials import (  # re-exported for callers
-    ConnectorNotConfigured,
-    CredentialUnavailable,
-)
 
 _log = logging.getLogger(__name__)
 
@@ -62,23 +59,23 @@ _log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 LLM_CONNECTOR_BY_ENV: dict[str, str] = {
-    "ANTHROPIC_API_KEY":  LLM_ANTHROPIC,
-    "OPENAI_API_KEY":     LLM_OPENAI,
-    "XAI_API_KEY":        LLM_XAI,
+    "ANTHROPIC_API_KEY": LLM_ANTHROPIC,
+    "OPENAI_API_KEY": LLM_OPENAI,
+    "XAI_API_KEY": LLM_XAI,
     "PERPLEXITY_API_KEY": LLM_PERPLEXITY,
-    "GEMINI_API_KEY":     LLM_GEMINI,
-    "MISTRAL_API_KEY":    LLM_MISTRAL,
+    "GEMINI_API_KEY": LLM_GEMINI,
+    "MISTRAL_API_KEY": LLM_MISTRAL,
 }
 """Frozen at import time; new entries require the four-step add-a-vendor flow above."""
 
 
 _VENDOR_LABEL_BY_CONNECTOR: dict[str, str] = {
-    LLM_ANTHROPIC:  "Anthropic",
-    LLM_OPENAI:     "OpenAI",
-    LLM_XAI:        "xAI",
+    LLM_ANTHROPIC: "Anthropic",
+    LLM_OPENAI: "OpenAI",
+    LLM_XAI: "xAI",
     LLM_PERPLEXITY: "Perplexity",
-    LLM_GEMINI:     "Google Gemini",
-    LLM_MISTRAL:    "Mistral",
+    LLM_GEMINI: "Google Gemini",
+    LLM_MISTRAL: "Mistral",
 }
 
 
@@ -130,7 +127,8 @@ def has_credential(user_id: str | None, api_key_env: str) -> bool:
         # model appear enabled (false positive). Treat as "not present".
         _log.exception(
             "has_credential: unexpected error reading record user_id=%s connector=%s",
-            user_id, connector,
+            user_id,
+            connector,
         )
         return False
 
@@ -162,7 +160,8 @@ def get_user_credentials_snapshot(user_id: str | None) -> set[str]:
         )
     except Exception:
         _log.exception(
-            "get_user_credentials_snapshot: unexpected error for user_id=%s", user_id,
+            "get_user_credentials_snapshot: unexpected error for user_id=%s",
+            user_id,
         )
         return set()
     return {r["connector"] for r in rows}
@@ -233,8 +232,7 @@ def effective_api_key(user_id: str | None, api_key_env: str) -> str:
         api_key: Any = payload[payload_key]
     except KeyError as exc:
         raise CredentialUnavailable(
-            f"payload for connector={connector!r} is missing required key "
-            f"{payload_key!r}"
+            f"payload for connector={connector!r} is missing required key {payload_key!r}"
         ) from exc
     if not isinstance(api_key, str):
         raise CredentialUnavailable(

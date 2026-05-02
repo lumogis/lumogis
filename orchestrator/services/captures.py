@@ -12,31 +12,34 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
+from datetime import timezone
 from pathlib import Path
-from typing import Any, Literal, Optional
-from uuid import UUID, uuid4
+from typing import Any
+from typing import Literal
+from typing import Optional
+from uuid import UUID
+from uuid import uuid4
 
-from fastapi import HTTPException, status
-from ports.metadata_store import MetadataStore
-
-import config
 import hooks
 from actions.audit import write_audit
 from events import Event
+from fastapi import HTTPException
+from fastapi import status
 from models.actions import AuditEntry
-from models.api_v1 import (
-    CaptureAttachmentSummary,
-    CaptureCreateRequest,
-    CaptureCreated,
-    CaptureDetail,
-    CaptureListItem,
-    CapturePatchRequest,
-    CaptureTranscriptSummary,
-    TranscriptionResult,
-)
-from services import media_storage
+from models.api_v1 import CaptureAttachmentSummary
+from models.api_v1 import CaptureCreated
+from models.api_v1 import CaptureCreateRequest
+from models.api_v1 import CaptureDetail
+from models.api_v1 import CaptureListItem
+from models.api_v1 import CapturePatchRequest
+from models.api_v1 import CaptureTranscriptSummary
+from models.api_v1 import TranscriptionResult
+from ports.metadata_store import MetadataStore
 from services.point_ids import note_conversation_point_id
+
+import config
+from services import media_storage
 
 _log = logging.getLogger(__name__)
 
@@ -92,7 +95,9 @@ def _validate_url(url: str) -> None:
         )
 
 
-def derive_capture_type(*, text: Optional[str], url: Optional[str]) -> Literal["text", "url", "mixed"]:
+def derive_capture_type(
+    *, text: Optional[str], url: Optional[str]
+) -> Literal["text", "url", "mixed"]:
     has_text = bool(text)
     has_url = bool(url)
     if has_text and has_url:
@@ -171,7 +176,9 @@ def create_capture(
     )
     if row is None:
         _log.error("capture insert returned no row user_id=%s", user_id)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail={"error": "insert_failed"})
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail={"error": "insert_failed"}
+        )
     return (
         CaptureCreated(capture_id=str(row["id"]), status="pending"),
         status.HTTP_201_CREATED,
@@ -187,14 +194,18 @@ def get_capture(
     try:
         UUID(capture_id)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"error": "capture_not_found"}) from exc
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail={"error": "capture_not_found"}
+        ) from exc
 
     row = ms.fetch_one(
         "SELECT * FROM captures WHERE id = %s::uuid AND user_id = %s",
         (capture_id, user_id),
     )
     if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"error": "capture_not_found"})
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail={"error": "capture_not_found"}
+        )
 
     att_rows = ms.fetch_all(
         "SELECT id, attachment_type, mime_type, size_bytes, original_filename, "
@@ -307,14 +318,18 @@ def patch_capture(
     try:
         UUID(capture_id)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"error": "capture_not_found"}) from exc
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail={"error": "capture_not_found"}
+        ) from exc
 
     row = ms.fetch_one(
         "SELECT * FROM captures WHERE id = %s::uuid AND user_id = %s",
         (capture_id, user_id),
     )
     if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"error": "capture_not_found"})
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail={"error": "capture_not_found"}
+        )
     if row["status"] == "indexed":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -375,14 +390,18 @@ def delete_capture(ms: MetadataStore, *, user_id: str, capture_id: str) -> None:
     try:
         UUID(capture_id)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"error": "capture_not_found"}) from exc
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail={"error": "capture_not_found"}
+        ) from exc
 
     row = ms.fetch_one(
         "SELECT status FROM captures WHERE id = %s::uuid AND user_id = %s",
         (capture_id, user_id),
     )
     if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"error": "capture_not_found"})
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail={"error": "capture_not_found"}
+        )
     if row["status"] == "indexed":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -486,9 +505,13 @@ def add_capture_attachment(
         (capture_id, user_id),
     )
     if cap is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"error": "capture_not_found"})
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail={"error": "capture_not_found"}
+        )
     if cap["status"] == "indexed":
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"error": "capture_indexed"})
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail={"error": "capture_indexed"}
+        )
 
     lc = client_attachment_id.strip() if client_attachment_id else None
     if lc:
@@ -625,7 +648,9 @@ def get_attachment_download(
         (attachment_id, capture_id, user_id),
     )
     if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"error": "attachment_not_found"})
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail={"error": "attachment_not_found"}
+        )
 
     try:
         path = media_storage.resolve_storage_key_file(str(row["storage_key"]))
@@ -661,9 +686,13 @@ def delete_capture_attachment(
         (capture_id, user_id),
     )
     if cap is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"error": "capture_not_found"})
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail={"error": "capture_not_found"}
+        )
     if cap["status"] == "indexed":
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"error": "capture_indexed"})
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail={"error": "capture_indexed"}
+        )
 
     row = ms.fetch_one(
         "SELECT storage_key FROM capture_attachments "
@@ -671,7 +700,9 @@ def delete_capture_attachment(
         (attachment_id, capture_id, user_id),
     )
     if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"error": "attachment_not_found"})
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail={"error": "attachment_not_found"}
+        )
 
     try:
         media_storage.unlink_storage_file(str(row["storage_key"]))
@@ -746,9 +777,13 @@ def prepare_capture_transcribe(
         (capture_id, user_id),
     )
     if cap is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"error": "capture_not_found"})
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail={"error": "capture_not_found"}
+        )
     if cap["status"] == "indexed":
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"error": "capture_indexed"})
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail={"error": "capture_indexed"}
+        )
 
     if attachment_id:
         att_id_s = attachment_id.strip()
@@ -856,7 +891,17 @@ def finish_capture_transcribe(
             "UPDATE capture_transcripts SET provider = %s, model = %s, transcript_text = %s, "
             "transcript_status = %s, language = %s, confidence = %s, error = %s "
             "WHERE id = %s::uuid AND user_id = %s",
-            (provider, model, text, status_t, language, conf, err, transcript_row_id_to_update, user_id),
+            (
+                provider,
+                model,
+                text,
+                status_t,
+                language,
+                conf,
+                err,
+                transcript_row_id_to_update,
+                user_id,
+            ),
         )
         row = ms.fetch_one(
             "SELECT id, attachment_id, transcript_status, transcript_text, transcript_provenance, "
@@ -898,9 +943,7 @@ def read_transcribe_audio_bytes(attachment_row: dict) -> tuple[bytes, str]:
     try:
         path = media_storage.resolve_storage_key_file(str(attachment_row["storage_key"]))
     except ValueError as exc:
-        _log.warning(
-            "transcribe: bad storage_key %r: %s", attachment_row.get("storage_key"), exc
-        )
+        _log.warning("transcribe: bad storage_key %r: %s", attachment_row.get("storage_key"), exc)
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"error": "attachment_not_found"},
@@ -1024,7 +1067,9 @@ def index_capture(ms: MetadataStore, *, user_id: str, capture_id: str) -> Captur
                 (note_id_str,),
             )
         except Exception:
-            _log.warning("capture index: note cleanup failed note_id=%s", note_id_str, exc_info=True)
+            _log.warning(
+                "capture index: note cleanup failed note_id=%s", note_id_str, exc_info=True
+            )
         ms.execute(
             "UPDATE captures SET status = 'failed', last_error = %s "
             "WHERE id = %s::uuid AND user_id = %s",

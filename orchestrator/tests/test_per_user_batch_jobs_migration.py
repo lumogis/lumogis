@@ -113,8 +113,7 @@ def test_claim_next_two_workers_do_not_claim_same_row(_pg_available):
             cur.execute(f'SET search_path TO "{schema_name}"')
             cur.execute(_MIGRATION_PATH.read_text(encoding="utf-8"))
             cur.execute(
-                "INSERT INTO user_batch_jobs (user_id, kind, payload) "
-                "VALUES (%s, %s, %s::jsonb)",
+                "INSERT INTO user_batch_jobs (user_id, kind, payload) VALUES (%s, %s, %s::jsonb)",
                 ("alice", "ingest_folder", '{"path": "/tmp"}'),
             )
         # Two competing workers, each in its own connection with

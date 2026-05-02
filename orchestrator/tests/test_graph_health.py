@@ -15,18 +15,18 @@ Coverage:
   10. One metric failure does not fail entire endpoint
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-import pytest
-
-import config as _config
 import main
+import pytest
 from fastapi.testclient import TestClient
 
+import config as _config
 
 # ---------------------------------------------------------------------------
 # Configurable MetadataStore mock for health endpoint tests
 # ---------------------------------------------------------------------------
+
 
 class _HealthMetadataStore:
     """A programmable metadata store for /graph/health tests.
@@ -70,6 +70,7 @@ class _HealthMetadataStore:
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def client():
     with TestClient(main.app) as c:
@@ -83,6 +84,7 @@ def _inject_store(monkeypatch, store):
 # ---------------------------------------------------------------------------
 # 1. Response has correct shape with all required fields
 # ---------------------------------------------------------------------------
+
 
 def test_graph_health_response_shape(client, monkeypatch):
     store = _HealthMetadataStore(
@@ -123,6 +125,7 @@ def test_graph_health_response_shape(client, monkeypatch):
 # 2. Empty corpus returns zeros and null trend
 # ---------------------------------------------------------------------------
 
+
 def test_graph_health_empty_corpus(client, monkeypatch):
     store = _HealthMetadataStore(
         fetch_one_results={
@@ -150,6 +153,7 @@ def test_graph_health_empty_corpus(client, monkeypatch):
 # 3. constraint_violation_counts reflect open violations
 # ---------------------------------------------------------------------------
 
+
 def test_graph_health_violation_counts(client, monkeypatch):
     store = _HealthMetadataStore(
         fetch_one_results={
@@ -165,7 +169,7 @@ def test_graph_health_violation_counts(client, monkeypatch):
                 {"severity": "WARNING", "cnt": 7},
                 {"severity": "INFO", "cnt": 2},
             ]
-        }
+        },
     )
     _inject_store(monkeypatch, store)
 
@@ -180,6 +184,7 @@ def test_graph_health_violation_counts(client, monkeypatch):
 # ---------------------------------------------------------------------------
 # 4. Orphan percentage computed correctly
 # ---------------------------------------------------------------------------
+
 
 def test_graph_health_orphan_pct(client, monkeypatch):
     store = _HealthMetadataStore(
@@ -200,6 +205,7 @@ def test_graph_health_orphan_pct(client, monkeypatch):
 # ---------------------------------------------------------------------------
 # 5. Mean completeness excludes staged entities and NULLs
 # ---------------------------------------------------------------------------
+
 
 def test_graph_health_mean_completeness_non_staged(client, monkeypatch):
     # The endpoint queries with is_staged = FALSE and extraction_quality IS NOT NULL
@@ -223,6 +229,7 @@ def test_graph_health_mean_completeness_non_staged(client, monkeypatch):
 # 6. ingestion_quality_trend_7d is null when no entities in last 7 days
 # ---------------------------------------------------------------------------
 
+
 def test_graph_health_trend_null_when_no_recent_entities(client, monkeypatch):
     store = _HealthMetadataStore(
         fetch_one_results={
@@ -241,6 +248,7 @@ def test_graph_health_trend_null_when_no_recent_entities(client, monkeypatch):
 # ---------------------------------------------------------------------------
 # 7. Temporal freshness buckets are correct
 # ---------------------------------------------------------------------------
+
 
 def test_graph_health_temporal_freshness_buckets(client, monkeypatch):
     store = _HealthMetadataStore(
@@ -265,6 +273,7 @@ def test_graph_health_temporal_freshness_buckets(client, monkeypatch):
 # ---------------------------------------------------------------------------
 # 8. Auth: no authentication required (matches /health endpoint pattern)
 # ---------------------------------------------------------------------------
+
 
 def test_graph_health_no_auth_required(client, monkeypatch):
     """Endpoint must be accessible without any auth header — same as /health."""
@@ -307,6 +316,7 @@ def test_graph_health_no_auth_with_auth_enabled(client, monkeypatch):
 # 9. 503 when Postgres unreachable
 # ---------------------------------------------------------------------------
 
+
 def test_graph_health_503_when_postgres_unreachable(client, monkeypatch):
     store = _HealthMetadataStore(ping_ok=False)
     _inject_store(monkeypatch, store)
@@ -318,6 +328,7 @@ def test_graph_health_503_when_postgres_unreachable(client, monkeypatch):
 # ---------------------------------------------------------------------------
 # 10. One metric failure does not fail the entire endpoint
 # ---------------------------------------------------------------------------
+
 
 def test_graph_health_partial_failure_does_not_break_endpoint(client, monkeypatch):
     """If one metric query raises, the endpoint still returns 200 with 0/null for that field."""

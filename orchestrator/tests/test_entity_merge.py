@@ -18,36 +18,34 @@ Runs: docker compose -f docker-compose.test.yml run --rm orchestrator pytest
 """
 
 import inspect
-import json
 import re
 import uuid
 from unittest.mock import MagicMock
-from unittest.mock import call
 from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
 
 WINNER_ID = str(uuid.uuid4())
-LOSER_ID  = str(uuid.uuid4())
-USER_ID   = "default"
+LOSER_ID = str(uuid.uuid4())
+USER_ID = "default"
 
 _WINNER_ROW = {
-    "entity_id":   WINNER_ID,
-    "name":        "Alice",
-    "aliases":     ["A. Smith"],
+    "entity_id": WINNER_ID,
+    "name": "Alice",
+    "aliases": ["A. Smith"],
     "context_tags": ["finance", "banking"],
     "mention_count": 3,
 }
 _LOSER_ROW = {
-    "entity_id":   LOSER_ID,
-    "name":        "Alice Smith",
-    "aliases":     ["Alice S."],
+    "entity_id": LOSER_ID,
+    "name": "Alice Smith",
+    "aliases": ["Alice S."],
     "context_tags": ["banking", "investment"],
     "mention_count": 1,
 }
 _WINNER_POST_ROW = {
-    "name":    "Alice",
+    "name": "Alice",
     "aliases": ["A. Smith", "Alice S."],
 }
 
@@ -55,6 +53,7 @@ _WINNER_POST_ROW = {
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 def _make_conn_mock(fail_at: str | None = None):
     """Return a minimal mock psycopg2 connection.
@@ -92,9 +91,9 @@ def _make_ms(conn, winner_row=None, loser_row=None, winner_post=None):
 
     # fetch_one call order: winner verify, loser verify, winner pre, winner post
     fetch_sequence = [
-        winner_row,   # Step 1a — verify winner
-        loser_row,    # Step 1b — verify loser
-        winner_row,   # pre-fetch for Phase B name
+        winner_row,  # Step 1a — verify winner
+        loser_row,  # Step 1b — verify loser
+        winner_row,  # pre-fetch for Phase B name
         winner_post or {"name": (winner_row or {}).get("name", ""), "aliases": []},
     ]
     ms.fetch_one.side_effect = fetch_sequence
@@ -104,6 +103,7 @@ def _make_ms(conn, winner_row=None, loser_row=None, winner_post=None):
 # ---------------------------------------------------------------------------
 # 1. Phase A success
 # ---------------------------------------------------------------------------
+
 
 class TestPhaseASuccess:
     def test_all_postgres_steps_called(self):
@@ -117,17 +117,18 @@ class TestPhaseASuccess:
             patch("services.entity_merge.hooks.fire_background") as mock_hook,
         ):
             from services.entity_merge import merge_entities
+
             result = merge_entities(WINNER_ID, LOSER_ID, USER_ID)
 
         assert result.winner_id == WINNER_ID
-        assert result.loser_id  == LOSER_ID
+        assert result.loser_id == LOSER_ID
         # Phase A committed
         conn.commit.assert_called_once()
         # Hook fired after commit
         mock_hook.assert_called_once()
         call_kwargs = mock_hook.call_args
         assert call_kwargs.kwargs.get("winner_id") == WINNER_ID
-        assert call_kwargs.kwargs.get("loser_id")  == LOSER_ID
+        assert call_kwargs.kwargs.get("loser_id") == LOSER_ID
 
     def test_mentions_count_summed(self):
         conn, cur = _make_conn_mock()
@@ -140,10 +141,13 @@ class TestPhaseASuccess:
             patch("services.entity_merge.hooks.fire_background"),
         ):
             from services.entity_merge import merge_entities
-            result = merge_entities(WINNER_ID, LOSER_ID, USER_ID)
+
+            merge_entities(WINNER_ID, LOSER_ID, USER_ID)
 
         # Check UPDATE entities called with summed mention_count
-        update_calls = [c for c in cur.execute.call_args_list if "UPDATE entities" in (c.args[0] or "")]
+        update_calls = [
+            c for c in cur.execute.call_args_list if "UPDATE entities" in (c.args[0] or "")
+        ]
         assert update_calls, "UPDATE entities not called"
         update_params = update_calls[0].args[1]
         assert 4 in update_params  # 3 + 1 = 4 mention_count
@@ -159,12 +163,11 @@ class TestPhaseASuccess:
             patch("services.entity_merge.hooks.fire_background"),
         ):
             from services.entity_merge import merge_entities
+
             merge_entities(WINNER_ID, LOSER_ID, USER_ID)
 
         # The UPDATE entities SQL must set graph_projected_at = NULL
-        all_sql = " ".join(
-            str(c.args[0]) for c in cur.execute.call_args_list if c.args
-        )
+        all_sql = " ".join(str(c.args[0]) for c in cur.execute.call_args_list if c.args)
         assert "graph_projected_at = NULL" in all_sql
 
     def test_loser_deleted(self):
@@ -178,9 +181,12 @@ class TestPhaseASuccess:
             patch("services.entity_merge.hooks.fire_background"),
         ):
             from services.entity_merge import merge_entities
+
             merge_entities(WINNER_ID, LOSER_ID, USER_ID)
 
-        delete_calls = [c for c in cur.execute.call_args_list if "DELETE FROM entities" in (c.args[0] or "")]
+        delete_calls = [
+            c for c in cur.execute.call_args_list if "DELETE FROM entities" in (c.args[0] or "")
+        ]
         assert delete_calls, "DELETE FROM entities not called"
         assert LOSER_ID in delete_calls[0].args[1]
 
@@ -195,9 +201,12 @@ class TestPhaseASuccess:
             patch("services.entity_merge.hooks.fire_background"),
         ):
             from services.entity_merge import merge_entities
+
             merge_entities(WINNER_ID, LOSER_ID, USER_ID)
 
-        session_calls = [c for c in cur.execute.call_args_list if "array_replace" in (c.args[0] or "")]
+        session_calls = [
+            c for c in cur.execute.call_args_list if "array_replace" in (c.args[0] or "")
+        ]
         assert session_calls, "array_replace UPDATE sessions not called"
         sql = session_calls[0].args[0]
         assert "entity_ids" in sql
@@ -213,20 +222,23 @@ class TestPhaseASuccess:
             patch("services.entity_merge.hooks.fire_background"),
         ):
             from services.entity_merge import merge_entities
+
             merge_entities(WINNER_ID, LOSER_ID, USER_ID)
 
-        relation_calls = [c for c in cur.execute.call_args_list if "UPDATE entity_relations" in (c.args[0] or "")]
+        relation_calls = [
+            c for c in cur.execute.call_args_list if "UPDATE entity_relations" in (c.args[0] or "")
+        ]
         assert relation_calls, "UPDATE entity_relations not called"
         params = relation_calls[0].args[1]
         assert WINNER_ID in params
-        assert LOSER_ID  in params
+        assert LOSER_ID in params
 
     def test_qdrant_cleaned_true_on_success(self):
         conn, cur = _make_conn_mock()
         ms = _make_ms(conn, _WINNER_ROW, _LOSER_ROW, _WINNER_POST_ROW)
         mock_vs = MagicMock()
         mock_vs.delete_where = MagicMock()
-        mock_vs.upsert       = MagicMock()
+        mock_vs.upsert = MagicMock()
         mock_embedder = MagicMock()
         mock_embedder.embed.return_value = [0.0] * 768
 
@@ -237,6 +249,7 @@ class TestPhaseASuccess:
             patch("services.entity_merge.hooks.fire_background"),
         ):
             from services.entity_merge import merge_entities
+
             result = merge_entities(WINNER_ID, LOSER_ID, USER_ID)
 
         assert result.qdrant_cleaned is True
@@ -247,6 +260,7 @@ class TestPhaseASuccess:
 # ---------------------------------------------------------------------------
 # 2. Phase A failure — rollback, no hook, no Qdrant
 # ---------------------------------------------------------------------------
+
 
 class TestPhaseAFailure:
     def test_rollback_on_sql_error(self):
@@ -261,6 +275,7 @@ class TestPhaseAFailure:
             patch("services.entity_merge.hooks.fire_background") as mock_hook,
         ):
             from services.entity_merge import merge_entities
+
             with pytest.raises(RuntimeError):
                 merge_entities(WINNER_ID, LOSER_ID, USER_ID)
 
@@ -281,6 +296,7 @@ class TestPhaseAFailure:
             patch("services.entity_merge.hooks.fire_background"),
         ):
             from services.entity_merge import merge_entities
+
             with pytest.raises(RuntimeError):
                 merge_entities(WINNER_ID, LOSER_ID, USER_ID)
 
@@ -291,6 +307,7 @@ class TestPhaseAFailure:
 # ---------------------------------------------------------------------------
 # 3. Phase B Qdrant failure
 # ---------------------------------------------------------------------------
+
 
 class TestPhaseBQdrantFailure:
     def test_postgres_committed_hook_fired_qdrant_cleaned_false(self):
@@ -307,6 +324,7 @@ class TestPhaseBQdrantFailure:
             patch("services.entity_merge.hooks.fire_background") as mock_hook,
         ):
             from services.entity_merge import merge_entities
+
             result = merge_entities(WINNER_ID, LOSER_ID, USER_ID)
 
         # Phase A committed
@@ -321,9 +339,11 @@ class TestPhaseBQdrantFailure:
 # 4. Same winner/loser ID
 # ---------------------------------------------------------------------------
 
+
 class TestSameId:
     def test_raises_value_error(self):
         from services.entity_merge import merge_entities
+
         with pytest.raises(ValueError, match="differ"):
             merge_entities(WINNER_ID, WINNER_ID, USER_ID)
 
@@ -331,6 +351,7 @@ class TestSameId:
 # ---------------------------------------------------------------------------
 # 5. Entity not found
 # ---------------------------------------------------------------------------
+
 
 class TestEntityNotFound:
     def test_winner_not_found_raises_value_error(self):
@@ -341,6 +362,7 @@ class TestEntityNotFound:
 
         with patch("services.entity_merge.config.get_metadata_store", return_value=ms):
             from services.entity_merge import merge_entities
+
             with pytest.raises(ValueError, match="winner.*not found"):
                 merge_entities(WINNER_ID, LOSER_ID, USER_ID)
 
@@ -355,6 +377,7 @@ class TestEntityNotFound:
 
         with patch("services.entity_merge.config.get_metadata_store", return_value=ms):
             from services.entity_merge import merge_entities
+
             with pytest.raises(ValueError, match="loser.*not found"):
                 merge_entities(WINNER_ID, LOSER_ID, USER_ID)
 
@@ -365,9 +388,11 @@ class TestEntityNotFound:
 # 6–10. Route-level tests for POST /entities/merge
 # ---------------------------------------------------------------------------
 
+
 def _make_app():
     from fastapi import FastAPI
     from routes.admin import router
+
     app = FastAPI()
     app.include_router(router)
     return app
@@ -381,7 +406,9 @@ def client():
 
 class TestEntitiesMergeRoute:
     def test_invalid_uuid_returns_400(self, client):
-        resp = client.post("/entities/merge", json={"winner_id": "not-a-uuid", "loser_id": str(uuid.uuid4())})
+        resp = client.post(
+            "/entities/merge", json={"winner_id": "not-a-uuid", "loser_id": str(uuid.uuid4())}
+        )
         assert resp.status_code == 400
         assert "invalid uuid" in resp.json()["detail"]
 
@@ -398,10 +425,13 @@ class TestEntitiesMergeRoute:
 
         with patch("routes.admin.config.get_metadata_store", return_value=ms):
             with patch("services.entity_merge.config.get_metadata_store", return_value=ms):
-                resp = client.post("/entities/merge", json={
-                    "winner_id": WINNER_ID,
-                    "loser_id":  LOSER_ID,
-                })
+                resp = client.post(
+                    "/entities/merge",
+                    json={
+                        "winner_id": WINNER_ID,
+                        "loser_id": LOSER_ID,
+                    },
+                )
         assert resp.status_code == 404
 
     def test_successful_merge_returns_200(self, client):
@@ -409,7 +439,7 @@ class TestEntitiesMergeRoute:
         ms = _make_ms(conn, _WINNER_ROW, _LOSER_ROW, _WINNER_POST_ROW)
         mock_vs = MagicMock()
         mock_vs.delete_where = MagicMock()
-        mock_vs.upsert       = MagicMock()
+        mock_vs.upsert = MagicMock()
         mock_embedder = MagicMock()
         mock_embedder.embed.return_value = [0.0] * 768
 
@@ -420,24 +450,27 @@ class TestEntitiesMergeRoute:
             patch("services.entity_merge.config.get_embedder", return_value=mock_embedder),
             patch("services.entity_merge.hooks.fire_background"),
         ):
-            resp = client.post("/entities/merge", json={
-                "winner_id": WINNER_ID,
-                "loser_id":  LOSER_ID,
-                "user_id":   USER_ID,
-            })
+            resp = client.post(
+                "/entities/merge",
+                json={
+                    "winner_id": WINNER_ID,
+                    "loser_id": LOSER_ID,
+                    "user_id": USER_ID,
+                },
+            )
 
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "ok"
         assert data["winner_id"] == WINNER_ID
-        assert data["loser_id"]  == LOSER_ID
+        assert data["loser_id"] == LOSER_ID
 
     def test_review_decisions_row_inserted_on_success(self, client):
         conn, cur = _make_conn_mock()
         ms = _make_ms(conn, _WINNER_ROW, _LOSER_ROW, _WINNER_POST_ROW)
         mock_vs = MagicMock()
         mock_vs.delete_where = MagicMock()
-        mock_vs.upsert       = MagicMock()
+        mock_vs.upsert = MagicMock()
         mock_embedder = MagicMock()
         mock_embedder.embed.return_value = [0.0] * 768
 
@@ -456,11 +489,14 @@ class TestEntitiesMergeRoute:
             patch("services.entity_merge.config.get_embedder", return_value=mock_embedder),
             patch("services.entity_merge.hooks.fire_background"),
         ):
-            resp = client.post("/entities/merge", json={
-                "winner_id": WINNER_ID,
-                "loser_id":  LOSER_ID,
-                "user_id":   USER_ID,
-            })
+            resp = client.post(
+                "/entities/merge",
+                json={
+                    "winner_id": WINNER_ID,
+                    "loser_id": LOSER_ID,
+                    "user_id": USER_ID,
+                },
+            )
 
         assert resp.status_code == 200
         assert audit_calls, "review_decisions INSERT not called"

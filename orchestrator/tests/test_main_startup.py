@@ -17,7 +17,6 @@ Asserts:
 from __future__ import annotations
 
 import logging
-import os
 
 import pytest
 
@@ -36,8 +35,12 @@ def test_signal_llm_model_cloud_under_auth_on_fails_boot(monkeypatch):
     with pytest.raises(RuntimeError) as excinfo:
         config._check_background_model_defaults()
     msg = str(excinfo.value)
-    for canary in ("SIGNAL_LLM_MODEL", "claude", "AUTH_ENABLED=true",
-                   "boot check guards the *default* model only"):
+    for canary in (
+        "SIGNAL_LLM_MODEL",
+        "claude",
+        "AUTH_ENABLED=true",
+        "boot check guards the *default* model only",
+    ):
         assert canary in msg, (
             f"missing canary {canary!r} from boot-check error message; "
             "did the message wording regress?"
@@ -55,6 +58,4 @@ def test_signal_llm_model_unknown_warns_does_not_raise(monkeypatch, caplog):
     monkeypatch.setenv("SIGNAL_LLM_MODEL", "does_not_exist_anywhere")
     with caplog.at_level(logging.WARNING, logger="config"):
         config._check_background_model_defaults()
-    assert any(
-        "does_not_exist_anywhere" in r.getMessage() for r in caplog.records
-    )
+    assert any("does_not_exist_anywhere" in r.getMessage() for r in caplog.records)

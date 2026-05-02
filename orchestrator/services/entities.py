@@ -25,11 +25,11 @@ import hooks
 from auth import UserContext
 from events import Event
 from models.entities import ExtractedEntity
-from services import entity_constraints
-from services import entity_quality
 from visibility import visible_filter
 
 import config
+from services import entity_constraints
+from services import entity_quality
 
 _log = logging.getLogger(__name__)
 
@@ -46,6 +46,7 @@ def resolve_relation_source_id(entity_row: dict) -> str:
     """
     pf = entity_row.get("published_from")
     return pf if pf else entity_row["entity_id"]
+
 
 _EXTRACT_PROMPT = """\
 Extract all named entities from the text below. For each entity, identify:
@@ -69,9 +70,7 @@ Text to analyse:
 """
 
 
-def extract_entities(
-    session_text: str, *, user_id: str | None = None
-) -> list[ExtractedEntity]:
+def extract_entities(session_text: str, *, user_id: str | None = None) -> list[ExtractedEntity]:
     """Call the local model to extract named entities from session text.
 
     Returns a list of ExtractedEntity objects. Returns an empty list on
@@ -93,13 +92,15 @@ def extract_entities(
     except ConnectorNotConfigured as exc:
         _log.warning(
             "extract_entities: missing per-user credential (user=%s): %s",
-            user_id, exc,
+            user_id,
+            exc,
         )
         return []
     except CredentialUnavailable as exc:
         _log.warning(
             "extract_entities: stored credential unusable (user=%s): %s",
-            user_id, exc,
+            user_id,
+            exc,
         )
         return []
     try:
@@ -212,7 +213,9 @@ def store_entities(
     entity_ids: list[str] = []
     for entity in entities:
         try:
-            entity_id = _upsert_entity(entity, evidence_id, evidence_type, user_id, ms, embedder, vs)
+            entity_id = _upsert_entity(
+                entity, evidence_id, evidence_type, user_id, ms, embedder, vs
+            )
             entity_ids.append(entity_id)
         except Exception as exc:
             _log.error(

@@ -14,6 +14,7 @@ _log = logging.getLogger(__name__)
 
 _OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://ollama:11434")
 
+
 def _resolve_catalog_path() -> Path:
     """Resolve the fallback catalog, preferring bind mount, then image baked-in copy."""
     override = os.environ.get("OLLAMA_CATALOG_FALLBACK")
@@ -38,6 +39,7 @@ _CATALOG_URL = "https://ollama.com/api/tags"
 # ---------------------------------------------------------------------------
 # Local Ollama helpers
 # ---------------------------------------------------------------------------
+
 
 def list_local_models(timeout: float = 5.0) -> list[dict]:
     """Return models currently pulled in Ollama as a list of dicts with keys:
@@ -100,6 +102,7 @@ def delete_model(name: str, timeout: float = 30.0) -> None:
 # ---------------------------------------------------------------------------
 # Public catalog helpers
 # ---------------------------------------------------------------------------
+
 
 def _load_fallback_catalog() -> list[dict]:
     """Load the bundled fallback catalog from disk."""
@@ -174,6 +177,7 @@ def fetch_catalog(timeout: float = 8.0) -> list[dict]:
 
         # Group live entries by base name so we can collect available tags.
         from collections import defaultdict
+
         by_base: dict[str, list[dict]] = defaultdict(list)
         for m in raw_models:
             full_name = m.get("name") or m.get("model", "")

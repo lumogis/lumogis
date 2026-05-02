@@ -79,28 +79,55 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-import config
 from connectors import registry as connectors_registry
-from connectors.registry import (  # noqa: F401 — re-exported for callers
-    UnknownConnector,
+from connectors.registry import UnknownConnector  # noqa: F401 — re-exported for callers
+from services._credential_internals import (  # noqa: F401 — _-prefixed names re-exported for back-compat with pre-refactor test imports
+    _PLACEHOLDER_KEYS,
 )
 from services._credential_internals import (  # noqa: F401 — _-prefixed names re-exported for back-compat with pre-refactor test imports
     ConnectorNotConfigured,
+)
+from services._credential_internals import (  # noqa: F401 — _-prefixed names re-exported for back-compat with pre-refactor test imports
     CredentialUnavailable,
+)
+from services._credential_internals import (  # noqa: F401 — _-prefixed names re-exported for back-compat with pre-refactor test imports
     _actor_str,
+)
+from services._credential_internals import (  # noqa: F401 — _-prefixed names re-exported for back-compat with pre-refactor test imports
     _build_multifernet,
+)
+from services._credential_internals import (  # noqa: F401 — _-prefixed names re-exported for back-compat with pre-refactor test imports
     _current_key_version,
+)
+from services._credential_internals import (  # noqa: F401 — _-prefixed names re-exported for back-compat with pre-refactor test imports
     _decrypt_payload,
+)
+from services._credential_internals import (  # noqa: F401 — _-prefixed names re-exported for back-compat with pre-refactor test imports
     _emit_audit as _emit_audit_internal,
+)
+from services._credential_internals import (  # noqa: F401 — _-prefixed names re-exported for back-compat with pre-refactor test imports
     _encrypt_payload,
+)
+from services._credential_internals import (  # noqa: F401 — _-prefixed names re-exported for back-compat with pre-refactor test imports
     _get_multifernet,
+)
+from services._credential_internals import (  # noqa: F401 — _-prefixed names re-exported for back-compat with pre-refactor test imports
     _key_fingerprint,
+)
+from services._credential_internals import (  # noqa: F401 — _-prefixed names re-exported for back-compat with pre-refactor test imports
     _load_keys,
-    _PLACEHOLDER_KEYS,
+)
+from services._credential_internals import (  # noqa: F401 — _-prefixed names re-exported for back-compat with pre-refactor test imports
     _resolve_env_fallback,
+)
+from services._credential_internals import (  # noqa: F401 — _-prefixed names re-exported for back-compat with pre-refactor test imports
     get_current_key_version,
+)
+from services._credential_internals import (  # noqa: F401 — _-prefixed names re-exported for back-compat with pre-refactor test imports
     reset_for_tests,
 )
+
+import config
 
 _log = logging.getLogger(__name__)
 
@@ -240,7 +267,10 @@ def _fire_change(user_id: str, connector: str, *, action: str) -> None:
             _log.exception(
                 "connector_credentials change listener %r raised "
                 "(user_id=%s connector=%s action=%s); ignoring",
-                listener, user_id, connector, action,
+                listener,
+                user_id,
+                connector,
+                action,
             )
 
 
@@ -298,8 +328,7 @@ def _record_from_row(row: dict) -> CredentialRecord:
 
 
 _SELECT_RECORD_COLS = (
-    "user_id, connector, created_at, updated_at, "
-    "created_by, updated_by, key_version"
+    "user_id, connector, created_at, updated_at, created_by, updated_by, key_version"
 )
 
 
@@ -367,8 +396,7 @@ def get_payload(user_id: str, connector: str) -> dict[str, Any] | None:
     # SCOPE-EXEMPT: user_connector_credentials has no `scope` column
     # — encrypted per-user external-service secrets, not authored memory.
     row = ms.fetch_one(
-        "SELECT ciphertext FROM user_connector_credentials "
-        "WHERE user_id = %s AND connector = %s",
+        "SELECT ciphertext FROM user_connector_credentials WHERE user_id = %s AND connector = %s",
         (user_id, connector),
     )
     if row is None:
@@ -436,7 +464,9 @@ def put_payload(
     )
     _log.info(
         "connector_credentials: put user_id=%s connector=%s actor=%s",
-        user_id, connector, actor_clean,
+        user_id,
+        connector,
+        actor_clean,
     )
     _fire_change(user_id, connector, action="put")
     return record
@@ -483,7 +513,9 @@ def delete_payload(
     )
     _log.info(
         "connector_credentials: deleted user_id=%s connector=%s actor=%s",
-        user_id, connector, actor_clean,
+        user_id,
+        connector,
+        actor_clean,
     )
     _fire_change(user_id, connector, action="delete")
     return True
@@ -513,8 +545,7 @@ def resolve(
     # SCOPE-EXEMPT: user_connector_credentials has no `scope` column
     # — encrypted per-user external-service secrets, not authored memory.
     row = ms.fetch_one(
-        "SELECT ciphertext FROM user_connector_credentials "
-        "WHERE user_id = %s AND connector = %s",
+        "SELECT ciphertext FROM user_connector_credentials WHERE user_id = %s AND connector = %s",
         (user_id, connector),
     )
     if row is not None:
@@ -571,9 +602,10 @@ def _reencrypt_user_table(*, actor_clean: str) -> dict[str, int]:
             new_token = mf.rotate(old_ciphertext)
         except Exception as exc:
             _log.error(
-                "rotate failed for user_id=%s connector=%s "
-                "(%s); ciphertext bytes NOT logged",
-                user_id, connector, exc.__class__.__name__,
+                "rotate failed for user_id=%s connector=%s (%s); ciphertext bytes NOT logged",
+                user_id,
+                connector,
+                exc.__class__.__name__,
             )
             failed += 1
             continue
@@ -584,7 +616,9 @@ def _reencrypt_user_table(*, actor_clean: str) -> dict[str, int]:
             _log.error(
                 "rotate verify failed for user_id=%s connector=%s "
                 "(%s); ciphertext bytes NOT logged",
-                user_id, connector, exc.__class__.__name__,
+                user_id,
+                connector,
+                exc.__class__.__name__,
             )
             failed += 1
             continue
@@ -602,7 +636,9 @@ def _reencrypt_user_table(*, actor_clean: str) -> dict[str, int]:
         except Exception as exc:
             _log.error(
                 "rotate UPDATE failed for user_id=%s connector=%s (%s)",
-                user_id, connector, exc.__class__.__name__,
+                user_id,
+                connector,
+                exc.__class__.__name__,
             )
             failed += 1
             continue
@@ -692,9 +728,11 @@ def reencrypt_all_to_current_version(
             totals[k] += int(sub.get(k, 0))
 
     _log.info(
-        "connector_credentials rotation summary: rotated=%d skipped=%d failed=%d "
-        "by_tier=%s",
-        totals["rotated"], totals["skipped"], totals["failed"], by_tier,
+        "connector_credentials rotation summary: rotated=%d skipped=%d failed=%d by_tier=%s",
+        totals["rotated"],
+        totals["skipped"],
+        totals["failed"],
+        by_tier,
     )
     return {
         "rotated": totals["rotated"],

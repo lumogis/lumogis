@@ -81,6 +81,7 @@ def invalidate_settings_cache() -> None:
     with _settings_cache_lock:
         _settings_cache_loaded_at = 0.0
 
+
 # ---------------------------------------------------------------------------
 # Stop entity list cache (mtime-based invalidation)
 # ---------------------------------------------------------------------------
@@ -152,8 +153,8 @@ def _resolve_config_file(name: str) -> str:
     configurations, so we verify the path is a regular file.
     """
     candidates = [
-        Path(__file__).resolve().parent / "config" / name,   # /app/config/<name>
-        Path("/opt/lumogis/config") / name,                  # baked into image
+        Path(__file__).resolve().parent / "config" / name,  # /app/config/<name>
+        Path("/opt/lumogis/config") / name,  # baked into image
     ]
     for p in candidates:
         if p.is_file():
@@ -183,6 +184,7 @@ def _dynamic_ollama_models() -> dict:
     """
     try:
         import ollama_client
+
         local = ollama_client.list_local_models()
     except Exception:
         return {}
@@ -341,6 +343,7 @@ def is_model_enabled(
     # Household optional toggle is checked first in both auth modes.
     if cfg.get("optional"):
         from settings_store import get_setting
+
         store = get_metadata_store()
         toggled = get_setting(f"optional_{model_name}", store)
         if not (toggled and toggled.lower() in ("true", "1", "yes")):
@@ -351,6 +354,7 @@ def is_model_enabled(
             return False
         from services.llm_connector_map import connector_for_api_key_env
         from services.llm_connector_map import has_credential
+
         if _credentials_present is not None:
             connector = connector_for_api_key_env(api_key_env)
             return connector is not None and connector in _credentials_present
@@ -358,6 +362,7 @@ def is_model_enabled(
 
     # Auth-off: legacy global app_settings + env path.
     from settings_store import get_setting
+
     store = get_metadata_store()
     stored_key = get_setting(api_key_env, store)
     effective_key = (stored_key or os.environ.get(api_key_env, "") or "").strip()
@@ -416,6 +421,7 @@ def get_llm_provider(
 
     if api_key_env:
         from services.llm_connector_map import effective_api_key
+
         effective_key = effective_api_key(user_id, api_key_env)
     else:
         effective_key = ""
@@ -1029,8 +1035,7 @@ def _stt_sidecar_host_allowed(host: str, *, allow_remote: bool) -> bool:
         if addr.is_loopback or addr.is_private or addr.is_link_local:
             return True
         _log.error(
-            "Rejected STT_SIDECAR_URL host=%r — public IPs require "
-            "STT_SIDECAR_ALLOW_REMOTE",
+            "Rejected STT_SIDECAR_URL host=%r — public IPs require STT_SIDECAR_ALLOW_REMOTE",
             host,
         )
         return False
@@ -1108,8 +1113,7 @@ def get_stt_backend() -> Literal["none", "fake_stt", "whisper_sidecar"]:
         _log.error("STT_BACKEND=faster_whisper is not implemented in this build")
         raise RuntimeError("faster_whisper backend is not implemented in this build")
     _log.error(
-        "Invalid STT_BACKEND=%r — must be one of none, fake_stt, "
-        "whisper_sidecar, faster_whisper",
+        "Invalid STT_BACKEND=%r — must be one of none, fake_stt, whisper_sidecar, faster_whisper",
         val,
     )
     raise RuntimeError(f"Invalid STT_BACKEND: {val!r}")
@@ -1307,9 +1311,7 @@ def shutdown() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _on_connector_credential_change(
-    *, user_id: str, connector: str, action: str
-) -> None:
+def _on_connector_credential_change(*, user_id: str, connector: str, action: str) -> None:
     """Funnel substrate change events into the per-user LLM cache invalidator."""
     if connector.startswith("llm_"):
         invalidate_llm_cache_for_user(user_id)
@@ -1323,6 +1325,7 @@ def _reregister_listeners_for_tests() -> None:
     the listener function's name.
     """
     from services import connector_credentials as _ccs
+
     _ccs.register_change_listener(_on_connector_credential_change)
 
 

@@ -152,9 +152,7 @@ def match_relevance(signal: Signal, profile: RelevanceProfile) -> float:
 # ---------------------------------------------------------------------------
 
 
-def _call_llm(
-    title: str, content: str, *, user_id: str | None = None
-) -> dict:
+def _call_llm(title: str, content: str, *, user_id: str | None = None) -> dict:
     """Run the combined summarise+score LLM call. Returns parsed dict or {}.
 
     Plan llm_provider_keys_per_user_migration Pass 2.9: ``user_id`` is
@@ -169,9 +167,7 @@ def _call_llm(
     prompt = _PROCESS_PROMPT_TEMPLATE.format(title=title, content=content)
     model_name = os.environ.get("SIGNAL_LLM_MODEL", "llama")
     try:
-        needs_user_key = bool(
-            config.get_model_config(model_name).get("api_key_env")
-        )
+        needs_user_key = bool(config.get_model_config(model_name).get("api_key_env"))
     except Exception:
         needs_user_key = False
     if needs_user_key and not user_id:
@@ -201,12 +197,16 @@ def _call_llm(
     except ConnectorNotConfigured as exc:
         _log.warning(
             "signal_llm: missing per-user credential for model=%s user=%s: %s",
-            model_name, user_id, exc,
+            model_name,
+            user_id,
+            exc,
         )
     except CredentialUnavailable as exc:
         _log.warning(
             "signal_llm: stored credential unusable for model=%s user=%s: %s",
-            model_name, user_id, exc,
+            model_name,
+            user_id,
+            exc,
         )
     except Exception as exc:
         _log.warning("LLM call failed for signal %r: %s", title[:60], exc)

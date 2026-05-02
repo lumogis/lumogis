@@ -133,9 +133,7 @@ def on_action_executed(**kwargs) -> None:
 def on_routine_elevation_ready(**kwargs) -> None:
     user_id = kwargs.get("user_id")
     if not user_id:
-        _log.warning(
-            "routine_elevation_ready hook: missing user_id; dropping SSE fanout"
-        )
+        _log.warning("routine_elevation_ready hook: missing user_id; dropping SSE fanout")
         return
     _push_to_connections(
         "routine_elevation_ready",

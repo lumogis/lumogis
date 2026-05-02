@@ -25,9 +25,9 @@ this background path.
 import logging
 
 import httpx
+from services.ntfy_runtime import load_ntfy_runtime_config
 
 from services import connector_credentials as ccs
-from services.ntfy_runtime import load_ntfy_runtime_config
 
 _log = logging.getLogger(__name__)
 
@@ -47,13 +47,15 @@ class NtfyNotifier:
         except ccs.ConnectorNotConfigured:
             _log.info(
                 "ntfy: connector_not_configured user_id=%s title=%r — skipping",
-                user_id, title,
+                user_id,
+                title,
             )
             return False
         except ccs.CredentialUnavailable:
             _log.warning(
                 "ntfy: credential_unavailable user_id=%s title=%r — skipping",
-                user_id, title,
+                user_id,
+                title,
             )
             return False
 
@@ -72,18 +74,23 @@ class NtfyNotifier:
             if resp.status_code in (200, 201):
                 _log.info(
                     "ntfy notification sent: %r (priority=%s, user_id=%s)",
-                    title, ntfy_priority, user_id,
+                    title,
+                    ntfy_priority,
+                    user_id,
                 )
                 return True
             _log.warning(
                 "ntfy returned %d for %r (user_id=%s)",
-                resp.status_code, title, user_id,
+                resp.status_code,
+                title,
+                user_id,
             )
             return False
         except Exception as exc:
             _log.warning(
                 "ntfy unreachable — notification skipped (user_id=%s): %s",
-                user_id, exc,
+                user_id,
+                exc,
             )
             return False
 

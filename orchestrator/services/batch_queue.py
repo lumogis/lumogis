@@ -30,9 +30,7 @@ BATCH_QUEUE_MAX_ATTEMPTS = int(os.environ.get("BATCH_QUEUE_MAX_ATTEMPTS", "3"))
 BATCH_QUEUE_TICK_SECONDS = int(os.environ.get("BATCH_QUEUE_TICK_SECONDS", "5"))
 BATCH_QUEUE_TICK_DRAIN_LIMIT = int(os.environ.get("BATCH_QUEUE_TICK_DRAIN_LIMIT", "8"))
 BATCH_QUEUE_STUCK_AFTER_SECONDS = int(os.environ.get("BATCH_QUEUE_STUCK_AFTER_SECONDS", "1800"))
-BATCH_QUEUE_STUCK_SWEEPER_SECONDS = int(
-    os.environ.get("BATCH_QUEUE_STUCK_SWEEPER_SECONDS", "60")
-)
+BATCH_QUEUE_STUCK_SWEEPER_SECONDS = int(os.environ.get("BATCH_QUEUE_STUCK_SWEEPER_SECONDS", "60"))
 
 _CLAIM_PREFIX = (
     "WITH next_eligible AS ( "
@@ -41,8 +39,7 @@ _CLAIM_PREFIX = (
 )
 # SCOPE-EXEMPT: user_batch_jobs is operational queue state, no scope column
 _CLAIM_SQL = (
-    _CLAIM_PREFIX
-    + "WHERE r.user_id = user_batch_jobs.user_id AND r.status = 'running' "
+    _CLAIM_PREFIX + "WHERE r.user_id = user_batch_jobs.user_id AND r.status = 'running' "
     ") < %s ORDER BY id ASC LIMIT 1 FOR UPDATE SKIP LOCKED ) "
     "UPDATE user_batch_jobs SET status = 'running', started_at = NOW(), worker_id = %s "
     "FROM next_eligible WHERE user_batch_jobs.id = next_eligible.id "
@@ -223,9 +220,18 @@ def _run_one_tick(worker_id: str) -> bool:
             "batch_queue: no handler for kind=%s job_id=%s",
             job.kind,
             job.id,
-            extra={"user_id": job.user_id, "kind": job.kind, "job_id": job.id, "attempt": job.attempt},
+            extra={
+                "user_id": job.user_id,
+                "kind": job.kind,
+                "job_id": job.id,
+                "attempt": job.attempt,
+            },
         )
-        fail(job.id, f"no handler registered for kind {job.kind!r}", max_attempts=BATCH_QUEUE_MAX_ATTEMPTS)
+        fail(
+            job.id,
+            f"no handler registered for kind {job.kind!r}",
+            max_attempts=BATCH_QUEUE_MAX_ATTEMPTS,
+        )
         return True
 
     handler, payload_model = entry
@@ -235,7 +241,12 @@ def _run_one_tick(worker_id: str) -> bool:
             "batch_queue: dispatch kind=%s job_id=%s",
             job.kind,
             job.id,
-            extra={"user_id": job.user_id, "kind": job.kind, "job_id": job.id, "attempt": job.attempt},
+            extra={
+                "user_id": job.user_id,
+                "kind": job.kind,
+                "job_id": job.id,
+                "attempt": job.attempt,
+            },
         )
         handler(user_id=job.user_id, payload=model)
         complete(job.id)
@@ -243,14 +254,24 @@ def _run_one_tick(worker_id: str) -> bool:
             "batch_queue: complete kind=%s job_id=%s",
             job.kind,
             job.id,
-            extra={"user_id": job.user_id, "kind": job.kind, "job_id": job.id, "attempt": job.attempt},
+            extra={
+                "user_id": job.user_id,
+                "kind": job.kind,
+                "job_id": job.id,
+                "attempt": job.attempt,
+            },
         )
     except Exception as exc:
         _log.exception(
             "batch_queue: handler failed kind=%s job_id=%s",
             job.kind,
             job.id,
-            extra={"user_id": job.user_id, "kind": job.kind, "job_id": job.id, "attempt": job.attempt},
+            extra={
+                "user_id": job.user_id,
+                "kind": job.kind,
+                "job_id": job.id,
+                "attempt": job.attempt,
+            },
         )
         fail(job.id, repr(exc), max_attempts=BATCH_QUEUE_MAX_ATTEMPTS)
     return True

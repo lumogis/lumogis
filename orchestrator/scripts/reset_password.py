@@ -40,8 +40,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="python -m scripts.reset_password",
         description=(
-            "Reset a Lumogis user password (local shell only). "
-            "Specify --email or --user-id."
+            "Reset a Lumogis user password (local shell only). Specify --email or --user-id."
         ),
     )
     g = p.add_mutually_exclusive_group(required=True)

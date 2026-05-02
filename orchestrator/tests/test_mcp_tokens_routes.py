@@ -29,14 +29,13 @@ from __future__ import annotations
 import os
 import time
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime
+from datetime import timezone
 
 import jwt
 import pytest
 from fastapi.testclient import TestClient
-
 from tests.test_auth_phase1 import FakeUsersStore  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Composite store: users CRUD (FakeUsersStore) + mcp_tokens CRUD +
@@ -81,10 +80,7 @@ class _RoutesFakeStore(FakeUsersStore):
         if q.startswith("insert into mcp_tokens"):
             token_id, user_id, token_prefix, token_hash, label, scopes = p
             for row in self.tokens.values():
-                if (
-                    row["revoked_at"] is None
-                    and row["token_prefix"] == token_prefix
-                ):
+                if row["revoked_at"] is None and row["token_prefix"] == token_prefix:
                     raise RuntimeError(
                         "duplicate key value violates unique constraint "
                         "mcp_tokens_active_prefix_uniq"
@@ -104,8 +100,7 @@ class _RoutesFakeStore(FakeUsersStore):
             return
 
         if q.startswith(
-            "update mcp_tokens set revoked_at = now() where id = %s "
-            "and revoked_at is null"
+            "update mcp_tokens set revoked_at = now() where id = %s and revoked_at is null"
         ):
             (tid,) = p
             row = self.tokens.get(tid)
@@ -113,9 +108,7 @@ class _RoutesFakeStore(FakeUsersStore):
                 row["revoked_at"] = datetime.now(timezone.utc)
             return
 
-        if q.startswith(
-            "update mcp_tokens set last_used_at = now() where id = %s"
-        ):
+        if q.startswith("update mcp_tokens set last_used_at = now() where id = %s"):
             (tid,) = p
             row = self.tokens.get(tid)
             if row is not None:
@@ -135,10 +128,7 @@ class _RoutesFakeStore(FakeUsersStore):
             row = self.tokens.get(tid)
             return dict(row) if row else None
 
-        if q.startswith(
-            "select * from mcp_tokens where token_prefix = %s "
-            "and revoked_at is null"
-        ):
+        if q.startswith("select * from mcp_tokens where token_prefix = %s and revoked_at is null"):
             (prefix,) = p
             for row in self.tokens.values():
                 if row["token_prefix"] == prefix and row["revoked_at"] is None:
@@ -147,15 +137,17 @@ class _RoutesFakeStore(FakeUsersStore):
 
         if q.startswith("insert into audit_log"):
             row_id = len(self.audit) + 1
-            self.audit.append({
-                "id": row_id,
-                "user_id": p[0],
-                "action_name": p[1],
-                "connector": p[2],
-                "mode": p[3],
-                "input_summary": p[4],
-                "result_summary": p[5],
-            })
+            self.audit.append(
+                {
+                    "id": row_id,
+                    "user_id": p[0],
+                    "action_name": p[1],
+                    "connector": p[2],
+                    "mode": p[3],
+                    "input_summary": p[4],
+                    "result_summary": p[5],
+                }
+            )
             return {"id": row_id}
 
         return super().fetch_one(query, params)
@@ -179,24 +171,24 @@ class _RoutesFakeStore(FakeUsersStore):
                     updated.append(dict(row))
             return updated
 
-        if q.startswith(
-            "select * from mcp_tokens where user_id = %s "
-            "and revoked_at is null"
-        ):
+        if q.startswith("select * from mcp_tokens where user_id = %s and revoked_at is null"):
             (uid,) = p
             return sorted(
-                (dict(r) for r in self.tokens.values()
-                 if r["user_id"] == uid and r["revoked_at"] is None),
-                key=lambda r: r["created_at"], reverse=True,
+                (
+                    dict(r)
+                    for r in self.tokens.values()
+                    if r["user_id"] == uid and r["revoked_at"] is None
+                ),
+                key=lambda r: r["created_at"],
+                reverse=True,
             )
 
-        if q.startswith(
-            "select * from mcp_tokens where user_id = %s order by created_at"
-        ):
+        if q.startswith("select * from mcp_tokens where user_id = %s order by created_at"):
             (uid,) = p
             return sorted(
                 (dict(r) for r in self.tokens.values() if r["user_id"] == uid),
-                key=lambda r: r["created_at"], reverse=True,
+                key=lambda r: r["created_at"],
+                reverse=True,
             )
 
         return super().fetch_all(query, params)
@@ -250,6 +242,7 @@ def auth_env(monkeypatch):
     monkeypatch.delenv("MCP_AUTH_TOKEN", raising=False)
     yield
     from routes.auth import _reset_rate_limit_for_tests
+
     _reset_rate_limit_for_tests()
 
 
@@ -270,6 +263,7 @@ def _mint_jwt(user_id: str, role: str) -> str:
 def _client():
     """Boot the live FastAPI app inside a TestClient (lifespan executes)."""
     import main
+
     with TestClient(main.app) as client:
         yield client
 
@@ -277,6 +271,7 @@ def _client():
 def _seed(store, *, email: str, role: str) -> str:
     """Create a user via the real service and return their id."""
     import services.users as users_svc
+
     if users_svc.get_user_by_email(email) is None:
         users_svc.create_user(email, "verylongpassword12", role)
     user = users_svc.get_user_by_email(email)
@@ -342,7 +337,8 @@ def test_me_mint_label_length_capped_at_64(store, dev_env):
 
 
 def test_me_list_returns_only_callers_tokens_and_redacts_secrets(
-    store, auth_env,
+    store,
+    auth_env,
 ):
     """Cross-user isolation: list never crosses the caller boundary.
 
@@ -355,12 +351,9 @@ def test_me_list_returns_only_callers_tokens_and_redacts_secrets(
     bob_hdr = {"Authorization": f"Bearer {_mint_jwt(bob, 'user')}"}
 
     with _client() as client:
-        client.post("/api/v1/me/mcp-tokens",
-                    headers=alice_hdr, json={"label": "alice-1"})
-        client.post("/api/v1/me/mcp-tokens",
-                    headers=bob_hdr, json={"label": "bob-1"})
-        client.post("/api/v1/me/mcp-tokens",
-                    headers=bob_hdr, json={"label": "bob-2"})
+        client.post("/api/v1/me/mcp-tokens", headers=alice_hdr, json={"label": "alice-1"})
+        client.post("/api/v1/me/mcp-tokens", headers=bob_hdr, json={"label": "bob-1"})
+        client.post("/api/v1/me/mcp-tokens", headers=bob_hdr, json={"label": "bob-2"})
 
         a_resp = client.get("/api/v1/me/mcp-tokens", headers=alice_hdr)
         b_resp = client.get("/api/v1/me/mcp-tokens", headers=bob_hdr)
@@ -380,18 +373,21 @@ def test_me_list_default_excludes_revoked(store, auth_env):
     alice = _seed(store, email="alice@home.lan", role="user")
     hdr = {"Authorization": f"Bearer {_mint_jwt(alice, 'user')}"}
     with _client() as client:
-        m = client.post("/api/v1/me/mcp-tokens",
-                        headers=hdr, json={"label": "k1"})
+        m = client.post("/api/v1/me/mcp-tokens", headers=hdr, json={"label": "k1"})
         assert m.status_code == 201
         token_id = m.json()["token"]["id"]
-        client.post("/api/v1/me/mcp-tokens",
-                    headers=hdr, json={"label": "k2"})
-        assert client.delete(
-            f"/api/v1/me/mcp-tokens/{token_id}", headers=hdr,
-        ).status_code == 200
+        client.post("/api/v1/me/mcp-tokens", headers=hdr, json={"label": "k2"})
+        assert (
+            client.delete(
+                f"/api/v1/me/mcp-tokens/{token_id}",
+                headers=hdr,
+            ).status_code
+            == 200
+        )
         active = client.get("/api/v1/me/mcp-tokens", headers=hdr).json()
         all_rows = client.get(
-            "/api/v1/me/mcp-tokens?include_revoked=true", headers=hdr,
+            "/api/v1/me/mcp-tokens?include_revoked=true",
+            headers=hdr,
         ).json()
     assert {r["label"] for r in active} == {"k2"}
     assert {r["label"] for r in all_rows} == {"k1", "k2"}
@@ -442,16 +438,14 @@ def test_me_revoke_other_users_token_returns_404_not_403(store, auth_env):
     bob_hdr = {"Authorization": f"Bearer {_mint_jwt(bob, 'user')}"}
 
     with _client() as client:
-        m = client.post("/api/v1/me/mcp-tokens",
-                        headers=alice_hdr, json={"label": "k"})
+        m = client.post("/api/v1/me/mcp-tokens", headers=alice_hdr, json={"label": "k"})
         alice_token_id = m.json()["token"]["id"]
         cross = client.delete(
             f"/api/v1/me/mcp-tokens/{alice_token_id}",
             headers=bob_hdr,
         )
     assert cross.status_code == 404, (
-        "leaking the existence of someone else's token via 403 would let "
-        "non-admins probe id-space"
+        "leaking the existence of someone else's token via 403 would let non-admins probe id-space"
     )
 
 
@@ -467,13 +461,10 @@ def test_admin_list_user_tokens_includes_revoked_by_default(store, auth_env):
     alice_hdr = {"Authorization": f"Bearer {_mint_jwt(alice, 'user')}"}
 
     with _client() as client:
-        m = client.post("/api/v1/me/mcp-tokens",
-                        headers=alice_hdr, json={"label": "k1"})
+        m = client.post("/api/v1/me/mcp-tokens", headers=alice_hdr, json={"label": "k1"})
         revoked_id = m.json()["token"]["id"]
-        client.post("/api/v1/me/mcp-tokens",
-                    headers=alice_hdr, json={"label": "k2"})
-        client.delete(f"/api/v1/me/mcp-tokens/{revoked_id}",
-                      headers=alice_hdr)
+        client.post("/api/v1/me/mcp-tokens", headers=alice_hdr, json={"label": "k2"})
+        client.delete(f"/api/v1/me/mcp-tokens/{revoked_id}", headers=alice_hdr)
 
         resp = client.get(
             f"/api/v1/admin/users/{alice}/mcp-tokens",
@@ -504,8 +495,7 @@ def test_admin_revoke_user_token_returns_admin_view(store, auth_env):
     alice_hdr = {"Authorization": f"Bearer {_mint_jwt(alice, 'user')}"}
 
     with _client() as client:
-        m = client.post("/api/v1/me/mcp-tokens",
-                        headers=alice_hdr, json={"label": "k"})
+        m = client.post("/api/v1/me/mcp-tokens", headers=alice_hdr, json={"label": "k"})
         token_id = m.json()["token"]["id"]
         d = client.delete(
             f"/api/v1/admin/users/{alice}/mcp-tokens/{token_id}",
@@ -529,8 +519,7 @@ def test_admin_revoke_mismatched_user_id_in_path_returns_404(store, auth_env):
     alice_hdr = {"Authorization": f"Bearer {_mint_jwt(alice, 'user')}"}
 
     with _client() as client:
-        m = client.post("/api/v1/me/mcp-tokens",
-                        headers=alice_hdr, json={"label": "k"})
+        m = client.post("/api/v1/me/mcp-tokens", headers=alice_hdr, json={"label": "k"})
         token_id = m.json()["token"]["id"]
         d = client.delete(
             f"/api/v1/admin/users/{bob}/mcp-tokens/{token_id}",
@@ -578,8 +567,7 @@ def test_admin_revoke_emits_admin_revoked_audit_row(store, auth_env):
     admin_hdr = {"Authorization": f"Bearer {_mint_jwt(admin, 'admin')}"}
     alice_hdr = {"Authorization": f"Bearer {_mint_jwt(alice, 'user')}"}
     with _client() as client:
-        m = client.post("/api/v1/me/mcp-tokens",
-                        headers=alice_hdr, json={"label": "k"})
+        m = client.post("/api/v1/me/mcp-tokens", headers=alice_hdr, json={"label": "k"})
         token_id = m.json()["token"]["id"]
         client.delete(
             f"/api/v1/admin/users/{alice}/mcp-tokens/{token_id}",
@@ -611,6 +599,8 @@ def test_bearer_authenticated_post_bypasses_origin_check(store, monkeypatch):
     }
     with _client() as client:
         resp = client.post(
-            "/api/v1/me/mcp-tokens", headers=hdr, json={"label": "k"},
+            "/api/v1/me/mcp-tokens",
+            headers=hdr,
+            json={"label": "k"},
         )
     assert resp.status_code == 201, resp.text

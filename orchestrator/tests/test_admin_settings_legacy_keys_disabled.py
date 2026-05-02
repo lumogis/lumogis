@@ -32,11 +32,8 @@ from contextlib import contextmanager
 
 import jwt
 import pytest
-from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
-
 from tests.test_auth_phase1 import FakeUsersStore  # noqa: E402
-
 
 _TEST_FERNET_KEY = "OlGLYckGIbBSt54y8XVmgb441LgKJWvvYoHnpQ_cv9A="
 
@@ -106,6 +103,7 @@ def auth_on_env(monkeypatch):
     monkeypatch.delenv("LUMOGIS_CREDENTIAL_KEYS", raising=False)
     yield
     from routes.auth import _reset_rate_limit_for_tests
+
     _reset_rate_limit_for_tests()
 
 
@@ -131,12 +129,14 @@ def _mint_admin_jwt(user_id: str) -> str:
 @contextmanager
 def _client():
     import main
+
     with TestClient(main.app) as client:
         yield client
 
 
 def _seed_admin(store) -> str:
     import services.users as users_svc
+
     if users_svc.get_user_by_email("admin@home.lan") is None:
         users_svc.create_user("admin@home.lan", "verylongpassword12", "admin")
     user = users_svc.get_user_by_email("admin@home.lan")
@@ -165,9 +165,7 @@ def test_get_settings_under_auth_on_omits_api_key_status(store, auth_on_env):
     assert "default_model" in body
 
 
-def test_put_settings_with_api_keys_under_auth_on_returns_422(
-    store, auth_on_env
-):
+def test_put_settings_with_api_keys_under_auth_on_returns_422(store, auth_on_env):
     admin = _seed_admin(store)
     hdr = {"Authorization": f"Bearer {_mint_admin_jwt(admin)}"}
     with _client() as client:
@@ -188,9 +186,7 @@ def test_put_settings_with_api_keys_under_auth_on_returns_422(
     assert "ANTHROPIC_API_KEY" not in store.app_settings
 
 
-def test_put_settings_with_empty_api_keys_under_auth_on_is_no_op(
-    store, auth_on_env
-):
+def test_put_settings_with_empty_api_keys_under_auth_on_is_no_op(store, auth_on_env):
     """Empty ``api_keys: {}`` must NOT trigger 422 — clients send other fields."""
     admin = _seed_admin(store)
     hdr = {"Authorization": f"Bearer {_mint_admin_jwt(admin)}"}
@@ -203,14 +199,11 @@ def test_put_settings_with_empty_api_keys_under_auth_on_is_no_op(
     # Either 200 (with default_model accepted) or 400 (model unknown to YAML)
     # — what we assert is "NOT a 422 with legacy_global_api_keys_disabled".
     assert resp.status_code != 422 or (
-        resp.json().get("detail", {}).get("code")
-        != "legacy_global_api_keys_disabled"
+        resp.json().get("detail", {}).get("code") != "legacy_global_api_keys_disabled"
     ), resp.text
 
 
-def test_put_settings_omitted_api_keys_under_auth_on_is_no_op(
-    store, auth_on_env
-):
+def test_put_settings_omitted_api_keys_under_auth_on_is_no_op(store, auth_on_env):
     """``api_keys`` field omitted entirely must not trigger 422."""
     admin = _seed_admin(store)
     hdr = {"Authorization": f"Bearer {_mint_admin_jwt(admin)}"}
@@ -221,8 +214,7 @@ def test_put_settings_omitted_api_keys_under_auth_on_is_no_op(
             json={"reranker_enabled": False},
         )
     assert resp.status_code != 422 or (
-        resp.json().get("detail", {}).get("code")
-        != "legacy_global_api_keys_disabled"
+        resp.json().get("detail", {}).get("code") != "legacy_global_api_keys_disabled"
     ), resp.text
 
 
@@ -231,9 +223,7 @@ def test_put_settings_omitted_api_keys_under_auth_on_is_no_op(
 # ---------------------------------------------------------------------------
 
 
-def test_get_settings_under_auth_off_includes_api_key_status(
-    store, auth_off_env
-):
+def test_get_settings_under_auth_off_includes_api_key_status(store, auth_off_env):
     with _client() as client:
         resp = client.get("/settings")
     assert resp.status_code == 200, resp.text
@@ -245,9 +235,7 @@ def test_get_settings_under_auth_off_includes_api_key_status(
     assert isinstance(body["api_key_status"], dict)
 
 
-def test_put_settings_with_api_keys_under_auth_off_writes_app_settings(
-    store, auth_off_env
-):
+def test_put_settings_with_api_keys_under_auth_off_writes_app_settings(store, auth_off_env):
     with _client() as client:
         resp = client.put(
             "/settings",

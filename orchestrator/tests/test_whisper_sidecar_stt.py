@@ -120,9 +120,9 @@ def test_ipv4_mapped_public_ip_blocked_by_default(monkeypatch: pytest.MonkeyPatc
 
 def test_ipv4_mapped_private_ip_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("STT_SIDECAR_ALLOW_REMOTE", raising=False)
-    assert config.normalize_stt_sidecar_base_url(
-        "http://[::ffff:192.168.4.3]:8080/"
-    ).startswith("http")
+    assert config.normalize_stt_sidecar_base_url("http://[::ffff:192.168.4.3]:8080/").startswith(
+        "http"
+    )
 
 
 def test_public_dns_ok_when_allow_remote(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -19,26 +19,25 @@ import json
 import logging
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler
+from http.server import HTTPServer
 
+import hooks
 import httpx
 import pytest
+from events import Event
+from models.webhook import EntityCreatedPayload
+from models.webhook import EntityMergedPayload
+from models.webhook import WebhookEnvelope
+from models.webhook import WebhookEvent
 
 import config
-import hooks
-from events import Event
-from models.webhook import (
-    EntityCreatedPayload,
-    EntityMergedPayload,
-    WebhookEnvelope,
-    WebhookEvent,
-)
 from services import graph_webhook_dispatcher as dispatcher
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(autouse=True)
 def _reset_dispatcher(monkeypatch):
@@ -55,8 +54,12 @@ def _reset_dispatcher(monkeypatch):
     monkeypatch.setenv("KG_SERVICE_URL", "http://kg-test.local:8001")
     monkeypatch.delenv("GRAPH_WEBHOOK_SECRET", raising=False)
     touched_events = [
-        Event.DOCUMENT_INGESTED, Event.ENTITY_CREATED, Event.SESSION_ENDED,
-        Event.ENTITY_MERGED, Event.NOTE_CAPTURED, Event.AUDIO_TRANSCRIBED,
+        Event.DOCUMENT_INGESTED,
+        Event.ENTITY_CREATED,
+        Event.SESSION_ENDED,
+        Event.ENTITY_MERGED,
+        Event.NOTE_CAPTURED,
+        Event.AUDIO_TRANSCRIBED,
     ]
     snapshots = {e: list(hooks._listeners.get(e, [])) for e in touched_events}
     yield
@@ -99,9 +102,9 @@ def test_make_callback_signature_accepts_entity_created_kwargs():
     sig = inspect.signature(cb)
     # We use a kwargs-only callback so any current OR future hook field
     # is forwarded; verify the catch-all kwargs is present.
-    assert any(
-        p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
-    ), f"callback must accept **kwargs, got {sig}"
+    assert any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()), (
+        f"callback must accept **kwargs, got {sig}"
+    )
 
 
 def test_make_callback_drops_unknown_kwargs_silently():
@@ -222,6 +225,7 @@ def test_get_context_sync_returns_empty_on_500(caplog):
 def test_get_context_sync_returns_empty_on_network_error():
     def boom(_req):
         raise httpx.ConnectError("kg gone")
+
     _install_mock_client(boom)
     assert dispatcher.get_context_sync(query="ada") == []
 
@@ -244,9 +248,7 @@ def test_get_context_sync_returns_empty_when_fragments_field_missing(caplog):
 
 def test_get_context_sync_attaches_bearer(monkeypatch):
     monkeypatch.setenv("GRAPH_WEBHOOK_SECRET", "ctx-secret")
-    captured = _install_mock_client(
-        lambda _req: httpx.Response(200, json={"fragments": []})
-    )
+    captured = _install_mock_client(lambda _req: httpx.Response(200, json={"fragments": []}))
     dispatcher.get_context_sync(query="ada")
     assert captured[0].headers["authorization"] == "Bearer ctx-secret"
 
@@ -258,6 +260,7 @@ class _SlowHandler(BaseHTTPRequestHandler):
     per-request timeouts, so the only honest way to test the 40 ms `/context`
     budget is against a real local socket. Stdlib `http.server` is enough.
     """
+
     sleep_seconds = 0.15
 
     def do_POST(self):  # noqa: N802 — stdlib spelling
@@ -369,7 +372,9 @@ def test_register_core_callbacks_callbacks_fire_through_hook_bus():
 
     hooks.fire(
         Event.ENTITY_MERGED,
-        winner_id="W", loser_id="L", user_id="u",
+        winner_id="W",
+        loser_id="L",
+        user_id="u",
     )
 
     assert len(captured) == 1

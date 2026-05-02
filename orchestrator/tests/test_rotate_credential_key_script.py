@@ -31,7 +31,6 @@ from cryptography.fernet import Fernet
 # and this script test inherits the fix.
 from tests.test_connector_credentials_service import _FakeStore
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -93,14 +92,16 @@ def test_script_exits_zero_when_nothing_to_rotate(store, monkeypatch, capsys):
 
 def test_script_rotates_after_key_prepend(store, monkeypatch, capsys):
     """Prepending a new primary key ⇒ existing row is rotated."""
-    from services import connector_credentials as svc
     from scripts.rotate_credential_key import main
+
+    from services import connector_credentials as svc
 
     _seed_one_row(store)
 
     new_key = Fernet.generate_key().decode()
     monkeypatch.setenv(
-        "LUMOGIS_CREDENTIAL_KEYS", f"{new_key},{store._k1}",
+        "LUMOGIS_CREDENTIAL_KEYS",
+        f"{new_key},{store._k1}",
     )
     monkeypatch.delenv("LUMOGIS_CREDENTIAL_KEY", raising=False)
     svc.reset_for_tests()
@@ -116,15 +117,17 @@ def test_script_rotates_after_key_prepend(store, monkeypatch, capsys):
 
 def test_script_exits_nonzero_when_a_row_fails(store, monkeypatch, capsys):
     """A row with un-decryptable ciphertext ⇒ script exits 1."""
-    from services import connector_credentials as svc
-    from services.connector_credentials import _key_fingerprint
-    from scripts.rotate_credential_key import main
-
     # Plant a bogus ciphertext that no key in the keyring can decrypt.
     # ``key_version`` is set to a fingerprint that does NOT match the
     # current primary so the rotation loop will *attempt* (and fail)
     # to re-seal the row instead of skipping it.
-    from datetime import datetime, timezone
+    from datetime import datetime
+    from datetime import timezone
+
+    from scripts.rotate_credential_key import main
+    from services.connector_credentials import _key_fingerprint
+
+    from services import connector_credentials as svc
 
     bogus_key = Fernet.generate_key().decode()
     now = datetime.now(timezone.utc)

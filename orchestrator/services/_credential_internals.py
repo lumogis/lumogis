@@ -50,13 +50,16 @@ import logging
 import os
 import re
 import threading
-from datetime import datetime, timezone
-from typing import Any, Literal
-
-from cryptography.fernet import Fernet, InvalidToken, MultiFernet
+from datetime import datetime
+from datetime import timezone
+from typing import Any
+from typing import Literal
 
 from actions.audit import write_audit
 from auth import auth_enabled
+from cryptography.fernet import Fernet
+from cryptography.fernet import InvalidToken
+from cryptography.fernet import MultiFernet
 from models.actions import AuditEntry
 
 _log = logging.getLogger(__name__)
@@ -67,11 +70,13 @@ _log = logging.getLogger(__name__)
 # ``AUTH_SECRET`` sentinel set used by ``main._enforce_auth_consistency``.
 # ---------------------------------------------------------------------------
 
-_PLACEHOLDER_KEYS: frozenset[str] = frozenset({
-    "",
-    "change-me-in-production",
-    "__GENERATE_ME__",
-})
+_PLACEHOLDER_KEYS: frozenset[str] = frozenset(
+    {
+        "",
+        "change-me-in-production",
+        "__GENERATE_ME__",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -249,9 +254,7 @@ def get_current_key_version() -> int:
 def _actor_str(actor: str) -> str:
     """Validate a per-user actor literal (``self|system|admin:<id>``)."""
     if not isinstance(actor, str) or not _ACTOR_RE.match(actor):
-        raise ValueError(
-            f"actor must match {_ACTOR_RE.pattern}: {actor!r}"
-        )
+        raise ValueError(f"actor must match {_ACTOR_RE.pattern}: {actor!r}")
     return actor
 
 
@@ -263,9 +266,7 @@ def _actor_str_tiered(actor: str) -> str:
     ``ValueError`` propagate so operators can trace mis-callers.
     """
     if not isinstance(actor, str) or not _ACTOR_RE_TIERED.match(actor):
-        raise ValueError(
-            f"actor must be 'system' or 'admin:<id>'; got {actor!r}"
-        )
+        raise ValueError(f"actor must be 'system' or 'admin:<id>'; got {actor!r}")
     return actor
 
 
@@ -305,18 +306,20 @@ def _emit_audit(
       :func:`services.credential_tiers._extract_admin_caller_user_id`.
     """
     try:
-        write_audit(AuditEntry(
-            action_name=action_name,
-            connector=connector,
-            mode="DO",
-            input_summary=json.dumps(
-                {"actor": actor, "key_version": key_version, "tier": tier},
-                default=str,
-            ),
-            result_summary=json.dumps({"ok": bool(ok)}, default=str),
-            executed_at=datetime.now(timezone.utc),
-            user_id=user_id,
-        ))
+        write_audit(
+            AuditEntry(
+                action_name=action_name,
+                connector=connector,
+                mode="DO",
+                input_summary=json.dumps(
+                    {"actor": actor, "key_version": key_version, "tier": tier},
+                    default=str,
+                ),
+                result_summary=json.dumps({"ok": bool(ok)}, default=str),
+                executed_at=datetime.now(timezone.utc),
+                user_id=user_id,
+            )
+        )
     except Exception:
         _log.exception("audit write for %s failed", action_name)
 
@@ -353,9 +356,7 @@ def _decrypt_payload(ciphertext: bytes) -> dict[str, Any]:
             f"plaintext is not valid JSON ({exc.__class__.__name__})"
         ) from exc
     if not isinstance(obj, dict):
-        raise CredentialUnavailable(
-            f"plaintext is not a JSON object (got {type(obj).__name__})"
-        )
+        raise CredentialUnavailable(f"plaintext is not a JSON object (got {type(obj).__name__})")
     return obj
 
 
@@ -394,7 +395,8 @@ def _resolve_env_fallback(
             _log.debug(
                 "credential resolve: ignoring fallback_env=%r under "
                 "AUTH_ENABLED=true (connector=%s)",
-                fallback_env, connector,
+                fallback_env,
+                connector,
             )
         return None
 

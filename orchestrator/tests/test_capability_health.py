@@ -17,8 +17,6 @@ from datetime import timezone
 import httpx
 import pytest
 from fastapi.testclient import TestClient
-
-import config as _config
 from models.capability import CapabilityLicenseMode
 from models.capability import CapabilityManifest
 from models.capability import CapabilityMaturity
@@ -26,6 +24,7 @@ from models.capability import CapabilityTransport
 from services.capability_registry import CapabilityRegistry
 from services.capability_registry import RegisteredService
 
+import config as _config
 
 # ---------------------------------------------------------------------------
 # Helpers

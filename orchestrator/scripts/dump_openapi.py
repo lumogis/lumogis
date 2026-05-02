@@ -48,6 +48,7 @@ def _build_openapi() -> dict[str, Any]:
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
     import main  # noqa: WPS433 — top-level import side-effects required.
+
     return main.app.openapi()
 
 

@@ -65,8 +65,9 @@ def generate_librechat_yaml() -> bool:
     Returns True if the file was written, False on error.
     """
     try:
-        import config as app_config
         import ollama_client
+
+        import config as app_config
 
         all_models = app_config.get_all_models_config()
         local_models = ollama_client.list_local_models()
@@ -79,10 +80,7 @@ def generate_librechat_yaml() -> bool:
                 param_sizes[name] = ps
                 param_sizes[name.split(":")[0]] = ps
 
-        catalog_by_base = {
-            e["name"].split(":")[0]: e
-            for e in ollama_client.get_curated_catalog()
-        }
+        catalog_by_base = {e["name"].split(":")[0]: e for e in ollama_client.get_curated_catalog()}
         _CLOUD_DESCRIPTIONS: dict[str, str] = {
             "anthropic": (
                 "Anthropic's Claude models, known for careful reasoning, long-context "
@@ -154,19 +152,21 @@ def generate_librechat_yaml() -> bool:
                 "customFooter": _custom_footer,
             },
             "endpoints": {
-                "custom": [{
-                    "name": "Lumogis",
-                    "apiKey": "ignored",
-                    "baseURL": "http://orchestrator:8000/v1",
-                    "models": {
-                        "default": [s["name"] for s in specs_list],
-                        "fetch": True,
-                    },
-                    "titleConvo": False,
-                    "summarize": False,
-                    "forcePrompt": False,
-                    "modelDisplayLabel": "Lumogis",
-                }],
+                "custom": [
+                    {
+                        "name": "Lumogis",
+                        "apiKey": "ignored",
+                        "baseURL": "http://orchestrator:8000/v1",
+                        "models": {
+                            "default": [s["name"] for s in specs_list],
+                            "fetch": True,
+                        },
+                        "titleConvo": False,
+                        "summarize": False,
+                        "forcePrompt": False,
+                        "modelDisplayLabel": "Lumogis",
+                    }
+                ],
             },
             "modelSpecs": {
                 "enforce": True,

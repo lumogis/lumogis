@@ -13,15 +13,14 @@ import logging
 import uuid
 from typing import Optional
 
-import hooks
 from auth import UserContext
-from events import Event
 from models.memory import ContextHit
 from models.memory import SessionSummary
 from services.context_budget import truncate_messages
 from services.context_budget import truncate_text
 from services.point_ids import session_conversation_point_id
-from visibility import visible_filter, visible_qdrant_filter
+from visibility import visible_filter
+from visibility import visible_qdrant_filter
 
 import config
 
@@ -51,9 +50,9 @@ def summarize_session(
     here resolves the key per-user. ``llama`` (the current default) has no
     ``api_key_env`` so user_id is a no-op semantically.
     """
-    from services.context_budget import get_budget
     from services.connector_credentials import ConnectorNotConfigured
     from services.connector_credentials import CredentialUnavailable
+    from services.context_budget import get_budget
 
     budget = get_budget("llama")
     trimmed = truncate_messages(messages, max_tokens=budget - 500)
@@ -74,13 +73,15 @@ def summarize_session(
     except ConnectorNotConfigured as exc:
         _log.warning(
             "summarize_session: missing per-user credential (user=%s): %s",
-            user_id, exc,
+            user_id,
+            exc,
         )
         return SessionSummary(session_id=sid, summary="")
     except CredentialUnavailable as exc:
         _log.warning(
             "summarize_session: stored credential unusable (user=%s): %s",
-            user_id, exc,
+            user_id,
+            exc,
         )
         return SessionSummary(session_id=sid, summary="")
 

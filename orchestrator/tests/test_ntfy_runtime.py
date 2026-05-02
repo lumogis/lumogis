@@ -20,7 +20,6 @@ import pytest
 
 from services import connector_credentials as ccs
 
-
 _TEST_FERNET_KEY = "OlGLYckGIbBSt54y8XVmgb441LgKJWvvYoHnpQ_cv9A="
 
 
@@ -58,7 +57,9 @@ class _FakeStore:
             return dict(row) if row else None
         if q.startswith("insert into user_connector_credentials"):
             uid, conn, ciphertext, key_version, created_by, updated_by = p
-            from datetime import datetime, timezone
+            from datetime import datetime
+            from datetime import timezone
+
             now = datetime.now(timezone.utc)
             row = {
                 "user_id": uid,

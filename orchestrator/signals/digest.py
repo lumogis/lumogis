@@ -89,7 +89,8 @@ def _send_digest() -> None:
             if sent:
                 _log.info(
                     "signal_digest: sent digest user_id=%s count=%d",
-                    user_id, count,
+                    user_id,
+                    count,
                 )
             else:
                 _log.warning(
@@ -99,7 +100,8 @@ def _send_digest() -> None:
         except Exception as exc:
             _log.error(
                 "signal_digest: notifier error (user_id=%s): %s",
-                user_id, exc,
+                user_id,
+                exc,
             )
 
 
@@ -138,7 +140,8 @@ def _fetch_top_signals_for_user(user_id: str, since: datetime) -> list[dict]:
     except Exception as exc:
         _log.warning(
             "signal_digest: per-user fetch error (user_id=%s): %s",
-            user_id, exc,
+            user_id,
+            exc,
         )
         return []
 

@@ -38,8 +38,7 @@ def test_session_summary_schema_advertises_scope() -> None:
         "MCP contract has no other valid values."
     )
     assert "scope" in schema["required"], (
-        "scope MUST be in 'required' so MCP clients can rely on it "
-        "without optional-field handling."
+        "scope MUST be in 'required' so MCP clients can rely on it without optional-field handling."
     )
 
 

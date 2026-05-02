@@ -36,13 +36,13 @@ import time
 import uuid
 import zipfile
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime
+from datetime import timezone
 from pathlib import Path
 
 import jwt
 import pytest
 from fastapi.testclient import TestClient
-
 
 # ---------------------------------------------------------------------------
 # Helpers shared with the auth-phase test suite (mocks + JWT minting).
@@ -52,8 +52,6 @@ from fastapi.testclient import TestClient
 # reuse it here rather than rebuilding a parallel mock that would drift
 # out of sync with services/users.py.
 # ---------------------------------------------------------------------------
-
-
 from tests.test_auth_phase1 import FakeUsersStore  # noqa: E402
 
 
@@ -120,6 +118,7 @@ def auth_env(monkeypatch):
     monkeypatch.setenv("LUMOGIS_REFRESH_COOKIE_SECURE", "false")
     yield
     from routes.auth import _reset_rate_limit_for_tests
+
     _reset_rate_limit_for_tests()
 
 
@@ -141,6 +140,7 @@ def _mint(user_id: str, role: str) -> str:
 def _client():
     """Boot the live FastAPI app inside a TestClient (lifespan executes)."""
     import main
+
     with TestClient(main.app) as client:
         yield client
 
@@ -148,6 +148,7 @@ def _client():
 def _seed_admin(users_store) -> str:
     """Create the seeded admin (idempotent) and return their id."""
     import services.users as users_svc
+
     if users_svc.get_user_by_email("admin@home.lan") is None:
         users_svc.create_user("admin@home.lan", "verylongpassword12", "admin")
     admin = users_svc.get_user_by_email("admin@home.lan")
@@ -158,6 +159,7 @@ def _seed_admin(users_store) -> str:
 def _seed_user(users_store) -> str:
     """Create a non-admin user (idempotent) and return their id."""
     import services.users as users_svc
+
     if users_svc.get_user_by_email("bob@home.lan") is None:
         users_svc.create_user("bob@home.lan", "verylongpassword12", "user")
     target = users_svc.get_user_by_email("bob@home.lan")
@@ -201,22 +203,25 @@ def _build_archive(
     user_dir.mkdir(parents=True, exist_ok=True)
     out = user_dir / f"export_test_{uuid.uuid4().hex[:8]}.zip"
     declared = [
-        {"name": f"postgres/{t}.json", "kind": "postgres",
-         "row_count": len(rows)}
+        {"name": f"postgres/{t}.json", "kind": "postgres", "row_count": len(rows)}
         for t, rows in sections.items()
     ]
     if not drop_user_record:
-        declared.append({
-            "name": f"users/{user_id}.json",
-            "kind": "user_record",
-            "row_count": 1,
-        })
+        declared.append(
+            {
+                "name": f"users/{user_id}.json",
+                "kind": "user_record",
+                "row_count": 1,
+            }
+        )
     if declared_extra_section:
-        declared.append({
-            "name": declared_extra_section,
-            "kind": "postgres",
-            "row_count": 99,
-        })
+        declared.append(
+            {
+                "name": declared_extra_section,
+                "kind": "postgres",
+                "row_count": 99,
+            }
+        )
     manifest = {
         "format_version": 1,
         "exported_at": datetime.now(timezone.utc).isoformat(),
@@ -251,7 +256,9 @@ def _build_archive(
 
 
 def test_me_export_self_returns_zip_in_dev_mode(
-    users_store, dev_env, export_dir,
+    users_store,
+    dev_env,
+    export_dir,
 ):
     """Default dev-mode caller (``user_id="default"``) gets their own zip."""
     with _client() as client:
@@ -270,7 +277,9 @@ def test_me_export_self_returns_zip_in_dev_mode(
 
 
 def test_me_export_admin_on_behalf_unknown_target_returns_404(
-    users_store, auth_env, export_dir,
+    users_store,
+    auth_env,
+    export_dir,
 ):
     """Pre-fix this returned 200 + an empty archive (invisibly wrong);
     plan §"Admin-on-behalf Export" requires a loud 404 instead so an
@@ -289,7 +298,9 @@ def test_me_export_admin_on_behalf_unknown_target_returns_404(
 
 
 def test_me_export_admin_on_behalf_known_target_succeeds(
-    users_store, auth_env, export_dir,
+    users_store,
+    auth_env,
+    export_dir,
 ):
     """Existing target user → admin gets that user's zip back."""
     bob_id = _seed_user(users_store)
@@ -306,7 +317,9 @@ def test_me_export_admin_on_behalf_known_target_succeeds(
 
 
 def test_me_export_non_admin_targeting_other_user_returns_403(
-    users_store, auth_env, export_dir,
+    users_store,
+    auth_env,
+    export_dir,
 ):
     """Plan §F2: non-admin caller with ``target_user_id`` set to a
     different user → 403 before we even check whether the target
@@ -322,7 +335,9 @@ def test_me_export_non_admin_targeting_other_user_returns_403(
 
 
 def test_me_export_self_export_skips_target_existence_check(
-    users_store, auth_env, export_dir,
+    users_store,
+    auth_env,
+    export_dir,
 ):
     """Caller targeting themselves must not be rejected on the 404 path
     just because the FakeUsersStore happens to mock a different lookup."""
@@ -342,7 +357,10 @@ def test_me_export_self_export_skips_target_existence_check(
 
 
 def test_export_route_with_bearer_skips_csrf_intentionally(
-    users_store, auth_env, export_dir, monkeypatch,
+    users_store,
+    auth_env,
+    export_dir,
+    monkeypatch,
 ):
     """Pin the v1 contract that ``csrf.require_same_origin`` is bypassed
     for Bearer-authenticated callers.
@@ -393,9 +411,8 @@ def test_csrf_dependency_still_enforces_for_non_bearer_writes(
     the Bearer-bypass test above, the contract is pinned from both
     sides.
     """
-    from fastapi import HTTPException
-
     from csrf import require_same_origin
+    from fastapi import HTTPException
 
     monkeypatch.setenv("AUTH_ENABLED", "true")
     monkeypatch.setenv("LUMOGIS_PUBLIC_ORIGIN", "https://lumogis.home.lan")
@@ -420,7 +437,9 @@ def test_csrf_dependency_still_enforces_for_non_bearer_writes(
 
 
 def test_dry_run_import_success_returns_import_plan(
-    users_store, dev_env, export_dir,
+    users_store,
+    dev_env,
+    export_dir,
 ):
     archive = _build_archive(
         export_dir,
@@ -450,7 +469,9 @@ def test_dry_run_import_success_returns_import_plan(
 
 
 def test_real_import_returns_201_with_location_header(
-    users_store, dev_env, export_dir,
+    users_store,
+    dev_env,
+    export_dir,
 ):
     """Plan §"Import success contract": real import → 201 + Location.
 
@@ -495,9 +516,12 @@ def test_dry_run_does_not_create_user(users_store, dev_env, export_dir):
     would then try to import ``psycopg2`` and fail in the local venv.
     """
     archive = _build_archive(
-        export_dir, user_id="u-source", sections={"notes": []},
+        export_dir,
+        user_id="u-source",
+        sections={"notes": []},
     )
     import services.users as users_svc
+
     with _client() as client:
         assert users_svc.get_user_by_email("never-minted@home.lan") is None
         resp = client.post(
@@ -523,7 +547,10 @@ def test_dry_run_does_not_create_user(users_store, dev_env, export_dir):
 
 
 def test_import_outside_root_returns_403(
-    users_store, dev_env, export_dir, tmp_path,
+    users_store,
+    dev_env,
+    export_dir,
+    tmp_path,
 ):
     """``forbidden_path`` → 403. Defence-in-depth against an admin
     pasting an arbitrary filesystem path."""
@@ -547,10 +574,14 @@ def test_import_outside_root_returns_403(
 
 
 def test_import_invalid_manifest_returns_400(
-    users_store, dev_env, export_dir,
+    users_store,
+    dev_env,
+    export_dir,
 ):
     archive = _build_archive(
-        export_dir, user_id="u-source", bogus_manifest=True,
+        export_dir,
+        user_id="u-source",
+        bogus_manifest=True,
     )
     with _client() as client:
         resp = client.post(
@@ -570,7 +601,9 @@ def test_import_invalid_manifest_returns_400(
 
 
 def test_import_unsafe_entry_names_returns_400(
-    users_store, dev_env, export_dir,
+    users_store,
+    dev_env,
+    export_dir,
 ):
     archive = _build_archive(
         export_dir,
@@ -596,13 +629,18 @@ def test_import_unsafe_entry_names_returns_400(
 
 
 def test_real_import_email_collision_returns_409(
-    users_store, dev_env, export_dir,
+    users_store,
+    dev_env,
+    export_dir,
 ):
     """``email_exists`` → 409 (per plan refusal table)."""
     import services.users as users_svc
+
     users_svc.create_user("dup@home.lan", "verylongpassword12", "user")
     archive = _build_archive(
-        export_dir, user_id="u-source", sections={"notes": []},
+        export_dir,
+        user_id="u-source",
+        sections={"notes": []},
     )
     with _client() as client:
         resp = client.post(
@@ -622,7 +660,9 @@ def test_real_import_email_collision_returns_409(
 
 
 def test_real_import_missing_user_record_returns_400(
-    users_store, dev_env, export_dir,
+    users_store,
+    dev_env,
+    export_dir,
 ):
     archive = _build_archive(
         export_dir,
@@ -676,6 +716,7 @@ def test_route_refusal_reason_table_matches_service_enum():
     400 and lose the contract.
     """
     from routes.admin_users import _REFUSAL_TO_STATUS
+
     for reason in _REFUSAL_REASONS_FROM_PLAN:
         assert reason in _REFUSAL_TO_STATUS, (
             f"plan-nominated refusal reason {reason!r} is missing from "
@@ -685,7 +726,10 @@ def test_route_refusal_reason_table_matches_service_enum():
 
 
 def test_refused_audit_event_emitted_on_dry_run_refusal(
-    users_store, dev_env, export_dir, monkeypatch,
+    users_store,
+    dev_env,
+    export_dir,
+    monkeypatch,
 ):
     """Pre-start refusals (manifest_invalid here) must emit a dedicated
     ``__user_import__.refused`` audit event so operators can tell
@@ -699,13 +743,14 @@ def test_refused_audit_event_emitted_on_dry_run_refusal(
     from services import user_export as svc
 
     def _capture(action, *, user_id, input_summary=None, result_summary=None):
-        captured.append((action, dict(input_summary or {}),
-                         dict(result_summary or {})))
+        captured.append((action, dict(input_summary or {}), dict(result_summary or {})))
 
     monkeypatch.setattr(svc, "_audit_event", _capture)
 
     archive = _build_archive(
-        export_dir, user_id="u-source", bogus_manifest=True,
+        export_dir,
+        user_id="u-source",
+        bogus_manifest=True,
     )
     with _client() as client:
         resp = client.post(
@@ -736,7 +781,10 @@ def test_refused_audit_event_emitted_on_dry_run_refusal(
 
 
 def test_refused_audit_event_emitted_for_post_started_refusal(
-    users_store, dev_env, export_dir, monkeypatch,
+    users_store,
+    dev_env,
+    export_dir,
+    monkeypatch,
 ):
     """``email_exists`` fires AFTER ``__user_import__.started`` was
     emitted — but it is still a refusal (no writes happened yet) and
@@ -745,16 +793,18 @@ def test_refused_audit_event_emitted_for_post_started_refusal(
     from services import user_export as svc
 
     def _capture(action, *, user_id, input_summary=None, result_summary=None):
-        captured.append((action, dict(input_summary or {}),
-                         dict(result_summary or {})))
+        captured.append((action, dict(input_summary or {}), dict(result_summary or {})))
 
     monkeypatch.setattr(svc, "_audit_event", _capture)
 
     import services.users as users_svc
+
     users_svc.create_user("dup2@home.lan", "verylongpassword12", "user")
 
     archive = _build_archive(
-        export_dir, user_id="u-source", sections={"notes": []},
+        export_dir,
+        user_id="u-source",
+        sections={"notes": []},
     )
     with _client() as client:
         resp = client.post(
@@ -777,8 +827,7 @@ def test_refused_audit_event_emitted_for_post_started_refusal(
     # exceptions after writes begin, which is a different operator
     # signal entirely.
     assert "__user_import__.failed" not in actions, (
-        f"email_exists is a precondition refusal, not a failure — got "
-        f"actions={actions!r}"
+        f"email_exists is a precondition refusal, not a failure — got actions={actions!r}"
     )
 
 
@@ -788,7 +837,8 @@ def test_refused_audit_event_emitted_for_post_started_refusal(
 
 
 def test_legacy_admin_export_returns_410_with_successor(
-    users_store, dev_env,
+    users_store,
+    dev_env,
 ):
     """Plan deviation (recorded in ADR per_user_backup_export §status
     history): the legacy NDJSON dumper now returns ``410 Gone``

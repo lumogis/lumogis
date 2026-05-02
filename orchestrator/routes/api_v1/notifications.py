@@ -103,8 +103,7 @@ def _vapid_public_key() -> str | None:
 
 def _webpush_configured() -> bool:
     return bool(
-        os.environ.get("WEBPUSH_VAPID_PUBLIC_KEY")
-        and os.environ.get("WEBPUSH_VAPID_PRIVATE_KEY")
+        os.environ.get("WEBPUSH_VAPID_PUBLIC_KEY") and os.environ.get("WEBPUSH_VAPID_PRIVATE_KEY")
     )
 
 

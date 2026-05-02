@@ -29,6 +29,7 @@ Cases covered (ID ↔ plan §):
 * #46a — empty / whitespace / ``None`` ``caller_user_id`` → ``ValueError``
 * #46b — unanticipated exception class is logged + re-raised
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -37,9 +38,7 @@ from typing import Any
 
 import pytest
 from cryptography.fernet import Fernet
-
 from tests.test_credential_tiers_service import _TiersFakeStore
-
 
 # ---------------------------------------------------------------------------
 # Fixtures.
@@ -180,7 +179,9 @@ def test_resolver_env_fallback_under_auth_disabled(store, monkeypatch):
     monkeypatch.setenv("LUMOGIS_TEST_FALLBACK", "secret123")
 
     resolved = resolve_runtime_credential(
-        "alice", _TEST_CONNECTOR, fallback_env="LUMOGIS_TEST_FALLBACK",
+        "alice",
+        _TEST_CONNECTOR,
+        fallback_env="LUMOGIS_TEST_FALLBACK",
     )
 
     assert resolved.tier == "env"
@@ -193,7 +194,8 @@ def test_resolver_env_fallback_under_auth_disabled(store, monkeypatch):
 
 
 def test_resolver_env_fallback_silently_ignored_under_auth_enabled(
-    store, monkeypatch,
+    store,
+    monkeypatch,
 ):
     from services._credential_internals import ConnectorNotConfigured
     from services.credential_tiers import resolve_runtime_credential
@@ -203,7 +205,9 @@ def test_resolver_env_fallback_silently_ignored_under_auth_enabled(
 
     with pytest.raises(ConnectorNotConfigured):
         resolve_runtime_credential(
-            "alice", _TEST_CONNECTOR, fallback_env="LUMOGIS_TEST_FALLBACK",
+            "alice",
+            _TEST_CONNECTOR,
+            fallback_env="LUMOGIS_TEST_FALLBACK",
         )
 
 
@@ -257,7 +261,8 @@ def test_resolved_credential_repr_redacts_payload():
     from services.credential_tiers import ResolvedCredential
 
     rc = ResolvedCredential(
-        payload={"password": "secret123"}, tier="household",
+        payload={"password": "secret123"},
+        tier="household",
     )
     rendered = repr(rc)
 
@@ -277,10 +282,8 @@ def test_resolved_credential_repr_redacts_payload():
 def test_resolver_decrypt_failure_raises_CredentialUnavailable_no_fallthrough(
     store,
 ):
-    from services._credential_internals import (
-        CredentialUnavailable,
-        _current_key_version,
-    )
+    from services._credential_internals import CredentialUnavailable
+    from services._credential_internals import _current_key_version
     from services.credential_tiers import resolve_runtime_credential
 
     # Per-user row with corrupt ciphertext.
@@ -349,7 +352,9 @@ def test_resolver_caller_user_id_validated_before_registry_check(store):
 
 
 def test_resolver_unexpected_exception_re_raised_with_log(
-    store, monkeypatch, caplog,
+    store,
+    monkeypatch,
+    caplog,
 ):
     """A fresh ``KeyError`` from ``ccs.get_payload`` must propagate
     AND emit one ERROR-level structured log line so the fault domain
@@ -369,7 +374,8 @@ def test_resolver_unexpected_exception_re_raised_with_log(
             resolve_runtime_credential("alice", _TEST_CONNECTOR)
 
     matches = [
-        rec for rec in caplog.records
+        rec
+        for rec in caplog.records
         if "resolve_runtime_credential.unexpected_exception" in rec.getMessage()
     ]
     assert matches, (

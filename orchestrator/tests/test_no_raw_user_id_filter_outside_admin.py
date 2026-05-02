@@ -48,7 +48,6 @@ from typing import Iterable
 
 import pytest
 
-
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SCOPED_ROOTS = (
     "orchestrator/services",
@@ -63,9 +62,7 @@ _ADMIN_TAG = "# ADMIN-BYPASS:"
 _EXEMPT_TAG = "# SCOPE-EXEMPT:"
 _LOOKBACK = 6
 
-_USER_ID_FILTER = re.compile(
-    r"WHERE\s+(\w+\.)?user_id\s*(=|IN)\s*(%s|\$\d+|:\w+|%\(\w+\)s)"
-)
+_USER_ID_FILTER = re.compile(r"WHERE\s+(\w+\.)?user_id\s*(=|IN)\s*(%s|\$\d+|:\w+|%\(\w+\)s)")
 
 
 def _iter_scoped_files() -> Iterable[Path]:
@@ -141,8 +138,7 @@ def test_no_raw_user_id_filter_outside_admin() -> None:
             "Acceptance #4 grep gate failed: untagged raw user_id filters detected.",
             "Replace with visible_filter(user) — or, if this is a deliberate admin /",
             "scope-exempt read, add `# ADMIN-BYPASS: <reason>` or",
-            "`# SCOPE-EXEMPT: <reason>` on the line above (within "
-            f"{_LOOKBACK} lines).",
+            f"`# SCOPE-EXEMPT: <reason>` on the line above (within {_LOOKBACK} lines).",
             "",
             f"Untagged hits ({len(all_hits)}):",
         ]

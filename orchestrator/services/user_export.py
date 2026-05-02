@@ -33,31 +33,32 @@ import logging
 import os
 import re
 import zipfile
-from datetime import datetime, timezone
-from pathlib import Path, PurePosixPath
+from datetime import datetime
+from datetime import timezone
+from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Any
 
-import config
 from actions.audit import write_audit
 from models.actions import AuditEntry
 from models.auth import Role
-from models.user_export import (
-    ArchiveEntry,
-    ArchiveInventoryEntry,
-    ArchiveMeta,
-    DanglingReference,
-    ImportPlan,
-    ImportPreconditions,
-    ImportReceipt,
-    ImportRefused,
-    Manifest,
-    PruneDecision,
-    PruneReceipt,
-    SectionSummary,
-)
+from models.user_export import ArchiveEntry
+from models.user_export import ArchiveInventoryEntry
+from models.user_export import ArchiveMeta
+from models.user_export import DanglingReference
+from models.user_export import ImportPlan
+from models.user_export import ImportPreconditions
+from models.user_export import ImportReceipt
+from models.user_export import ImportRefused
+from models.user_export import Manifest
+from models.user_export import PruneDecision
+from models.user_export import PruneReceipt
+from models.user_export import SectionSummary
+from visibility import authored_by_filter
+
+import config
 from services import media_storage
 from services import users as users_service
-from visibility import authored_by_filter
 
 _log = logging.getLogger(__name__)
 
@@ -65,22 +66,23 @@ _log = logging.getLogger(__name__)
 # ─── Constants ──────────────────────────────────────────────────────────────
 
 _BACKUP_DIR = Path(os.environ.get("BACKUP_DIR", "/workspace/backups"))
-_USER_EXPORT_DIR = Path(
-    os.environ.get("USER_EXPORT_DIR", str(_BACKUP_DIR / "users"))
-)
+_USER_EXPORT_DIR = Path(os.environ.get("USER_EXPORT_DIR", str(_BACKUP_DIR / "users")))
 _USER_EXPORT_KEEP_MIN = int(os.environ.get("USER_EXPORT_KEEP_MIN", "3"))
 _USER_EXPORT_MAX_AGE_DAYS = int(os.environ.get("USER_EXPORT_MAX_AGE_DAYS", "30"))
 
 _MANIFEST_FORMAT_VERSION = 1
 _SUPPORTED_FORMAT_VERSIONS = frozenset({1})
 
-_MAX_ARCHIVE_BYTES = int(os.environ.get("USER_EXPORT_MAX_ARCHIVE_BYTES",
-                                        str(500 * 1024 * 1024)))
-_MAX_PER_ENTRY_BYTES = int(os.environ.get("USER_EXPORT_MAX_PER_ENTRY_BYTES",
-                                          str(100 * 1024 * 1024)))
+_MAX_ARCHIVE_BYTES = int(os.environ.get("USER_EXPORT_MAX_ARCHIVE_BYTES", str(500 * 1024 * 1024)))
+_MAX_PER_ENTRY_BYTES = int(
+    os.environ.get("USER_EXPORT_MAX_PER_ENTRY_BYTES", str(100 * 1024 * 1024))
+)
 
 _QDRANT_COLLECTIONS: tuple[str, ...] = (
-    "documents", "conversations", "entities", "signals",
+    "documents",
+    "conversations",
+    "entities",
+    "signals",
 )
 
 # The hard-coded allowlist of per-user Postgres tables to export.
@@ -147,10 +149,8 @@ _OMITTED_USER_TABLES: dict[str, str] = {
     # transit a portable archive; out of scope for v1. Raw pg_dump
     # backups still carry the ciphertext (and need the matching
     # household key to decrypt).
-    "user_connector_credentials":
-        "excluded (sensitive, non-portable in standard export)",
-    "user_batch_jobs":
-        "excluded (operational queue state, non-portable)",
+    "user_connector_credentials": "excluded (sensitive, non-portable in standard export)",
+    "user_batch_jobs": "excluded (operational queue state, non-portable)",
     # Web Push subscription rows are per-user *device handles* —
     # endpoint URLs minted by the recipient's browser/push service
     # against this Lumogis origin. Replaying them at a destination
@@ -158,15 +158,13 @@ _OMITTED_USER_TABLES: dict[str, str] = {
     # the user's notifications to a stale device they have since
     # forgotten. Subscriptions are re-registered at the destination
     # by the SPA service worker.
-    "webpush_subscriptions":
-        "excluded (per-device push endpoint; re-registered at destination)",
+    "webpush_subscriptions": "excluded (per-device push endpoint; re-registered at destination)",
     # Refresh-token revocations are per-instance auth state. The JTIs
     # are minted under the source instance's ``LUMOGIS_JWT_REFRESH_SECRET``
     # and are meaningless at the destination (different secret → tokens
     # would never validate, so revocations are inert). Forward-compat
     # scaffolding only in v1 (table is INERT — see migration 019).
-    "auth_refresh_revocations":
-        "excluded (per-instance auth state; tokens unrecoverable at destination)",
+    "auth_refresh_revocations": "excluded (per-instance auth state; tokens unrecoverable at destination)",
 }
 
 
@@ -196,23 +194,30 @@ _OMITTED_NON_USER_TABLES: dict[str, str] = {
     # with the household ``LUMOGIS_CREDENTIAL_KEY``. Per-user export
     # bundles never carry tier-table material; operator backup =
     # pg_dump of the table (recipient needs the household key).
-    "household_connector_credentials":
-        "excluded (household-tier; sensitive, non-portable in standard export)",
+    "household_connector_credentials": "excluded (household-tier; sensitive, non-portable in standard export)",
     # Instance/system connector credentials (per ADR
     # ``credential_scopes_shared_system``) — same crypto as household
     # tier; operator-owned, never user-owned. Same omission rationale.
-    "instance_system_connector_credentials":
-        "excluded (instance/system tier; sensitive, non-portable in standard export)",
+    "instance_system_connector_credentials": "excluded (instance/system tier; sensitive, non-portable in standard export)",
 }
 
 
 # Tables that have a `scope` column. The export filter is
 # (scope IN ('personal','shared') AND user_id = $me); other tables get
 # user_id-only filtering.
-_TABLES_WITH_SCOPE: frozenset[str] = frozenset({
-    "file_index", "entities", "sessions", "notes", "audio_memos",
-    "signals", "review_queue", "action_log", "audit_log",
-})
+_TABLES_WITH_SCOPE: frozenset[str] = frozenset(
+    {
+        "file_index",
+        "entities",
+        "sessions",
+        "notes",
+        "audio_memos",
+        "signals",
+        "review_queue",
+        "action_log",
+        "audit_log",
+    }
+)
 
 # Parent tables — PKs other tables FK into. Per the F4 arbitration, a
 # UUID collision on any of these refuses the import (409); a leaf
@@ -234,15 +239,27 @@ _PARENT_TABLE_NAMES: frozenset[str] = frozenset(t for t, _ in _PARENT_TABLES)
 # the originating instance's serial id would either collide (unsafe in
 # the source-instance round-trip case) or skip a row that operators
 # expect to land.
-_SERIAL_PK_TABLES: frozenset[str] = frozenset({
-    "file_index", "entity_relations", "review_queue",
-    "connector_permissions", "routine_do_tracking",
-    "action_log", "audit_log",
-    "feedback_log", "edge_scores", "dedup_candidates",
-})
+_SERIAL_PK_TABLES: frozenset[str] = frozenset(
+    {
+        "file_index",
+        "entity_relations",
+        "review_queue",
+        "connector_permissions",
+        "routine_do_tracking",
+        "action_log",
+        "audit_log",
+        "feedback_log",
+        "edge_scores",
+        "dedup_candidates",
+    }
+)
 
 _REDACTED_FIELD_SUFFIXES: tuple[str, ...] = (
-    "_secret", "_hash", "_token", "_credential", "_jti",
+    "_secret",
+    "_hash",
+    "_token",
+    "_credential",
+    "_jti",
 )
 
 # Safe column-name regex; used as defence-in-depth before splicing
@@ -315,10 +332,13 @@ def _resolve_archive_path(archive_path: str) -> Path:
     try:
         candidate.relative_to(allowed)
     except ValueError as exc:
-        raise ImportRefused("forbidden_path", {
-            "archive_path": archive_path,
-            "allowed_root": str(allowed),
-        }) from exc
+        raise ImportRefused(
+            "forbidden_path",
+            {
+                "archive_path": archive_path,
+                "allowed_root": str(allowed),
+            },
+        ) from exc
     return candidate
 
 
@@ -346,9 +366,7 @@ def _parse_manifest(zf: zipfile.ZipFile) -> Manifest:
                 raw.get("falkordb_edge_policy", "personal_intra_user_authored")
             ),
             sections=list(raw.get("sections") or []),
-            falkordb_external_edge_count=int(
-                raw.get("falkordb_external_edge_count", 0)
-            ),
+            falkordb_external_edge_count=int(raw.get("falkordb_external_edge_count", 0)),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise ImportRefused("manifest_invalid", {"shape_error": str(exc)}) from exc
@@ -384,8 +402,7 @@ def _validate_manifest(manifest: Manifest) -> list[str]:
 
 def _enumerate_archive(zf: zipfile.ZipFile) -> list[ArchiveEntry]:
     """List every entry in the archive (filename + uncompressed size)."""
-    return [ArchiveEntry(name=info.filename, size_bytes=info.file_size)
-            for info in zf.infolist()]
+    return [ArchiveEntry(name=info.filename, size_bytes=info.file_size) for info in zf.infolist()]
 
 
 def _decide_pruning(
@@ -448,15 +465,17 @@ def _audit_event(
     else:
         connector = "user_export"  # defensive default
     try:
-        write_audit(AuditEntry(
-            action_name=action,
-            connector=connector,
-            mode="system",
-            input_summary=json.dumps(input_summary or {}, default=str),
-            result_summary=json.dumps(result_summary or {}, default=str),
-            executed_at=datetime.now(timezone.utc),
-            user_id=user_id,
-        ))
+        write_audit(
+            AuditEntry(
+                action_name=action,
+                connector=connector,
+                mode="system",
+                input_summary=json.dumps(input_summary or {}, default=str),
+                result_summary=json.dumps(result_summary or {}, default=str),
+                executed_at=datetime.now(timezone.utc),
+                user_id=user_id,
+            )
+        )
     except Exception:
         _log.exception("audit write for %s failed", action)
 
@@ -531,69 +550,83 @@ def _plan_capture_media_export(
         cap_id = str(row.get("capture_id", ""))
         sk_raw = row.get("storage_key")
         if not isinstance(sk_raw, str) or not sk_raw.strip():
-            omissions.append({
-                "attachment_id": att_id,
-                "capture_id": cap_id,
-                "storage_key": sk_raw,
-                "reason": "bad_storage_key",
-            })
+            omissions.append(
+                {
+                    "attachment_id": att_id,
+                    "capture_id": cap_id,
+                    "storage_key": sk_raw,
+                    "reason": "bad_storage_key",
+                }
+            )
             continue
         sk = sk_raw.strip().replace("\\", "/")
         if row.get("user_id") != user_id:
-            omissions.append({
-                "attachment_id": att_id,
-                "capture_id": cap_id,
-                "storage_key": sk,
-                "reason": "user_mismatch",
-            })
+            omissions.append(
+                {
+                    "attachment_id": att_id,
+                    "capture_id": cap_id,
+                    "storage_key": sk,
+                    "reason": "user_mismatch",
+                }
+            )
             continue
         try:
             path = media_storage.resolve_storage_key_file(sk, root=media_root)
         except ValueError as exc:
-            omissions.append({
-                "attachment_id": att_id,
-                "capture_id": cap_id,
-                "storage_key": sk,
-                "reason": "bad_storage_key",
-                "detail": str(exc)[:500],
-            })
+            omissions.append(
+                {
+                    "attachment_id": att_id,
+                    "capture_id": cap_id,
+                    "storage_key": sk,
+                    "reason": "bad_storage_key",
+                    "detail": str(exc)[:500],
+                }
+            )
             continue
         if not path.is_file():
-            omissions.append({
-                "attachment_id": att_id,
-                "capture_id": cap_id,
-                "storage_key": sk,
-                "reason": "missing_on_disk",
-            })
+            omissions.append(
+                {
+                    "attachment_id": att_id,
+                    "capture_id": cap_id,
+                    "storage_key": sk,
+                    "reason": "missing_on_disk",
+                }
+            )
             continue
         try:
             sz = path.stat().st_size
         except OSError:
-            omissions.append({
-                "attachment_id": att_id,
-                "capture_id": cap_id,
-                "storage_key": sk,
-                "reason": "stat_failed",
-            })
+            omissions.append(
+                {
+                    "attachment_id": att_id,
+                    "capture_id": cap_id,
+                    "storage_key": sk,
+                    "reason": "stat_failed",
+                }
+            )
             continue
         if sz > _MAX_PER_ENTRY_BYTES:
-            omissions.append({
-                "attachment_id": att_id,
-                "capture_id": cap_id,
-                "storage_key": sk,
-                "reason": "too_large",
-                "size_bytes": sz,
-            })
+            omissions.append(
+                {
+                    "attachment_id": att_id,
+                    "capture_id": cap_id,
+                    "storage_key": sk,
+                    "reason": "too_large",
+                    "size_bytes": sz,
+                }
+            )
             continue
         arcname = f"captures/media/{sk}"
-        included.append({
-            "zip_entry": arcname,
-            "path": path,
-            "storage_key": sk,
-            "attachment_id": att_id,
-            "capture_id": cap_id,
-            "size_bytes": sz,
-        })
+        included.append(
+            {
+                "zip_entry": arcname,
+                "path": path,
+                "storage_key": sk,
+                "attachment_id": att_id,
+                "capture_id": cap_id,
+                "size_bytes": sz,
+            }
+        )
 
     return included, omissions
 
@@ -622,7 +655,7 @@ def _restore_capture_media_from_zip(
         if not rel or rel == "index.json":
             continue
         if rel.startswith(prefix):
-            new_sk = f"{new_uid}/{rel[len(prefix):]}"
+            new_sk = f"{new_uid}/{rel[len(prefix) :]}"
         elif "/" not in rel:
             new_sk = f"{new_uid}/{rel}"
         else:
@@ -677,8 +710,9 @@ def enumerate_user_data_sections(user_id: str) -> list[SectionSummary]:
         except Exception:
             _log.exception("enumerate: count failed for %s", table)
             n = 0
-        summaries.append(SectionSummary(name=f"postgres/{table}.json",
-                                        kind="postgres", row_count=n))
+        summaries.append(
+            SectionSummary(name=f"postgres/{table}.json", kind="postgres", row_count=n)
+        )
     return summaries
 
 
@@ -727,8 +761,9 @@ def export_user(user_id: str) -> tuple[bytes, str]:
             _log.exception("export: SELECT failed for %s", table)
             rows = []
         pg_payload[table] = rows
-        sections.append({"name": f"postgres/{table}.json",
-                         "kind": "postgres", "row_count": len(rows)})
+        sections.append(
+            {"name": f"postgres/{table}.json", "kind": "postgres", "row_count": len(rows)}
+        )
 
     # Qdrant collections (D12 — graceful degradation per collection).
     qdrant_payload: dict[str, list[dict]] = {}
@@ -740,13 +775,14 @@ def export_user(user_id: str) -> tuple[bytes, str]:
             # only supports user_id exact match — see plan §Qdrant).
             # Missing-scope payloads default to 'personal'.
             filtered = [
-                p for p in points
-                if (p.get("payload", {}).get("scope") or "personal")
-                in ("personal", "shared")
+                p
+                for p in points
+                if (p.get("payload", {}).get("scope") or "personal") in ("personal", "shared")
             ]
             qdrant_payload[coll] = filtered
-            sections.append({"name": f"qdrant/{coll}.json",
-                             "kind": "qdrant", "row_count": len(filtered)})
+            sections.append(
+                {"name": f"qdrant/{coll}.json", "kind": "qdrant", "row_count": len(filtered)}
+            )
         except Exception as exc:
             _log.exception("export: scroll failed for collection %s", coll)
             qdrant_warnings.append(f"qdrant:{coll}:{type(exc).__name__}")
@@ -770,11 +806,13 @@ def export_user(user_id: str) -> tuple[bytes, str]:
                 {"me": user_id},
             )
             for row in node_rows or []:
-                falkor_nodes.append({
-                    "labels": row.get("labels") or [],
-                    "lumogis_id": row.get("lumogis_id"),
-                    "properties": row.get("properties") or {},
-                })
+                falkor_nodes.append(
+                    {
+                        "labels": row.get("labels") or [],
+                        "lumogis_id": row.get("lumogis_id"),
+                        "properties": row.get("properties") or {},
+                    }
+                )
         except Exception as exc:
             _log.exception("export: FalkorDB node read failed")
             falkor_warnings.append(f"falkordb:nodes:{type(exc).__name__}")
@@ -790,39 +828,44 @@ def export_user(user_id: str) -> tuple[bytes, str]:
                 {"me": user_id},
             )
             for row in edge_rows or []:
-                if (row.get("from_user_id") != user_id
-                        or row.get("to_user_id") != user_id):
+                if row.get("from_user_id") != user_id or row.get("to_user_id") != user_id:
                     falkor_external_count += 1
                     continue
-                falkor_edges.append({
-                    "from_lumogis_id": row.get("from_lumogis_id"),
-                    "to_lumogis_id": row.get("to_lumogis_id"),
-                    "rel_type": row.get("rel_type"),
-                    "properties": row.get("properties") or {},
-                })
+                falkor_edges.append(
+                    {
+                        "from_lumogis_id": row.get("from_lumogis_id"),
+                        "to_lumogis_id": row.get("to_lumogis_id"),
+                        "rel_type": row.get("rel_type"),
+                        "properties": row.get("properties") or {},
+                    }
+                )
         except Exception as exc:
             _log.exception("export: FalkorDB edge read failed")
             falkor_warnings.append(f"falkordb:edges:{type(exc).__name__}")
 
-    sections.append({"name": "falkordb/nodes.json", "kind": "falkordb",
-                     "row_count": len(falkor_nodes)})
-    sections.append({"name": "falkordb/edges.json", "kind": "falkordb",
-                     "row_count": len(falkor_edges)})
-    sections.append({"name": f"users/{user_id}.json", "kind": "user_record",
-                     "row_count": 1})
+    sections.append(
+        {"name": "falkordb/nodes.json", "kind": "falkordb", "row_count": len(falkor_nodes)}
+    )
+    sections.append(
+        {"name": "falkordb/edges.json", "kind": "falkordb", "row_count": len(falkor_edges)}
+    )
+    sections.append({"name": f"users/{user_id}.json", "kind": "user_record", "row_count": 1})
 
     att_rows = pg_payload.get("capture_attachments") or []
     capture_included: list[dict] = []
     capture_omissions: list[dict] = []
     if att_rows:
         capture_included, capture_omissions = _plan_capture_media_export(
-            user_id, att_rows,
+            user_id,
+            att_rows,
         )
-        sections.append({
-            "name": "captures/media/index.json",
-            "kind": "capture_media",
-            "row_count": len(capture_included),
-        })
+        sections.append(
+            {
+                "name": "captures/media/index.json",
+                "kind": "capture_media",
+                "row_count": len(capture_included),
+            }
+        )
 
     manifest = {
         "format_version": _MANIFEST_FORMAT_VERSION,
@@ -856,21 +899,15 @@ def export_user(user_id: str) -> tuple[bytes, str]:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("manifest.json", json.dumps(manifest, default=str, indent=2))
-        zf.writestr(f"users/{user_id}.json",
-                    json.dumps(redacted_user, default=str, indent=2))
+        zf.writestr(f"users/{user_id}.json", json.dumps(redacted_user, default=str, indent=2))
         for table, rows in pg_payload.items():
-            zf.writestr(f"postgres/{table}.json",
-                        json.dumps(rows, default=str))
+            zf.writestr(f"postgres/{table}.json", json.dumps(rows, default=str))
         for coll, points in qdrant_payload.items():
-            zf.writestr(f"qdrant/{coll}.json",
-                        json.dumps(points, default=str))
+            zf.writestr(f"qdrant/{coll}.json", json.dumps(points, default=str))
         zf.writestr("falkordb/nodes.json", json.dumps(falkor_nodes, default=str))
         zf.writestr("falkordb/edges.json", json.dumps(falkor_edges, default=str))
         if att_rows:
-            index_payload = [
-                {k: v for k, v in e.items() if k != "path"}
-                for e in capture_included
-            ]
+            index_payload = [{k: v for k, v in e.items() if k != "path"} for e in capture_included]
             zf.writestr(
                 "captures/media/index.json",
                 json.dumps(index_payload, default=str),
@@ -884,8 +921,7 @@ def export_user(user_id: str) -> tuple[bytes, str]:
             "__user_export__.failed",
             user_id=user_id,
             input_summary={"target_user_id": user_id},
-            result_summary={"error_class": "ExportTooLarge",
-                            "size_bytes": len(archive_bytes)},
+            result_summary={"error_class": "ExportTooLarge", "size_bytes": len(archive_bytes)},
         )
         raise RuntimeError(
             f"export exceeds {_MAX_ARCHIVE_BYTES} bytes; "
@@ -938,10 +974,13 @@ def prune_user_archives(user_id: str) -> PruneReceipt:
     """Apply D8 hybrid policy to ``${USER_EXPORT_DIR}/<user_id>/``."""
     user_dir = _USER_EXPORT_DIR / user_id
     if not user_dir.is_dir():
-        return PruneReceipt(user_id=user_id, archives_kept=0,
-                            archives_pruned=0, pruned_filenames=[],
-                            policy={"keep_min": _USER_EXPORT_KEEP_MIN,
-                                    "max_age_days": _USER_EXPORT_MAX_AGE_DAYS})
+        return PruneReceipt(
+            user_id=user_id,
+            archives_kept=0,
+            archives_pruned=0,
+            pruned_filenames=[],
+            policy={"keep_min": _USER_EXPORT_KEEP_MIN, "max_age_days": _USER_EXPORT_MAX_AGE_DAYS},
+        )
     archives = []
     for path in user_dir.glob("export_*.zip"):
         try:
@@ -967,8 +1006,7 @@ def prune_user_archives(user_id: str) -> PruneReceipt:
         archives_kept=len(decision.keep),
         archives_pruned=len(pruned_names),
         pruned_filenames=pruned_names,
-        policy={"keep_min": _USER_EXPORT_KEEP_MIN,
-                "max_age_days": _USER_EXPORT_MAX_AGE_DAYS},
+        policy={"keep_min": _USER_EXPORT_KEEP_MIN, "max_age_days": _USER_EXPORT_MAX_AGE_DAYS},
     )
 
 
@@ -1026,7 +1064,8 @@ def list_archives() -> list[ArchiveInventoryEntry]:
 
 
 def _detect_dangling_references(
-    zf: zipfile.ZipFile, manifest: Manifest,
+    zf: zipfile.ZipFile,
+    manifest: Manifest,
 ) -> list[DanglingReference]:
     """Detect cross-section FK dangling references inside the archive.
 
@@ -1051,29 +1090,45 @@ def _detect_dangling_references(
     def _check(section: str, field: str, refs: set, target_ids: set) -> None:
         bad = sorted(str(r) for r in refs - target_ids)
         if bad:
-            dangling.append(DanglingReference(
-                section=section, field=field, count=len(bad),
-                sample_values=bad[:5],
-            ))
+            dangling.append(
+                DanglingReference(
+                    section=section,
+                    field=field,
+                    count=len(bad),
+                    sample_values=bad[:5],
+                )
+            )
 
     entity_ids = _ids("entities", "entity_id")
     session_ids = _ids("sessions", "session_id")
 
     er_rows = sections.get("postgres/entity_relations.json", [])
-    _check("entity_relations", "source_id",
-           {r["source_id"] for r in er_rows if r.get("source_id")},
-           entity_ids)
-    _check("entity_relations", "target_id",
-           {r["target_id"] for r in er_rows if r.get("target_id")},
-           entity_ids)
+    _check(
+        "entity_relations",
+        "source_id",
+        {r["source_id"] for r in er_rows if r.get("source_id")},
+        entity_ids,
+    )
+    _check(
+        "entity_relations",
+        "target_id",
+        {r["target_id"] for r in er_rows if r.get("target_id")},
+        entity_ids,
+    )
 
     rq_rows = sections.get("postgres/review_queue.json", [])
-    _check("review_queue", "candidate_a_id",
-           {r["candidate_a_id"] for r in rq_rows if r.get("candidate_a_id")},
-           entity_ids)
-    _check("review_queue", "candidate_b_id",
-           {r["candidate_b_id"] for r in rq_rows if r.get("candidate_b_id")},
-           entity_ids)
+    _check(
+        "review_queue",
+        "candidate_a_id",
+        {r["candidate_a_id"] for r in rq_rows if r.get("candidate_a_id")},
+        entity_ids,
+    )
+    _check(
+        "review_queue",
+        "candidate_b_id",
+        {r["candidate_b_id"] for r in rq_rows if r.get("candidate_b_id")},
+        entity_ids,
+    )
 
     rd_rows = sections.get("postgres/review_decisions.json", [])
     if rd_rows:
@@ -1084,20 +1139,26 @@ def _detect_dangling_references(
             if r.get("item_type") == "entity" and r.get("item_id") not in entity_ids:
                 bad_refs.append(str(r.get("item_id")))
         if bad_refs:
-            dangling.append(DanglingReference(
-                section="review_decisions", field="item_id",
-                count=len(bad_refs), sample_values=sorted(bad_refs)[:5],
-            ))
+            dangling.append(
+                DanglingReference(
+                    section="review_decisions",
+                    field="item_id",
+                    count=len(bad_refs),
+                    sample_values=sorted(bad_refs)[:5],
+                )
+            )
 
     audit_rows = sections.get("postgres/audit_log.json", [])
     if audit_rows:
-        evidence_targets = entity_ids | session_ids | {
-            r.get("note_id") for r in sections.get("postgres/notes.json", [])
-        } | {
-            r.get("audio_id") for r in sections.get("postgres/audio_memos.json", [])
-        }
+        evidence_targets = (
+            entity_ids
+            | session_ids
+            | {r.get("note_id") for r in sections.get("postgres/notes.json", [])}
+            | {r.get("audio_id") for r in sections.get("postgres/audio_memos.json", [])}
+        )
         bad_refs = [
-            str(r.get("reverse_token")) for r in audit_rows
+            str(r.get("reverse_token"))
+            for r in audit_rows
             if r.get("reverse_token") and r.get("reverse_token") not in evidence_targets
         ]
         # Note: reverse_token is rarely a hard FK; skipping reporting in v1
@@ -1106,9 +1167,7 @@ def _detect_dangling_references(
 
     dc_rows = sections.get("postgres/dedup_candidates.json", [])
     run_ids = _ids("deduplication_runs", "run_id")
-    _check("dedup_candidates", "run_id",
-           {r["run_id"] for r in dc_rows if r.get("run_id")},
-           run_ids)
+    _check("dedup_candidates", "run_id", {r["run_id"] for r in dc_rows if r.get("run_id")}, run_ids)
 
     return dangling
 
@@ -1147,8 +1206,7 @@ def _parent_uuid_collisions(zf: zipfile.ZipFile) -> list[dict]:
             continue
         clashes = [str(r["pk"]) for r in existing or []]
         if clashes:
-            out.append({"table": table, "count": len(clashes),
-                        "sample_ids": clashes[:5]})
+            out.append({"table": table, "count": len(clashes), "sample_ids": clashes[:5]})
     return out
 
 
@@ -1175,17 +1233,13 @@ def _build_dry_run_plan(
         )
         for s in manifest.sections
     ]
-    missing_sections = [
-        s.name for s in declared_sections if s.name not in name_set
-    ]
+    missing_sections = [s.name for s in declared_sections if s.name not in name_set]
 
     validation_errors = _validate_manifest(manifest)
 
     dangling = _detect_dangling_references(zf, manifest)
 
-    target_email_available = (
-        users_service.get_user_by_email(new_user_email) is None
-    )
+    target_email_available = users_service.get_user_by_email(new_user_email) is None
 
     parent_collisions = _parent_uuid_collisions(zf)
     no_parent_pk_collisions = not parent_collisions
@@ -1194,30 +1248,28 @@ def _build_dry_run_plan(
         archive_integrity_ok=archive_integrity_ok,
         manifest_present=True,
         manifest_parses=True,
-        manifest_version_supported=(
-            manifest.format_version in _SUPPORTED_FORMAT_VERSIONS
-        ),
+        manifest_version_supported=(manifest.format_version in _SUPPORTED_FORMAT_VERSIONS),
         target_email_available=target_email_available,
         all_required_sections_present=not missing_sections,
         no_parent_pk_collisions=no_parent_pk_collisions,
     )
 
-    would_succeed = all([
-        preconditions.archive_integrity_ok,
-        preconditions.manifest_present,
-        preconditions.manifest_parses,
-        preconditions.manifest_version_supported,
-        preconditions.target_email_available,
-        preconditions.all_required_sections_present,
-        preconditions.no_parent_pk_collisions,
-        not validation_errors,
-    ])
+    would_succeed = all(
+        [
+            preconditions.archive_integrity_ok,
+            preconditions.manifest_present,
+            preconditions.manifest_parses,
+            preconditions.manifest_version_supported,
+            preconditions.target_email_available,
+            preconditions.all_required_sections_present,
+            preconditions.no_parent_pk_collisions,
+            not validation_errors,
+        ]
+    )
 
     warnings_list: list[str] = list(validation_errors)
     if parent_collisions:
-        warnings_list.append(
-            f"parent_uuid_collisions: {[c['table'] for c in parent_collisions]}"
-        )
+        warnings_list.append(f"parent_uuid_collisions: {[c['table'] for c in parent_collisions]}")
 
     exported_user_payload: dict = {
         "id": manifest.exporting_user_id,
@@ -1241,46 +1293,51 @@ def _build_dry_run_plan(
 
 
 def _dry_run_import_impl(
-    archive_path: Path | str, new_user_email: str,
+    archive_path: Path | str,
+    new_user_email: str,
 ) -> ImportPlan:
     """Internal: see :func:`dry_run_import` for the public contract."""
     archive_path = _resolve_archive_path(str(archive_path))
     if not archive_path.exists():
-        raise ImportRefused("archive_integrity_failed",
-                            {"detail": f"file not found: {archive_path}"})
+        raise ImportRefused(
+            "archive_integrity_failed", {"detail": f"file not found: {archive_path}"}
+        )
     if archive_path.stat().st_size > _MAX_ARCHIVE_BYTES:
-        raise ImportRefused("archive_too_large",
-                            {"size_bytes": archive_path.stat().st_size,
-                             "cap": _MAX_ARCHIVE_BYTES})
+        raise ImportRefused(
+            "archive_too_large",
+            {"size_bytes": archive_path.stat().st_size, "cap": _MAX_ARCHIVE_BYTES},
+        )
 
     try:
         with zipfile.ZipFile(archive_path) as zf:
             bad = _validate_zip_entry_names(zf.namelist())
             if bad:
-                raise ImportRefused("archive_unsafe_entry_names",
-                                    {"bad_entries": bad[:10]})
+                raise ImportRefused("archive_unsafe_entry_names", {"bad_entries": bad[:10]})
             for info in zf.infolist():
                 if info.file_size > _MAX_PER_ENTRY_BYTES:
-                    raise ImportRefused("archive_too_large", {
-                        "entry": info.filename,
-                        "uncompressed_size": info.file_size,
-                        "per_entry_cap": _MAX_PER_ENTRY_BYTES,
-                    })
+                    raise ImportRefused(
+                        "archive_too_large",
+                        {
+                            "entry": info.filename,
+                            "uncompressed_size": info.file_size,
+                            "per_entry_cap": _MAX_PER_ENTRY_BYTES,
+                        },
+                    )
             manifest = _parse_manifest(zf)
             user_record_name = f"users/{manifest.exporting_user_id}.json"
             if user_record_name not in zf.namelist():
-                raise ImportRefused("missing_user_record",
-                                    {"expected": user_record_name})
+                raise ImportRefused("missing_user_record", {"expected": user_record_name})
 
             _audit_event(
                 "__user_import__.dry_run_requested",
                 user_id=manifest.exporting_user_id,
-                input_summary={"archive": archive_path.name,
-                               "new_user_email": new_user_email},
+                input_summary={"archive": archive_path.name, "new_user_email": new_user_email},
             )
 
             plan = _build_dry_run_plan(
-                zf, manifest, new_user_email,
+                zf,
+                manifest,
+                new_user_email,
                 archive_integrity_ok=True,
             )
 
@@ -1304,8 +1361,7 @@ def _dry_run_import_impl(
                 )
             return plan
     except zipfile.BadZipFile as exc:
-        raise ImportRefused("archive_integrity_failed",
-                            {"detail": str(exc)}) from exc
+        raise ImportRefused("archive_integrity_failed", {"detail": str(exc)}) from exc
 
 
 # ─── Import: real ───────────────────────────────────────────────────────────
@@ -1326,7 +1382,11 @@ def _strip_id_for_serial_table(table: str, row: dict) -> dict:
 
 
 def _insert_rows_for_table(
-    meta, table: str, rows: list[dict], *, on_conflict: bool,
+    meta,
+    table: str,
+    rows: list[dict],
+    *,
+    on_conflict: bool,
 ) -> tuple[int, int]:
     """Bulk-insert ``rows`` into ``table``.
 
@@ -1369,12 +1429,14 @@ def _import_user_impl(
     """Internal: see :func:`import_user` for the public contract."""
     archive_path = _resolve_archive_path(str(archive_path))
     if not archive_path.exists():
-        raise ImportRefused("archive_integrity_failed",
-                            {"detail": f"file not found: {archive_path}"})
+        raise ImportRefused(
+            "archive_integrity_failed", {"detail": f"file not found: {archive_path}"}
+        )
     if archive_path.stat().st_size > _MAX_ARCHIVE_BYTES:
-        raise ImportRefused("archive_too_large",
-                            {"size_bytes": archive_path.stat().st_size,
-                             "cap": _MAX_ARCHIVE_BYTES})
+        raise ImportRefused(
+            "archive_too_large",
+            {"size_bytes": archive_path.stat().st_size, "cap": _MAX_ARCHIVE_BYTES},
+        )
 
     meta = config.get_metadata_store()
     vs = config.get_vector_store()
@@ -1396,26 +1458,25 @@ def _import_user_impl(
         with zipfile.ZipFile(archive_path) as zf:
             bad = _validate_zip_entry_names(zf.namelist())
             if bad:
-                raise ImportRefused("archive_unsafe_entry_names",
-                                    {"bad_entries": bad[:10]})
+                raise ImportRefused("archive_unsafe_entry_names", {"bad_entries": bad[:10]})
             for info in zf.infolist():
                 if info.file_size > _MAX_PER_ENTRY_BYTES:
-                    raise ImportRefused("archive_too_large", {
-                        "entry": info.filename,
-                        "uncompressed_size": info.file_size,
-                        "per_entry_cap": _MAX_PER_ENTRY_BYTES,
-                    })
+                    raise ImportRefused(
+                        "archive_too_large",
+                        {
+                            "entry": info.filename,
+                            "uncompressed_size": info.file_size,
+                            "per_entry_cap": _MAX_PER_ENTRY_BYTES,
+                        },
+                    )
             manifest = _parse_manifest(zf)
             validation_errors = _validate_manifest(manifest)
-            if any("not supported" in e for e in validation_errors
-                   if "format_version" in e):
-                raise ImportRefused("unsupported_format_version",
-                                    {"detail": validation_errors})
+            if any("not supported" in e for e in validation_errors if "format_version" in e):
+                raise ImportRefused("unsupported_format_version", {"detail": validation_errors})
 
             user_record_name = f"users/{manifest.exporting_user_id}.json"
             if user_record_name not in zf.namelist():
-                raise ImportRefused("missing_user_record",
-                                    {"expected": user_record_name})
+                raise ImportRefused("missing_user_record", {"expected": user_record_name})
 
             # Manifest section count check.
             archive_names = set(zf.namelist())
@@ -1429,22 +1490,21 @@ def _import_user_impl(
                         actual = -1
                     declared = int(s.get("row_count", 0))
                     if actual != declared:
-                        mismatches.append({
-                            "section": fname,
-                            "declared": declared,
-                            "actual": actual,
-                        })
+                        mismatches.append(
+                            {
+                                "section": fname,
+                                "declared": declared,
+                                "actual": actual,
+                            }
+                        )
             if mismatches:
-                raise ImportRefused("manifest_section_count_mismatch",
-                                    {"mismatches": mismatches})
+                raise ImportRefused("manifest_section_count_mismatch", {"mismatches": mismatches})
 
             missing_sections = [
-                s["name"] for s in manifest.sections
-                if s["name"] not in archive_names
+                s["name"] for s in manifest.sections if s["name"] not in archive_names
             ]
             if missing_sections:
-                raise ImportRefused("missing_sections",
-                                    {"missing": missing_sections})
+                raise ImportRefused("missing_sections", {"missing": missing_sections})
 
             _audit_event(
                 "__user_import__.started",
@@ -1458,14 +1518,14 @@ def _import_user_impl(
 
             # Email pre-check (race fallback caught later from create_user).
             if users_service.get_user_by_email(new_user_email) is not None:
-                raise ImportRefused("email_exists",
-                                    {"email": new_user_email})
+                raise ImportRefused("email_exists", {"email": new_user_email})
 
             # Parent UUID pre-check (mirrors dry-run; closes race window).
             parent_collisions = _parent_uuid_collisions(zf)
             if parent_collisions:
-                raise ImportRefused("uuid_collision_on_parent_table",
-                                    {"collisions": parent_collisions})
+                raise ImportRefused(
+                    "uuid_collision_on_parent_table", {"collisions": parent_collisions}
+                )
 
             # Mint user + bulk insert in a single transaction.
             try:
@@ -1479,9 +1539,7 @@ def _import_user_impl(
                     except ValueError as exc:
                         raise ImportRefused(
                             "email_exists",
-                            {"email": new_user_email,
-                             "race_detected": True,
-                             "detail": str(exc)},
+                            {"email": new_user_email, "race_detected": True, "detail": str(exc)},
                         ) from exc
                     except users_service.PasswordPolicyViolationError as exc:
                         raise ImportRefused(
@@ -1515,21 +1573,23 @@ def _import_user_impl(
                                 from_user = str(manifest.exporting_user_id)
                                 prefix = f"{from_user}/"
                                 if old_key.startswith(prefix):
-                                    row["storage_key"] = (
-                                        f"{new_user_id}/"
-                                        + old_key[len(prefix) :]
-                                    )
+                                    row["storage_key"] = f"{new_user_id}/" + old_key[len(prefix) :]
                                 elif "/" not in old_key:
-                                    row["storage_key"] = (
-                                        f"{new_user_id}/{old_key}"
-                                    )
+                                    row["storage_key"] = f"{new_user_id}/{old_key}"
                         on_conflict = table not in _PARENT_TABLE_NAMES
                         inserted, skipped = _insert_rows_for_table(
-                            meta, table, rows, on_conflict=on_conflict,
+                            meta,
+                            table,
+                            rows,
+                            on_conflict=on_conflict,
                         )
-                        sections_imported.append(SectionSummary(
-                            name=entry, kind="postgres", row_count=inserted,
-                        ))
+                        sections_imported.append(
+                            SectionSummary(
+                                name=entry,
+                                kind="postgres",
+                                row_count=inserted,
+                            )
+                        )
                         if skipped:
                             leaf_collisions[table] = skipped
             except ImportRefused:
@@ -1538,8 +1598,7 @@ def _import_user_impl(
                 _audit_event(
                     "__user_import__.failed",
                     user_id=manifest.exporting_user_id,
-                    input_summary={"archive": archive_path.name,
-                                   "new_user_email": new_user_email},
+                    input_summary={"archive": archive_path.name, "new_user_email": new_user_email},
                     result_summary={
                         "error_class": type(exc).__name__,
                         "partial_state_warning": True,
@@ -1554,15 +1613,17 @@ def _import_user_impl(
                 receipt_warnings=receipt_warnings,
             )
             if capture_media_written:
-                sections_imported.append(SectionSummary(
-                    name="captures/media",
-                    kind="capture_media",
-                    row_count=capture_media_written,
-                ))
+                sections_imported.append(
+                    SectionSummary(
+                        name="captures/media",
+                        kind="capture_media",
+                        row_count=capture_media_written,
+                    )
+                )
 
             # Qdrant — outside the transaction (different backend).
             for entry in [n for n in archive_names if n.startswith("qdrant/")]:
-                coll = entry[len("qdrant/"):-len(".json")]
+                coll = entry[len("qdrant/") : -len(".json")]
                 try:
                     points = json.loads(zf.read(entry))
                 except Exception:
@@ -1590,15 +1651,17 @@ def _import_user_impl(
                             vec = [0.0] * 768
                         qdrant_zero_vector_count += 1
                     try:
-                        vs.upsert(collection=coll, id=pt["id"], vector=vec,
-                                  payload=payload)
+                        vs.upsert(collection=coll, id=pt["id"], vector=vec, payload=payload)
                         inserted_pts += 1
                     except Exception:
-                        _log.debug("import: upsert failed for %s/%s",
-                                   coll, pt.get("id"))
-                sections_imported.append(SectionSummary(
-                    name=entry, kind="qdrant", row_count=inserted_pts,
-                ))
+                        _log.debug("import: upsert failed for %s/%s", coll, pt.get("id"))
+                sections_imported.append(
+                    SectionSummary(
+                        name=entry,
+                        kind="qdrant",
+                        row_count=inserted_pts,
+                    )
+                )
 
             # FalkorDB re-MERGE — best-effort.
             if gs is not None:
@@ -1631,8 +1694,7 @@ def _import_user_impl(
                         falkor_external_skipped = 0
                         if edges:
                             receipt_warnings.append(
-                                "falkordb_edges_not_restored: "
-                                "re-derive via re-ingest"
+                                "falkordb_edges_not_restored: re-derive via re-ingest"
                             )
                     except Exception:
                         pass
@@ -1669,8 +1731,7 @@ def _import_user_impl(
             )
             return receipt
     except zipfile.BadZipFile as exc:
-        raise ImportRefused("archive_integrity_failed",
-                            {"detail": str(exc)}) from exc
+        raise ImportRefused("archive_integrity_failed", {"detail": str(exc)}) from exc
 
 
 # ─── Public wrappers — refusal-audit catch ──────────────────────────────────
@@ -1771,7 +1832,10 @@ def import_user(
     """
     try:
         return _import_user_impl(
-            archive_path, new_user_email, new_user_password, new_user_role,
+            archive_path,
+            new_user_email,
+            new_user_password,
+            new_user_role,
         )
     except ImportRefused as exc:
         _audit_refusal(

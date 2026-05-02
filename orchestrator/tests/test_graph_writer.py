@@ -16,29 +16,29 @@ FALKORDB_URL is set in the environment.
 """
 
 import os
-import pytest
-import config
-from plugins.graph import schema as gs_schema
-from plugins.graph.writer import (
-    on_document_ingested,
-    on_entity_created,
-    on_entity_merged,
-    on_note_captured,
-    on_session_ended,
-    on_audio_transcribed,
-)
 
+import pytest
+from plugins.graph import schema as gs_schema
+from plugins.graph.writer import on_audio_transcribed
+from plugins.graph.writer import on_document_ingested
+from plugins.graph.writer import on_entity_created
+from plugins.graph.writer import on_entity_merged
+from plugins.graph.writer import on_note_captured
+from plugins.graph.writer import on_session_ended
+
+import config
 
 # ---------------------------------------------------------------------------
 # Mock GraphStore
 # ---------------------------------------------------------------------------
 
+
 class MockGraphStore:
     """In-memory GraphStore for writer unit tests."""
 
     def __init__(self):
-        self._nodes: dict[str, dict] = {}   # node_id -> {"labels": [...], "props": {...}}
-        self._edges: list[dict] = []         # list of edge records
+        self._nodes: dict[str, dict] = {}  # node_id -> {"labels": [...], "props": {...}}
+        self._edges: list[dict] = []  # list of edge records
         self._next_id = 0
         self.queries: list[tuple[str, dict]] = []  # (cypher, params) log
 
@@ -100,6 +100,7 @@ class MockGraphStore:
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def mock_graph_store():
     return MockGraphStore()
@@ -116,6 +117,7 @@ def _inject_graph_store(mock_graph_store, monkeypatch):
 # ---------------------------------------------------------------------------
 # DOCUMENT_INGESTED
 # ---------------------------------------------------------------------------
+
 
 class TestOnDocumentIngested:
     def test_creates_document_node(self, mock_graph_store):
@@ -144,6 +146,7 @@ class TestOnDocumentIngested:
 # ---------------------------------------------------------------------------
 # ENTITY_CREATED
 # ---------------------------------------------------------------------------
+
 
 class TestOnEntityCreated:
     def test_creates_entity_node(self, mock_graph_store):
@@ -225,6 +228,7 @@ class TestOnEntityCreated:
 # SESSION_ENDED
 # ---------------------------------------------------------------------------
 
+
 class TestOnSessionEnded:
     def test_creates_session_node(self, mock_graph_store):
         on_session_ended(
@@ -289,6 +293,7 @@ class TestOnSessionEnded:
 # NOTE_CAPTURED
 # ---------------------------------------------------------------------------
 
+
 class TestOnNoteCaptured:
     def test_creates_note_node(self, mock_graph_store):
         on_note_captured(note_id="note-001", user_id="default")
@@ -306,6 +311,7 @@ class TestOnNoteCaptured:
 # AUDIO_TRANSCRIBED
 # ---------------------------------------------------------------------------
 
+
 class TestOnAudioTranscribed:
     def test_creates_audio_memo_node(self, mock_graph_store):
         on_audio_transcribed(
@@ -322,12 +328,11 @@ class TestOnAudioTranscribed:
 # ENTITY_MERGED
 # ---------------------------------------------------------------------------
 
+
 class TestOnEntityMerged:
     def test_deletes_loser_via_query(self, mock_graph_store):
         on_entity_merged(winner_id="eid-win", loser_id="eid-lose", user_id="default")
-        detach_queries = [
-            q for q, _ in mock_graph_store.queries if "DETACH DELETE" in q
-        ]
+        detach_queries = [q for q, _ in mock_graph_store.queries if "DETACH DELETE" in q]
         assert len(detach_queries) >= 1
 
     def test_no_op_when_graph_disabled(self, monkeypatch):
@@ -338,6 +343,7 @@ class TestOnEntityMerged:
 # ---------------------------------------------------------------------------
 # Staged entity exclusion (Pass 1 quality gate)
 # ---------------------------------------------------------------------------
+
 
 class TestStagedEntityExclusion:
     def test_staged_entity_skips_project_entity(self, mock_graph_store):
@@ -374,16 +380,21 @@ class TestStagedEntityExclusion:
         concepts = mock_graph_store.nodes_with_label(gs_schema.NodeLabel.CONCEPT)
         assert not any(c.get("lumogis_id") == "eid-staged-hook" for c in concepts)
 
-    def test_staged_entity_does_not_generate_cooccurrence_edges(self, mock_graph_store, monkeypatch):
+    def test_staged_entity_does_not_generate_cooccurrence_edges(
+        self, mock_graph_store, monkeypatch
+    ):
         """Staged entity must not produce RELATES_TO edges."""
         from plugins.graph.writer import project_entity
 
         class StagedAwareMockMS:
             """MetadataStore that returns a staged sibling to verify it is excluded."""
+
             def fetch_all(self, query, params=None):
                 return []  # No non-staged siblings
+
             def fetch_one(self, query, params=None):
                 return None
+
             def execute(self, query, params=None):
                 pass
 
@@ -412,14 +423,17 @@ class TestStagedEntityExclusion:
             def fetch_all(self, query, params=None):
                 executed_queries.append(query)
                 return []
+
             def fetch_one(self, query, params=None):
                 return None
+
             def execute(self, query, params=None):
                 pass
 
         monkeypatch.setitem(config._instances, "metadata_store", CapturingMS())
 
         from plugins.graph.writer import _update_cooccurrence_edges
+
         _update_cooccurrence_edges(mock_graph_store, "eid-001", "ev-001", "default")
 
         assert executed_queries, "Expected at least one fetch_all call"
@@ -432,6 +446,7 @@ class TestStagedEntityExclusion:
 # ---------------------------------------------------------------------------
 # Schema constants
 # ---------------------------------------------------------------------------
+
 
 class TestSchemaConstants:
     def test_entity_type_map_covers_all_types(self):
@@ -449,6 +464,7 @@ class TestSchemaConstants:
 
     def test_new_event_constants_exist(self):
         from events import Event
+
         assert Event.NOTE_CAPTURED == "on_note_captured"
         assert Event.AUDIO_TRANSCRIBED == "on_audio_transcribed"
         assert Event.ENTITY_MERGED == "on_entity_merged"
@@ -485,6 +501,7 @@ class TestFalkorDBCompatGate:
     @pytest.fixture
     def live_store(self):
         from adapters.falkordb_store import FalkorDBStore
+
         store = FalkorDBStore(url=_FALKORDB_URL, graph_name="lumogis_test_compat")
         yield store
         try:
@@ -521,7 +538,11 @@ class TestFalkorDBCompatGate:
             from_id=doc_id,
             to_id=person_id,
             rel_type="MENTIONS",
-            properties={"evidence_id": "compat-doc-01", "user_id": "test", "timestamp": "2026-01-01T00:00:00Z"},
+            properties={
+                "evidence_id": "compat-doc-01",
+                "user_id": "test",
+                "timestamp": "2026-01-01T00:00:00Z",
+            },
         )
 
     def test_merge_relates_to_edge_with_coalesce(self, live_store):

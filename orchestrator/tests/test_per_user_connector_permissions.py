@@ -37,12 +37,12 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime
+from datetime import timezone
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-
 
 # ---------------------------------------------------------------------------
 # In-memory fake store covering the connector_permissions and
@@ -271,11 +271,7 @@ class _FakeConnectorPermStore:
             return None
 
         if q.startswith("select count(*) as n from users where role = 'admin'"):
-            n = sum(
-                1
-                for r in self.users.values()
-                if r["role"] == "admin" and not r["disabled"]
-            )
+            n = sum(1 for r in self.users.values() if r["role"] == "admin" and not r["disabled"])
             return {"n": n}
 
         if q.startswith("select count(*) as n from users"):
@@ -283,11 +279,7 @@ class _FakeConnectorPermStore:
 
         if q.startswith("select id from users where role = 'admin'"):
             admins = sorted(
-                (
-                    r
-                    for r in self.users.values()
-                    if r["role"] == "admin" and not r["disabled"]
-                ),
+                (r for r in self.users.values() if r["role"] == "admin" and not r["disabled"]),
                 key=lambda r: r["created_at"],
             )
             return {"id": admins[0]["id"]} if admins else None
@@ -305,9 +297,7 @@ class _FakeConnectorPermStore:
         q = self._norm(query)
         p = params or ()
 
-        if q.startswith(
-            "select connector, mode from connector_permissions where user_id"
-        ):
+        if q.startswith("select connector, mode from connector_permissions where user_id"):
             (uid,) = p
             rows = [
                 {
@@ -320,9 +310,7 @@ class _FakeConnectorPermStore:
             ]
             return sorted(rows, key=lambda r: r["connector"])
 
-        if q.startswith(
-            "select user_id, connector, mode from connector_permissions"
-        ):
+        if q.startswith("select user_id, connector, mode from connector_permissions"):
             rows = [
                 {
                     "user_id": r["user_id"],
@@ -340,9 +328,7 @@ class _FakeConnectorPermStore:
                 key=lambda r: r["created_at"],
             )
 
-        if q.startswith(
-            "update mcp_tokens set revoked_at = now() where user_id = %s"
-        ):
+        if q.startswith("update mcp_tokens set revoked_at = now() where user_id = %s"):
             return []
 
         return []
@@ -362,8 +348,9 @@ def perm_store(monkeypatch):
     so route tests can both read back the row state and assert which
     queries were issued.
     """
-    import config as _config
     import permissions as _permissions
+
+    import config as _config
 
     store = _FakeConnectorPermStore()
     _config._instances["metadata_store"] = store
@@ -408,7 +395,9 @@ def _hdr(user_id: str, role: str = "user") -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _create_user(perm_store: _FakeConnectorPermStore, *, user_id: str, email: str, role: str) -> str:
+def _create_user(
+    perm_store: _FakeConnectorPermStore, *, user_id: str, email: str, role: str
+) -> str:
     perm_store.users[user_id] = {
         "id": user_id,
         "email": email,
@@ -469,23 +458,20 @@ def test_get_connector_mode_returns_per_user_row_when_present(perm_store):
     from permissions import get_connector_mode
 
     _seed_perm(perm_store, user_id="alice", connector="filesystem-mcp", mode="DO")
-    assert (
-        get_connector_mode(user_id="alice", connector="filesystem-mcp") == "DO"
-    )
+    assert get_connector_mode(user_id="alice", connector="filesystem-mcp") == "DO"
 
 
 def test_get_connector_mode_falls_through_to_default_mode_constant_on_miss(perm_store):
     """Plan test 2."""
     from permissions import get_connector_mode
 
-    assert (
-        get_connector_mode(user_id="alice", connector="filesystem-mcp") == "ASK"
-    )
+    assert get_connector_mode(user_id="alice", connector="filesystem-mcp") == "ASK"
 
 
 def test_get_connector_mode_caches_per_user_per_connector_only(perm_store):
     """Plan test 3."""
-    from permissions import get_connector_mode, invalidate_cache
+    from permissions import get_connector_mode
+    from permissions import invalidate_cache
 
     _seed_perm(perm_store, user_id="alice", connector="filesystem-mcp", mode="DO")
     assert get_connector_mode(user_id="alice", connector="filesystem-mcp") == "DO"
@@ -506,7 +492,8 @@ def test_get_connector_mode_cache_does_not_leak_between_users(perm_store):
 
     Plan test 4 (verbatim docstring per ARBITRATE-R2 D6.2).
     """
-    from permissions import get_connector_mode, invalidate_cache
+    from permissions import get_connector_mode
+    from permissions import invalidate_cache
 
     _seed_perm(perm_store, user_id="alice", connector="filesystem-mcp", mode="DO")
     assert get_connector_mode(user_id="bob", connector="filesystem-mcp") == "ASK"
@@ -518,7 +505,9 @@ def test_get_connector_mode_cache_does_not_leak_between_users(perm_store):
 
 def test_set_connector_mode_upserts_and_invalidates_one_cache_slot(perm_store):
     """Plan test 5."""
-    from permissions import _mode_cache, get_connector_mode, set_connector_mode
+    from permissions import _mode_cache
+    from permissions import get_connector_mode
+    from permissions import set_connector_mode
 
     _seed_perm(perm_store, user_id="alice", connector="filesystem-mcp", mode="ASK")
     _seed_perm(perm_store, user_id="bob", connector="filesystem-mcp", mode="DO")
@@ -549,11 +538,9 @@ def test_set_connector_mode_rejects_empty_user_id(perm_store):
 
 def test_clear_cache_for_user_evicts_all_users_keys_only(perm_store):
     """Plan test 8."""
-    from permissions import (
-        _mode_cache,
-        clear_cache_for_user,
-        get_connector_mode,
-    )
+    from permissions import _mode_cache
+    from permissions import clear_cache_for_user
+    from permissions import get_connector_mode
 
     _seed_perm(perm_store, user_id="alice", connector="filesystem-mcp", mode="DO")
     _seed_perm(perm_store, user_id="alice", connector="email-mcp", mode="DO")
@@ -608,7 +595,9 @@ def test_routine_check_increments_per_user_row_only(perm_store, monkeypatch):
 
     for _ in range(16):
         routine_check(
-            user_id="alice", connector="filesystem-mcp", action_type="write_file",
+            user_id="alice",
+            connector="filesystem-mcp",
+            action_type="write_file",
         )
     alice_row = perm_store.rdt[("alice", "filesystem-mcp", "write_file")]
     assert alice_row["approval_count"] == 16
@@ -621,7 +610,9 @@ def test_elevate_to_routine_writes_per_user_row(perm_store):
     from permissions import elevate_to_routine
 
     elevate_to_routine(
-        user_id="alice", connector="filesystem-mcp", action_type="write_file",
+        user_id="alice",
+        connector="filesystem-mcp",
+        action_type="write_file",
     )
     row = perm_store.rdt[("alice", "filesystem-mcp", "write_file")]
     assert row["auto_approved"] is True
@@ -634,7 +625,9 @@ def test_elevate_to_routine_writes_per_user_row(perm_store):
 
 
 def test_me_get_permissions_returns_default_for_unwritten_connectors(
-    perm_store, auth_env, monkeypatch,
+    perm_store,
+    auth_env,
+    monkeypatch,
 ):
     """Plan test 13 — every known connector comes back as is_default=True."""
     _stub_registry(monkeypatch, ["filesystem-mcp", "email-mcp"])
@@ -649,14 +642,17 @@ def test_me_get_permissions_returns_default_for_unwritten_connectors(
 
 
 def test_me_get_permission_for_unwritten_connector_returns_default(
-    perm_store, auth_env, monkeypatch,
+    perm_store,
+    auth_env,
+    monkeypatch,
 ):
     """Plan test 13a."""
     _stub_registry(monkeypatch, ["filesystem-mcp"])
     alice_id = _create_user(perm_store, user_id="alice", email="a@home.lan", role="user")
     with _booted_client() as client:
         r = client.get(
-            "/api/v1/me/permissions/filesystem-mcp", headers=_hdr(alice_id),
+            "/api/v1/me/permissions/filesystem-mcp",
+            headers=_hdr(alice_id),
         )
     assert r.status_code == 200, r.text
     assert r.json() == {
@@ -668,7 +664,9 @@ def test_me_get_permission_for_unwritten_connector_returns_default(
 
 
 def test_me_get_permission_for_written_connector_returns_row(
-    perm_store, auth_env, monkeypatch,
+    perm_store,
+    auth_env,
+    monkeypatch,
 ):
     """Plan test 13b."""
     _stub_registry(monkeypatch, ["filesystem-mcp"])
@@ -676,7 +674,8 @@ def test_me_get_permission_for_written_connector_returns_row(
     _seed_perm(perm_store, user_id=alice_id, connector="filesystem-mcp", mode="DO")
     with _booted_client() as client:
         r = client.get(
-            "/api/v1/me/permissions/filesystem-mcp", headers=_hdr(alice_id),
+            "/api/v1/me/permissions/filesystem-mcp",
+            headers=_hdr(alice_id),
         )
     assert r.status_code == 200, r.text
     body = r.json()
@@ -686,23 +685,29 @@ def test_me_get_permission_for_written_connector_returns_row(
 
 
 def test_me_get_permission_returns_404_for_unknown_connector(
-    perm_store, auth_env, monkeypatch,
+    perm_store,
+    auth_env,
+    monkeypatch,
 ):
     """Plan test 13c."""
     _stub_registry(monkeypatch, ["filesystem-mcp"])
     alice_id = _create_user(perm_store, user_id="alice", email="a@home.lan", role="user")
     with _booted_client() as client:
         r = client.get(
-            "/api/v1/me/permissions/email-mcp", headers=_hdr(alice_id),
+            "/api/v1/me/permissions/email-mcp",
+            headers=_hdr(alice_id),
         )
     assert r.status_code == 404, r.text
     assert r.json()["detail"] == {
-        "error": "unknown_connector", "connector": "email-mcp",
+        "error": "unknown_connector",
+        "connector": "email-mcp",
     }
 
 
 def test_admin_get_user_permission_for_one_connector_returns_admin_view(
-    perm_store, auth_env, monkeypatch,
+    perm_store,
+    auth_env,
+    monkeypatch,
 ):
     """Plan test 13d."""
     _stub_registry(monkeypatch, ["calendar-mcp"])
@@ -723,7 +728,9 @@ def test_admin_get_user_permission_for_one_connector_returns_admin_view(
 
 
 def test_admin_get_user_permission_returns_404_for_unknown_user(
-    perm_store, auth_env, monkeypatch,
+    perm_store,
+    auth_env,
+    monkeypatch,
 ):
     """Plan test 13e."""
     _stub_registry(monkeypatch, ["filesystem-mcp"])
@@ -738,7 +745,9 @@ def test_admin_get_user_permission_returns_404_for_unknown_user(
 
 
 def test_me_put_permission_writes_callers_row(
-    perm_store, auth_env, monkeypatch,
+    perm_store,
+    auth_env,
+    monkeypatch,
 ):
     """Plan test 14."""
     _stub_registry(monkeypatch, ["filesystem-mcp"])
@@ -758,7 +767,9 @@ def test_me_put_permission_writes_callers_row(
 
 
 def test_me_put_permission_rejects_unknown_field(
-    perm_store, auth_env, monkeypatch,
+    perm_store,
+    auth_env,
+    monkeypatch,
 ):
     """Plan test 15."""
     _stub_registry(monkeypatch, ["filesystem-mcp"])
@@ -773,7 +784,9 @@ def test_me_put_permission_rejects_unknown_field(
 
 
 def test_me_put_permission_rejects_invalid_mode(
-    perm_store, auth_env, monkeypatch,
+    perm_store,
+    auth_env,
+    monkeypatch,
 ):
     """Plan test 16."""
     _stub_registry(monkeypatch, ["filesystem-mcp"])
@@ -788,7 +801,9 @@ def test_me_put_permission_rejects_invalid_mode(
 
 
 def test_me_put_permission_returns_404_for_unknown_connector_when_registry_reachable(
-    perm_store, auth_env, monkeypatch,
+    perm_store,
+    auth_env,
+    monkeypatch,
 ):
     """Plan test 17."""
     _stub_registry(monkeypatch, ["filesystem-mcp"])
@@ -804,7 +819,10 @@ def test_me_put_permission_returns_404_for_unknown_connector_when_registry_reach
 
 
 def test_me_put_permission_warns_when_registry_unavailable(
-    perm_store, auth_env, monkeypatch, caplog,
+    perm_store,
+    auth_env,
+    monkeypatch,
+    caplog,
 ):
     """Plan test 18 — degrade-allow when actions.registry raises."""
     import actions.registry as _registry
@@ -827,7 +845,9 @@ def test_me_put_permission_warns_when_registry_unavailable(
 
 
 def test_me_delete_permission_resets_to_default(
-    perm_store, auth_env, monkeypatch,
+    perm_store,
+    auth_env,
+    monkeypatch,
 ):
     """Plan test 19."""
     _stub_registry(monkeypatch, ["filesystem-mcp"])
@@ -847,7 +867,9 @@ def test_me_delete_permission_resets_to_default(
 
 
 def test_admin_put_other_users_permission_succeeds(
-    perm_store, auth_env, monkeypatch,
+    perm_store,
+    auth_env,
+    monkeypatch,
 ):
     """Plan test 20."""
     _stub_registry(monkeypatch, ["filesystem-mcp"])
@@ -864,7 +886,9 @@ def test_admin_put_other_users_permission_succeeds(
 
 
 def test_admin_put_returns_404_for_unknown_target_user(
-    perm_store, auth_env, monkeypatch,
+    perm_store,
+    auth_env,
+    monkeypatch,
 ):
     """Plan test 21."""
     _stub_registry(monkeypatch, ["filesystem-mcp"])
@@ -880,7 +904,9 @@ def test_admin_put_returns_404_for_unknown_target_user(
 
 
 def test_user_cannot_set_other_users_permission_via_admin_route(
-    perm_store, auth_env, monkeypatch,
+    perm_store,
+    auth_env,
+    monkeypatch,
 ):
     """Plan test 22 — non-admin caller hits the admin-on-behalf PUT."""
     _stub_registry(monkeypatch, ["filesystem-mcp"])
@@ -896,7 +922,9 @@ def test_user_cannot_set_other_users_permission_via_admin_route(
 
 
 def test_admin_get_all_permissions_returns_user_id_field_and_email(
-    perm_store, auth_env, monkeypatch,
+    perm_store,
+    auth_env,
+    monkeypatch,
 ):
     """Plan test 23."""
     admin_id = _create_user(perm_store, user_id="admin1", email="ad@home.lan", role="admin")
@@ -906,7 +934,8 @@ def test_admin_get_all_permissions_returns_user_id_field_and_email(
     _seed_perm(perm_store, user_id=bob_id, connector="email-mcp", mode="ASK")
     with _booted_client() as client:
         r = client.get(
-            "/api/v1/admin/permissions", headers=_hdr(admin_id, role="admin"),
+            "/api/v1/admin/permissions",
+            headers=_hdr(admin_id, role="admin"),
         )
     assert r.status_code == 200, r.text
     body = r.json()
@@ -916,7 +945,9 @@ def test_admin_get_all_permissions_returns_user_id_field_and_email(
 
 
 def test_legacy_get_permissions_requires_admin_now(
-    perm_store, auth_env, monkeypatch,
+    perm_store,
+    auth_env,
+    monkeypatch,
 ):
     """Plan test 24."""
     alice_id = _create_user(perm_store, user_id="alice", email="a@home.lan", role="user")
@@ -926,7 +957,9 @@ def test_legacy_get_permissions_requires_admin_now(
 
 
 def test_legacy_put_permissions_writes_caller_admin_row_with_deprecation_header(
-    perm_store, auth_env, monkeypatch,
+    perm_store,
+    auth_env,
+    monkeypatch,
 ):
     """Plan test 25."""
     admin_id = _create_user(perm_store, user_id="admin1", email="ad@home.lan", role="admin")
@@ -947,7 +980,9 @@ def test_legacy_put_permissions_writes_caller_admin_row_with_deprecation_header(
 
 
 def test_legacy_get_permissions_emits_deprecation_header(
-    perm_store, auth_env, monkeypatch,
+    perm_store,
+    auth_env,
+    monkeypatch,
 ):
     """Plan test 26."""
     admin_id = _create_user(perm_store, user_id="admin1", email="ad@home.lan", role="admin")
@@ -961,7 +996,9 @@ def test_legacy_get_permissions_emits_deprecation_header(
 
 
 def test_actions_elevate_route_requires_user_auth(
-    perm_store, auth_env, monkeypatch,
+    perm_store,
+    auth_env,
+    monkeypatch,
 ):
     """Plan test 27 — closes the unauthenticated-elevation hole."""
     with _booted_client() as client:
@@ -973,7 +1010,9 @@ def test_actions_elevate_route_requires_user_auth(
 
 
 def test_actions_elevate_route_threads_user_id_into_routine(
-    perm_store, auth_env, monkeypatch,
+    perm_store,
+    auth_env,
+    monkeypatch,
 ):
     """Plan test 28."""
     alice_id = _create_user(perm_store, user_id="alice", email="a@home.lan", role="user")
@@ -986,14 +1025,14 @@ def test_actions_elevate_route_threads_user_id_into_routine(
         )
     assert r.status_code == 200, r.text
     assert (alice_id, "filesystem-mcp", "write_file") in perm_store.rdt
-    assert perm_store.rdt[(alice_id, "filesystem-mcp", "write_file")][
-        "auto_approved"
-    ] is True
+    assert perm_store.rdt[(alice_id, "filesystem-mcp", "write_file")]["auto_approved"] is True
     assert ("bob", "filesystem-mcp", "write_file") not in perm_store.rdt
 
 
 def test_actions_elevate_route_still_rejects_hard_limited_action_types(
-    perm_store, auth_env, monkeypatch,
+    perm_store,
+    auth_env,
+    monkeypatch,
 ):
     """Plan test 29."""
     alice_id = _create_user(perm_store, user_id="alice", email="a@home.lan", role="user")
@@ -1008,7 +1047,9 @@ def test_actions_elevate_route_still_rejects_hard_limited_action_types(
 
 def test_disable_user_clears_cache_but_retains_rows(perm_store):
     """Plan test 30."""
-    from permissions import _mode_cache, get_connector_mode
+    from permissions import _mode_cache
+    from permissions import get_connector_mode
+
     from services import users as users_svc
 
     _create_user(perm_store, user_id="alice", email="a@home.lan", role="user")
@@ -1022,7 +1063,9 @@ def test_disable_user_clears_cache_but_retains_rows(perm_store):
 
 def test_delete_user_clears_cache_but_retains_rows(perm_store):
     """Plan test 31."""
-    from permissions import _mode_cache, get_connector_mode
+    from permissions import _mode_cache
+    from permissions import get_connector_mode
+
     from services import users as users_svc
 
     _create_user(perm_store, user_id="alice", email="a@home.lan", role="user")

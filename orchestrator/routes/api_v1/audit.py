@@ -16,21 +16,25 @@ from __future__ import annotations
 
 import logging
 import time
-from collections import defaultdict, deque
+from collections import defaultdict
+from collections import deque
 from typing import Deque
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-
-import config
 from actions import audit as audit_module
 from actions.reversibility import attempt_reverse
 from auth import get_user
 from authz import require_user
-from models.api_v1 import (
-    AuditEntryDTO,
-    AuditListResponse,
-    AuditReverseResponse,
-)
+from fastapi import APIRouter
+from fastapi import Depends
+from fastapi import HTTPException
+from fastapi import Query
+from fastapi import Request
+from fastapi import status
+from models.api_v1 import AuditEntryDTO
+from models.api_v1 import AuditListResponse
+from models.api_v1 import AuditReverseResponse
+
+import config
 
 _log = logging.getLogger(__name__)
 
@@ -88,9 +92,7 @@ def list_audit(
         user_id=target_user_id,
         limit=limit,
     )
-    return AuditListResponse(
-        audit=[AuditEntryDTO.model_validate(r) for r in rows]
-    )
+    return AuditListResponse(audit=[AuditEntryDTO.model_validate(r) for r in rows])
 
 
 @router.post(
@@ -106,8 +108,7 @@ def reverse(reverse_token: str, request: Request) -> AuditReverseResponse:
     ms = config.get_metadata_store()
     try:
         row = ms.fetch_one(
-            "SELECT id, reversed_at FROM audit_log "
-            "WHERE reverse_token = %s AND user_id = %s",
+            "SELECT id, reversed_at FROM audit_log WHERE reverse_token = %s AND user_id = %s",
             (reverse_token, caller.user_id),
         )
     except Exception as exc:  # noqa: BLE001

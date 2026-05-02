@@ -11,8 +11,6 @@ from datetime import datetime
 from datetime import timezone
 
 import pytest
-from pydantic import ValidationError
-
 from models.webhook import _PAYLOAD_BY_EVENT
 from models.webhook import SUPPORTED_SCHEMA_VERSIONS
 from models.webhook import AudioTranscribedPayload
@@ -25,7 +23,7 @@ from models.webhook import NoteCapturedPayload
 from models.webhook import SessionEndedPayload
 from models.webhook import WebhookEnvelope
 from models.webhook import WebhookEvent
-
+from pydantic import ValidationError
 
 # ---------------------------------------------------------------------------
 # Per-payload round-trip
@@ -53,9 +51,7 @@ def test_entity_created_defaults_is_staged_false():
 
 
 def test_session_ended_entity_ids_optional():
-    p = SessionEndedPayload(
-        session_id="s1", summary="hello", topics=["t1"], entities=["e1"]
-    )
+    p = SessionEndedPayload(session_id="s1", summary="hello", topics=["t1"], entities=["e1"])
     assert p.entity_ids is None
     assert p.user_id == "default"
     restored = SessionEndedPayload.model_validate_json(p.model_dump_json())
@@ -176,11 +172,18 @@ def test_payload_dispatch_classes_validate_their_payloads():
     samples: dict[WebhookEvent, dict] = {
         WebhookEvent.DOCUMENT_INGESTED: {"file_path": "/x.md", "chunk_count": 1, "user_id": "u1"},
         WebhookEvent.ENTITY_CREATED: {
-            "entity_id": "e", "name": "n", "entity_type": "PERSON",
-            "evidence_id": "ev", "evidence_type": "document", "user_id": "u1",
+            "entity_id": "e",
+            "name": "n",
+            "entity_type": "PERSON",
+            "evidence_id": "ev",
+            "evidence_type": "document",
+            "user_id": "u1",
         },
         WebhookEvent.SESSION_ENDED: {
-            "session_id": "s", "summary": "sum", "topics": [], "entities": [],
+            "session_id": "s",
+            "summary": "sum",
+            "topics": [],
+            "entities": [],
         },
         WebhookEvent.ENTITY_MERGED: {"winner_id": "w", "loser_id": "l", "user_id": "u1"},
         WebhookEvent.NOTE_CAPTURED: {"note_id": "n", "user_id": "u1"},

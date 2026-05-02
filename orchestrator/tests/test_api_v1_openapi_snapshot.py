@@ -27,54 +27,56 @@ SNAPSHOT_PATH = REPO_ROOT / "clients" / "lumogis-web" / "openapi.snapshot.json"
 # (rather than derived) so a future router refactor that accidentally
 # drops a path triggers a concrete diff in this list, not a vague
 # "snapshot drifted" failure.
-REQUIRED_V1_PATHS = frozenset({
-    # Auth (shipped, included for codegen completeness)
-    "/api/v1/auth/login",
-    "/api/v1/auth/logout",
-    "/api/v1/auth/me",
-    "/api/v1/auth/refresh",
-    # New v1 web façade — plan §API routes
-    "/api/v1/chat/completions",
-    "/api/v1/models",
-    "/api/v1/memory/search",
-    "/api/v1/memory/recent",
-    "/api/v1/kg/entities/{entity_id}",
-    "/api/v1/kg/entities/{entity_id}/related",
-    "/api/v1/kg/search",
-    "/api/v1/approvals/pending",
-    "/api/v1/approvals/connector/{connector}/mode",
-    "/api/v1/approvals/elevate",
-    "/api/v1/audit",
-    "/api/v1/audit/{reverse_token}/reverse",
-    "/api/v1/captures",
-    "/api/v1/captures/text",
-    "/api/v1/captures/upload",
-    "/api/v1/captures/{capture_id}",
-    "/api/v1/captures/{capture_id}/attachments",
-    "/api/v1/captures/{capture_id}/attachments/{attachment_id}",
-    "/api/v1/captures/{capture_id}/transcribe",
-    "/api/v1/captures/{capture_id}/index",
-    "/api/v1/notifications/vapid-public-key",
-    "/api/v1/notifications/subscribe",
-    "/api/v1/notifications/subscriptions",
-    "/api/v1/notifications/subscriptions/{subscription_id}",
-    "/api/v1/notifications/test",
-    "/api/v1/events",
-    # Shipped surfaces the plan asks the snapshot to cover (§Pass 0.3.19)
-    "/api/v1/me/permissions",
-    "/api/v1/me/tools",
-    "/api/v1/me/llm-providers",
-    "/api/v1/me/notifications",
-    "/api/v1/me/connector-credentials",
-    "/api/v1/me/mcp-tokens",
-    "/api/v1/me/password",
-    "/api/v1/admin/users",
-    "/api/v1/admin/users/{user_id}/password",
-    "/api/v1/admin/permissions",
-    "/api/v1/admin/diagnostics",
-    # Speech-to-text foundation (STT-1)
-    "/api/v1/voice/transcribe",
-})
+REQUIRED_V1_PATHS = frozenset(
+    {
+        # Auth (shipped, included for codegen completeness)
+        "/api/v1/auth/login",
+        "/api/v1/auth/logout",
+        "/api/v1/auth/me",
+        "/api/v1/auth/refresh",
+        # New v1 web façade — plan §API routes
+        "/api/v1/chat/completions",
+        "/api/v1/models",
+        "/api/v1/memory/search",
+        "/api/v1/memory/recent",
+        "/api/v1/kg/entities/{entity_id}",
+        "/api/v1/kg/entities/{entity_id}/related",
+        "/api/v1/kg/search",
+        "/api/v1/approvals/pending",
+        "/api/v1/approvals/connector/{connector}/mode",
+        "/api/v1/approvals/elevate",
+        "/api/v1/audit",
+        "/api/v1/audit/{reverse_token}/reverse",
+        "/api/v1/captures",
+        "/api/v1/captures/text",
+        "/api/v1/captures/upload",
+        "/api/v1/captures/{capture_id}",
+        "/api/v1/captures/{capture_id}/attachments",
+        "/api/v1/captures/{capture_id}/attachments/{attachment_id}",
+        "/api/v1/captures/{capture_id}/transcribe",
+        "/api/v1/captures/{capture_id}/index",
+        "/api/v1/notifications/vapid-public-key",
+        "/api/v1/notifications/subscribe",
+        "/api/v1/notifications/subscriptions",
+        "/api/v1/notifications/subscriptions/{subscription_id}",
+        "/api/v1/notifications/test",
+        "/api/v1/events",
+        # Shipped surfaces the plan asks the snapshot to cover (§Pass 0.3.19)
+        "/api/v1/me/permissions",
+        "/api/v1/me/tools",
+        "/api/v1/me/llm-providers",
+        "/api/v1/me/notifications",
+        "/api/v1/me/connector-credentials",
+        "/api/v1/me/mcp-tokens",
+        "/api/v1/me/password",
+        "/api/v1/admin/users",
+        "/api/v1/admin/users/{user_id}/password",
+        "/api/v1/admin/permissions",
+        "/api/v1/admin/diagnostics",
+        # Speech-to-text foundation (STT-1)
+        "/api/v1/voice/transcribe",
+    }
+)
 
 
 @pytest.fixture(scope="module")
@@ -82,6 +84,7 @@ def live_spec() -> dict:
     """Build the OpenAPI spec from the live FastAPI app."""
     from scripts.dump_openapi import _build_openapi
     from scripts.dump_openapi import _normalise
+
     return _normalise(_build_openapi())
 
 
@@ -126,6 +129,6 @@ def test_v1_audit_schema_named_AuditEntry(live_spec):
     resolve ``AuditListResponse.audit[].$ref``.
     """
     schemas = (live_spec.get("components") or {}).get("schemas") or {}
-    assert (
-        "AuditEntry" in schemas or "AuditEntryDTO" in schemas
-    ), "Expected AuditEntry / AuditEntryDTO schema component in OpenAPI."
+    assert "AuditEntry" in schemas or "AuditEntryDTO" in schemas, (
+        "Expected AuditEntry / AuditEntryDTO schema component in OpenAPI."
+    )

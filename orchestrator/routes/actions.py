@@ -69,9 +69,7 @@ def get_audit(
     """Return recent audit log entries scoped to the calling user."""
     from actions.audit import get_audit as _get
 
-    rows = _get(
-        connector=connector, action_type=action_type, limit=limit, user_id=user.user_id
-    )
+    rows = _get(connector=connector, action_type=action_type, limit=limit, user_id=user.user_id)
     result = []
     for r in rows:
         result.append(

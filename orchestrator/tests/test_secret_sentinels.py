@@ -32,6 +32,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+
 def _find_repo_root() -> Path:
     """Locate the repo root by walking up looking for ``docker-compose.yml``.
 
@@ -42,9 +43,7 @@ def _find_repo_root() -> Path:
     works both inside the container and when run from the host.
     """
     for candidate in (*Path(__file__).resolve().parents, Path("/project")):
-        if (candidate / "docker-compose.yml").is_file() and (
-            candidate / ".env.example"
-        ).is_file():
+        if (candidate / "docker-compose.yml").is_file() and (candidate / ".env.example").is_file():
             return candidate
     raise RuntimeError(
         "Unable to locate Lumogis repo root (looked for docker-compose.yml + "
@@ -133,11 +132,11 @@ def test_entrypoint_rotates_change_me_in_production_only():
     string as its real signing secret.
     """
     text = _entrypoint()
-    assert 'JWT_SECRET=change-me-in-production' in text, (
+    assert "JWT_SECRET=change-me-in-production" in text, (
         "Entrypoint must look for 'JWT_SECRET=change-me-in-production' — "
         "match the .env.example default exactly or auto-rotation breaks."
     )
-    assert 'JWT_REFRESH_SECRET=change-me-in-production' in text, (
+    assert "JWT_REFRESH_SECRET=change-me-in-production" in text, (
         "Entrypoint must look for 'JWT_REFRESH_SECRET=change-me-in-production' — "
         "match the .env.example default exactly or auto-rotation breaks."
     )

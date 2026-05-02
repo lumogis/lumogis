@@ -333,12 +333,8 @@ def test_oop_dispatch_uses_bearer_for_each_capability_service(
     try:
         monkeypatch.setattr("config.get_capability_registry", lambda: reg)
         monkeypatch.setattr("permissions.check_permission", lambda *a, **k: True)
-        assert "ok" in services_tools.run_tool(
-            "alpha.echo", {"msg": "a"}, user_id="user-multi"
-        )
-        assert "ok" in services_tools.run_tool(
-            "zulu.echo", {"msg": "z"}, user_id="user-multi"
-        )
+        assert "ok" in services_tools.run_tool("alpha.echo", {"msg": "a"}, user_id="user-multi")
+        assert "ok" in services_tools.run_tool("zulu.echo", {"msg": "z"}, user_id="user-multi")
     finally:
         finish_llm_tools_request(tok)
 
@@ -395,9 +391,7 @@ def test_missing_bearer_no_oop_entry_no_http(monkeypatch: pytest.MonkeyPatch) ->
 
 
 def test_permission_denied_no_http(monkeypatch: pytest.MonkeyPatch) -> None:
-    cap = _patch_httpx_client(
-        monkeypatch, lambda _r: httpx.Response(200, text="should-not-reach")
-    )
+    cap = _patch_httpx_client(monkeypatch, lambda _r: httpx.Response(200, text="should-not-reach"))
     monkeypatch.setenv("LUMOGIS_TOOL_CATALOG_ENABLED", "true")
     monkeypatch.setenv(BEARER_ENV_KEY, "tok")
     reg = _FakeRegistry(_registered_service(healthy=True))

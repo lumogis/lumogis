@@ -47,9 +47,7 @@ class _NotifyStore:
         p = params or ()
 
         # Idempotent subscribe / key refresh (+ optional prefs via COALESCE).
-        if q.startswith(
-            "update webpush_subscriptions set last_seen_at"
-        ) and "coalesce" in q:
+        if q.startswith("update webpush_subscriptions set last_seen_at") and "coalesce" in q:
             p256dh, auth, ua, ns, nss = p[0], p[1], p[2], p[3], p[4]
             sid = int(p[5])
             now = self._now()
@@ -65,17 +63,13 @@ class _NotifyStore:
                     r["last_seen_at"] = now
             return
 
-        if q.startswith(
-            "update webpush_subscriptions set last_error = null where id"
-        ):
+        if q.startswith("update webpush_subscriptions set last_error = null where id"):
             sid = int(p[0])
             for row in self.rows:
                 if row["id"] == sid:
                     row["last_error"] = None
             return
-        if q.startswith(
-            "update webpush_subscriptions set last_error = %s where id = %s"
-        ):
+        if q.startswith("update webpush_subscriptions set last_error = %s where id = %s"):
             err, sid = p[0], int(p[1])
             for row in self.rows:
                 if row["id"] == sid:
@@ -97,10 +91,7 @@ class _NotifyStore:
         ql = " ".join(q_lower.split())
         p = params or ()
 
-        if (
-            ql.startswith("update webpush_subscriptions set")
-            and "returning" in ql
-        ):
+        if ql.startswith("update webpush_subscriptions set") and "returning" in ql:
             uid = str(p[-1])
             sid = int(p[-2])
             vals = list(p[:-2])
@@ -179,37 +170,37 @@ class _NotifyStore:
             for r in sorted(self.rows, key=lambda x: int(x["id"])):
                 if str(r["user_id"]) != uid:
                     continue
-                out.append({
-                    "id": r["id"],
-                    "endpoint": r["endpoint"],
-                    "created_at": r["created_at"],
-                    "last_seen_at": r["last_seen_at"],
-                    "last_error": r["last_error"],
-                    "user_agent": r["user_agent"],
-                    "notify_on_signals": r["notify_on_signals"],
-                    "notify_on_shared_scope": r["notify_on_shared_scope"],
-                })
+                out.append(
+                    {
+                        "id": r["id"],
+                        "endpoint": r["endpoint"],
+                        "created_at": r["created_at"],
+                        "last_seen_at": r["last_seen_at"],
+                        "last_error": r["last_error"],
+                        "user_agent": r["user_agent"],
+                        "notify_on_signals": r["notify_on_signals"],
+                        "notify_on_shared_scope": r["notify_on_shared_scope"],
+                    }
+                )
             return out
 
         # Sender/service list (Phase 4A) — excludes created_at list query.
-        if (
-            "p256dh" in ql
-            and "from webpush_subscriptions" in ql
-            and "created_at" not in ql
-        ):
+        if "p256dh" in ql and "from webpush_subscriptions" in ql and "created_at" not in ql:
             uid = str(p[0])
             out = []
             for r in self.rows:
                 if str(r["user_id"]) != uid:
                     continue
-                out.append({
-                    "id": r["id"],
-                    "endpoint": r["endpoint"],
-                    "p256dh": r["p256dh"],
-                    "auth": r["auth"],
-                    "notify_on_signals": r["notify_on_signals"],
-                    "notify_on_shared_scope": r["notify_on_shared_scope"],
-                })
+                out.append(
+                    {
+                        "id": r["id"],
+                        "endpoint": r["endpoint"],
+                        "p256dh": r["p256dh"],
+                        "auth": r["auth"],
+                        "notify_on_signals": r["notify_on_signals"],
+                        "notify_on_shared_scope": r["notify_on_shared_scope"],
+                    }
+                )
             return out
 
         return []
@@ -229,6 +220,7 @@ def _notifications_routes_default_single_user_auth(
 @pytest.fixture
 def notify_store(monkeypatch):
     import config as _config
+
     s = _NotifyStore()
     _config._instances["metadata_store"] = s
     yield s
@@ -245,6 +237,7 @@ def webpush_env(monkeypatch):
 @pytest.fixture
 def client():
     import main
+
     with TestClient(main.app) as c:
         yield c
 
@@ -305,9 +298,7 @@ def test_test_endpoint_404_when_dev_echo_disabled(client, webpush_env, notify_st
     assert resp.status_code == 404
 
 
-def test_test_endpoint_returns_count_when_enabled(
-    client, webpush_env, notify_store, monkeypatch
-):
+def test_test_endpoint_returns_count_when_enabled(client, webpush_env, notify_store, monkeypatch):
     monkeypatch.setenv("WEBPUSH_DEV_ECHO", "true")
     import services.webpush as wp
 
@@ -350,14 +341,11 @@ def test_list_subscriptions_redacted_no_secrets(
     monkeypatch.setenv("AUTH_ENABLED", "true")
     hdr = _auth_header(monkeypatch, "redact-u1")
 
-    sid = (
-        client.post(
-            "/api/v1/notifications/subscribe",
-            json=VALID_SUB,
-            headers=hdr,
-        )
-        .json()["id"]
-    )
+    sid = client.post(
+        "/api/v1/notifications/subscribe",
+        json=VALID_SUB,
+        headers=hdr,
+    ).json()["id"]
 
     r = client.get("/api/v1/notifications/subscriptions", headers=hdr)
     assert r.status_code == 200
@@ -431,18 +419,15 @@ def test_patch_subscription_partial_preserves_pref(
     monkeypatch,
 ) -> None:
     hdr = _auth_header(monkeypatch, "wp-partial-u")
-    sid = (
-        client.post(
-            "/api/v1/notifications/subscribe",
-            json={
-                **VALID_SUB,
-                "notify_on_signals": True,
-                "notify_on_shared_scope": True,
-            },
-            headers=hdr,
-        )
-        .json()["id"]
-    )
+    sid = client.post(
+        "/api/v1/notifications/subscribe",
+        json={
+            **VALID_SUB,
+            "notify_on_signals": True,
+            "notify_on_shared_scope": True,
+        },
+        headers=hdr,
+    ).json()["id"]
 
     r = client.patch(
         f"/api/v1/notifications/subscriptions/{sid}",
@@ -482,14 +467,11 @@ def test_patch_unknown_field_returns_422(
     monkeypatch,
 ) -> None:
     hdr = _auth_header(monkeypatch, "wp-extra-field")
-    sid = (
-        client.post(
-            "/api/v1/notifications/subscribe",
-            json=VALID_SUB,
-            headers=hdr,
-        )
-        .json()["id"]
-    )
+    sid = client.post(
+        "/api/v1/notifications/subscribe",
+        json=VALID_SUB,
+        headers=hdr,
+    ).json()["id"]
     bad = client.patch(
         f"/api/v1/notifications/subscriptions/{sid}",
         headers=hdr,
@@ -505,14 +487,11 @@ def test_patch_empty_body_returns_422(
     monkeypatch,
 ) -> None:
     hdr = _auth_header(monkeypatch, "wp-422-u")
-    sid = (
-        client.post(
-            "/api/v1/notifications/subscribe",
-            json=VALID_SUB,
-            headers=hdr,
-        )
-        .json()["id"]
-    )
+    sid = client.post(
+        "/api/v1/notifications/subscribe",
+        json=VALID_SUB,
+        headers=hdr,
+    ).json()["id"]
     empty = client.patch(
         f"/api/v1/notifications/subscriptions/{sid}",
         headers=hdr,

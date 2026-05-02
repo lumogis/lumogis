@@ -89,6 +89,7 @@ def test_notify_omits_auth_header_when_no_token(patched_loader, mock_httpx):
 def test_notify_returns_false_on_connector_not_configured(patched_loader, mock_httpx):
     def _raise(uid):
         raise ccs.ConnectorNotConfigured("no row")
+
     patched_loader(_raise)
     from adapters.ntfy_notifier import NtfyNotifier
 
@@ -100,6 +101,7 @@ def test_notify_returns_false_on_connector_not_configured(patched_loader, mock_h
 def test_notify_returns_false_on_credential_unavailable(patched_loader, mock_httpx):
     def _raise(uid):
         raise ccs.CredentialUnavailable("bad ciphertext")
+
     patched_loader(_raise)
     from adapters.ntfy_notifier import NtfyNotifier
 
@@ -115,6 +117,7 @@ def test_notify_returns_false_on_non_2xx(patched_loader, monkeypatch):
         resp = MagicMock()
         resp.status_code = 500
         return resp
+
     monkeypatch.setattr("adapters.ntfy_notifier.httpx.post", _fake_post)
 
     from adapters.ntfy_notifier import NtfyNotifier
@@ -127,6 +130,7 @@ def test_notify_returns_false_on_network_error(patched_loader, monkeypatch):
 
     def _raise(*a, **kw):
         raise RuntimeError("connection refused")
+
     monkeypatch.setattr("adapters.ntfy_notifier.httpx.post", _raise)
 
     from adapters.ntfy_notifier import NtfyNotifier

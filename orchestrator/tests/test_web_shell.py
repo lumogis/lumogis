@@ -25,13 +25,12 @@ those criteria from a real browser:
 from __future__ import annotations
 
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime
+from datetime import timezone
 
 import pytest
 from fastapi.testclient import TestClient
-
 from tests.test_auth_phase1 import _csrf_origin_headers
-
 
 # ---------------------------------------------------------------------------
 # Shared fixtures (mirror the patterns in test_auth_phase1.py so this slice
@@ -125,6 +124,7 @@ def auth_env(monkeypatch):
     monkeypatch.setenv("LUMOGIS_REFRESH_COOKIE_SECURE", "false")
     yield
     from routes.auth import _reset_rate_limit_for_tests
+
     _reset_rate_limit_for_tests()
 
 
@@ -136,8 +136,9 @@ def dev_env(monkeypatch):
 
 @contextmanager
 def _client_with_admin(users_store):
-    import services.users as users_svc
     import main
+    import services.users as users_svc
+
     if users_svc.get_user_by_email("alice@home.lan") is None:
         users_svc.create_user("alice@home.lan", "verylongpassword12", "admin")
     with TestClient(main.app) as client:
@@ -167,6 +168,7 @@ def test_web_root_redirects_to_trailing_slash(dev_env):
     ``routes/web.py``.
     """
     import main
+
     with TestClient(main.app) as client:
         resp = client.get("/web", follow_redirects=False)
     assert resp.status_code == 307
@@ -176,13 +178,14 @@ def test_web_root_redirects_to_trailing_slash(dev_env):
 def test_web_index_served_in_dev_mode(dev_env):
     """In ``AUTH_ENABLED=false`` the SPA is reachable without any token."""
     import main
+
     with TestClient(main.app) as client:
         resp = client.get("/web/")
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/html")
     body = resp.text
     assert "Lumogis Web" in body
-    assert "<form id=\"login-form\"" in body
+    assert '<form id="login-form"' in body
 
 
 def test_web_index_served_in_family_lan_mode_without_bearer(auth_env, users_store):
@@ -193,6 +196,7 @@ def test_web_index_served_in_family_lan_mode_without_bearer(auth_env, users_stor
     page. If this test ever turns 401, the bypass list regressed.
     """
     import main
+
     with TestClient(main.app) as client:
         resp = client.get("/web/")
     assert resp.status_code == 200
@@ -202,6 +206,7 @@ def test_web_index_served_in_family_lan_mode_without_bearer(auth_env, users_stor
 def test_web_index_contains_all_four_success_criterion_wirings(dev_env):
     """The static HTML must wire every endpoint the four success criteria need."""
     import main
+
     with TestClient(main.app) as client:
         body = client.get("/web/").text
 
@@ -214,12 +219,13 @@ def test_web_index_contains_all_four_success_criterion_wirings(dev_env):
     # 4. logout works cleanly → POST /api/v1/auth/logout
     assert "/api/v1/auth/logout" in body
     # And there must be a logout button to drive (4) from the UI.
-    assert "id=\"logout-btn\"" in body
+    assert 'id="logout-btn"' in body
 
 
 def test_auth_bypass_includes_web_prefix():
     """Direct unit assertion on the bypass tuple — guards against silent removal."""
     import auth
+
     assert "/web" in auth._AUTH_BYPASS_PREFIXES
 
 
@@ -266,6 +272,7 @@ def test_webhook_lookalike_path_returns_401_in_family_lan_mode(auth_env, users_s
     checking the bearer.
     """
     import main
+
     with TestClient(main.app) as client:
         # No such route exists, so the truthful proof is: the middleware
         # rejects with 401 BEFORE the router gets a chance to 404.
@@ -338,6 +345,7 @@ def test_full_signin_flow_login_me_signals_logout(users_store, auth_env):
 
         # Confirm the refresh jti is currently set server-side (login wrote it).
         import services.users as users_svc
+
         user_id = body["user"]["id"]
         assert users_svc.get_refresh_jti(user_id) is not None
 
@@ -369,6 +377,7 @@ def test_full_signin_flow_in_dev_mode_skips_login(dev_env):
     — proving the dev-mode UX requires no special path.
     """
     import main
+
     with TestClient(main.app) as client:
         me = client.get("/api/v1/auth/me")
         assert me.status_code == 200

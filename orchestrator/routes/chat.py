@@ -61,9 +61,7 @@ def list_models(request: Request):
         data = [
             {"id": name, "object": "model", "owned_by": "lumogis"}
             for name in all_models
-            if config.is_model_enabled(
-                name, user_id=user_id, _credentials_present=present
-            )
+            if config.is_model_enabled(name, user_id=user_id, _credentials_present=present)
         ]
     else:
         data = [
@@ -267,7 +265,9 @@ def _inject_context(question: str, history: list[dict], model: str, user_id: str
         from services.graph_webhook_dispatcher import get_context_sync
 
         graph_fragments = get_context_sync(
-            query=question, user_id=user_id, max_fragments=3,
+            query=question,
+            user_id=user_id,
+            max_fragments=3,
         )
         fragments.extend(graph_fragments)
 
@@ -330,7 +330,7 @@ def chat_completions(body: ChatCompletionsRequest, request: Request) -> Any:
         raise HTTPException(
             status_code=404,
             detail=f"Model '{body.model}' is not available. "
-                   "Enable it in Settings and provide an API key, or choose another model.",
+            "Enable it in Settings and provide an API key, or choose another model.",
         )
 
     last = body.messages[-1]
@@ -361,7 +361,8 @@ def chat_completions(body: ChatCompletionsRequest, request: Request) -> Any:
         except Exception:
             _log.exception(
                 "chat.stream pre-flight failed for model=%s user=%s",
-                body.model, user_id,
+                body.model,
+                user_id,
             )
             return _internal_credential_error_response(body.model)
 
@@ -396,7 +397,8 @@ def chat_completions(body: ChatCompletionsRequest, request: Request) -> Any:
     except Exception:
         _log.exception(
             "chat.completions failed for model=%s user=%s",
-            body.model, user_id,
+            body.model,
+            user_id,
         )
         return _internal_credential_error_response(body.model)
 

@@ -56,7 +56,7 @@ def _parse_url(url: str) -> tuple[str, int]:
     """Parse redis://host:port into (host, port). Defaults: localhost:6379."""
     url = url.strip()
     if url.startswith("redis://"):
-        url = url[len("redis://"):]
+        url = url[len("redis://") :]
     if ":" in url:
         host, port_str = url.rsplit(":", 1)
         return host, int(port_str)
@@ -98,9 +98,7 @@ class FalkorDBStore:
         lumogis_id = properties["lumogis_id"]
 
         set_pairs = ", ".join(
-            f"n.{k} = ${k}"
-            for k in properties
-            if k not in ("lumogis_id", "user_id")
+            f"n.{k} = ${k}" for k in properties if k not in ("lumogis_id", "user_id")
         )
         set_clause = f"SET {set_pairs}" if set_pairs else ""
 
@@ -112,9 +110,7 @@ class FalkorDBStore:
         result = self._graph().query(cypher, properties)
         rows = result.result_set
         if not rows:
-            raise RuntimeError(
-                f"create_node: MERGE returned no rows for lumogis_id={lumogis_id}"
-            )
+            raise RuntimeError(f"create_node: MERGE returned no rows for lumogis_id={lumogis_id}")
         return str(rows[0][0])
 
     def create_edge(

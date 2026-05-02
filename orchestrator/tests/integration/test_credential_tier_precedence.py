@@ -37,6 +37,7 @@ exit, so we re-install the fake store + autouse mocks via
 :func:`_reinstall_singletons` (mirrors the precedent in
 ``tests/integration/test_testconnector_roundtrip.py``).
 """
+
 from __future__ import annotations
 
 import os
@@ -46,13 +47,9 @@ from contextlib import contextmanager
 import jwt
 import pytest
 from fastapi.testclient import TestClient
-
-from tests.test_credential_tiers_routes import (  # noqa: E402
-    _RoutesFakeStore,
-    _TEST_FERNET_KEY,
-    _TIER_PREFIX,
-)
-
+from tests.test_credential_tiers_routes import _TEST_FERNET_KEY  # noqa: E402
+from tests.test_credential_tiers_routes import _TIER_PREFIX  # noqa: E402
+from tests.test_credential_tiers_routes import _RoutesFakeStore  # noqa: E402
 
 _TEST_CONNECTOR = "testconnector"
 _CALDAV_CONNECTOR = "caldav"
@@ -116,6 +113,7 @@ def auth_env(monkeypatch):
     monkeypatch.delenv("LUMOGIS_CREDENTIAL_KEYS", raising=False)
     yield
     from routes.auth import _reset_rate_limit_for_tests
+
     _reset_rate_limit_for_tests()
 
 
@@ -135,6 +133,7 @@ def _mint_jwt(user_id: str, role: str) -> str:
 @contextmanager
 def _client():
     import main
+
     with TestClient(main.app) as client:
         yield client
 
@@ -155,7 +154,8 @@ def _seed_user_account(store, *, email: str, role: str) -> str:
 
 
 def test_resolver_walks_user_household_system_then_unconfigured(
-    store, auth_env,
+    store,
+    auth_env,
 ):
     """The headline integration test for this chunk.
 

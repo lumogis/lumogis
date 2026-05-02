@@ -10,7 +10,8 @@ from __future__ import annotations
 import re
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime
+from datetime import timezone
 from typing import Any
 
 
@@ -389,14 +390,19 @@ class CapturesMemoryMetadataStore:
                     return {"x": 1}
             return None
 
-        raise NotImplementedError(f"CapturesMemoryMetadataStore.fetch_one not implemented: {q[:120]}")
+        raise NotImplementedError(
+            f"CapturesMemoryMetadataStore.fetch_one not implemented: {q[:120]}"
+        )
 
     def fetch_all(self, query: str, params: tuple | None = None) -> list[dict]:
         q = " ".join(query.split())
         p = params or ()
         qn = re.sub(r"%s::uuid", "%s", q, flags=re.IGNORECASE)
 
-        if "SELECT storage_key FROM capture_attachments WHERE capture_id = %s AND user_id = %s" in qn:
+        if (
+            "SELECT storage_key FROM capture_attachments WHERE capture_id = %s AND user_id = %s"
+            in qn
+        ):
             cap_id, user_id = str(p[0]), str(p[1])
             return [
                 {"storage_key": a["storage_key"]}
@@ -447,7 +453,9 @@ class CapturesMemoryMetadataStore:
                 out.append(d)
             return out
 
-        raise NotImplementedError(f"CapturesMemoryMetadataStore.fetch_all not implemented: {q[:120]}")
+        raise NotImplementedError(
+            f"CapturesMemoryMetadataStore.fetch_all not implemented: {q[:120]}"
+        )
 
     def close(self) -> None:
         pass

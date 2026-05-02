@@ -14,18 +14,20 @@ Coverage:
 """
 
 import os
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import pytest
+from models.entities import ExtractedEntity
+from services.entity_quality import _compute_quality
+from services.entity_quality import score_and_filter_entities
 
 import config as _config
-from models.entities import ExtractedEntity
-from services.entity_quality import score_and_filter_entities, _compute_quality
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _entity(name: str, entity_type: str = "PERSON") -> ExtractedEntity:
     return ExtractedEntity(name=name, entity_type=entity_type)
@@ -45,6 +47,7 @@ def _classify(name: str, lower: float = 0.35, upper: float = 0.60) -> str:
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def _clear_stop_cache():
     """Reset the stop entity cache before each test."""
@@ -60,12 +63,7 @@ def fixture_stop_list(tmp_path):
     """Write a small stop list file and point config at it."""
     stop_file = tmp_path / "stop_entities.txt"
     stop_file.write_text(
-        "# test stop list\n"
-        "the meeting\n"
-        "the client\n"
-        "next steps\n"
-        "this week\n"
-        "team\n",
+        "# test stop list\nthe meeting\nthe client\nnext steps\nthis week\nteam\n",
         encoding="utf-8",
     )
     with patch.dict(os.environ, {"STOP_ENTITIES_PATH": str(stop_file)}):
@@ -77,6 +75,7 @@ def fixture_stop_list(tmp_path):
 # ---------------------------------------------------------------------------
 # 1. Calibration examples
 # ---------------------------------------------------------------------------
+
 
 class TestCalibrationExamples:
     """Assert expected tier for all ten reference names from the plan."""
@@ -126,6 +125,7 @@ class TestCalibrationExamples:
 # 2. Stop list match is case-insensitive
 # ---------------------------------------------------------------------------
 
+
 class TestStopListCaseInsensitive:
     def test_upper_case_stop_phrase_matched(self, fixture_stop_list):
         # "THE MEETING" should match "the meeting" in the stop list
@@ -140,6 +140,7 @@ class TestStopListCaseInsensitive:
 # ---------------------------------------------------------------------------
 # 3. Stop list reload on mtime change
 # ---------------------------------------------------------------------------
+
 
 class TestStopListReload:
     def test_reload_triggered_by_mtime_change(self, tmp_path):
@@ -190,6 +191,7 @@ class TestStopListReload:
 # 4. ENTITY_QUALITY_FAIL_OPEN=true: exception → original list unchanged
 # ---------------------------------------------------------------------------
 
+
 class TestFailOpen:
     def test_exception_returns_original_list(self, monkeypatch, fixture_stop_list):
         monkeypatch.setenv("ENTITY_QUALITY_FAIL_OPEN", "true")
@@ -225,6 +227,7 @@ class TestFailOpen:
 # 5. ENTITY_QUALITY_FAIL_OPEN=false: exception → empty list
 # ---------------------------------------------------------------------------
 
+
 class TestFailClosed:
     def test_exception_returns_empty_list(self, monkeypatch, fixture_stop_list):
         monkeypatch.setenv("ENTITY_QUALITY_FAIL_OPEN", "false")
@@ -243,6 +246,7 @@ class TestFailClosed:
 # ---------------------------------------------------------------------------
 # 6. Staged entity promoted when mention_count reaches threshold
 # ---------------------------------------------------------------------------
+
 
 class TestStagedEntityPromotion:
     """Tests for the promotion logic in services/entities._upsert_entity.
@@ -263,6 +267,7 @@ class TestStagedEntityPromotion:
 
     def _call_upsert(self, entity: ExtractedEntity, existing_row: dict):
         from services.entities import _upsert_entity
+
         ms = self._make_ms(existing_row)
         embedder, vs = self._make_embedder_vs()
         _config._instances["metadata_store"] = ms
@@ -352,6 +357,7 @@ class TestStagedEntityPromotion:
 # ---------------------------------------------------------------------------
 # Additional scoring unit tests
 # ---------------------------------------------------------------------------
+
 
 class TestScoringSignals:
     def test_normal_named_entity_scores_above_upper(self, fixture_stop_list):

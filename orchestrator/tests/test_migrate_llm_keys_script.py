@@ -28,12 +28,9 @@ prove the wrapper:
 from __future__ import annotations
 
 import json
-import re
-from typing import Any
 
 import pytest
 from cryptography.fernet import Fernet
-
 from tests.test_connector_credentials_service import _FakeStore
 
 
@@ -92,14 +89,16 @@ def store(monkeypatch):
 
 def _seed_all_six(store):
     """Populate every legacy plaintext row the script knows how to read."""
-    store.app_settings.update({
-        "ANTHROPIC_API_KEY": "sk-ant-fake",
-        "OPENAI_API_KEY": "sk-openai-fake",
-        "XAI_API_KEY": "xai-fake",
-        "PERPLEXITY_API_KEY": "pplx-fake",
-        "GEMINI_API_KEY": "gemini-fake",
-        "MISTRAL_API_KEY": "mistral-fake",
-    })
+    store.app_settings.update(
+        {
+            "ANTHROPIC_API_KEY": "sk-ant-fake",
+            "OPENAI_API_KEY": "sk-openai-fake",
+            "XAI_API_KEY": "xai-fake",
+            "PERPLEXITY_API_KEY": "pplx-fake",
+            "GEMINI_API_KEY": "gemini-fake",
+            "MISTRAL_API_KEY": "mistral-fake",
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -233,12 +232,11 @@ def test_single_user_migration_writes_rows_and_audit(store, capsys):
     # One encrypted row per llm_<vendor> connector for alice.
     alice_rows = [k for k in store.rows if k[0] == "alice"]
     assert len(alice_rows) == 6
-    for (uid, conn) in alice_rows:
+    for uid, conn in alice_rows:
         assert conn.startswith("llm_")
 
     # Audit emission: one __connector_credential__.put per write.
-    put_audits = [a for a in store.audit
-                  if a["action_name"] == "__connector_credential__.put"]
+    put_audits = [a for a in store.audit if a["action_name"] == "__connector_credential__.put"]
     assert len(put_audits) == 6
     for a in put_audits:
         assert a["user_id"] == "alice"
@@ -272,8 +270,12 @@ def test_delete_legacy_removes_app_settings_row_after_success(store, capsys):
     assert summary["deleted_legacy"] == 6
     # Plaintext app_settings rows are gone.
     for env_key in (
-        "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "XAI_API_KEY",
-        "PERPLEXITY_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "XAI_API_KEY",
+        "PERPLEXITY_API_KEY",
+        "GEMINI_API_KEY",
+        "MISTRAL_API_KEY",
     ):
         assert env_key not in store.app_settings, env_key
 
@@ -283,8 +285,12 @@ def test_plaintext_never_logged_anywhere(store, capsys):
     from scripts.migrate_llm_keys_to_per_user import main
 
     secret_substrings = [
-        "sk-ant-fake", "sk-openai-fake", "xai-fake",
-        "pplx-fake", "gemini-fake", "mistral-fake",
+        "sk-ant-fake",
+        "sk-openai-fake",
+        "xai-fake",
+        "pplx-fake",
+        "gemini-fake",
+        "mistral-fake",
     ]
     _seed_all_six(store)
     rc = main(["--user-id", "alice"])
@@ -292,9 +298,7 @@ def test_plaintext_never_logged_anywhere(store, capsys):
     captured = capsys.readouterr()
     blob = captured.out + captured.err
     for secret in secret_substrings:
-        assert secret not in blob, (
-            f"secret substring {secret!r} leaked into script output"
-        )
+        assert secret not in blob, f"secret substring {secret!r} leaked into script output"
 
     # And every per-pair stderr line should be a JSON object with the
     # documented schema (no plaintext field).
@@ -303,7 +307,11 @@ def test_plaintext_never_logged_anywhere(store, capsys):
             continue  # skip the "Note: restart..." trailing line
         rec = json.loads(line)
         assert set(rec.keys()) == {
-            "user_id", "connector", "outcome", "error_class", "key_present"
+            "user_id",
+            "connector",
+            "outcome",
+            "error_class",
+            "key_present",
         }, rec
         assert isinstance(rec["key_present"], bool)
 
@@ -333,14 +341,19 @@ def test_partial_failure_does_not_stop_subsequent_pairs(store, capsys, monkeypat
     # Every connector was attempted (no early bail-out).
     attempted_connectors = {c for (_uid, c) in seen}
     assert attempted_connectors == {
-        "llm_anthropic", "llm_openai", "llm_xai",
-        "llm_perplexity", "llm_gemini", "llm_mistral",
+        "llm_anthropic",
+        "llm_openai",
+        "llm_xai",
+        "llm_perplexity",
+        "llm_gemini",
+        "llm_mistral",
     }
 
 
 def test_credential_key_unset_exits_two_before_any_write(store, monkeypatch, capsys):
     """``LUMOGIS_CREDENTIAL_KEY[S]`` unset → exit 2 with remediation hint."""
     from scripts.migrate_llm_keys_to_per_user import main
+
     from services import connector_credentials as svc
 
     monkeypatch.delenv("LUMOGIS_CREDENTIAL_KEY", raising=False)

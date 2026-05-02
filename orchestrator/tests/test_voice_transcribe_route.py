@@ -271,9 +271,7 @@ def test_whisper_sidecar_200_via_injected_adapter(
     assert js["text"] == "svc"
 
 
-def test_whisper_diag_backend(
-    monkeypatch: pytest.MonkeyPatch, orch_client: TestClient
-) -> None:
+def test_whisper_diag_backend(monkeypatch: pytest.MonkeyPatch, orch_client: TestClient) -> None:
     _pop_stt_adapter()
     monkeypatch.setenv("AUTH_SECRET", "test-whisper-admin")
     monkeypatch.setenv("AUTH_ENABLED", "true")

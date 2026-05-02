@@ -9,11 +9,13 @@ import os
 import re
 import uuid
 import zipfile
-from datetime import timezone
 from pathlib import Path
 
-from auth import UserContext, auth_enabled, get_user
-from authz import require_admin, require_user
+from auth import UserContext
+from auth import auth_enabled
+from auth import get_user
+from authz import require_admin
+from authz import require_user
 from csrf import require_same_origin
 from fastapi import APIRouter
 from fastapi import BackgroundTasks
@@ -25,17 +27,16 @@ from fastapi import Response
 from fastapi import status
 from fastapi.responses import FileResponse
 from fastapi.responses import JSONResponse
-from fastapi.responses import StreamingResponse
 from permissions import get_all_permissions
 from permissions import set_connector_mode
 from pydantic import BaseModel
-
-import config
 from settings_store import get_setting
 from settings_store import put_settings
 
+import config
+
 _DASHBOARD_HTML = Path(__file__).parent.parent / "dashboard" / "index.html"
-_GRAPH_MGM_HTML  = Path(__file__).parent.parent / "static" / "graph_mgm.html"
+_GRAPH_MGM_HTML = Path(__file__).parent.parent / "static" / "graph_mgm.html"
 _PROJECT_ENV_FILE = Path("/project/.env")
 
 router = APIRouter()
@@ -54,7 +55,7 @@ def _current_restart_secret() -> str:
             for line in _PROJECT_ENV_FILE.read_text().splitlines():
                 stripped = line.strip()
                 if stripped.startswith("RESTART_SECRET="):
-                    return stripped[len("RESTART_SECRET="):].strip()
+                    return stripped[len("RESTART_SECRET=") :].strip()
         except Exception:
             pass
     return os.environ.get("RESTART_SECRET", "")
@@ -215,19 +216,19 @@ _SETTING_META: dict[str, dict] = {
 
 # Range validation rules per key: (min_inclusive, max_inclusive) or None for no range check.
 _SETTING_RANGES: dict[str, tuple] = {
-    "entity_quality_lower":          (0.0, 1.0),
-    "entity_quality_upper":          (0.0, 1.0),
-    "graph_edge_quality_threshold":  (0.0, 1.0),
+    "entity_quality_lower": (0.0, 1.0),
+    "entity_quality_upper": (0.0, 1.0),
+    "graph_edge_quality_threshold": (0.0, 1.0),
     "entity_promote_on_mention_count": (1, None),
-    "graph_cooccurrence_threshold":  (1, None),
-    "graph_min_mention_count":       (1, None),
-    "graph_max_cooccurrence_pairs":  (1, None),
-    "graph_viz_max_nodes":           (1, None),
-    "graph_viz_max_edges":           (1, None),
-    "decay_half_life_relates_to":    (1, None),
-    "decay_half_life_mentions":      (1, None),
-    "decay_half_life_discussed_in":  (1, None),
-    "dedup_cron_hour_utc":           (0, 23),
+    "graph_cooccurrence_threshold": (1, None),
+    "graph_min_mention_count": (1, None),
+    "graph_max_cooccurrence_pairs": (1, None),
+    "graph_viz_max_nodes": (1, None),
+    "graph_viz_max_edges": (1, None),
+    "decay_half_life_relates_to": (1, None),
+    "decay_half_life_mentions": (1, None),
+    "decay_half_life_discussed_in": (1, None),
+    "dedup_cron_hour_utc": (0, 23),
 }
 
 _KNOWN_SETTING_KEYS = frozenset(_SETTING_META.keys())
@@ -325,14 +326,16 @@ def kg_settings_get():
             typed_value = default_raw
             source = "default"
 
-        settings_out.append({
-            "key":         key,
-            "value":       typed_value,
-            "type":        dtype,
-            "default":     default_raw,
-            "source":      source,
-            "description": meta["description"],
-        })
+        settings_out.append(
+            {
+                "key": key,
+                "value": typed_value,
+                "type": dtype,
+                "default": default_raw,
+                "source": source,
+                "description": meta["description"],
+            }
+        )
 
     return {"settings": settings_out}
 
@@ -438,9 +441,7 @@ def kg_job_status():
     # ── reconciliation ──────────────────────────────────────────────────────
     last_reconciliation: str | None = None
     try:
-        row = meta.fetch_one(
-            "SELECT value FROM kg_settings WHERE key = '_job_last_reconciliation'"
-        )
+        row = meta.fetch_one("SELECT value FROM kg_settings WHERE key = '_job_last_reconciliation'")
         if row:
             last_reconciliation = row["value"]
     except Exception:
@@ -449,9 +450,7 @@ def kg_job_status():
     # ── weekly quality job ──────────────────────────────────────────────────
     last_weekly: str | None = None
     try:
-        row = meta.fetch_one(
-            "SELECT value FROM kg_settings WHERE key = '_job_last_weekly'"
-        )
+        row = meta.fetch_one("SELECT value FROM kg_settings WHERE key = '_job_last_weekly'")
         if row:
             last_weekly = row["value"]
     except Exception:
@@ -538,6 +537,7 @@ def kg_trigger_weekly(background_tasks: BackgroundTasks):
     def _run():
         try:
             from services.edge_quality import run_weekly_quality_job
+
             run_weekly_quality_job()
         except Exception:
             _log.exception("kg/trigger-weekly: background job failed")
@@ -555,7 +555,7 @@ _STOP_ENTITY_MAX_PHRASE_LEN = 200
 
 
 class StopEntityRequest(BaseModel):
-    action: str   # "add" or "remove"
+    action: str  # "add" or "remove"
     phrase: str
 
 
@@ -625,8 +625,8 @@ def kg_stop_entities_get():
             detail=f"Stop entity file exists but could not be read: {exc}",
         ) from exc
     return {
-        "phrases":     sorted(phrases, key=str.lower),
-        "count":       len(phrases),
+        "phrases": sorted(phrases, key=str.lower),
+        "count": len(phrases),
         "source_path": path,
     }
 
@@ -663,7 +663,9 @@ def kg_stop_entities_post(body: StopEntityRequest):
     except FileNotFoundError:
         pass
     except OSError as exc:
-        raise HTTPException(status_code=500, detail=f"Could not read stop entity file: {exc}") from exc
+        raise HTTPException(
+            status_code=500, detail=f"Could not read stop entity file: {exc}"
+        ) from exc
 
     lower_current = [p.lower() for p in current]
 
@@ -679,7 +681,9 @@ def kg_stop_entities_post(body: StopEntityRequest):
     try:
         _write_stop_entity_file_atomic(path, current)
     except OSError as exc:
-        raise HTTPException(status_code=500, detail=f"Could not write stop entity file: {exc}") from exc
+        raise HTTPException(
+            status_code=500, detail=f"Could not write stop entity file: {exc}"
+        ) from exc
 
     config.invalidate_settings_cache()
     return {"status": "ok", "count": len(current)}
@@ -739,9 +743,7 @@ def update_permission(
     """
     caller = get_user(request)
     response.headers["Deprecation"] = "true"
-    response.headers["Link"] = (
-        f'</api/v1/me/permissions/{connector}>; rel="successor-version"'
-    )
+    response.headers["Link"] = f'</api/v1/me/permissions/{connector}>; rel="successor-version"'
     try:
         set_connector_mode(
             user_id=caller.user_id,
@@ -752,7 +754,8 @@ def update_permission(
         raise HTTPException(status_code=400, detail=str(e))
     _log.warning(
         "legacy_put_permissions_used user_id=%s connector=%s",
-        caller.user_id, connector,
+        caller.user_id,
+        connector,
     )
     return {"connector": connector, "mode": body.mode.upper()}
 
@@ -815,7 +818,9 @@ def _get_settings_response():
         default_model = stored_default
     else:
         enabled_names = [n for n in model_names if _safe_is_enabled(n)]
-        default_model = enabled_names[0] if enabled_names else (model_names[0] if model_names else None)
+        default_model = (
+            enabled_names[0] if enabled_names else (model_names[0] if model_names else None)
+        )
 
     # Plan llm_provider_keys_per_user_migration Pass 3.11: under
     # ``AUTH_ENABLED=true`` the household-wide "is this key set" view is
@@ -859,7 +864,7 @@ def _get_settings_response():
         }
         models.append(entry)
         if is_optional:
-            optional_models[name] = (_safe_get_setting(f"optional_{name}", store) == "true")
+            optional_models[name] = _safe_get_setting(f"optional_{name}", store) == "true"
 
     reranker_backend = os.environ.get("RERANKER_BACKEND", "none")
     pending_reranker = _safe_get_setting("reranker_enabled", store)
@@ -917,7 +922,7 @@ def update_settings(body: SettingsUpdate):
             # The .env must contain C:/Users/foo for Docker Desktop to mount it correctly.
             host_os = os.environ.get("HOST_OS", "").lower()
             if host_os == "windows" and new_root.startswith("/host/"):
-                parts = new_root[len("/host/"):].split("/", 1)
+                parts = new_root[len("/host/") :].split("/", 1)
                 drive = parts[0].upper()
                 rest = parts[1] if len(parts) > 1 else ""
                 host_path = f"{drive}:/{rest}"
@@ -1049,9 +1054,7 @@ def restart_stack():
     pending_root = _safe_get_setting("filesystem_root", store)
     current_host_root = os.environ.get("FILESYSTEM_ROOT_HOST", "")
     root_changing = bool(
-        pending_root
-        and current_host_root
-        and pending_root.strip() != current_host_root.strip()
+        pending_root and current_host_root and pending_root.strip() != current_host_root.strip()
     )
 
     if root_changing:
@@ -1098,10 +1101,7 @@ def root_preview(new_root: str):
     current_host_root = os.environ.get("FILESYSTEM_ROOT_HOST", "")
     row = store.fetch_one("SELECT COUNT(*) AS n FROM file_index")
     total = int(row["n"]) if row else 0
-    changing = bool(
-        current_host_root
-        and new_root.strip() != current_host_root.strip()
-    )
+    changing = bool(current_host_root and new_root.strip() != current_host_root.strip())
     return {
         "new_root": new_root,
         "current_root": current_host_root,
@@ -1178,10 +1178,11 @@ def ollama_discovery():
 def ollama_pull(request: Request, body: OllamaPullRequest):
     """Trigger a pull for a specific Ollama model name."""
     import re as _re
+
     import ollama_client
 
     name = body.name.strip()
-    if not name or not _re.match(r'^[a-zA-Z0-9_\-.:]+$', name):
+    if not name or not _re.match(r"^[a-zA-Z0-9_\-.:]+$", name):
         raise HTTPException(status_code=400, detail="Invalid model name.")
 
     try:
@@ -1227,7 +1228,7 @@ def _browse_root_info() -> tuple[Path, str, str | None]:
       Windows→ /host/c, /host/d, …          → virtual root "/"
     """
     host_dir = Path("/host")
-    host_os  = os.environ.get("HOST_OS", "").lower()
+    host_os = os.environ.get("HOST_OS", "").lower()
 
     if not host_dir.is_dir():
         # No /host mount at all — fallback to the indexed data folder
@@ -1283,8 +1284,7 @@ def browse_directories(path: str = "/"):
 
     try:
         children = sorted(
-            [d.name for d in target.iterdir()
-             if d.is_dir() and not d.name.startswith(".")],
+            [d.name for d in target.iterdir() if d.is_dir() and not d.name.startswith(".")],
             key=str.lower,
         )
     except PermissionError:
@@ -1326,13 +1326,27 @@ def browse_mkdir(body: MkdirRequest):
     if host_os == "macos":
         _ALLOWED_PREFIXES = ("/Users", "/Volumes")
     elif host_os == "windows":
-        _ALLOWED_PREFIXES = ("/c/Users", "/d/Users", "/c/tmp", "/d/tmp",
-                              "/c/Projects", "/c/Work", "/c/Dev")
+        _ALLOWED_PREFIXES = (
+            "/c/Users",
+            "/d/Users",
+            "/c/tmp",
+            "/d/tmp",
+            "/c/Projects",
+            "/c/Work",
+            "/c/Dev",
+        )
     else:
         # Linux — same list as before
         _ALLOWED_PREFIXES = (
-            "/home", "/mnt", "/media", "/tmp", "/root",
-            "/run/user", "/srv", "/opt", "/data",
+            "/home",
+            "/mnt",
+            "/media",
+            "/tmp",
+            "/root",
+            "/run/user",
+            "/srv",
+            "/opt",
+            "/data",
         )
 
     container_root, _vroot, _note = _browse_root_info()
@@ -1371,10 +1385,11 @@ def browse_mkdir(body: MkdirRequest):
 def ollama_delete(body: OllamaPullRequest):
     """Remove a locally pulled Ollama model."""
     import re as _re
+
     import ollama_client
 
     name = body.name.strip()
-    if not name or not _re.match(r'^[a-zA-Z0-9_\-.:]+$', name):
+    if not name or not _re.match(r"^[a-zA-Z0-9_\-.:]+$", name):
         raise HTTPException(status_code=400, detail="Invalid model name.")
 
     try:
@@ -1713,9 +1728,9 @@ def graph_health():
         )
         if row:
             temporal_freshness = {
-                "last_7d":  int(row.get("last_7d") or 0),
-                "8_30d":    int(row.get("d8_30") or 0),
-                "31_90d":   int(row.get("d31_90") or 0),
+                "last_7d": int(row.get("last_7d") or 0),
+                "8_30d": int(row.get("d8_30") or 0),
+                "31_90d": int(row.get("d31_90") or 0),
                 "90d_plus": int(row.get("d90_plus") or 0),
             }
     except Exception:
@@ -1740,16 +1755,21 @@ def graph_health():
 # Unified review queue  (GET /review-queue and GET /review-queue?source=all)
 # ---------------------------------------------------------------------------
 
-_REVIEW_QUEUE_ITEM_TYPES = {"ambiguous_entity", "staged_entity", "constraint_violation", "orphan_entity"}
+_REVIEW_QUEUE_ITEM_TYPES = {
+    "ambiguous_entity",
+    "staged_entity",
+    "constraint_violation",
+    "orphan_entity",
+}
 _REVIEW_QUEUE_ACTIONS = {"merge", "distinct", "promote", "discard", "suppress", "dismiss"}
 _REVIEW_QUEUE_MAX_LIMIT = 100
 _REVIEW_QUEUE_DEFAULT_LIMIT = 20
 
 _ACTION_TABLE: dict[str, set] = {
-    "ambiguous_entity":    {"merge", "distinct"},
-    "staged_entity":       {"promote", "discard"},
+    "ambiguous_entity": {"merge", "distinct"},
+    "staged_entity": {"promote", "discard"},
     "constraint_violation": {"suppress"},
-    "orphan_entity":       {"dismiss"},
+    "orphan_entity": {"dismiss"},
 }
 
 
@@ -1771,7 +1791,9 @@ def _fetch_unified_queue(meta, admin_user_id: str, limit: int) -> list[dict]:
     sub_limit = min(limit, _REVIEW_QUEUE_MAX_LIMIT)
 
     _log.info(
-        "component=unified_queue admin_user_id=%s limit=%d", admin_user_id, sub_limit,
+        "component=unified_queue admin_user_id=%s limit=%d",
+        admin_user_id,
+        sub_limit,
     )
 
     # 1. ambiguous_entity — from review_queue (priority 1.0)
@@ -1789,27 +1811,29 @@ def _fetch_unified_queue(meta, admin_user_id: str, limit: int) -> list[dict]:
             (sub_limit,),
         )
         for r in rows:
-            items.append({
-                "item_type": "ambiguous_entity",
-                "item_id":   str(r["id"]),
-                "priority":  1.0,
-                "_sort_ts":  r["created_at"],
-                "user_id":   r.get("rq_user_id") or "",
-                "scope":     r.get("scope") or "personal",
-                "candidate_a": {
-                    "entity_id":   str(r["eid_a"]),
-                    "name":        r["name_a"],
-                    "entity_type": r["type_a"],
-                    "scope":       r.get("scope_a") or "personal",
-                },
-                "candidate_b": {
-                    "entity_id":   str(r["eid_b"]),
-                    "name":        r["name_b"],
-                    "entity_type": r["type_b"],
-                    "scope":       r.get("scope_b") or "personal",
-                },
-                "reason": r["reason"],
-            })
+            items.append(
+                {
+                    "item_type": "ambiguous_entity",
+                    "item_id": str(r["id"]),
+                    "priority": 1.0,
+                    "_sort_ts": r["created_at"],
+                    "user_id": r.get("rq_user_id") or "",
+                    "scope": r.get("scope") or "personal",
+                    "candidate_a": {
+                        "entity_id": str(r["eid_a"]),
+                        "name": r["name_a"],
+                        "entity_type": r["type_a"],
+                        "scope": r.get("scope_a") or "personal",
+                    },
+                    "candidate_b": {
+                        "entity_id": str(r["eid_b"]),
+                        "name": r["name_b"],
+                        "entity_type": r["type_b"],
+                        "scope": r.get("scope_b") or "personal",
+                    },
+                    "reason": r["reason"],
+                }
+            )
     except Exception as exc:
         _log.warning("unified_queue: ambiguous_entity fetch failed — %s", exc)
 
@@ -1827,19 +1851,21 @@ def _fetch_unified_queue(meta, admin_user_id: str, limit: int) -> list[dict]:
             (sub_limit,),
         )
         for r in rows:
-            items.append({
-                "item_type": "constraint_violation",
-                "item_id":   str(r["violation_id"]),
-                "priority":  0.9,
-                "_sort_ts":  r["detected_at"],
-                "user_id":   r.get("cv_user_id") or "",
-                "violation": {
-                    "rule_name": r["rule_name"],
-                    "severity":  r["severity"],
-                    "detail":    r.get("detail") or "",
-                    "entity_id": str(r["entity_id"]) if r.get("entity_id") else "",
-                },
-            })
+            items.append(
+                {
+                    "item_type": "constraint_violation",
+                    "item_id": str(r["violation_id"]),
+                    "priority": 0.9,
+                    "_sort_ts": r["detected_at"],
+                    "user_id": r.get("cv_user_id") or "",
+                    "violation": {
+                        "rule_name": r["rule_name"],
+                        "severity": r["severity"],
+                        "detail": r.get("detail") or "",
+                        "entity_id": str(r["entity_id"]) if r.get("entity_id") else "",
+                    },
+                }
+            )
     except Exception as exc:
         _log.warning("unified_queue: constraint_violation fetch failed — %s", exc)
 
@@ -1856,22 +1882,26 @@ def _fetch_unified_queue(meta, admin_user_id: str, limit: int) -> list[dict]:
             (sub_limit,),
         )
         for r in rows:
-            items.append({
-                "item_type": "staged_entity",
-                "item_id":   str(r["entity_id"]),
-                "priority":  0.7,
-                "_sort_ts":  r.get("created_at"),
-                "user_id":   r.get("user_id") or "",
-                "scope":     r.get("scope") or "personal",
-                "entity": {
-                    "entity_id":          str(r["entity_id"]),
-                    "name":               r["name"],
-                    "entity_type":        r["entity_type"],
-                    "extraction_quality": float(r["extraction_quality"]) if r.get("extraction_quality") is not None else 0.0,
-                    "mention_count":      r.get("mention_count") or 0,
-                    "scope":              r.get("scope") or "personal",
-                },
-            })
+            items.append(
+                {
+                    "item_type": "staged_entity",
+                    "item_id": str(r["entity_id"]),
+                    "priority": 0.7,
+                    "_sort_ts": r.get("created_at"),
+                    "user_id": r.get("user_id") or "",
+                    "scope": r.get("scope") or "personal",
+                    "entity": {
+                        "entity_id": str(r["entity_id"]),
+                        "name": r["name"],
+                        "entity_type": r["entity_type"],
+                        "extraction_quality": float(r["extraction_quality"])
+                        if r.get("extraction_quality") is not None
+                        else 0.0,
+                        "mention_count": r.get("mention_count") or 0,
+                        "scope": r.get("scope") or "personal",
+                    },
+                }
+            )
     except Exception as exc:
         _log.warning("unified_queue: staged_entity fetch failed — %s", exc)
 
@@ -1890,22 +1920,26 @@ def _fetch_unified_queue(meta, admin_user_id: str, limit: int) -> list[dict]:
             (sub_limit,),
         )
         for r in rows:
-            items.append({
-                "item_type": "orphan_entity",
-                "item_id":   str(r["violation_id"]),
-                "priority":  0.5,
-                "_sort_ts":  r["detected_at"],
-                "user_id":   r.get("cv_user_id") or "",
-                "scope":     r.get("scope") or "personal",
-                "entity": {
-                    "entity_id":   str(r["entity_id"]),
-                    "name":        r["name"],
-                    "entity_type": r["entity_type"],
-                    "mention_count": r.get("mention_count") or 0,
-                    "created_at":  r["entity_created_at"].isoformat() if r.get("entity_created_at") else "",
-                    "scope":       r.get("scope") or "personal",
-                },
-            })
+            items.append(
+                {
+                    "item_type": "orphan_entity",
+                    "item_id": str(r["violation_id"]),
+                    "priority": 0.5,
+                    "_sort_ts": r["detected_at"],
+                    "user_id": r.get("cv_user_id") or "",
+                    "scope": r.get("scope") or "personal",
+                    "entity": {
+                        "entity_id": str(r["entity_id"]),
+                        "name": r["name"],
+                        "entity_type": r["entity_type"],
+                        "mention_count": r.get("mention_count") or 0,
+                        "created_at": r["entity_created_at"].isoformat()
+                        if r.get("entity_created_at")
+                        else "",
+                        "scope": r.get("scope") or "personal",
+                    },
+                }
+            )
     except Exception as exc:
         _log.warning("unified_queue: orphan_entity fetch failed — %s", exc)
 
@@ -2116,8 +2150,8 @@ def review_queue_decide(body: DecideRequest, ctx: UserContext = Depends(require_
     when an admin acted on someone else's item.
     """
     item_type = body.item_type
-    item_id   = body.item_id
-    action    = body.action
+    item_id = body.item_id
+    action = body.action
 
     if item_type not in _REVIEW_QUEUE_ITEM_TYPES:
         raise HTTPException(status_code=400, detail=f"unknown item_type {item_type!r}")
@@ -2130,7 +2164,7 @@ def review_queue_decide(body: DecideRequest, ctx: UserContext = Depends(require_
 
     meta = config.get_metadata_store()
 
-    is_admin = (ctx.role == "admin")
+    is_admin = ctx.role == "admin"
 
     requested_target = (body.user_id or "").strip()
     if not is_admin and requested_target and requested_target not in ("default", ctx.user_id):
@@ -2173,8 +2207,7 @@ def review_queue_decide(body: DecideRequest, ctx: UserContext = Depends(require_
         # Fetch the review_queue row to get candidate IDs
         try:
             rq_row = meta.fetch_one(
-                "SELECT id, candidate_a_id, candidate_b_id FROM review_queue "
-                "WHERE id = %s",
+                "SELECT id, candidate_a_id, candidate_b_id FROM review_queue WHERE id = %s",
                 (item_id,),
             )
         except Exception as exc:
@@ -2189,6 +2222,7 @@ def review_queue_decide(body: DecideRequest, ctx: UserContext = Depends(require_
         if action == "merge":
             # winner = candidate_a, loser = candidate_b (convention: a was first-seen)
             from services.entity_merge import merge_entities
+
             try:
                 result = merge_entities(winner_id=cand_a, loser_id=cand_b, user_id=user_id)
             except ValueError as exc:
@@ -2350,7 +2384,7 @@ def entities_merge(body: MergeRequest):
     # UUID validation before any DB call
     try:
         winner_uuid = str(uuid.UUID(body.winner_id))
-        loser_uuid  = str(uuid.UUID(body.loser_id))
+        loser_uuid = str(uuid.UUID(body.loser_id))
     except (ValueError, AttributeError):
         raise HTTPException(status_code=400, detail="invalid uuid")
 
@@ -2391,7 +2425,7 @@ def entities_merge(body: MergeRequest):
     return {
         "status": "ok",
         "winner_id": winner_uuid,
-        "loser_id":  loser_uuid,
+        "loser_id": loser_uuid,
         **result.model_dump(),
     }
 
@@ -2452,17 +2486,12 @@ def entities_deduplicate(background_tasks: BackgroundTasks):
 
     def _run_in_background(pre_created_run_id: str) -> None:
         try:
-            from services.deduplication import (
-                _build_candidates,
-                _score_candidates_with_splink,
-                _route_pair,
-                _update_run,
-                _update_run_error,
-                _SPLINK_MODEL_PATH,
-                _log as _dedup_log,
-            )
-            import time as _time
-            t0 = _time.monotonic()
+            from services.deduplication import _SPLINK_MODEL_PATH
+            from services.deduplication import _build_candidates
+            from services.deduplication import _route_pair
+            from services.deduplication import _score_candidates_with_splink
+            from services.deduplication import _update_run
+
             ms2 = config.get_metadata_store()
             vs2 = config.get_vector_store()
 
@@ -2487,10 +2516,16 @@ def entities_deduplicate(background_tasks: BackgroundTasks):
                 "WHERE user_id = %s",
                 (user_id,),
             )
-            known_distinct = {(str(dr["entity_id_a"]), str(dr["entity_id_b"])) for dr in distinct_rows}
+            known_distinct = {
+                (str(dr["entity_id_a"]), str(dr["entity_id_b"])) for dr in distinct_rows
+            }
 
-            candidates, cos_sims = _build_candidates(list(entity_map.values()), vs2, user_id, known_distinct)
-            scored = _score_candidates_with_splink(candidates, entity_map, cos_sims, _SPLINK_MODEL_PATH)
+            candidates, cos_sims = _build_candidates(
+                list(entity_map.values()), vs2, user_id, known_distinct
+            )
+            scored = _score_candidates_with_splink(
+                candidates, entity_map, cos_sims, _SPLINK_MODEL_PATH
+            )
 
             auto_merged = 0
             queued = 0
@@ -2500,8 +2535,13 @@ def entities_deduplicate(background_tasks: BackgroundTasks):
                 if e_a is None or e_b is None:
                     continue
                 outcome = _route_pair(
-                    ms2, pre_created_run_id, user_id, e_a, e_b,
-                    item["match_probability"], item.get("features") or {},
+                    ms2,
+                    pre_created_run_id,
+                    user_id,
+                    e_a,
+                    e_b,
+                    item["match_probability"],
+                    item.get("features") or {},
                 )
                 if outcome == "auto_merged":
                     auto_merged += 1
@@ -2509,7 +2549,8 @@ def entities_deduplicate(background_tasks: BackgroundTasks):
                     queued += 1
 
             _update_run(
-                ms2, pre_created_run_id,
+                ms2,
+                pre_created_run_id,
                 candidate_count=len(scored),
                 auto_merged=auto_merged,
                 queued_for_review=queued,
@@ -2517,12 +2558,16 @@ def entities_deduplicate(background_tasks: BackgroundTasks):
             )
             _log.info(
                 "entities/deduplicate: background job complete run_id=%s auto_merged=%d queued=%d",
-                pre_created_run_id, auto_merged, queued,
+                pre_created_run_id,
+                auto_merged,
+                queued,
             )
         except Exception as exc:
             _log.error(
                 "entities/deduplicate: background job failed run_id=%s: %s",
-                pre_created_run_id, exc, exc_info=True,
+                pre_created_run_id,
+                exc,
+                exc_info=True,
             )
             try:
                 meta2 = config.get_metadata_store()

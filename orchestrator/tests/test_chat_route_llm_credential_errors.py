@@ -26,16 +26,12 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-import pytest
-from fastapi.testclient import TestClient
-
 import main
+import pytest
 from auth import UserContext
-from services.connector_credentials import (
-    ConnectorNotConfigured,
-    CredentialUnavailable,
-)
-
+from fastapi.testclient import TestClient
+from services.connector_credentials import ConnectorNotConfigured
+from services.connector_credentials import CredentialUnavailable
 
 _ALICE = UserContext(user_id="alice", role="user", is_authenticated=True)
 
@@ -54,18 +50,16 @@ def chat_client():
 
 
 @patch("routes.chat._inject_context", side_effect=lambda q, h, m, u: h)
-@patch("routes.chat.config.get_model_config",
-       return_value={"tools": False, "api_key_env": "OPENAI_API_KEY"})
+@patch(
+    "routes.chat.config.get_model_config",
+    return_value={"tools": False, "api_key_env": "OPENAI_API_KEY"},
+)
 @patch("routes.chat.config.is_model_enabled", return_value=True)
-@patch("routes.chat.ask",
-       side_effect=ConnectorNotConfigured("alice has no llm_openai row"))
-def test_chat_completions_424_on_missing_credential(
-    _ask, _enabled, _cfg, _ctx, chat_client
-):
+@patch("routes.chat.ask", side_effect=ConnectorNotConfigured("alice has no llm_openai row"))
+def test_chat_completions_424_on_missing_credential(_ask, _enabled, _cfg, _ctx, chat_client):
     resp = chat_client.post(
         "/v1/chat/completions",
-        json={"model": "chatgpt", "stream": False,
-              "messages": [{"role": "user", "content": "hi"}]},
+        json={"model": "chatgpt", "stream": False, "messages": [{"role": "user", "content": "hi"}]},
     )
     assert resp.status_code == 424
     body = resp.json()
@@ -79,18 +73,16 @@ def test_chat_completions_424_on_missing_credential(
 
 
 @patch("routes.chat._inject_context", side_effect=lambda q, h, m, u: h)
-@patch("routes.chat.config.get_model_config",
-       return_value={"tools": False, "api_key_env": "OPENAI_API_KEY"})
+@patch(
+    "routes.chat.config.get_model_config",
+    return_value={"tools": False, "api_key_env": "OPENAI_API_KEY"},
+)
 @patch("routes.chat.config.is_model_enabled", return_value=True)
-@patch("routes.chat.ask",
-       side_effect=CredentialUnavailable("Fernet decrypt failed"))
-def test_chat_completions_503_on_decrypt_failure(
-    _ask, _enabled, _cfg, _ctx, chat_client
-):
+@patch("routes.chat.ask", side_effect=CredentialUnavailable("Fernet decrypt failed"))
+def test_chat_completions_503_on_decrypt_failure(_ask, _enabled, _cfg, _ctx, chat_client):
     resp = chat_client.post(
         "/v1/chat/completions",
-        json={"model": "chatgpt", "stream": False,
-              "messages": [{"role": "user", "content": "hi"}]},
+        json={"model": "chatgpt", "stream": False, "messages": [{"role": "user", "content": "hi"}]},
     )
     assert resp.status_code == 503
     body = resp.json()
@@ -110,8 +102,10 @@ def _raise_not_configured(*a, **kw):
 
 
 @patch("routes.chat._inject_context", side_effect=lambda q, h, m, u: h)
-@patch("routes.chat.config.get_model_config",
-       return_value={"tools": False, "api_key_env": "OPENAI_API_KEY"})
+@patch(
+    "routes.chat.config.get_model_config",
+    return_value={"tools": False, "api_key_env": "OPENAI_API_KEY"},
+)
 @patch("routes.chat.config.is_model_enabled", return_value=True)
 @patch("routes.chat.config.get_llm_provider", side_effect=_raise_not_configured)
 @patch("routes.chat.ask_stream")
@@ -121,8 +115,7 @@ def test_chat_completions_424_streaming_returns_json_not_sse(
     """The pre-flight MUST be the path that yields the 424 — not ask_stream."""
     resp = chat_client.post(
         "/v1/chat/completions",
-        json={"model": "chatgpt", "stream": True,
-              "messages": [{"role": "user", "content": "hi"}]},
+        json={"model": "chatgpt", "stream": True, "messages": [{"role": "user", "content": "hi"}]},
     )
     assert resp.status_code == 424
     assert resp.headers["content-type"].startswith("application/json"), (
@@ -146,12 +139,10 @@ def test_v1_models_under_auth_off_unchanged(monkeypatch):
     monkeypatch.setattr("routes.chat.auth_enabled", lambda: False)
     fake_models = {
         "claude": {"adapter": "anthropic", "api_key_env": "ANTHROPIC_API_KEY"},
-        "llama":  {"adapter": "openai", "base_url": "http://ollama:11434/v1"},
+        "llama": {"adapter": "openai", "base_url": "http://ollama:11434/v1"},
     }
-    monkeypatch.setattr("routes.chat.config.get_all_models_config",
-                        lambda: fake_models)
-    monkeypatch.setattr("routes.chat.config.is_model_enabled",
-                        lambda name, **kw: True)
+    monkeypatch.setattr("routes.chat.config.get_all_models_config", lambda: fake_models)
+    monkeypatch.setattr("routes.chat.config.is_model_enabled", lambda name, **kw: True)
     with TestClient(main.app) as c:
         resp = c.get("/v1/models")
     assert resp.status_code == 200
@@ -163,14 +154,12 @@ def test_v1_models_per_user_filtering_under_auth_on(monkeypatch, chat_client):
     """Alice has llm_anthropic only → claude in, chatgpt out, llama in."""
     monkeypatch.setattr("routes.chat.auth_enabled", lambda: True)
     fake_models = {
-        "claude":  {"adapter": "anthropic", "api_key_env": "ANTHROPIC_API_KEY"},
+        "claude": {"adapter": "anthropic", "api_key_env": "ANTHROPIC_API_KEY"},
         "chatgpt": {"adapter": "openai", "api_key_env": "OPENAI_API_KEY"},
-        "llama":   {"adapter": "openai", "base_url": "http://ollama:11434/v1"},
+        "llama": {"adapter": "openai", "base_url": "http://ollama:11434/v1"},
     }
-    monkeypatch.setattr("routes.chat.config.get_all_models_config",
-                        lambda: fake_models)
-    monkeypatch.setattr("routes.chat.get_user_credentials_snapshot",
-                        lambda uid: {"llm_anthropic"})
+    monkeypatch.setattr("routes.chat.config.get_all_models_config", lambda: fake_models)
+    monkeypatch.setattr("routes.chat.get_user_credentials_snapshot", lambda uid: {"llm_anthropic"})
 
     def _is_enabled(name, *, user_id=None, _credentials_present=None):
         cfg = fake_models[name]
@@ -178,6 +167,7 @@ def test_v1_models_per_user_filtering_under_auth_on(monkeypatch, chat_client):
         if not env:
             return True
         from services.llm_connector_map import connector_for_api_key_env
+
         connector = connector_for_api_key_env(env)
         return connector is not None and (
             _credentials_present is not None and connector in _credentials_present

@@ -25,11 +25,9 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
-
 
 # Pick a JWT secret comfortably above PyJWT's 32-byte recommendation so
 # the test doesn't trip InsecureKeyLengthWarning the way the headline
@@ -69,7 +67,8 @@ def mini_app(jwt_env):
 
     @router.get("/mcp/probe")
     def probe():
-        from mcp_server import _current_bearer_token, _resolve_user_id
+        from mcp_server import _current_bearer_token
+        from mcp_server import _resolve_user_id
 
         try:
             resolved = _resolve_user_id()
@@ -103,23 +102,17 @@ def test_mcp_request_resolves_user_id_from_jwt_sub(mini_app, monkeypatch):
     token = _mint(user_id="alice")
     client = TestClient(mini_app)
 
-    resp = client.get(
-        "/mcp/probe", headers={"Authorization": f"Bearer {token}"}
-    )
+    resp = client.get("/mcp/probe", headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == 200
     body = resp.json()
 
     assert body["bearer_in_contextvar"] == token, (
         "auth_middleware did not copy the inbound Bearer into the MCP ContextVar"
     )
-    assert body["resolved_user_id"] == "alice", (
-        "expected JWT sub to win over MCP_DEFAULT_USER_ID"
-    )
+    assert body["resolved_user_id"] == "alice", "expected JWT sub to win over MCP_DEFAULT_USER_ID"
 
 
-def test_mcp_request_rejects_legacy_shared_secret_in_multi_user_mode(
-    mini_app, monkeypatch
-):
+def test_mcp_request_rejects_legacy_shared_secret_in_multi_user_mode(mini_app, monkeypatch):
     """Per ADR ``mcp_token_user_map`` D6: in multi-user mode
     (``AUTH_ENABLED=true``) a Bearer that matches the legacy
     ``MCP_AUTH_TOKEN`` MUST be rejected with 401, NOT silently mapped to
@@ -162,12 +155,8 @@ def test_contextvar_does_not_leak_between_requests(mini_app, monkeypatch):
 
     client = TestClient(mini_app)
 
-    alice_resp = client.get(
-        "/mcp/probe", headers={"Authorization": f"Bearer {alice_token}"}
-    )
-    bob_resp = client.get(
-        "/mcp/probe", headers={"Authorization": f"Bearer {bob_token}"}
-    )
+    alice_resp = client.get("/mcp/probe", headers={"Authorization": f"Bearer {alice_token}"})
+    bob_resp = client.get("/mcp/probe", headers={"Authorization": f"Bearer {bob_token}"})
 
     assert alice_resp.json()["resolved_user_id"] == "alice"
     assert bob_resp.json()["resolved_user_id"] == "bob"
@@ -181,9 +170,7 @@ def test_contextvar_does_not_leak_between_requests(mini_app, monkeypatch):
         return _current_bearer_token()
 
     leaked = asyncio.run(_peek())
-    assert leaked is None, (
-        f"ContextVar leaked across requests: {leaked!r}"
-    )
+    assert leaked is None, f"ContextVar leaked across requests: {leaked!r}"
 
 
 def test_non_mcp_paths_do_not_touch_mcp_contextvar(mini_app, monkeypatch):
@@ -203,9 +190,7 @@ def test_non_mcp_paths_do_not_touch_mcp_contextvar(mini_app, monkeypatch):
 
     token = _mint(user_id="alice")
     client = TestClient(mini_app)
-    resp = client.get(
-        "/non-mcp-probe", headers={"Authorization": f"Bearer {token}"}
-    )
+    resp = client.get("/non-mcp-probe", headers={"Authorization": f"Bearer {token}"})
     # AUTH_ENABLED=true, so non-/mcp routes go through the JWT gate
     # which sets request.state.user but does NOT touch the MCP
     # ContextVar — that's the expected behaviour we're pinning here.

@@ -45,18 +45,19 @@ function. The point of a headline test is to catch contract drift
 between the route layer, the projection engine, and the visibility
 helper; mocking the engine would defeat that.
 """
+
 from __future__ import annotations
 
 import uuid
-from typing import Any, Optional
+from typing import Any
+from typing import Optional
 
 import pytest
+from auth import UserContext
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import config
-from auth import UserContext
-
 
 # ---------------------------------------------------------------------------
 # In-memory metadata store with scope + published_from semantics
@@ -84,9 +85,15 @@ class _ScopedStore:
 
     # ----- direct seeding ---------------------------------------------------
 
-    def seed_note(self, *, user_id: str, scope: str = "personal",
-                  text: str = "hello", note_id: Optional[str] = None,
-                  published_from: Optional[str] = None) -> str:
+    def seed_note(
+        self,
+        *,
+        user_id: str,
+        scope: str = "personal",
+        text: str = "hello",
+        note_id: Optional[str] = None,
+        published_from: Optional[str] = None,
+    ) -> str:
         nid = note_id or str(uuid.uuid4())
         self.rows[("notes", nid)] = {
             "note_id": nid,
@@ -98,30 +105,58 @@ class _ScopedStore:
         }
         return nid
 
-    def seed_entity(self, *, user_id: str, name: str = "Acme",
-                    entity_type: str = "company", scope: str = "personal",
-                    is_staged: bool = False,
-                    entity_id: Optional[str] = None) -> str:
+    def seed_entity(
+        self,
+        *,
+        user_id: str,
+        name: str = "Acme",
+        entity_type: str = "company",
+        scope: str = "personal",
+        is_staged: bool = False,
+        entity_id: Optional[str] = None,
+    ) -> str:
         eid = entity_id or str(uuid.uuid4())
         self.rows[("entities", eid)] = {
-            "entity_id": eid, "name": name, "entity_type": entity_type,
-            "aliases": [], "context_tags": [], "mention_count": 1,
-            "user_id": user_id, "scope": scope, "published_from": None,
-            "is_staged": is_staged, "extraction_quality": 0.9,
+            "entity_id": eid,
+            "name": name,
+            "entity_type": entity_type,
+            "aliases": [],
+            "context_tags": [],
+            "mention_count": 1,
+            "user_id": user_id,
+            "scope": scope,
+            "published_from": None,
+            "is_staged": is_staged,
+            "extraction_quality": 0.9,
         }
         return eid
 
-    def seed_signal(self, *, user_id: str, title: str = "headline",
-                    scope: str = "system",
-                    signal_id: Optional[str] = None) -> str:
+    def seed_signal(
+        self,
+        *,
+        user_id: str,
+        title: str = "headline",
+        scope: str = "system",
+        signal_id: Optional[str] = None,
+    ) -> str:
         sid = signal_id or str(uuid.uuid4())
         self.rows[("signals", sid)] = {
-            "signal_id": sid, "user_id": user_id, "source_id": "__system__",
-            "title": title, "url": "", "published_at": None,
-            "content_summary": "", "entities": [], "topics": [],
-            "importance_score": 0.5, "relevance_score": 0.5,
-            "notified": False, "scope": scope, "published_from": None,
-            "source_url": None, "source_label": None,
+            "signal_id": sid,
+            "user_id": user_id,
+            "source_id": "__system__",
+            "title": title,
+            "url": "",
+            "published_at": None,
+            "content_summary": "",
+            "entities": [],
+            "topics": [],
+            "importance_score": 0.5,
+            "relevance_score": 0.5,
+            "notified": False,
+            "scope": scope,
+            "published_from": None,
+            "source_url": None,
+            "source_label": None,
         }
         return sid
 
@@ -174,8 +209,7 @@ class _ScopedStore:
 
     # ----- INSERT helpers ---------------------------------------------------
 
-    def _handle_projection_insert(self, table: str, pk_col: str,
-                                  params: tuple) -> dict:
+    def _handle_projection_insert(self, table: str, pk_col: str, params: tuple) -> dict:
         """Insert + ON CONFLICT (published_from, scope) DO UPDATE.
 
         The ordering here mirrors the column order in
@@ -187,21 +221,58 @@ class _ScopedStore:
         new_pk = params[0]
         # Derive column dict from a per-table positional template.
         column_templates: dict[str, list[str]] = {
-            "notes": ["note_id", "text", "user_id", "source", "scope",
-                      "published_from"],
-            "audio_memos": ["audio_id", "file_path", "transcript",
-                            "duration_seconds", "whisper_model", "user_id",
-                            "scope", "published_from", "transcribed_at"],
-            "sessions": ["session_id", "summary", "topics", "entities",
-                         "entity_ids", "user_id", "scope", "published_from"],
-            "entities": ["entity_id", "name", "entity_type", "aliases",
-                         "context_tags", "mention_count", "user_id", "scope",
-                         "published_from", "extraction_quality"],
-            "signals": ["signal_id", "user_id", "source_id", "title", "url",
-                        "published_at", "content_summary", "entities",
-                        "topics", "importance_score", "relevance_score",
-                        "notified", "scope", "published_from", "source_url",
-                        "source_label"],
+            "notes": ["note_id", "text", "user_id", "source", "scope", "published_from"],
+            "audio_memos": [
+                "audio_id",
+                "file_path",
+                "transcript",
+                "duration_seconds",
+                "whisper_model",
+                "user_id",
+                "scope",
+                "published_from",
+                "transcribed_at",
+            ],
+            "sessions": [
+                "session_id",
+                "summary",
+                "topics",
+                "entities",
+                "entity_ids",
+                "user_id",
+                "scope",
+                "published_from",
+            ],
+            "entities": [
+                "entity_id",
+                "name",
+                "entity_type",
+                "aliases",
+                "context_tags",
+                "mention_count",
+                "user_id",
+                "scope",
+                "published_from",
+                "extraction_quality",
+            ],
+            "signals": [
+                "signal_id",
+                "user_id",
+                "source_id",
+                "title",
+                "url",
+                "published_at",
+                "content_summary",
+                "entities",
+                "topics",
+                "importance_score",
+                "relevance_score",
+                "notified",
+                "scope",
+                "published_from",
+                "source_url",
+                "source_label",
+            ],
         }
         cols = column_templates[table]
         row = {col: params[i] for i, col in enumerate(cols) if i < len(params)}
@@ -209,7 +280,8 @@ class _ScopedStore:
         # partial unique index by overwriting the existing projection.
         existing = next(
             (
-                (k, r) for k, r in self.rows.items()
+                (k, r)
+                for k, r in self.rows.items()
                 if k[0] == table
                 and r.get("published_from") == row.get("published_from")
                 and r.get("scope") == row.get("scope")
@@ -226,12 +298,21 @@ class _ScopedStore:
         return row
 
     def _handle_file_projection_insert(self, params: tuple) -> dict:
-        cols = ["file_path", "file_hash", "file_type", "chunk_count",
-                "ocr_used", "user_id", "scope", "published_from"]
+        cols = [
+            "file_path",
+            "file_hash",
+            "file_type",
+            "chunk_count",
+            "ocr_used",
+            "user_id",
+            "scope",
+            "published_from",
+        ]
         row = {col: params[i] for i, col in enumerate(cols) if i < len(params)}
         existing = next(
             (
-                (k, r) for k, r in self.rows.items()
+                (k, r)
+                for k, r in self.rows.items()
                 if k[0] == "file_index"
                 and r.get("published_from") == row.get("published_from")
                 and r.get("scope") == row.get("scope")
@@ -258,8 +339,11 @@ class _ScopedStore:
             return None
         target_pf, target_scope = params[0], params[1]
         for k, r in list(self.rows.items()):
-            if k[0] == table and r.get("published_from") == target_pf \
-                    and r.get("scope") == target_scope:
+            if (
+                k[0] == table
+                and r.get("published_from") == target_pf
+                and r.get("scope") == target_scope
+            ):
                 self.rows.pop(k)
                 return {k[1].__class__.__name__: k[1]}
         return None
@@ -306,10 +390,9 @@ class _ScopedStore:
         for k, r in self.rows.items():
             if k[0] != "notes":
                 continue
-            visible = (
-                (r.get("scope") == "personal" and r.get("user_id") == me)
-                or r.get("scope") in ("shared", "system")
-            )
+            visible = (r.get("scope") == "personal" and r.get("user_id") == me) or r.get(
+                "scope"
+            ) in ("shared", "system")
             if visible:
                 out.append(dict(r))
         return out
@@ -327,8 +410,7 @@ class _PayloadVectorStore:
     def ping(self) -> bool:
         return True
 
-    def upsert(self, collection: str, id: str, vector: list[float],
-               payload: dict) -> None:
+    def upsert(self, collection: str, id: str, vector: list[float], payload: dict) -> None:
         self.points[(collection, id)] = {"vector": vector, "payload": payload}
 
     def delete(self, collection: str, id: str) -> None:
@@ -339,12 +421,10 @@ class _PayloadVectorStore:
             if k[0] != collection:
                 continue
             payload = p.get("payload") or {}
-            if all(payload.get(c["key"]) == c["match"]["value"]
-                   for c in filter.get("must", [])):
+            if all(payload.get(c["key"]) == c["match"]["value"] for c in filter.get("must", [])):
                 self.points.pop(k, None)
 
-    def search(self, collection: str, vector, limit, threshold,
-               filter=None, sparse_query=None):
+    def search(self, collection: str, vector, limit, threshold, filter=None, sparse_query=None):
         out = []
         for k, p in self.points.items():
             if k[0] != collection:
@@ -352,8 +432,7 @@ class _PayloadVectorStore:
             payload = p.get("payload") or {}
             if filter:
                 if not all(
-                    payload.get(c["key"]) == c["match"]["value"]
-                    for c in filter.get("must", [])
+                    payload.get(c["key"]) == c["match"]["value"] for c in filter.get("must", [])
                 ):
                     continue
             out.append({"id": k[1], "score": 1.0, "payload": payload})
@@ -419,11 +498,11 @@ def client(app):
 # ---------------------------------------------------------------------------
 
 
-def _publish_note(client, app, *, actor: str, note_id: str,
-                  body: Optional[dict] = None):
+def _publish_note(client, app, *, actor: str, note_id: str, body: Optional[dict] = None):
     _override_user(app, actor)
-    return client.post(f"/api/v1/notes/{note_id}/publish",
-                       json=body if body is not None else {"scope": "shared"})
+    return client.post(
+        f"/api/v1/notes/{note_id}/publish", json=body if body is not None else {"scope": "shared"}
+    )
 
 
 def _unpublish_note(client, app, *, actor: str, note_id: str):
@@ -443,8 +522,7 @@ def test_s1_personal_note_invisible_to_other_user(store, app, client):
     # Bob attempts to publish Alice's note → must be 404, never 403.
     # 404 is the convention so the existence of Alice's row is hidden.
     _override_user(app, BOB)
-    resp = client.post(f"/api/v1/notes/{alice_note}/publish",
-                       json={"scope": "shared"})
+    resp = client.post(f"/api/v1/notes/{alice_note}/publish", json={"scope": "shared"})
     assert resp.status_code == 404, resp.text
     assert resp.json()["detail"]["error"] == "not_found"
 
@@ -465,8 +543,7 @@ def test_s2_publish_creates_visible_projection(store, app, client):
     assert body["scope"] == "shared"
 
     proj = next(
-        r for k, r in store.rows.items()
-        if k[0] == "notes" and r.get("published_from") == src
+        r for k, r in store.rows.items() if k[0] == "notes" and r.get("published_from") == src
     )
     assert proj["scope"] == "shared"
     assert proj["user_id"] == ALICE  # publisher attribution
@@ -492,9 +569,9 @@ def test_s3_system_signal_visible_to_both_users(store):
         assert "shared" in where and "system" in where
         # Direct membership check on our seeded row:
         row = store.rows[("signals", sid)]
-        visible = (
-            (row["scope"] == "personal" and row["user_id"] == actor)
-            or row["scope"] in ("shared", "system")
+        visible = (row["scope"] == "personal" and row["user_id"] == actor) or row["scope"] in (
+            "shared",
+            "system",
         )
         assert visible, f"system signal not visible to {actor}"
 
@@ -510,16 +587,14 @@ def test_s4_publish_then_unpublish_round_trip(store, app, client):
     pub = _publish_note(client, app, actor=ALICE, note_id=src)
     assert pub.status_code == 200
     proj_count = sum(
-        1 for k, r in store.rows.items()
-        if k[0] == "notes" and r.get("published_from") == src
+        1 for k, r in store.rows.items() if k[0] == "notes" and r.get("published_from") == src
     )
     assert proj_count == 1
 
     unp = _unpublish_note(client, app, actor=ALICE, note_id=src)
     assert unp.status_code == 204
     proj_count_after = sum(
-        1 for k, r in store.rows.items()
-        if k[0] == "notes" and r.get("published_from") == src
+        1 for k, r in store.rows.items() if k[0] == "notes" and r.get("published_from") == src
     )
     assert proj_count_after == 0
     # Personal source still intact.
@@ -541,8 +616,7 @@ def test_s5_publish_is_idempotent(store, app, client):
     assert r1.json()["note_id"] == r2.json()["note_id"]
 
     proj_count = sum(
-        1 for k, r in store.rows.items()
-        if k[0] == "notes" and r.get("published_from") == src
+        1 for k, r in store.rows.items() if k[0] == "notes" and r.get("published_from") == src
     )
     assert proj_count == 1, "concurrent publish must collapse to one projection"
 
@@ -556,8 +630,7 @@ def test_s6_staged_entity_publish_refused_409(store, app, client):
     eid = store.seed_entity(user_id=ALICE, is_staged=True, name="Quarantined")
 
     _override_user(app, ALICE)
-    resp = client.post(f"/api/v1/entities/{eid}/publish",
-                       json={"scope": "shared"})
+    resp = client.post(f"/api/v1/entities/{eid}/publish", json={"scope": "shared"})
     assert resp.status_code == 409, resp.text
     assert resp.json()["detail"]["error"] == "entity_is_staged"
 
@@ -618,9 +691,7 @@ def test_s10_scope_filter_personal_narrows_to_caller(store):
     caller's own personal rows — never cross-user personal."""
     from visibility import visible_filter
 
-    where, params = visible_filter(
-        UserContext(user_id=BOB), scope_filter="personal"
-    )
+    where, params = visible_filter(UserContext(user_id=BOB), scope_filter="personal")
     # The narrowed clause must reference user_id (caller's own only).
     assert "user_id" in where
     # And must NOT include the shared/system union arm.

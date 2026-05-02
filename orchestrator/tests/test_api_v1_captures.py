@@ -8,11 +8,11 @@ Legacy ``POST /upload`` remains **501**. ``POST …/index`` is **live** (**5G**)
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
+from datetime import timezone
 
 import pytest
 from fastapi.testclient import TestClient
-
 from services.point_ids import note_conversation_point_id
 from tests.captures_memory_store import CapturesMemoryMetadataStore
 
@@ -266,7 +266,9 @@ def test_patch_requires_text_or_url_when_clearing_both(client: TestClient):
     assert resp.json()["detail"]["error"] == "capture_requires_text_or_url"
 
 
-def test_patch_and_delete_blocked_when_indexed(client: TestClient, captures_ms: CapturesMemoryMetadataStore):
+def test_patch_and_delete_blocked_when_indexed(
+    client: TestClient, captures_ms: CapturesMemoryMetadataStore
+):
     r = client.post("/api/v1/captures", json={"text": "to index later"})
     cap_id = r.json()["capture_id"]
     captures_ms.captures[cap_id]["status"] = "indexed"
@@ -280,7 +282,9 @@ def test_patch_and_delete_blocked_when_indexed(client: TestClient, captures_ms: 
     assert dr.json()["detail"]["error"] == "indexed_capture_requires_memory_delete"
 
 
-def test_patch_and_delete_allowed_when_failed(client: TestClient, captures_ms: CapturesMemoryMetadataStore):
+def test_patch_and_delete_allowed_when_failed(
+    client: TestClient, captures_ms: CapturesMemoryMetadataStore
+):
     r = client.post("/api/v1/captures", json={"text": "failed row"})
     cap_id = r.json()["capture_id"]
     captures_ms.captures[cap_id]["status"] = "failed"
@@ -291,7 +295,9 @@ def test_patch_and_delete_allowed_when_failed(client: TestClient, captures_ms: C
     assert dr.status_code == 204
 
 
-def test_cross_user_isolation_404(client: TestClient, captures_ms: CapturesMemoryMetadataStore, monkeypatch):
+def test_cross_user_isolation_404(
+    client: TestClient, captures_ms: CapturesMemoryMetadataStore, monkeypatch
+):
     monkeypatch.setenv("AUTH_ENABLED", "true")
     monkeypatch.setenv("AUTH_SECRET", "capture-route-test-secret-do-not-use")
     from auth import mint_access_token
@@ -425,7 +431,9 @@ def test_attachment_cross_user_404(client: TestClient, monkeypatch):
     assert r.status_code == 404
 
 
-def test_attachment_blocked_when_capture_indexed_409(client: TestClient, captures_ms: CapturesMemoryMetadataStore):
+def test_attachment_blocked_when_capture_indexed_409(
+    client: TestClient, captures_ms: CapturesMemoryMetadataStore
+):
     cap = client.post("/api/v1/captures", json={"text": "x"})
     cap_id = cap.json()["capture_id"]
     captures_ms.captures[cap_id]["status"] = "indexed"
@@ -438,7 +446,8 @@ def test_attachment_blocked_when_capture_indexed_409(client: TestClient, capture
 
 
 def test_attachment_delete_blocked_when_indexed_409(
-    client: TestClient, captures_ms: CapturesMemoryMetadataStore,
+    client: TestClient,
+    captures_ms: CapturesMemoryMetadataStore,
 ):
     cap = client.post("/api/v1/captures", json={"text": "x"})
     cap_id = cap.json()["capture_id"]
@@ -581,17 +590,22 @@ def test_transcribe_omitted_attachment_picks_first_pending_audio(
     first_id = _upload_audio_attachment(client, cap_id, body=b"a1")
     second_id = _upload_audio_attachment(client, cap_id, body=b"a2")
 
-    assert client.post(
-        f"/api/v1/captures/{cap_id}/transcribe",
-        json={"attachment_id": first_id},
-    ).status_code == 200
+    assert (
+        client.post(
+            f"/api/v1/captures/{cap_id}/transcribe",
+            json={"attachment_id": first_id},
+        ).status_code
+        == 200
+    )
 
     r = client.post(f"/api/v1/captures/{cap_id}/transcribe", json={})
     assert r.status_code == 200
     assert r.json()["attachment_id"] == second_id
 
 
-def test_transcribe_all_audio_complete_returns_422(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+def test_transcribe_all_audio_complete_returns_422(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+):
     _pop_stt_adapter()
     monkeypatch.setenv("STT_BACKEND", "fake_stt")
     monkeypatch.setenv("STT_MAX_AUDIO_BYTES", "26214400")
@@ -599,10 +613,13 @@ def test_transcribe_all_audio_complete_returns_422(client: TestClient, monkeypat
 
     cap_id = client.post("/api/v1/captures", json={"text": "n"}).json()["capture_id"]
     att_id = _upload_audio_attachment(client, cap_id)
-    assert client.post(
-        f"/api/v1/captures/{cap_id}/transcribe",
-        json={"attachment_id": att_id},
-    ).status_code == 200
+    assert (
+        client.post(
+            f"/api/v1/captures/{cap_id}/transcribe",
+            json={"attachment_id": att_id},
+        ).status_code
+        == 200
+    )
 
     r = client.post(f"/api/v1/captures/{cap_id}/transcribe", json={})
     assert r.status_code == 422
@@ -618,7 +635,9 @@ def test_transcribe_no_audio_returns_422(client: TestClient, monkeypatch: pytest
     assert r.json()["detail"]["error"] == "capture_no_pending_audio"
 
 
-def test_transcribe_image_attachment_id_returns_422(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+def test_transcribe_image_attachment_id_returns_422(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+):
     _pop_stt_adapter()
     monkeypatch.setenv("STT_BACKEND", "fake_stt")
     cap_id = client.post("/api/v1/captures", json={"text": "n"}).json()["capture_id"]
@@ -666,7 +685,9 @@ def test_transcribe_missing_attachment_404(client: TestClient, monkeypatch: pyte
     assert r.json()["detail"]["error"] == "attachment_not_found"
 
 
-def test_transcribe_malformed_attachment_id_404(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+def test_transcribe_malformed_attachment_id_404(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+):
     _pop_stt_adapter()
     monkeypatch.setenv("STT_BACKEND", "fake_stt")
     cap_id = client.post("/api/v1/captures", json={"text": "n"}).json()["capture_id"]
@@ -786,9 +807,8 @@ def test_transcribe_empty_stt_text_persists_failed(
     monkeypatch.setenv("STT_BACKEND", "fake_stt")
     monkeypatch.setenv("STT_MAX_AUDIO_BYTES", "26214400")
 
-    from models.api_v1 import TranscriptionResult
-
     import routes.api_v1.captures as cap_routes
+    from models.api_v1 import TranscriptionResult
 
     def _tb(*_a, **_k):
         return TranscriptionResult(
@@ -816,7 +836,9 @@ def test_transcribe_empty_stt_text_persists_failed(
 # ── Index (5G) ──────────────────────────────────────────────────────────
 
 
-def test_index_text_capture_success(client: TestClient, captures_ms: CapturesMemoryMetadataStore, mock_vector_store):
+def test_index_text_capture_success(
+    client: TestClient, captures_ms: CapturesMemoryMetadataStore, mock_vector_store
+):
     r = client.post("/api/v1/captures", json={"text": "hello", "title": "My title"})
     assert r.status_code == 201
     cap_id = r.json()["capture_id"]
@@ -861,7 +883,9 @@ def test_index_audio_requires_complete_transcript(
     assert ir.json()["detail"]["error"] == "capture_transcript_required"
 
 
-def test_index_audio_with_transcript_ok(client: TestClient, captures_ms: CapturesMemoryMetadataStore, mock_vector_store):
+def test_index_audio_with_transcript_ok(
+    client: TestClient, captures_ms: CapturesMemoryMetadataStore, mock_vector_store
+):
     r = client.post("/api/v1/captures", json={"text": "voice"})
     cap_id = r.json()["capture_id"]
     aid = _inject_audio_attachment(captures_ms, cap_id)
@@ -906,7 +930,9 @@ def test_index_cross_user_404(client: TestClient, monkeypatch: pytest.MonkeyPatc
 
     alice_h = {"Authorization": f"Bearer {mint_access_token('alice-ix', 'user')}"}
     bob_h = {"Authorization": f"Bearer {mint_access_token('bob-ix', 'user')}"}
-    cap_id = client.post("/api/v1/captures", json={"text": "a"}, headers=alice_h).json()["capture_id"]
+    cap_id = client.post("/api/v1/captures", json={"text": "a"}, headers=alice_h).json()[
+        "capture_id"
+    ]
     r = client.post(f"/api/v1/captures/{cap_id}/index", headers=bob_h)
     assert r.status_code == 404
 
@@ -916,7 +942,10 @@ def test_index_malformed_capture_id_404(client: TestClient):
 
 
 def test_index_qdrant_failure_then_retry(
-    client: TestClient, captures_ms: CapturesMemoryMetadataStore, mock_vector_store, monkeypatch: pytest.MonkeyPatch
+    client: TestClient,
+    captures_ms: CapturesMemoryMetadataStore,
+    mock_vector_store,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     attempts = {"n": 0}
     orig_upsert = mock_vector_store.upsert

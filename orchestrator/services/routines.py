@@ -280,12 +280,14 @@ def _run_weekly_review(*, user_id: str) -> str:
     except ConnectorNotConfigured as exc:
         _log.warning(
             "weekly_review: missing per-user credential (user=%s): %s",
-            user_id, exc,
+            user_id,
+            exc,
         )
     except CredentialUnavailable as exc:
         _log.warning(
             "weekly_review: stored credential unusable (user=%s): %s",
-            user_id, exc,
+            user_id,
+            exc,
         )
     except Exception as exc:
         _log.warning("weekly_review: LLM prose generation failed: %s", exc)

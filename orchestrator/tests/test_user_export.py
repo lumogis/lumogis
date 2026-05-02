@@ -13,12 +13,15 @@ from __future__ import annotations
 import io
 import json
 import zipfile
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
+from datetime import timedelta
+from datetime import timezone
 from pathlib import Path
 
 import pytest
+from models.user_export import ArchiveMeta
+from models.user_export import ImportRefused
 
-from models.user_export import ArchiveMeta, ImportRefused
 from services import user_export
 
 
@@ -42,23 +45,30 @@ def test_redact_credentials_blanks_known_suffixes():
     assert raw["password_hash"] == "argon2$abc"
 
 
-@pytest.mark.parametrize("name", [
-    "../etc/passwd",
-    "/absolute/path",
-    "C:/windows/system32",
-    "foo/../bar",
-    "with\x00nul",
-    "",
-])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "../etc/passwd",
+        "/absolute/path",
+        "C:/windows/system32",
+        "foo/../bar",
+        "with\x00nul",
+        "",
+    ],
+)
 def test_zip_entry_names_rejects_dangerous(name):
     bad = user_export._validate_zip_entry_names([name])
     assert bad == [name]
 
 
 def test_zip_entry_names_accepts_safe_relative():
-    ok = ["manifest.json", "postgres/file_index.json",
-          "qdrant/documents.json", "users/abc.json",
-          "captures/media/u1/c1/a1/blob.png"]
+    ok = [
+        "manifest.json",
+        "postgres/file_index.json",
+        "qdrant/documents.json",
+        "users/abc.json",
+        "captures/media/u1/c1/a1/blob.png",
+    ]
     assert user_export._validate_zip_entry_names(ok) == []
 
 
@@ -72,7 +82,9 @@ def test_plan_capture_media_export_includes_existing_file(tmp_path):
         {"id": "a1", "capture_id": "c1", "user_id": uid, "storage_key": sk},
     ]
     inc, omit = user_export._plan_capture_media_export(
-        uid, rows, media_root=tmp_path,
+        uid,
+        rows,
+        media_root=tmp_path,
     )
     assert len(inc) == 1
     assert not omit
@@ -83,12 +95,16 @@ def test_plan_capture_media_export_includes_existing_file(tmp_path):
 def test_plan_capture_media_export_skips_user_mismatch(tmp_path):
     rows = [
         {
-            "id": "a1", "capture_id": "c1", "user_id": "other",
+            "id": "a1",
+            "capture_id": "c1",
+            "user_id": "other",
             "storage_key": "u1/c1/a1/blob.png",
         },
     ]
     inc, omit = user_export._plan_capture_media_export(
-        "u1", rows, media_root=tmp_path,
+        "u1",
+        rows,
+        media_root=tmp_path,
     )
     assert inc == []
     assert any(o.get("reason") == "user_mismatch" for o in omit)
@@ -124,17 +140,18 @@ def test_restore_capture_media_rewrites_user_prefix(tmp_path, monkeypatch):
 
 def test_decide_pruning_keeps_minimum_floor():
     base = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    archives = [ArchiveMeta(path=Path(f"a{i}.zip"),
-                            mtime=base - timedelta(days=i * 100))
-                for i in range(5)]
+    archives = [
+        ArchiveMeta(path=Path(f"a{i}.zip"), mtime=base - timedelta(days=i * 100)) for i in range(5)
+    ]
     decision = user_export._decide_pruning(
-        archives, keep_min=3, max_age_days=30, now=base,
+        archives,
+        keep_min=3,
+        max_age_days=30,
+        now=base,
     )
     # Newest 3 are always kept regardless of age.
     assert len(decision.keep) == 3
-    assert all(a in decision.keep for a in [Path("a0.zip"),
-                                             Path("a1.zip"),
-                                             Path("a2.zip")])
+    assert all(a in decision.keep for a in [Path("a0.zip"), Path("a1.zip"), Path("a2.zip")])
     # Older two are pruned (over max_age).
     assert len(decision.prune) == 2
     assert decision.reason_per_path[Path("a0.zip")] == "within_keep_min"
@@ -145,11 +162,14 @@ def test_decide_pruning_keeps_recent_above_floor():
     base = datetime(2026, 1, 1, tzinfo=timezone.utc)
     # Six archives, all within 5 days — none should be pruned despite
     # exceeding the keep_min floor.
-    archives = [ArchiveMeta(path=Path(f"a{i}.zip"),
-                            mtime=base - timedelta(days=i))
-                for i in range(6)]
+    archives = [
+        ArchiveMeta(path=Path(f"a{i}.zip"), mtime=base - timedelta(days=i)) for i in range(6)
+    ]
     decision = user_export._decide_pruning(
-        archives, keep_min=3, max_age_days=30, now=base,
+        archives,
+        keep_min=3,
+        max_age_days=30,
+        now=base,
     )
     assert len(decision.prune) == 0
     assert len(decision.keep) == 6
@@ -186,8 +206,7 @@ def test_parse_manifest_happy_path():
         "exported_user_role": "user",
         "scope_filter": "authored_by_me",
         "falkordb_edge_policy": "personal_intra_user_authored",
-        "sections": [{"name": "postgres/notes.json", "kind": "postgres",
-                      "row_count": 0}],
+        "sections": [{"name": "postgres/notes.json", "kind": "postgres", "row_count": 0}],
     }
     with zipfile.ZipFile(buf, "w") as zf:
         zf.writestr("manifest.json", json.dumps(body))
@@ -203,6 +222,7 @@ def test_parse_manifest_happy_path():
 
 def test_validate_manifest_flags_unsupported_version():
     from models.user_export import Manifest
+
     bad = Manifest(
         format_version=999,
         exported_at=datetime.now(timezone.utc),
