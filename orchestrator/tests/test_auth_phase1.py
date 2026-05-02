@@ -28,6 +28,7 @@ from datetime import timezone
 
 import pytest
 from fastapi.testclient import TestClient
+from tests.ephemeral_fernet_key import TEST_FERNET_KEY
 
 
 def _csrf_origin_headers() -> dict[str, str]:
@@ -171,16 +172,10 @@ def auth_env(monkeypatch):
     monkeypatch.setenv("ACCESS_TOKEN_TTL_SECONDS", "900")
     monkeypatch.setenv("REFRESH_TOKEN_TTL_SECONDS", "3600")
     monkeypatch.setenv("LUMOGIS_REFRESH_COOKIE_SECURE", "false")
-    # Real (deterministic) Fernet key so `_enforce_auth_consistency`'s
-    # post-AUTH_SECRET LUMOGIS_CREDENTIAL_KEY[S] gate passes for every
-    # AUTH_ENABLED=true test in this file. The placeholder-refusal
-    # tests below override this with monkeypatch on a per-test basis.
-    # Generated once with `Fernet.generate_key().decode()` and pinned;
-    # the value is not security-sensitive (test-only).
-    monkeypatch.setenv(
-        "LUMOGIS_CREDENTIAL_KEY",
-        "OlGLYckGIbBSt54y8XVmgb441LgKJWvvYoHnpQ_cv9A=",
-    )
+    # Real Fernet key so `_enforce_auth_consistency`'s post-AUTH_SECRET
+    # LUMOGIS_CREDENTIAL_KEY[S] gate passes for every AUTH_ENABLED=true
+    # test in this file. Placeholder-refusal tests override via monkeypatch.
+    monkeypatch.setenv("LUMOGIS_CREDENTIAL_KEY", TEST_FERNET_KEY)
     yield
     # Reset rate limit state between tests so the per-IP bucket from one
     # test doesn't bleed into the next.
@@ -535,7 +530,7 @@ def test_enforce_auth_consistency_accepts_keys_csv_when_single_key_unset(
     monkeypatch.delenv("LUMOGIS_CREDENTIAL_KEY", raising=False)
     monkeypatch.setenv(
         "LUMOGIS_CREDENTIAL_KEYS",
-        "OlGLYckGIbBSt54y8XVmgb441LgKJWvvYoHnpQ_cv9A=,OlGLYckGIbBSt54y8XVmgb441LgKJWvvYoHnpQ_cv9A=",
+        f"{TEST_FERNET_KEY},{TEST_FERNET_KEY}",
     )
     main._enforce_auth_consistency()
 

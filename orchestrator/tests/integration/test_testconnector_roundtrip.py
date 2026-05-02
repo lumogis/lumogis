@@ -43,7 +43,7 @@ from contextlib import contextmanager
 
 import pytest
 from fastapi.testclient import TestClient
-from tests.test_connector_credentials_routes import _TEST_FERNET_KEY  # noqa: E402
+from tests.ephemeral_fernet_key import TEST_FERNET_KEY  # noqa: E402
 from tests.test_connector_credentials_routes import _RoutesFakeStore  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -104,7 +104,7 @@ def _reinstall_singletons(store) -> None:
 def env(monkeypatch):
     """Single-user dev mode + a real Fernet key so the service operates."""
     monkeypatch.setenv("AUTH_ENABLED", "false")
-    monkeypatch.setenv("LUMOGIS_CREDENTIAL_KEY", _TEST_FERNET_KEY)
+    monkeypatch.setenv("LUMOGIS_CREDENTIAL_KEY", TEST_FERNET_KEY)
     monkeypatch.delenv("LUMOGIS_CREDENTIAL_KEYS", raising=False)
     monkeypatch.delenv("LUMOGIS_PUBLIC_ORIGIN", raising=False)
     monkeypatch.delenv("MCP_AUTH_TOKEN", raising=False)

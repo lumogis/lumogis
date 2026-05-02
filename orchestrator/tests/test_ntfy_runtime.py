@@ -17,10 +17,9 @@ Pins the ADR 018 D3 split for the ntfy connector:
 from __future__ import annotations
 
 import pytest
+from tests.ephemeral_fernet_key import TEST_FERNET_KEY
 
 from services import connector_credentials as ccs
-
-_TEST_FERNET_KEY = "OlGLYckGIbBSt54y8XVmgb441LgKJWvvYoHnpQ_cv9A="
 
 
 class _FakeStore:
@@ -98,7 +97,7 @@ def store(monkeypatch):
 
     s = _FakeStore()
     _config._instances["metadata_store"] = s
-    monkeypatch.setenv("LUMOGIS_CREDENTIAL_KEY", _TEST_FERNET_KEY)
+    monkeypatch.setenv("LUMOGIS_CREDENTIAL_KEY", TEST_FERNET_KEY)
     monkeypatch.delenv("LUMOGIS_CREDENTIAL_KEYS", raising=False)
     ccs.reset_for_tests()
     yield s

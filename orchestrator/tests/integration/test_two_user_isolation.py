@@ -40,6 +40,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from tests.ephemeral_fernet_key import TEST_FERNET_KEY
 
 # ---------------------------------------------------------------------------
 # Fake metadata store: handles users + file_index, no-ops everything else.
@@ -1023,10 +1024,7 @@ def test_two_users_have_independent_caldav_credentials(
     """Alice's and Bob's CalDAV credentials never cross-contaminate."""
     import jwt
 
-    monkeypatch.setenv(
-        "LUMOGIS_CREDENTIAL_KEY",
-        "OlGLYckGIbBSt54y8XVmgb441LgKJWvvYoHnpQ_cv9A=",
-    )
+    monkeypatch.setenv("LUMOGIS_CREDENTIAL_KEY", TEST_FERNET_KEY)
     monkeypatch.delenv("LUMOGIS_CREDENTIAL_KEYS", raising=False)
     monkeypatch.delenv("LUMOGIS_PUBLIC_ORIGIN", raising=False)
     # CALENDAR_* env MUST NOT influence resolution under AUTH_ENABLED=true.

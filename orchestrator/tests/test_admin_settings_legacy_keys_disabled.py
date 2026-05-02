@@ -33,9 +33,8 @@ from contextlib import contextmanager
 import jwt
 import pytest
 from fastapi.testclient import TestClient
+from tests.ephemeral_fernet_key import TEST_FERNET_KEY  # noqa: E402
 from tests.test_auth_phase1 import FakeUsersStore  # noqa: E402
-
-_TEST_FERNET_KEY = "OlGLYckGIbBSt54y8XVmgb441LgKJWvvYoHnpQ_cv9A="
 
 
 class _SettingsFakeStore(FakeUsersStore):
@@ -99,7 +98,7 @@ def auth_on_env(monkeypatch):
     monkeypatch.setenv("LUMOGIS_REFRESH_COOKIE_SECURE", "false")
     monkeypatch.delenv("LUMOGIS_PUBLIC_ORIGIN", raising=False)
     monkeypatch.delenv("MCP_AUTH_TOKEN", raising=False)
-    monkeypatch.setenv("LUMOGIS_CREDENTIAL_KEY", _TEST_FERNET_KEY)
+    monkeypatch.setenv("LUMOGIS_CREDENTIAL_KEY", TEST_FERNET_KEY)
     monkeypatch.delenv("LUMOGIS_CREDENTIAL_KEYS", raising=False)
     yield
     from routes.auth import _reset_rate_limit_for_tests

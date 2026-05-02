@@ -39,11 +39,9 @@ from typing import Any
 
 import pytest
 from connectors import registry
+from tests.ephemeral_fernet_key import TEST_FERNET_KEY
 
 from services import connector_credentials as ccs
-
-_TEST_FERNET_KEY = "OlGLYckGIbBSt54y8XVmgb441LgKJWvvYoHnpQ_cv9A="
-
 
 # ---------------------------------------------------------------------------
 # Minimal metadata-store stand-in (matches tests/test_ntfy_runtime.py shape).
@@ -115,7 +113,7 @@ def store(monkeypatch):
 
     s = _FakeStore()
     _config._instances["metadata_store"] = s
-    monkeypatch.setenv("LUMOGIS_CREDENTIAL_KEY", _TEST_FERNET_KEY)
+    monkeypatch.setenv("LUMOGIS_CREDENTIAL_KEY", TEST_FERNET_KEY)
     monkeypatch.delenv("LUMOGIS_CREDENTIAL_KEYS", raising=False)
     ccs.reset_for_tests()
     yield s
@@ -362,7 +360,7 @@ def test_load_connection_payload_empty_string_raises_value_error(store, monkeypa
 
     from cryptography.fernet import Fernet
 
-    fernet = Fernet(_TEST_FERNET_KEY.encode())
+    fernet = Fernet(TEST_FERNET_KEY.encode())
     store.creds[("alice", registry.CALDAV)] = {
         "user_id": "alice",
         "connector": registry.CALDAV,
@@ -461,7 +459,7 @@ def test_adapter_get_connection_returns_none_on_value_error(store, monkeypatch, 
 
     from cryptography.fernet import Fernet
 
-    fernet = Fernet(_TEST_FERNET_KEY.encode())
+    fernet = Fernet(TEST_FERNET_KEY.encode())
     store.creds[("alice", registry.CALDAV)] = {
         "user_id": "alice",
         "connector": registry.CALDAV,

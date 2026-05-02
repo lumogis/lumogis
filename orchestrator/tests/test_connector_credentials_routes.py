@@ -39,6 +39,7 @@ from datetime import timezone
 import jwt
 import pytest
 from fastapi.testclient import TestClient
+from tests.ephemeral_fernet_key import TEST_FERNET_KEY  # noqa: E402
 from tests.test_auth_phase1 import FakeUsersStore  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -190,12 +191,6 @@ class _RoutesFakeStore(FakeUsersStore):
 # ---------------------------------------------------------------------------
 
 
-# Real Fernet key for the credential service. Test-only; rotated to a
-# fresh value would also work — pinned so test failures can be
-# reproduced without env drift.
-_TEST_FERNET_KEY = "OlGLYckGIbBSt54y8XVmgb441LgKJWvvYoHnpQ_cv9A="
-
-
 @pytest.fixture
 def store(monkeypatch):
     """Install the composite store as the metadata-store singleton.
@@ -227,7 +222,7 @@ def dev_env(monkeypatch):
     monkeypatch.setenv("AUTH_ENABLED", "false")
     monkeypatch.delenv("LUMOGIS_PUBLIC_ORIGIN", raising=False)
     monkeypatch.delenv("MCP_AUTH_TOKEN", raising=False)
-    monkeypatch.setenv("LUMOGIS_CREDENTIAL_KEY", _TEST_FERNET_KEY)
+    monkeypatch.setenv("LUMOGIS_CREDENTIAL_KEY", TEST_FERNET_KEY)
     monkeypatch.delenv("LUMOGIS_CREDENTIAL_KEYS", raising=False)
     yield
 
@@ -246,7 +241,7 @@ def auth_env(monkeypatch):
     monkeypatch.setenv("LUMOGIS_REFRESH_COOKIE_SECURE", "false")
     monkeypatch.delenv("LUMOGIS_PUBLIC_ORIGIN", raising=False)
     monkeypatch.delenv("MCP_AUTH_TOKEN", raising=False)
-    monkeypatch.setenv("LUMOGIS_CREDENTIAL_KEY", _TEST_FERNET_KEY)
+    monkeypatch.setenv("LUMOGIS_CREDENTIAL_KEY", TEST_FERNET_KEY)
     monkeypatch.delenv("LUMOGIS_CREDENTIAL_KEYS", raising=False)
     yield
     from routes.auth import _reset_rate_limit_for_tests
@@ -680,7 +675,7 @@ def test_bearer_authenticated_put_bypasses_origin_check(store, monkeypatch):
     monkeypatch.setenv("AUTH_ENABLED", "true")
     monkeypatch.setenv("AUTH_SECRET", "csrf-bypass-test-secret")
     monkeypatch.setenv("LUMOGIS_PUBLIC_ORIGIN", "https://lumogis.example")
-    monkeypatch.setenv("LUMOGIS_CREDENTIAL_KEY", _TEST_FERNET_KEY)
+    monkeypatch.setenv("LUMOGIS_CREDENTIAL_KEY", TEST_FERNET_KEY)
     monkeypatch.delenv("MCP_AUTH_TOKEN", raising=False)
     alice = _seed(store, email="alice@home.lan", role="user")
     hdr = {
