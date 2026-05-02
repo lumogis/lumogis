@@ -24,9 +24,12 @@ def record_explicit(
     item_type: str,
     item_id: str,
     positive: bool,
-    user_id: str = "default",
+    *,
+    user_id: str,
 ) -> None:
     """Record an explicit thumbs-up/down feedback signal."""
+    if not isinstance(user_id, str) or not user_id:
+        raise TypeError("record_explicit: user_id (keyword-only) is required")
     _write(
         item_type=item_type, item_id=item_id, positive=positive, event_type=None, user_id=user_id
     )
@@ -36,6 +39,7 @@ def record_explicit(
         item_id=item_id,
         positive=positive,
         event_type=None,
+        user_id=user_id,
     )
 
 
@@ -43,12 +47,15 @@ def record_implicit(
     item_type: str,
     item_id: str,
     event_type: str,
-    user_id: str = "default",
+    *,
+    user_id: str,
 ) -> None:
     """Record an implicit behavioural feedback signal.
 
     event_type examples: item_opened, signal_dismissed, briefing_item_expanded.
     """
+    if not isinstance(user_id, str) or not user_id:
+        raise TypeError("record_implicit: user_id (keyword-only) is required")
     _write(
         item_type=item_type, item_id=item_id, positive=None, event_type=event_type, user_id=user_id
     )
@@ -58,6 +65,7 @@ def record_implicit(
         item_id=item_id,
         positive=None,
         event_type=event_type,
+        user_id=user_id,
     )
 
 

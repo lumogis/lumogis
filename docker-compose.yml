@@ -10,6 +10,13 @@ services:
       FILESYSTEM_ROOT: /data
       FILESYSTEM_ROOT_HOST: ${FILESYSTEM_ROOT:-./lumogis-data}
       STACK_CONTROL_URL: http://stack-control:9000
+      # Same-origin Lumogis Web (Caddy) + refresh-cookie CSRF: pin the browser
+      # origin. Default matches http://localhost (port 80) — set in .env if you
+      # use 127.0.0.1, HTTPS, or a LAN hostname. See .env.example.
+      LUMOGIS_PUBLIC_ORIGIN: ${LUMOGIS_PUBLIC_ORIGIN:-http://localhost}
+      # Trust Caddy (and any listed proxies) for X-Forwarded-For. The app
+      # trusts no forwarded headers unless this env is explicitly set.
+      LUMOGIS_TRUSTED_PROXIES: ${LUMOGIS_TRUSTED_PROXIES:-127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7}
     volumes:
       - ${FILESYSTEM_ROOT:-./lumogis-data}:/data:ro
       # Project root — admin.py writes /project/.env (RERANKER_BACKEND, FILESYSTEM_ROOT),
@@ -32,7 +39,7 @@ services:
       stack-control:
         condition: service_started
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8000/healthz || exit 1"]
       interval: 15s
       timeout: 10s
       retries: 5
@@ -74,8 +81,14 @@ services:
   # Activepieces (optional automation UI) — see docker-compose.activepieces.yml
   # FalkorDB graph store (for graph plugins) — see docker-compose.falkordb.yml
 
+  # mongodb + librechat are gated behind the `librechat` compose profile so the
+  # legacy LibreChat surface can be skipped once a deployment cuts over to the
+  # Lumogis Web SPA. The .env.example sets COMPOSE_PROFILES=librechat by default
+  # so existing installs keep starting LibreChat unchanged. To disable, set
+  # COMPOSE_PROFILES= (empty) or remove `librechat` from the value.
   mongodb:
     image: mongo:7.0
+    profiles: ["librechat"]
     volumes:
       - mongodb_data:/data/db
     healthcheck:
@@ -87,6 +100,7 @@ services:
 
   librechat:
     image: ghcr.io/danny-avila/librechat:v0.7.9
+    profiles: ["librechat"]
     ports:
       - "3080:3080"
     env_file: .env
@@ -99,7 +113,11 @@ services:
       APP_TITLE: ${APP_TITLE:-Lumogis}
       CUSTOM_FOOTER: ${CUSTOM_FOOTER:-[Dashboard & Settings](http://localhost:8000/dashboard)}
       # LibreChat hides email sign-up unless this is true (see routes/config registrationEnabled).
-      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-true}
+      # Default `false` per family-LAN plan D6 + D15 — open LAN registration
+      # is the P0 audit finding A8 (docs/private/MULTI-USER-AUDIT.md). The
+      # supported multi-user path is Core-owned auth via /web/ + /api/v1/auth/*
+      # (plan §24), not LibreChat self-signup.
+      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-false}
     volumes:
       - ./config/librechat.yaml:/app/librechat.yaml:ro
       - ./branding/favicon-16x16.png:/app/client/public/assets/favicon-16x16.png:ro
@@ -113,8 +131,11 @@ services:
         condition: service_healthy
       mongodb:
         condition: service_healthy
+    # Probe 127.0.0.1 — busybox wget resolves `localhost` to ::1 first while Node
+    # often listens only on IPv4 (spurious "connection refused"). Image has wget,
+    # not curl, so keep this as an exec-form probe.
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:3080 2>/dev/null || curl -sf http://localhost:3080 2>/dev/null || exit 1"]
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3080"]
       interval: 20s
       timeout: 10s
       retries: 5
@@ -139,6 +160,42 @@ services:
       retries: 5
     restart: unless-stopped
     # No host ports — only reachable from within the Docker network
+
+  # Lumogis Web SPA (nginx static) + Caddy reverse proxy — Phase 1 Pass 1.5.
+  # http://localhost/ → SPA; /api/* /events /v1/* /mcp/* /health → orchestrator.
+  lumogis-web:
+    build:
+      context: ./clients/lumogis-web
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    expose:
+      - "80"
+    # Probe 127.0.0.1 — busybox wget resolves `localhost` to ::1 first while
+    # nginx often listens only on IPv4 (spurious "connection refused").
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      CADDY_DOMAIN: ${CADDY_DOMAIN:-:80}
+    volumes:
+      - ./docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      orchestrator:
+        condition: service_healthy
+      lumogis-web:
+        condition: service_healthy
 
   # Pin a recent release: Docker Hub :latest can lag; Gemma 4+ needs Ollama ≥ ~0.20.
   ollama:
@@ -176,6 +233,8 @@ services:
   #     NTFY_CACHE_FILE: /var/cache/ntfy/cache.db
 
 volumes:
+  caddy_data:
+  caddy_config:
   mongodb_data:
   ollama_data:
   qdrant_data:

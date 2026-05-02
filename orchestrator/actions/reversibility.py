@@ -21,8 +21,15 @@ import config
 _log = logging.getLogger(__name__)
 
 
-def attempt_reverse(reverse_token: str, user_id: str = "default") -> ActionResult:
-    """Attempt to reverse the action identified by reverse_token."""
+def attempt_reverse(reverse_token: str, *, user_id: str) -> ActionResult:
+    """Attempt to reverse the action identified by reverse_token.
+
+    Phase 3: ``user_id`` is keyword-only and required. Reversal is scoped
+    to the caller's audit rows; an admin endpoint can pass an explicit
+    target user_id, but the implicit ``"default"`` fallback is gone.
+    """
+    if not isinstance(user_id, str) or not user_id:
+        raise TypeError("attempt_reverse: user_id (keyword-only) is required")
     # Look up original audit entry.
     try:
         ms = config.get_metadata_store()

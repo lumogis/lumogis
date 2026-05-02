@@ -55,9 +55,9 @@ class RoutineSpec:
     name: str
     description: str
     schedule_cron: str  # APScheduler CronTrigger expression: "min hour dom mon dow"
+    user_id: str
     steps: list[dict] = field(default_factory=list)  # [{action_name, input}]
     requires_approval: bool = True
     approved_at: Optional[datetime] = None
     last_run_at: Optional[datetime] = None
     enabled: bool = True
-    user_id: str = "default"

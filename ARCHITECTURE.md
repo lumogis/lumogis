@@ -1,6 +1,6 @@
 # Lumogis Architecture
 
-This document explains how the lumogis orchestrator is structured and how the pieces fit together. Read this before contributing code. For decisions on *why* specific technologies were chosen, see `docs/decisions/`.
+This document explains how the lumogis orchestrator is structured and how the pieces fit together. Read this before contributing code. For a **single consolidated overview** aimed at operators and contributors (components, mental model, Web surfaces, deployment, roadmap disambiguation), see [`docs/LUMOGIS_REFERENCE_MANUAL.md`](docs/LUMOGIS_REFERENCE_MANUAL.md). For decisions on *why* specific technologies were chosen, see `docs/decisions/`. For the **post-remediation** framing (Core as policy kernel, tool catalog overlay, household-control `/api/v1` facades), see [ADR 028 — Self-hosted extension architecture and household control surfaces](docs/decisions/028-self-hosted-extension-architecture-and-household-control-surfaces.md).
 
 ---
 
@@ -15,6 +15,16 @@ Everything in the codebase maps to exactly one of five concepts:
 | **Plugins** | `orchestrator/plugins/` | Optional, self-contained extensions. Core works without any. |
 | **Signals** | `orchestrator/signals/` | Source monitors that detect and score incoming events |
 | **Actions** | `orchestrator/actions/` | Executable operations with audit logging and Ask/Do enforcement |
+
+---
+
+## Lumogis Web and Caddy
+
+The default `docker-compose.yml` runs **Caddy** (host **80** / **443**), **`lumogis-web`** (nginx serving the Vite SPA from `clients/lumogis-web/`), and the **orchestrator** on **8000**. Browsers should use the **same origin** as Caddy (e.g. `http://localhost/`) so refresh cookies and `csrf.require_same_origin` line up.
+
+**Routing (Caddy → upstream):** `/api/*`, `/events`, `/v1/*`, `/mcp/*`, `/health`, and root-mounted **legacy** orchestrator routes from `routes/admin.py` (e.g. `/dashboard`, `/settings`, `/graph/*`, `/kg/*`, `/review-queue`, `/backup`, `/restore`, `/permissions`, `/browse`, `/export`, `/entities/*`) go to `orchestrator:8000` **before** the catch-all to `lumogis-web:80`. The SPA’s nginx `try_files` would otherwise return `index.html` for those paths and hide the FastAPI pages.
+
+**Operators:** set `LUMOGIS_PUBLIC_ORIGIN` to the browser’s canonical URL when `AUTH_ENABLED=true`; set `LUMOGIS_TRUSTED_PROXIES` for `X-Forwarded-For` when a reverse proxy is in front. See `.env.example` and root `README.md`.
 
 ---
 
@@ -36,6 +46,7 @@ Arrows point in the direction of imports. The rule: **nothing imports inward pas
 - Services import ports (never concrete adapters)
 - Adapters implement ports
 - Plugins, signals, and actions import from `ports/`, `models/`, `events.py`, and `hooks.py` — never from `services/` or `adapters/`
+- **Plugins (precise list):** see [`docs/architecture/plugin-imports.md`](docs/architecture/plugin-imports.md) — in-tree first-party code may have a **documented** `config` import; everything else should stay on the default allow-list
 - `config.py` is the only place that instantiates concrete adapters
 
 ---
@@ -159,6 +170,7 @@ Using `fire_background` for slow work (like graph construction) prevents the ing
 - **Pydantic models** at route boundaries and stable service contracts (request/response shapes, serialisation)
 - **Plain dataclasses or dicts** for lightweight internal data passing within a single service
 - **`ToolSpec`** (frozen dataclass) — mandatory metadata for every tool registered via hooks, used by `run_tool()` for structural permission enforcement
+- **Read-only tool catalog** — `services/unified_tools.py::build_tool_catalog` assembles a deterministic snapshot of LLM, MCP, capability, and action-registry tool surfaces (not wired into the chat loop). Terminology: [`docs/architecture/tool-vocabulary.md`](docs/architecture/tool-vocabulary.md).
 
 New routes must define Pydantic request and response models. Services pass plain dicts internally.
 
@@ -273,11 +285,11 @@ Core exposes five read-only community tools over MCP at `/mcp/`:
 | `entity.search` | `services.entities.search_by_name` |
 | `context.build` | `services.search.semantic_search` + `services.memory.retrieve_context` + `services.context_budget.truncate_text` |
 
-All tools are thin wrappers — no business logic in `mcp_server.py`. The new helpers in `services/memory.py` and `services/entities.py` mirror the existing `routes/data.py::list_entities` error-handling pattern: warn + return empty answer (`[]` or `None`) on any DB failure, never raise.
+All tools are thin wrappers — no business logic in `mcp_server.py`. The three new helpers in `services/memory.py` and `services/entities.py` mirror the existing `routes/data.py::list_entities` error-handling pattern: warn + return empty answer (`[]` or `None`) on any DB failure, never raise.
 
 Transport: `FastMCP(stateless_http=True, json_response=True)` mounted at `/mcp` via `app.mount`. Stateless mode is a deliberate scope choice — every tool is read-only and self-contained, so no sessions, no streaming, no server→client notifications. A future stateful MCP surface (e.g. for long-running KG queries) belongs in a separate capability service rather than Core. The canonical client URL is **`/mcp/`** with the trailing slash; `POST /mcp` triggers a 307 redirect that some HTTP clients drop the `Authorization` header on.
 
-Lifespan integration: the SDK's `StreamableHTTPSessionManager` requires its anyio task group to be active even in stateless mode, so the FastAPI lifespan calls `mcp.session_manager.run().__aenter__()` after building a fresh `FastMCP` via `build_fastmcp()`. The factory is rebuilt per lifespan startup because `session_manager.run()` is single-shot per `FastMCP` instance — production lifespans run once so reuse would work, but `TestClient(main.app)` starts a fresh lifespan per test — rebuilding makes both paths identical and keeps the production code equally simple.
+Lifespan integration: the SDK's `StreamableHTTPSessionManager` requires its anyio task group to be active even in stateless mode, so the FastAPI lifespan calls `mcp.session_manager.run().__aenter__()` after building a fresh `FastMCP` via `build_fastmcp()`. The factory is rebuilt per lifespan startup because `session_manager.run()` is single-shot per `FastMCP` instance — production lifespans run once so reuse would work, but `TestClient(main.app)` starts a fresh lifespan per test.
 
 ### Auth
 
@@ -321,8 +333,9 @@ router = APIRouter(prefix="/my-plugin")
 def status(): ...
 ```
 
-Plugins may import from: `ports/`, `models/`, `events.py`, `hooks.py`.
-Plugins must **never** import from: `services/`, `adapters/`, `config.py`.
+**Default for plugin packages:** import only from `ports/`, `models/`, `events.py`, and `hooks.py`. Do not import from `services/` or `adapters/`.
+
+**`config`:** In-tree, first-party plugins (e.g. the shipped `plugins/graph` package) may import `config` for documented graph-mode and factory access only. That is a narrow exception, not a general second wiring layer — see [`docs/architecture/plugin-imports.md`](docs/architecture/plugin-imports.md) for the full rule and the distinction from out-of-tree plugins.
 
 Named plugin directories are listed in `.gitignore` so that plugin packages developed outside this repository can be mounted at deploy time without being tracked here. The orchestrator loads whatever is present — plugins are additive, never required. See [ADR-005](docs/decisions/005-plugin-boundary.md).
 

@@ -1,0 +1,727 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lumogis Knowledge Graph</title>
+<!--
+  Cytoscape.js loaded from CDN.
+  For offline / air-gapped deployments, download the file and place it at
+  orchestrator/static/cytoscape.min.js, then change the src below to
+  "/static/cytoscape.min.js".  The fallback loader below also handles this.
+-->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"
+        integrity="sha512-1qhH9fxNjz0GvRb/aTxdxmH3ysqMD+Jl8E1SBWDQ7PjZPWJEGHFpVJGu3xpFO5/eaOagQrLFGDFZ0rByPlhg=="
+        crossorigin="anonymous"
+        referrerpolicy="no-referrer"
+        onerror="loadCytoscapeLocal()">
+</script>
+<script>
+function loadCytoscapeLocal() {
+  var s = document.createElement('script');
+  s.src = '/static/cytoscape.min.js';
+  document.head.appendChild(s);
+}
+</script>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48' fill='none'%3E%3Ccircle cx='24' cy='24' r='11' fill='%23E8632A' opacity='0.12'/%3E%3Ccircle cx='24' cy='24' r='8.5' fill='%23FDE8D8' opacity='0.55'/%3E%3Ccircle cx='24' cy='24' r='5.5' fill='%23E8632A'/%3E%3Ccircle cx='24' cy='24' r='2.6' fill='%23FDE8D8'/%3E%3C/svg%3E">
+<style>
+:root {
+  --bg:        #0d1117;
+  --surface:   #161b22;
+  --border:    #30363d;
+  --txt:       #e6edf3;
+  --txt2:      #8b949e;
+  --accent:    #d9a878;
+  --radius:    6px;
+  --sidebar-w: 280px;
+  --header-h:  52px;
+}
+[data-theme="light"] {
+  --bg:       #ffffff;
+  --surface:  #f6f8fa;
+  --border:   #d0d7de;
+  --txt:      #1f2328;
+  --txt2:     #656d76;
+  --accent:   #a85c32;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: var(--bg); color: var(--txt);
+  font: 13px/1.5 system-ui, sans-serif;
+  display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+button {
+  cursor: pointer; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface); color: var(--txt); padding: 5px 12px; font-size: 12px;
+  transition: border-color .15s;
+}
+button:hover { border-color: var(--accent); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button.primary {
+  background: var(--accent); color: #14110e;
+  border-color: var(--accent); font-weight: 600;
+}
+input, select {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); color: var(--txt);
+  padding: 5px 9px; font-size: 12px; outline: none; width: 100%;
+}
+input:focus, select:focus { border-color: var(--accent); }
+
+/* Header */
+#header {
+  height: var(--header-h); background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 12px; padding: 0 16px;
+  flex-shrink: 0;
+}
+#header .logo { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; }
+#header .spacer { flex: 1; }
+#stats-bar { display: flex; gap: 16px; font-size: 12px; color: var(--txt2); align-items: center; }
+#stats-bar .stat strong { color: var(--txt); }
+#avail-badge {
+  padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600;
+}
+#avail-badge.ok  { background: rgba(63,185,80,.15); color: #3fb950; }
+#avail-badge.err { background: rgba(248,81,73,.15);  color: #f85149; }
+#theme-btn { background: none; border: none; cursor: pointer; font-size: 16px; padding: 4px; }
+#dashboard-link { font-size: 12px; color: var(--txt2); }
+
+/* Layout */
+#main { display: flex; flex: 1; overflow: hidden; }
+
+/* Sidebar */
+#sidebar {
+  width: var(--sidebar-w); background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 0; overflow-y: auto; flex-shrink: 0;
+}
+.sidebar-section { padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.sidebar-section h3 { font-size: 11px; font-weight: 600; color: var(--txt2); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 8px; }
+.field { margin-bottom: 8px; }
+.field label { display: block; font-size: 11px; color: var(--txt2); margin-bottom: 3px; }
+.field-row { display: flex; gap: 6px; align-items: flex-end; }
+.field-row input { flex: 1; }
+.autocomplete-wrap { position: relative; }
+#autocomplete-list {
+  position: absolute; top: 100%; left: 0; right: 0; z-index: 100;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); max-height: 180px; overflow-y: auto;
+  display: none;
+}
+#autocomplete-list .ac-item {
+  padding: 5px 10px; cursor: pointer; font-size: 12px;
+  display: flex; justify-content: space-between; gap: 8px;
+}
+#autocomplete-list .ac-item:hover { background: var(--bg); }
+#autocomplete-list .ac-type { font-size: 10px; color: var(--txt2); }
+
+#strength-val { font-size: 11px; color: var(--txt2); margin-top: 2px; }
+
+/* Type filter checkboxes */
+.type-filters { display: flex; flex-wrap: wrap; gap: 4px 8px; }
+.type-filter { display: flex; align-items: center; gap: 4px; font-size: 11px; cursor: pointer; user-select: none; }
+.type-filter input[type=checkbox] { width: auto; cursor: pointer; }
+
+/* Info panel */
+#info-panel {
+  padding: 12px 14px; background: var(--bg); border-top: 1px solid var(--border);
+  margin-top: auto;
+}
+#info-panel h4 { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+#info-panel .info-row { font-size: 11px; color: var(--txt2); margin-bottom: 2px; }
+#info-panel .info-row strong { color: var(--txt); }
+#info-panel { display: none; }
+
+/* Canvas */
+#cy-wrap { flex: 1; position: relative; }
+#cy { width: 100%; height: 100%; }
+
+/* Canvas overlay messages */
+#canvas-msg {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 12px;
+  text-align: center; padding: 24px; pointer-events: none;
+  color: var(--txt2); font-size: 14px;
+}
+#canvas-msg.hidden { display: none; }
+#canvas-msg .msg-title { font-size: 16px; font-weight: 600; color: var(--txt); }
+
+/* Fit button */
+#fit-btn {
+  position: absolute; bottom: 16px; right: 16px; z-index: 10;
+  background: var(--surface); border: 1px solid var(--border);
+  padding: 6px 12px; font-size: 12px;
+}
+</style>
+</head>
+<body>
+
+<!-- ── Header ──────────────────────────────────────────────────────────── -->
+<div id="header">
+  <div class="logo">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none" width="22" height="22" aria-hidden="true">
+      <circle cx="24" cy="24" r="11" fill="#E8632A" opacity="0.12"/>
+      <circle cx="24" cy="24" r="5.5" fill="#E8632A"/>
+      <circle cx="24" cy="24" r="2.6" fill="#FDE8D8"/>
+    </svg>
+    Lumogis Knowledge Graph
+  </div>
+  <div id="avail-badge" class="err">loading…</div>
+  <div id="stats-bar">
+    <span class="stat"><strong id="stat-nodes">–</strong> nodes</span>
+    <span class="stat"><strong id="stat-edges">–</strong> edges</span>
+  </div>
+  <div class="spacer"></div>
+  <a id="dashboard-link" href="/dashboard">← Dashboard</a>
+  <button id="theme-btn" title="Toggle dark/light" onclick="toggleTheme()">☀️</button>
+</div>
+
+<!-- ── Main ────────────────────────────────────────────────────────────── -->
+<div id="main">
+
+  <!-- Sidebar -->
+  <div id="sidebar">
+
+    <!-- Ego search -->
+    <div class="sidebar-section">
+      <h3>Explore entity</h3>
+      <div class="field">
+        <label for="ego-input">Entity name</label>
+        <div class="autocomplete-wrap">
+          <input id="ego-input" type="text" placeholder="e.g. Ada Lovelace" autocomplete="off">
+          <div id="autocomplete-list"></div>
+        </div>
+      </div>
+      <div class="field">
+        <label>Edge strength ≥ <span id="strength-val">0</span></label>
+        <input id="strength-slider" type="range" min="0" max="20" value="0" step="1"
+               oninput="document.getElementById('strength-val').textContent=this.value">
+      </div>
+      <div class="field-row">
+        <button class="primary" onclick="loadEgo()">Explore</button>
+        <button onclick="resetGraph()">Reset</button>
+      </div>
+    </div>
+
+    <!-- Path finder -->
+    <div class="sidebar-section">
+      <h3>Find path</h3>
+      <div class="field">
+        <label for="path-from">From</label>
+        <input id="path-from" type="text" placeholder="Entity A">
+      </div>
+      <div class="field">
+        <label for="path-to">To</label>
+        <input id="path-to" type="text" placeholder="Entity B">
+      </div>
+      <button onclick="loadPath()">Find path</button>
+    </div>
+
+    <!-- Type filters -->
+    <div class="sidebar-section">
+      <h3>Node types</h3>
+      <div class="type-filters" id="type-filters"></div>
+    </div>
+
+    <!-- Canvas fit -->
+    <div class="sidebar-section">
+      <button onclick="fitGraph()" style="width:100%">↔ Fit to screen</button>
+    </div>
+
+    <!-- Info panel (shown on node click) -->
+    <div id="info-panel">
+      <h4>Node info</h4>
+      <div class="info-row"><strong id="info-name"></strong></div>
+      <div class="info-row">Type: <strong id="info-type"></strong></div>
+      <div class="info-row">Mentions: <strong id="info-mentions"></strong></div>
+      <div class="info-row" id="info-id-row" style="font-size:10px;color:var(--txt2);margin-top:4px"></div>
+      <button style="margin-top:8px;width:100%;font-size:11px" onclick="exploreSelected()">
+        Explore this entity
+      </button>
+    </div>
+
+  </div><!-- /sidebar -->
+
+  <!-- Canvas -->
+  <div id="cy-wrap">
+    <div id="cy"></div>
+    <div id="canvas-msg">
+      <div class="msg-title" id="msg-title">Knowledge Graph</div>
+      <div id="msg-body">Search for an entity above to explore its connections.</div>
+    </div>
+    <button id="fit-btn" onclick="fitGraph()" style="display:none">↔ Fit</button>
+  </div>
+
+</div><!-- /main -->
+
+<script>
+'use strict';
+
+// ── State ──────────────────────────────────────────────────────────────────
+let cy = null;
+let _selectedNodeId = null;
+const _hiddenTypes = new Set();
+const _ALL_NODE_TYPES = [
+  'PERSON','ORGANISATION','DOCUMENT','PROJECT','CONCEPT','SESSION','NOTE','AUDIO_MEMO'
+];
+const _NODE_COLORS = {
+  PERSON:       '#58a6ff',   // blue
+  ORGANISATION: '#2ec4b6',   // teal
+  DOCUMENT:     '#e88a2e',   // orange
+  PROJECT:      '#bc8cff',   // purple
+  CONCEPT:      '#8b949e',   // gray
+  SESSION:      '#3fb950',   // light green
+  NOTE:         '#d29922',   // yellow
+  AUDIO_MEMO:   '#f85149',   // red
+};
+const _NODE_SHAPES = {
+  PERSON:       'ellipse',
+  ORGANISATION: 'rectangle',
+  DOCUMENT:     'diamond',
+  PROJECT:      'pentagon',
+  CONCEPT:      'ellipse',
+  SESSION:      'ellipse',
+  NOTE:         'rectangle',
+  AUDIO_MEMO:   'ellipse',
+};
+
+// ── Init ───────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  initCytoscape();
+  buildTypeFilters();
+  loadStats();
+  initAutocomplete();
+  restoreTheme();
+});
+
+function initCytoscape() {
+  cy = cytoscape({
+    container: document.getElementById('cy'),
+    elements: [],
+    style: buildStyle(),
+    layout: { name: 'preset' },
+    minZoom: 0.1,
+    maxZoom: 4,
+  });
+
+  cy.on('tap', 'node', function(evt) {
+    const node = evt.target;
+    _selectedNodeId = node.id();
+    showInfoPanel(node.data());
+  });
+
+  cy.on('dbltap', 'node', function(evt) {
+    const node = evt.target;
+    const name = node.data('label');
+    if (name) {
+      document.getElementById('ego-input').value = name;
+      loadEgo();
+    }
+  });
+
+  cy.on('tap', function(evt) {
+    if (evt.target === cy) {
+      hideInfoPanel();
+      _selectedNodeId = null;
+    }
+  });
+
+  // Show edge label on hover
+  cy.on('mouseover', 'edge', function(evt) {
+    evt.target.style('label', evt.target.data('type'));
+  });
+  cy.on('mouseout', 'edge', function(evt) {
+    evt.target.style('label', '');
+  });
+}
+
+function buildStyle() {
+  const nodeStyle = _ALL_NODE_TYPES.map(t => ({
+    selector: `node[type="${t}"]`,
+    style: {
+      'background-color': _NODE_COLORS[t] || '#8b949e',
+      'shape': _NODE_SHAPES[t] || 'ellipse',
+    }
+  }));
+
+  return [
+    {
+      selector: 'node',
+      style: {
+        'label': 'data(label)',
+        'width': 36,
+        'height': 36,
+        'font-size': 9,
+        'color': '#e6edf3',
+        'text-valign': 'bottom',
+        'text-margin-y': 4,
+        'text-outline-width': 2,
+        'text-outline-color': '#0d1117',
+        'text-max-width': 80,
+        'text-wrap': 'ellipsis',
+        'border-width': 2,
+        'border-color': 'rgba(255,255,255,0.15)',
+        'transition-property': 'border-color, border-width',
+        'transition-duration': '0.15s',
+      }
+    },
+    {
+      selector: 'node[?center]',
+      style: {
+        'width': 52,
+        'height': 52,
+        'border-width': 3,
+        'border-color': '#d9a878',
+      }
+    },
+    {
+      selector: 'node:selected',
+      style: {
+        'border-color': '#d9a878',
+        'border-width': 3,
+      }
+    },
+    ...nodeStyle,
+    {
+      selector: 'edge',
+      style: {
+        'width': 1.5,
+        'line-color': '#30363d',
+        'target-arrow-color': '#30363d',
+        'target-arrow-shape': 'triangle',
+        'curve-style': 'bezier',
+        'font-size': 8,
+        'color': '#8b949e',
+        'text-background-color': '#0d1117',
+        'text-background-opacity': 0.8,
+        'text-background-padding': 2,
+        'label': '',
+      }
+    },
+    {
+      selector: 'edge[type="RELATES_TO"]',
+      style: {
+        'line-style': 'solid',
+        'width': 'mapData(strength, 1, 20, 1.2, 4)',
+        'line-color': '#444c56',
+        'target-arrow-color': '#444c56',
+      }
+    },
+    {
+      selector: 'edge[type="MENTIONS"]',
+      style: { 'line-style': 'solid', 'width': 1.2, 'line-color': '#30363d' }
+    },
+    {
+      selector: 'edge[type="DISCUSSED_IN"]',
+      style: { 'line-style': 'dashed', 'line-color': '#3fb950', 'target-arrow-color': '#3fb950' }
+    },
+    {
+      selector: 'edge[type="DERIVED_FROM"]',
+      style: { 'line-style': 'dotted', 'line-color': '#bc8cff', 'target-arrow-color': '#bc8cff' }
+    },
+  ];
+}
+
+// ── Type filter UI ─────────────────────────────────────────────────────────
+function buildTypeFilters() {
+  const wrap = document.getElementById('type-filters');
+  _ALL_NODE_TYPES.forEach(t => {
+    const label = document.createElement('label');
+    label.className = 'type-filter';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = true;
+    cb.dataset.type = t;
+    cb.addEventListener('change', () => applyTypeFilter(t, cb.checked));
+    const dot = document.createElement('span');
+    dot.style.cssText = `display:inline-block;width:8px;height:8px;border-radius:50%;background:${_NODE_COLORS[t]||'#888'};`;
+    const name = document.createElement('span');
+    name.textContent = t.charAt(0) + t.slice(1).toLowerCase().replace('_', ' ');
+    label.appendChild(cb);
+    label.appendChild(dot);
+    label.appendChild(name);
+    wrap.appendChild(label);
+  });
+}
+
+function applyTypeFilter(type, visible) {
+  if (!cy) return;
+  if (visible) {
+    _hiddenTypes.delete(type);
+    cy.nodes(`[type="${type}"]`).style('display', 'element');
+  } else {
+    _hiddenTypes.add(type);
+    cy.nodes(`[type="${type}"]`).style('display', 'none');
+  }
+}
+
+function reapplyFilters() {
+  _hiddenTypes.forEach(t => {
+    cy.nodes(`[type="${t}"]`).style('display', 'none');
+  });
+}
+
+// ── Stats ──────────────────────────────────────────────────────────────────
+async function loadStats() {
+  try {
+    const r = await fetch('/graph/stats');
+    const data = await r.json();
+    const badge = document.getElementById('avail-badge');
+    if (!data.available) {
+      badge.textContent = 'Graph unavailable';
+      badge.className = 'err';
+      showMessage(
+        'Graph unavailable',
+        data.message || 'FalkorDB is not configured.'
+      );
+      return;
+    }
+    badge.textContent = 'Graph active';
+    badge.className = 'ok';
+    document.getElementById('stat-nodes').textContent = (data.node_count || 0).toLocaleString();
+    document.getElementById('stat-edges').textContent = (data.edge_count || 0).toLocaleString();
+  } catch (e) {
+    document.getElementById('avail-badge').textContent = 'Unreachable';
+    document.getElementById('avail-badge').className = 'err';
+  }
+}
+
+// ── Autocomplete ───────────────────────────────────────────────────────────
+function initAutocomplete() {
+  const input = document.getElementById('ego-input');
+  const list = document.getElementById('autocomplete-list');
+  let debounce = null;
+
+  input.addEventListener('input', () => {
+    clearTimeout(debounce);
+    const q = input.value.trim();
+    if (q.length < 2) { list.style.display = 'none'; return; }
+    debounce = setTimeout(() => fetchAutocomplete(q, list), 200);
+  });
+
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { list.style.display = 'none'; loadEgo(); }
+    if (e.key === 'Escape') { list.style.display = 'none'; }
+  });
+
+  document.addEventListener('click', e => {
+    if (!e.target.closest('.autocomplete-wrap')) list.style.display = 'none';
+  });
+}
+
+async function fetchAutocomplete(q, list) {
+  try {
+    const r = await fetch(`/graph/search?q=${encodeURIComponent(q)}&limit=10`);
+    const data = await r.json();
+    const results = data.results || [];
+    list.innerHTML = '';
+    if (!results.length) { list.style.display = 'none'; return; }
+    results.forEach(item => {
+      const div = document.createElement('div');
+      div.className = 'ac-item';
+      div.innerHTML = `<span>${esc(item.name)}</span><span class="ac-type">${esc(item.type)}</span>`;
+      div.addEventListener('mousedown', e => {
+        e.preventDefault();
+        document.getElementById('ego-input').value = item.name;
+        list.style.display = 'none';
+      });
+      list.appendChild(div);
+    });
+    list.style.display = 'block';
+  } catch (_) {
+    list.style.display = 'none';
+  }
+}
+
+// ── Load ego ───────────────────────────────────────────────────────────────
+async function loadEgo() {
+  const name = document.getElementById('ego-input').value.trim();
+  if (!name) return;
+  const strength = document.getElementById('strength-slider').value;
+  showMessage('Loading…', `Fetching ego network for "${name}"`);
+
+  try {
+    const url = `/graph/ego?entity=${encodeURIComponent(name)}&limit=100&min_strength=${strength}`;
+    const r = await fetch(url);
+    const data = await r.json();
+
+    if (!data.available) {
+      showMessage('Graph unavailable', data.message || '');
+      return;
+    }
+    if (!data.found) {
+      showMessage('Entity not found', `"${name}" was not found in the knowledge graph.`);
+      return;
+    }
+    renderGraph(data);
+  } catch (e) {
+    showMessage('Error', 'Could not load the graph. Is the orchestrator reachable?');
+  }
+}
+
+// ── Load path ──────────────────────────────────────────────────────────────
+async function loadPath() {
+  const from = document.getElementById('path-from').value.trim();
+  const to   = document.getElementById('path-to').value.trim();
+  if (!from || !to) { alert('Enter both entity names.'); return; }
+  showMessage('Loading…', `Finding path between "${from}" and "${to}"…`);
+
+  try {
+    const url = `/graph/path?from_entity=${encodeURIComponent(from)}&to_entity=${encodeURIComponent(to)}`;
+    const r = await fetch(url);
+    const data = await r.json();
+
+    if (!data.available) {
+      showMessage('Graph unavailable', data.message || '');
+      return;
+    }
+    if (!data.found) {
+      showMessage('Entity not found', data.message || '');
+      return;
+    }
+    if (!data.path_found) {
+      showMessage('No path found', data.message || `No path from "${from}" to "${to}".`);
+      return;
+    }
+    renderGraph(data);
+  } catch (e) {
+    showMessage('Error', 'Could not load the path. Is the orchestrator reachable?');
+  }
+}
+
+// ── Render graph ───────────────────────────────────────────────────────────
+function renderGraph(data) {
+  hideMessage();
+  document.getElementById('fit-btn').style.display = 'block';
+
+  const nodes = (data.nodes || []).map(n => ({
+    group: 'nodes',
+    data: {
+      id: n.id,
+      label: (n.label || n.id).slice(0, 20),
+      type: n.type || 'CONCEPT',
+      mention_count: n.mention_count || 0,
+      center: !!n.center,
+    }
+  }));
+
+  const edges = (data.edges || []).map((e, i) => ({
+    group: 'edges',
+    data: {
+      id: `e${i}-${e.source}-${e.target}`,
+      source: e.source,
+      target: e.target,
+      type: e.type || 'RELATES_TO',
+      strength: e.strength || 1,
+    }
+  }));
+
+  cy.elements().remove();
+  cy.add([...nodes, ...edges]);
+
+  cy.layout({
+    name: 'cose',
+    animate: true,
+    animationDuration: 500,
+    nodeRepulsion: () => 8000,
+    idealEdgeLength: () => 80,
+    gravity: 0.6,
+    numIter: 1000,
+    fit: true,
+    padding: 40,
+  }).run();
+
+  reapplyFilters();
+
+  if (data.truncated) {
+    showTruncationWarning(data.node_count, data.edge_count);
+  }
+}
+
+function showTruncationWarning(nodes, edges) {
+  const msg = document.createElement('div');
+  msg.style.cssText = 'position:absolute;top:8px;right:56px;background:rgba(210,153,34,.18);color:#d29922;border:1px solid rgba(210,153,34,.4);border-radius:6px;padding:4px 10px;font-size:11px;z-index:20;pointer-events:none;';
+  msg.textContent = `Showing ${nodes} nodes / ${edges} edges (truncated to cap)`;
+  document.getElementById('cy-wrap').appendChild(msg);
+  setTimeout(() => msg.remove(), 6000);
+}
+
+// ── Info panel ─────────────────────────────────────────────────────────────
+function showInfoPanel(data) {
+  document.getElementById('info-name').textContent = data.label || data.id;
+  document.getElementById('info-type').textContent = data.type || '–';
+  document.getElementById('info-mentions').textContent = data.mention_count !== undefined ? data.mention_count : '–';
+  document.getElementById('info-id-row').textContent = `ID: ${data.id}`;
+  document.getElementById('info-panel').style.display = 'block';
+}
+
+function hideInfoPanel() {
+  document.getElementById('info-panel').style.display = 'none';
+}
+
+function exploreSelected() {
+  if (!_selectedNodeId || !cy) return;
+  const node = cy.getElementById(_selectedNodeId);
+  if (!node.length) return;
+  const name = node.data('label');
+  if (name) {
+    document.getElementById('ego-input').value = name;
+    loadEgo();
+  }
+}
+
+// ── Canvas messages ────────────────────────────────────────────────────────
+function showMessage(title, body) {
+  document.getElementById('msg-title').textContent = title;
+  document.getElementById('msg-body').textContent = body;
+  document.getElementById('canvas-msg').classList.remove('hidden');
+  if (cy) cy.elements().remove();
+  document.getElementById('fit-btn').style.display = 'none';
+}
+
+function hideMessage() {
+  document.getElementById('canvas-msg').classList.add('hidden');
+}
+
+// ── Fit / Reset ────────────────────────────────────────────────────────────
+function fitGraph() {
+  if (cy && cy.elements().length > 0) cy.fit(40);
+}
+
+function resetGraph() {
+  if (cy) cy.elements().remove();
+  document.getElementById('ego-input').value = '';
+  hideInfoPanel();
+  _selectedNodeId = null;
+  showMessage('Knowledge Graph', 'Search for an entity above to explore its connections.');
+  document.getElementById('fit-btn').style.display = 'none';
+}
+
+// ── Theme ──────────────────────────────────────────────────────────────────
+function toggleTheme() {
+  const root = document.documentElement;
+  const next = root.dataset.theme === 'dark' ? 'light' : 'dark';
+  root.dataset.theme = next;
+  document.getElementById('theme-btn').textContent = next === 'dark' ? '☀️' : '🌙';
+  localStorage.setItem('lm-theme', next);
+  if (cy) cy.style(buildStyle());
+}
+
+function restoreTheme() {
+  const saved = localStorage.getItem('lm-theme');
+  if (saved) {
+    document.documentElement.dataset.theme = saved;
+    document.getElementById('theme-btn').textContent = saved === 'dark' ? '☀️' : '🌙';
+  }
+}
+
+// ── Utilities ──────────────────────────────────────────────────────────────
+function esc(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+</body>
+</html>

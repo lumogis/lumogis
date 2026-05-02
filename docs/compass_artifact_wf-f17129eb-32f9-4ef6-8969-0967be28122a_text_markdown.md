@@ -1,5 +1,7 @@
 # Building a high-quality personal knowledge graph: a research review for Lumogis
 
+> **Navigation:** Product-aligned KG quality framing lives in [`lumogis_kg_quality_strategy.md`](lumogis_kg_quality_strategy.md) and ADRs under [`docs/decisions/`](decisions/). This file is a retained long-form research review.
+
 ## 1. Executive summary
 
 **The central finding of this review is that the core quality problems Lumogis faces — duplicate entities, noisy extractions, spurious edges, and concept drift — are well-studied at enterprise scale but significantly under-addressed for local, single-user personal knowledge graphs.** The good news: mature, lightweight solutions exist for each problem when adapted to the personal KG context. The constraints of local deployment, privacy-first design, and continuous ingestion narrow the solution space in productive ways, eliminating enterprise-grade complexity in favour of simpler, faster approaches that work well at the scale of thousands to tens of thousands of entities.

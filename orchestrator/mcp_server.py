@@ -47,6 +47,8 @@ Tools are thin wrappers — no business logic lives here.
 from __future__ import annotations
 
 import logging
+import os
+from contextvars import ContextVar
 from typing import Any
 
 from models.capability import CapabilityLicenseMode
@@ -59,10 +61,130 @@ from __version__ import __version__ as CORE_VERSION
 
 _log = logging.getLogger(__name__)
 
-# Single-user local default. When MCP_AUTH_TOKEN is set we do not currently
-# map tokens onto distinct user_ids (single-user-local is the design point);
-# revisit if/when multi-tenant MCP becomes a requirement.
-_DEFAULT_USER_ID = "default"
+
+# ---------------------------------------------------------------------------
+# Phase 3: per-call user resolution.
+#
+# Lumogis MCP runs on the same process as the orchestrator. External MCP
+# clients (Thunderbolt, Claude Desktop, …) authenticate via
+# ``MCP_AUTH_TOKEN`` (a coarse "who can talk to MCP at all" gate) and
+# *also* — when the operator sets up the optional Lumogis JWT bridge —
+# present a Bearer JWT minted by ``orchestrator/auth.py``. The MCP tools
+# need a ``user_id`` to scope per-user queries.
+#
+# Resolution rule (applied per tool call by ``_resolve_user_id``):
+#
+#   1. The MCP transport injects the inbound request's ``Authorization``
+#      header into a context-local. If a valid Lumogis JWT is present we
+#      use its ``sub`` claim — this is the only path that gives real
+#      multi-user isolation over MCP.
+#   2. Otherwise we fall back to the operator-configured
+#      ``MCP_DEFAULT_USER_ID`` env var (a single user_id assigned to the
+#      shared MCP token). Self-hosted single-user installs set this to
+#      the bootstrap admin's id.
+#   3. If neither is set we raise — tools refuse to execute rather than
+#      silently leaking/writing into the legacy ``"default"`` bucket.
+#
+# The legacy module-level ``_DEFAULT_USER_ID = "default"`` constant is
+# **gone**. Any caller that wants a stable per-process default must set
+# ``MCP_DEFAULT_USER_ID`` explicitly.
+# ---------------------------------------------------------------------------
+
+
+def _resolve_user_id() -> str:
+    """Return the user_id to scope an MCP tool call to.
+
+    Per plan ``mcp_token_user_map`` D8 the canonical resolution order is:
+
+    1. ``_current_mcp_user_id`` ContextVar — set by ``auth.auth_middleware``
+       when ``_check_mcp_bearer`` already verified an ``lmcp_…`` token.
+       This is the SINGLE-VERIFY cache: the DB lookup happens exactly once
+       per request, in the middleware, and is reused here. Re-calling
+       ``services.mcp_tokens.verify`` from this resolver is forbidden.
+    2. Lumogis JWT ``sub`` (if a valid JWT bearer is present) — the
+       multi-user path that does not use a per-user MCP token.
+    3. ``MCP_DEFAULT_USER_ID`` env var — legacy single-user / shared
+       ``MCP_AUTH_TOKEN`` fallback.
+    4. Otherwise raise ``RuntimeError`` so tools fail loudly instead of
+       silently writing into a ``"default"`` bucket.
+    """
+    cached_user_id = _current_mcp_user_id.get()
+    if cached_user_id:
+        return cached_user_id
+
+    bearer = _current_bearer_token()
+    if bearer:
+        try:
+            from auth import verify_token  # local import: keep MCP boot light
+
+            payload = verify_token(bearer)
+            if payload and payload.get("sub"):
+                return str(payload["sub"])
+        except Exception:
+            _log.debug("MCP: JWT verify failed, falling back to MCP_DEFAULT_USER_ID")
+
+    fallback = os.environ.get("MCP_DEFAULT_USER_ID", "").strip()
+    if fallback:
+        return fallback
+
+    raise RuntimeError(
+        "MCP tool called without a resolvable user_id. Set MCP_DEFAULT_USER_ID "
+        "(self-hosted single-user) or ensure clients present a Lumogis JWT."
+    )
+
+
+_current_bearer: ContextVar[str | None] = ContextVar(
+    "lumogis_mcp_bearer", default=None
+)
+# Plan D8 — populated by ``auth.auth_middleware`` from the
+# ``lmcp_…`` verify result that ``_check_mcp_bearer`` already produced.
+# Reading these ContextVars MUST NOT trigger a second DB lookup; the
+# middleware is the ONLY writer.
+_current_mcp_token_id: ContextVar[str | None] = ContextVar(
+    "lumogis_mcp_token_id", default=None
+)
+_current_mcp_user_id: ContextVar[str | None] = ContextVar(
+    "lumogis_mcp_user_id", default=None
+)
+
+
+def _current_bearer_token() -> str | None:
+    """Return the inbound request's Bearer token, if FastMCP exposes one.
+
+    FastMCP does not expose request headers through the ``@tool``-decorated
+    handler signature, so we keep a context-local that the MCP middleware
+    populates per request. Unit tests calling tools as plain functions
+    leave this as ``None`` and ``_resolve_user_id`` falls back to the env var.
+    """
+    return _current_bearer.get()
+
+
+def _set_current_bearer(token: str | None):
+    """Set the per-request Bearer token; returns the reset token."""
+    return _current_bearer.set(token)
+
+
+def _reset_current_bearer(reset_token) -> None:
+    _current_bearer.reset(reset_token)
+
+
+def _set_current_mcp_token_id(token_id: str | None):
+    """Per-request setter for the verified ``lmcp_…`` token id (D8)."""
+    return _current_mcp_token_id.set(token_id)
+
+
+def _reset_current_mcp_token_id(reset_token) -> None:
+    _current_mcp_token_id.reset(reset_token)
+
+
+def _set_current_mcp_user_id(user_id: str | None):
+    """Per-request setter for the verified ``lmcp_…`` user id (D8)."""
+    return _current_mcp_user_id.set(user_id)
+
+
+def _reset_current_mcp_user_id(reset_token) -> None:
+    _current_mcp_user_id.reset(reset_token)
+
 
 try:
     from mcp.server.fastmcp import FastMCP as _FastMCP
@@ -91,8 +213,16 @@ _SESSION_SUMMARY_SCHEMA: dict[str, Any] = {
         "topics": {"type": "array", "items": {"type": "string"}},
         "entities": {"type": "array", "items": {"type": "string"}},
         "score": {"type": "number", "description": "Semantic match score (0..1)."},
+        "scope": {
+            "type": "string",
+            "enum": ["personal", "shared", "system"],
+            "description": (
+                "Visibility scope: 'personal' (owner-only), 'shared' "
+                "(household-visible projection), or 'system' (org-wide)."
+            ),
+        },
     },
-    "required": ["session_id", "summary"],
+    "required": ["session_id", "summary", "scope"],
 }
 
 _ENTITY_SUMMARY_SCHEMA: dict[str, Any] = {
@@ -103,8 +233,16 @@ _ENTITY_SUMMARY_SCHEMA: dict[str, Any] = {
         "mention_count": {"type": "integer"},
         "aliases": {"type": "array", "items": {"type": "string"}},
         "context_tags": {"type": "array", "items": {"type": "string"}},
+        "scope": {
+            "type": "string",
+            "enum": ["personal", "shared", "system"],
+            "description": (
+                "Visibility scope: 'personal' (owner-only), 'shared' "
+                "(household-visible projection), or 'system' (org-wide)."
+            ),
+        },
     },
-    "required": ["name", "entity_type"],
+    "required": ["name", "entity_type", "scope"],
 }
 
 MCP_TOOLS_FOR_MANIFEST: list[CapabilityTool] = [
@@ -258,10 +396,15 @@ def memory_search(query: str, limit: int = 5) -> dict:
     """MCP tool: memory.search — semantic search across past sessions."""
     from services.memory import retrieve_context
 
-    hits = retrieve_context(query=query, limit=limit, user_id=_DEFAULT_USER_ID)
+    hits = retrieve_context(query=query, limit=limit, user_id=_resolve_user_id())
     return {
         "results": [
-            {"session_id": h.session_id, "summary": h.summary, "score": h.score}
+            {
+                "session_id": h.session_id,
+                "summary": h.summary,
+                "score": h.score,
+                "scope": getattr(h, "scope", "personal"),
+            }
             for h in hits
         ],
     }
@@ -271,7 +414,7 @@ def memory_get_recent(limit: int = 10) -> dict:
     """MCP tool: memory.get_recent — most recent session summaries."""
     from services.memory import recent_sessions
 
-    sessions = recent_sessions(limit=limit, user_id=_DEFAULT_USER_ID)
+    sessions = recent_sessions(limit=limit, user_id=_resolve_user_id())
     return {
         "sessions": [
             {
@@ -279,6 +422,7 @@ def memory_get_recent(limit: int = 10) -> dict:
                 "summary": s.summary,
                 "topics": s.topics,
                 "entities": s.entities,
+                "scope": getattr(s, "scope", "personal"),
             }
             for s in sessions
         ],
@@ -289,7 +433,7 @@ def entity_lookup(name: str) -> dict:
     """MCP tool: entity.lookup — exact case-insensitive name match."""
     from services.entities import lookup_by_name
 
-    return {"entity": lookup_by_name(name=name, user_id=_DEFAULT_USER_ID)}
+    return {"entity": lookup_by_name(name=name, user_id=_resolve_user_id())}
 
 
 def entity_search(query: str, limit: int = 10) -> dict:
@@ -297,7 +441,7 @@ def entity_search(query: str, limit: int = 10) -> dict:
     from services.entities import search_by_name
 
     return {
-        "entities": search_by_name(query=query, limit=limit, user_id=_DEFAULT_USER_ID),
+        "entities": search_by_name(query=query, limit=limit, user_id=_resolve_user_id()),
     }
 
 
@@ -314,13 +458,14 @@ def context_build(query: str, max_tokens: int = 2000) -> dict:
     from services.memory import retrieve_context
     from services.search import semantic_search
 
+    user_id = _resolve_user_id()
     try:
-        doc_hits = semantic_search(query=query, limit=5, user_id=_DEFAULT_USER_ID)
+        doc_hits = semantic_search(query=query, limit=5, user_id=user_id)
     except Exception as exc:
         _log.warning("context.build: semantic_search failed — %s", exc)
         doc_hits = []
     try:
-        mem_hits = retrieve_context(query=query, limit=3, user_id=_DEFAULT_USER_ID)
+        mem_hits = retrieve_context(query=query, limit=3, user_id=user_id)
     except Exception as exc:
         _log.warning("context.build: retrieve_context failed — %s", exc)
         mem_hits = []

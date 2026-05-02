@@ -52,7 +52,7 @@ class TestSummarizeSession:
             "entities": ["RBA"],
         }
         llm = _mock_llm(json.dumps(payload))
-        monkeypatch.setattr(_config, "get_llm_provider", lambda name: llm)
+        monkeypatch.setattr(_config, "get_llm_provider", lambda name, *, user_id=None: llm)
 
         result = summarize_session(MESSAGES, session_id="sess-001")
 
@@ -64,7 +64,7 @@ class TestSummarizeSession:
     def test_falls_back_to_raw_text_on_invalid_json(self, monkeypatch):
         self._patch_budget(monkeypatch)
         llm = _mock_llm("not valid json at all")
-        monkeypatch.setattr(_config, "get_llm_provider", lambda name: llm)
+        monkeypatch.setattr(_config, "get_llm_provider", lambda name, *, user_id=None: llm)
 
         result = summarize_session(MESSAGES)
 
@@ -76,7 +76,7 @@ class TestSummarizeSession:
         self._patch_budget(monkeypatch)
         payload = {"summary": "A summary.", "topics": [], "entities": []}
         llm = _mock_llm(json.dumps(payload))
-        monkeypatch.setattr(_config, "get_llm_provider", lambda name: llm)
+        monkeypatch.setattr(_config, "get_llm_provider", lambda name, *, user_id=None: llm)
 
         result = summarize_session(MESSAGES)
         assert result.session_id  # non-empty UUID
@@ -86,7 +86,7 @@ class TestSummarizeSession:
         payload = {"summary": "Fenced.", "topics": [], "entities": []}
         raw = f"```json\n{json.dumps(payload)}\n```"
         llm = _mock_llm(raw)
-        monkeypatch.setattr(_config, "get_llm_provider", lambda name: llm)
+        monkeypatch.setattr(_config, "get_llm_provider", lambda name, *, user_id=None: llm)
 
         # Falls back to raw text — key thing is it does not raise
         result = summarize_session(MESSAGES)
@@ -156,6 +156,11 @@ class TestRetrieveContext:
                 "session_id": "old-session",
                 "summary": "Previously discussed RBA rates.",
                 "user_id": "default",
+                # Scope is required by visibility.visible_qdrant_filter,
+                # which defaults to the household union of personal-mine +
+                # shared + system. Sessions stored without a scope are
+                # invisible to retrieve_context — pin the default arm here.
+                "scope": "personal",
             },
         )
 
@@ -166,17 +171,30 @@ class TestRetrieveContext:
         assert hits[0].score is not None
 
     def test_filters_by_user_id(self, mock_embedder, mock_vector_store):
+        # Personal-scope payloads are visible only to their owner under the
+        # default household-union filter (see visibility.visible_qdrant_filter):
+        # the `personal` arm AND-merges scope==personal with user_id==me.
         mock_vector_store.upsert(
             collection="conversations",
             id="pt-user1",
             vector=[0.0] * 768,
-            payload={"session_id": "s1", "summary": "User 1 stuff.", "user_id": "user1"},
+            payload={
+                "session_id": "s1",
+                "summary": "User 1 stuff.",
+                "user_id": "user1",
+                "scope": "personal",
+            },
         )
         mock_vector_store.upsert(
             collection="conversations",
             id="pt-user2",
             vector=[0.0] * 768,
-            payload={"session_id": "s2", "summary": "User 2 stuff.", "user_id": "user2"},
+            payload={
+                "session_id": "s2",
+                "summary": "User 2 stuff.",
+                "user_id": "user2",
+                "scope": "personal",
+            },
         )
 
         hits = retrieve_context("anything", user_id="user1")

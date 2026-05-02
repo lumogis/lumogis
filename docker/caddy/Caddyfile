@@ -1,0 +1,175 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Lumogis Caddy front door.
+#
+# Single-origin reverse proxy: the SPA (lumogis-web) and the orchestrator
+# share one hostname so refresh cookies can be SameSite=Strict and the
+# orchestrator's `Origin` check (csrf.require_same_origin) sees the SPA's
+# own origin. Path table:
+#
+#   /api/*    -> orchestrator:8000  (REST API + auth)
+#   /events   -> orchestrator:8000  (Server-Sent Events)
+#   /v1/*     -> orchestrator:8000  (legacy chat compatibility)
+#   /mcp/*    -> orchestrator:8000  (MCP-over-HTTP)
+#   /health, legacy admin HTML, etc. -> orchestrator:8000  (see handle blocks)
+#   /         -> lumogis-web:80     (SPA static bundle, with SPA fallback)
+#
+# CADDY_DOMAIN: production hostname (e.g. lumogis.example.com). Caddy will
+# auto-provision an ACME cert for it. For LAN-only family deployments you
+# can use a `.local` mDNS name with `tls internal` instead — see the
+# commented block at the bottom.
+{
+	servers {
+		trusted_proxies static private_ranges
+	}
+}
+
+{$CADDY_DOMAIN} {
+	encode zstd gzip
+
+	# Common security headers (all responses, HTTP or HTTPS). HSTS is added
+	# only for TLS requests — see the @https matcher at the end of the block.
+	# Do not set HSTS for plain-HTTP CADDY_DOMAIN=:80; the @https matcher
+	# prevents emitting it for cleartext responses.
+	header {
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# Tighten over time: connect-src is widened for same-origin + SSE/WebSocket
+		Content-Security-Policy "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss:; form-action 'self'"
+		Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=(), interest-cohort=()"
+		# Caddy sets Server by default; reduce fingerprinting slightly.
+		-Server
+	}
+
+	# Global `servers { trusted_proxies ... }` above preserves X-Forwarded-For
+	# from Caddy. The orchestrator validates against LUMOGIS_TRUSTED_PROXIES.
+
+	# HSTS: only for HTTPS. With CADDY_DOMAIN=:80 this matcher never matches.
+	@https {
+		protocol https
+	}
+	header @https {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+	}
+
+	# Orchestrator root health (not served by the SPA).
+	handle /health {
+		reverse_proxy orchestrator:8000
+	}
+
+	# Server-Sent Events: long-lived, no buffering.
+	handle /events* {
+		reverse_proxy orchestrator:8000 {
+			flush_interval -1
+			transport http {
+				read_buffer 4KB
+				write_buffer 4KB
+				response_header_timeout 0s
+			}
+		}
+	}
+
+	handle /api/* {
+		reverse_proxy orchestrator:8000
+	}
+
+	handle /v1/* {
+		reverse_proxy orchestrator:8000
+	}
+
+	handle /mcp/* {
+		reverse_proxy orchestrator:8000
+	}
+
+	# Legacy root JSON routes still served by the orchestrator. Keep these
+	# before the SPA catch-all. Browser navigations to `/search` remain with
+	# Lumogis Web; API-style `/search` calls are forwarded.
+	@legacy_search_api {
+		path /search
+		not header Accept *text/html*
+	}
+	handle @legacy_search_api {
+		reverse_proxy orchestrator:8000
+	}
+	handle /ingest {
+		reverse_proxy orchestrator:8000
+	}
+	handle /session* {
+		reverse_proxy orchestrator:8000
+	}
+	handle /actions* {
+		reverse_proxy orchestrator:8000
+	}
+	handle /audit* {
+		reverse_proxy orchestrator:8000
+	}
+	handle /routines* {
+		reverse_proxy orchestrator:8000
+	}
+	handle /signals* {
+		reverse_proxy orchestrator:8000
+	}
+	handle /sources* {
+		reverse_proxy orchestrator:8000
+	}
+	handle /feedback {
+		reverse_proxy orchestrator:8000
+	}
+	handle /capabilities {
+		reverse_proxy orchestrator:8000
+	}
+
+	# Root-mounted FastAPI admin routes (orchestrator/routes/admin.py) must reach
+	# the orchestrator before the SPA’s nginx try_files (which would return
+	# index.html and mask legacy dashboard/settings/KG pages).
+	handle /dashboard* {
+		reverse_proxy orchestrator:8000
+	}
+	handle /settings* {
+		reverse_proxy orchestrator:8000
+	}
+	handle /graph* {
+		reverse_proxy orchestrator:8000
+	}
+	handle /kg* {
+		reverse_proxy orchestrator:8000
+	}
+	handle /review-queue* {
+		reverse_proxy orchestrator:8000
+	}
+	handle /backup* {
+		reverse_proxy orchestrator:8000
+	}
+	handle /restore* {
+		reverse_proxy orchestrator:8000
+	}
+	handle /permissions* {
+		reverse_proxy orchestrator:8000
+	}
+	handle /browse* {
+		reverse_proxy orchestrator:8000
+	}
+	handle /export {
+		reverse_proxy orchestrator:8000
+	}
+	handle /entities* {
+		reverse_proxy orchestrator:8000
+	}
+
+	handle {
+		reverse_proxy lumogis-web:80
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}
+
+# ------------------------------------------------------------------------
+# LAN-only example (uncomment + comment the block above).
+#
+# lumogis.local {
+# 	tls internal
+# 	# ... same handle blocks as above ...
+# }

@@ -29,6 +29,7 @@ fetch_one returns a dict of {column: value} or None if no row matched.
 fetch_all returns a (possibly empty) list of such dicts.
 """
 
+from contextlib import AbstractContextManager
 from typing import Protocol
 
 
@@ -47,4 +48,17 @@ class MetadataStore(Protocol):
 
     def fetch_all(self, query: str, params: tuple | None = None) -> list[dict]:
         """Execute a read query and return all rows as a list of dicts."""
+        ...
+
+    def transaction(self) -> AbstractContextManager[None]:
+        """Open an explicit transaction.
+
+        Within the ``with`` block, every ``execute`` runs in a single
+        transaction; the block commits on clean exit and rolls back on
+        any exception. Used by the per-user import path so a refusal
+        detected mid-flight (e.g. a parent UUID collision) can leave the
+        database untouched.
+
+        See ``per_user_backup_export`` plan Pass 0 step 6.
+        """
         ...

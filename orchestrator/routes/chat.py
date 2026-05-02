@@ -11,19 +11,30 @@ from typing import List
 from typing import Optional
 
 import hooks
+from auth import UserContext
+from auth import auth_enabled
 from auth import get_user
+from authz import require_user
 from events import Event
 from fastapi import APIRouter
+from fastapi import Depends
+from fastapi import HTTPException
 from fastapi import Request
+from fastapi.responses import JSONResponse
 from fastapi.responses import StreamingResponse
 from loop import ask
 from loop import ask_stream
 from models.stream import StreamEvent
 from pydantic import BaseModel
+from services.connector_credentials import ConnectorNotConfigured
+from services.connector_credentials import CredentialUnavailable
 from services.context_budget import allocate
 from services.context_budget import get_budget
 from services.context_budget import truncate_messages
 from services.context_budget import truncate_text
+from services.llm_connector_map import connector_for_api_key_env
+from services.llm_connector_map import get_user_credentials_snapshot
+from services.llm_connector_map import vendor_label_for_connector
 
 import config
 
@@ -32,15 +43,96 @@ _log = logging.getLogger(__name__)
 
 
 @router.get("/v1/models")
-def list_models():
-    """OpenAI-compatible model list — only returns enabled models."""
+def list_models(request: Request):
+    """OpenAI-compatible model list — only returns enabled models.
+
+    Plan llm_provider_keys_per_user_migration Pass 2.8: under
+    ``AUTH_ENABLED=true`` the response is filtered per-user (cloud models
+    only show up when the caller has a row in ``user_connector_credentials``
+    for the matching ``llm_*`` connector). Auth-off keeps legacy behaviour.
+    Per-request memoisation: one ``SELECT`` against
+    ``user_connector_credentials`` for the entire response, regardless of
+    cloud-model count (see ``services.llm_connector_map.get_user_credentials_snapshot``).
+    """
     all_models = config.get_all_models_config()
-    data = [
-        {"id": name, "object": "model", "owned_by": "lumogis"}
-        for name in all_models
-        if config.is_model_enabled(name)
-    ]
+    if auth_enabled():
+        user_id = get_user(request).user_id
+        present = get_user_credentials_snapshot(user_id)
+        data = [
+            {"id": name, "object": "model", "owned_by": "lumogis"}
+            for name in all_models
+            if config.is_model_enabled(
+                name, user_id=user_id, _credentials_present=present
+            )
+        ]
+    else:
+        data = [
+            {"id": name, "object": "model", "owned_by": "lumogis"}
+            for name in all_models
+            if config.is_model_enabled(name)
+        ]
     return {"object": "list", "data": data}
+
+
+def _vendor_label_for_model(model_name: str) -> str:
+    """Return the human vendor label for a model's ``api_key_env`` (best-effort)."""
+    try:
+        cfg = config.get_model_config(model_name)
+    except Exception:
+        return model_name
+    api_key_env = cfg.get("api_key_env")
+    if not api_key_env:
+        return model_name
+    connector = connector_for_api_key_env(api_key_env)
+    if not connector:
+        return model_name
+    return vendor_label_for_connector(connector)
+
+
+def _connector_not_configured_response(model: str) -> JSONResponse:
+    vendor = _vendor_label_for_model(model)
+    return JSONResponse(
+        status_code=424,
+        content={
+            "error": {
+                "code": "connector_not_configured",
+                "message": (
+                    f"{vendor} API key not configured for this user. "
+                    "Set it in dashboard \u2192 My LLM keys."
+                ),
+                "model": model,
+                "type": "invalid_request_error",
+            }
+        },
+    )
+
+
+def _credential_unavailable_response(model: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content={
+            "error": {
+                "code": "credential_unavailable",
+                "message": "Stored credential could not be decrypted.",
+                "model": model,
+                "type": "server_error",
+            }
+        },
+    )
+
+
+def _internal_credential_error_response(model: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": {
+                "code": "internal_error",
+                "message": "Internal error resolving credential.",
+                "model": model,
+                "type": "server_error",
+            }
+        },
+    )
 
 
 class AskRequest(BaseModel):
@@ -52,8 +144,8 @@ class AskResponse(BaseModel):
 
 
 @router.post("/ask", response_model=AskResponse)
-def ask_endpoint(body: AskRequest) -> AskResponse:
-    answer = ask(body.text, history=[])
+def ask_endpoint(body: AskRequest, user: UserContext = Depends(require_user)) -> AskResponse:
+    answer = ask(body.text, history=[], user_id=user.user_id)
     return AskResponse(answer=answer)
 
 
@@ -161,6 +253,24 @@ def _inject_context(question: str, history: list[dict], model: str, user_id: str
     fragments: list[str] = list(context_parts)
     hooks.fire(Event.CONTEXT_BUILDING, query=question, context_fragments=fragments)
 
+    # When the graph runs as an out-of-process service, the in-process
+    # CONTEXT_BUILDING listener is gone (the plugin self-disables in non-
+    # `inprocess` modes). Issue a synchronous /context HTTP call to the KG
+    # service to obtain the same fragments. The 40 ms hard timeout lives
+    # inside `get_context_sync`; on timeout / KG-down it returns [], so this
+    # extension never blocks the chat reply for more than the budget. The
+    # CONTEXT_BUILDING event still fires above for any other subscribers
+    # (today there are none besides the graph plugin, but this preserves the
+    # contract). `config.get_graph_mode()` is `@cache`-decorated so this is
+    # a dict lookup, not an env-var read, on the chat hot path.
+    if config.get_graph_mode() == "service":
+        from services.graph_webhook_dispatcher import get_context_sync
+
+        graph_fragments = get_context_sync(
+            query=question, user_id=user_id, max_fragments=3,
+        )
+        fragments.extend(graph_fragments)
+
     if len(fragments) > len(context_parts):
         plugin_text = "\n".join(fragments[len(context_parts) :])
         plugin_text = truncate_text(plugin_text, budget_plan.get("plugin_context"))
@@ -210,15 +320,18 @@ def chat_completions(body: ChatCompletionsRequest, request: Request) -> Any:
             "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
         }
 
-    if not config.is_model_enabled(body.model):
-        from fastapi import HTTPException
+    # Plan llm_provider_keys_per_user_migration Pass 2.8: resolve user_id
+    # FIRST so the per-user is_model_enabled call below sees the right
+    # credential context. Under auth-off, get_user returns the legacy default
+    # user; under auth-on, missing/invalid auth raises 401 here.
+    user_id = get_user(request).user_id
+
+    if not config.is_model_enabled(body.model, user_id=user_id):
         raise HTTPException(
             status_code=404,
             detail=f"Model '{body.model}' is not available. "
                    "Enable it in Settings and provide an API key, or choose another model.",
         )
-
-    user_id = get_user(request).user_id
 
     last = body.messages[-1]
     question = _content_to_str(last.content)
@@ -231,11 +344,33 @@ def chat_completions(body: ChatCompletionsRequest, request: Request) -> Any:
     history = _inject_context(question, history, body.model, user_id)
 
     if body.stream:
+        # Synchronous credential pre-flight — see plan §Modified files
+        # routes/chat.py + §Test cases test_chat_completions_424_streaming_returns_json_not_sse:
+        # loop.ask_stream wraps get_llm_provider in a broad except that yields
+        # SSE error events; if we let it resolve credentials lazily, a
+        # ConnectorNotConfigured/CredentialUnavailable would be smuggled out
+        # as HTTP 200 + text/event-stream instead of the documented 424/503.
+        # Once StreamingResponse is constructed the status code/headers are
+        # locked, so the pre-flight MUST run before that.
+        try:
+            config.get_llm_provider(body.model, user_id=user_id)
+        except ConnectorNotConfigured:
+            return _connector_not_configured_response(body.model)
+        except CredentialUnavailable:
+            return _credential_unavailable_response(body.model)
+        except Exception:
+            _log.exception(
+                "chat.stream pre-flight failed for model=%s user=%s",
+                body.model, user_id,
+            )
+            return _internal_credential_error_response(body.model)
+
         events = ask_stream(
             question,
             history=history,
             model=body.model,
             use_tools=use_tools,
+            user_id=user_id,
         )
         return StreamingResponse(
             stream_completion(
@@ -246,7 +381,25 @@ def chat_completions(body: ChatCompletionsRequest, request: Request) -> Any:
             media_type="text/event-stream",
         )
 
-    answer = ask(question, history=history, model=body.model, use_tools=use_tools)
+    try:
+        answer = ask(
+            question,
+            history=history,
+            model=body.model,
+            use_tools=use_tools,
+            user_id=user_id,
+        )
+    except ConnectorNotConfigured:
+        return _connector_not_configured_response(body.model)
+    except CredentialUnavailable:
+        return _credential_unavailable_response(body.model)
+    except Exception:
+        _log.exception(
+            "chat.completions failed for model=%s user=%s",
+            body.model, user_id,
+        )
+        return _internal_credential_error_response(body.model)
+
     return {
         "id": "chatcmpl-lumogis",
         "object": "chat.completion",

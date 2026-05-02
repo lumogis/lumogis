@@ -1,22 +1,27 @@
 # Lumogis Knowledge Graph — Technical Reference
 
-> Authoritative reference for the knowledge graph subsystem built in Phase 3 (M1–M4, M9) and the KG Quality Pipeline (Pass 1–4b).  
-> Generated from the codebase as of 2026-04-15. Where the codebase differs from any plan or earlier description, the codebase is authoritative.
+> Authoritative reference for the knowledge graph subsystem built in Phase 3 (M1–M4, M9), the KG Quality Pipeline (Pass 1–4b), the lumogis-graph service extraction, and the **family-LAN multi-user + personal/shared/system scopes** work (ADRs 012, 013, 015, 023).
+> Generated from the codebase as of **2026-04-24** (this refresh). Where the codebase differs from any plan or earlier description, the codebase is authoritative.
+
+> **Deployment modes** — The KG subsystem runs in `GRAPH_MODE=inprocess` (default) or `GRAPH_MODE=service`. See §1.6, §5.4, §6.4, and §8.1. **HTTP routes** for `/graph/ego`, `/graph/viz`, etc. are registered on **Core** only when `inprocess`; in `service` they are served from **`lumogis-graph`** (same path relative to `KG_SERVICE_URL`).
+
+> **Auth** — `AUTH_ENABLED=true` enforces JWT bearer auth on most Core routes, with admin-only and user-scoped review semantics (§6.0). The **`/graph/health` metrics endpoint** is affected by the global auth middleware: unauthenticated when auth is off, **401** when auth is on (it does *not* bypass auth).
 
 ---
 
 ## Table of Contents
 
-1. [Architecture Overview](#1-architecture-overview)
+1. [Architecture Overview](#1-architecture-overview) — incl. §1.6 Deployment modes
 2. [Graph Schema](#2-graph-schema)
 3. [File Reference](#3-file-reference)
 4. [Database Tables](#4-database-tables)
-5. [Environment Variables](#5-environment-variables)
-6. [API Endpoints](#6-api-endpoints)
+5. [Environment Variables](#5-environment-variables) — incl. §5.4 Service-mode variables
+6. [API Endpoints](#6-api-endpoints) — incl. §6.0 auth matrix, §6.4 lumogis-graph service endpoints
 7. [Quality Pipeline](#7-quality-pipeline)
-8. [Weekly Maintenance Job](#8-weekly-maintenance-job)
+8. [Weekly Maintenance Job](#8-weekly-maintenance-job) — incl. §8.1 Job ownership by mode
 9. [Knowledge Graph Management Page](#9-knowledge-graph-management-page)
 10. [Known Limitations and Deferred Work](#10-known-limitations-and-deferred-work)
+11. [Parity Verification](#11-parity-verification)
 
 ---
 
@@ -90,6 +95,60 @@ This model is acceptable because:
 - All graph writes are idempotent (`MERGE` with deterministic match keys)
 - The worst case is a brief window where a newly created entity is not yet visible in graph queries
 
+In **`GRAPH_MODE=service`** the live path becomes asynchronous over HTTP: Core's `graph_webhook_dispatcher` POSTs a `WebhookEnvelope` to the KG service (which queues it on its internal `webhook_queue` ThreadPoolExecutor) and returns immediately. The KG service then runs the same `project_*` helpers, stamps the same `graph_projected_at` columns in the shared Postgres, and the eventual-consistency guarantees above continue to apply. Reconciliation is owned by the KG service in `service` mode (see §1.6 and §8.1).
+
+---
+
+## 1.6 Deployment Modes (`GRAPH_MODE`)
+
+The KG subsystem can run in three modes, selected at orchestrator startup by the `GRAPH_MODE` environment variable. The mode is read once at boot by `config.get_graph_mode()` and dispatched in `main.py:_wire_graph_mode_handlers()`.
+
+| Mode | Where the plugin runs | Owns webhooks | Owns reconciliation | Owns weekly job | `query_graph` tool | `/context` injection |
+|------|----------------------|---------------|--------------------|-----------------|--------------------|---------------------|
+| `inprocess` (default) | Inside `orchestrator` process | Core (in-process hooks) | Core (APScheduler) | Core (APScheduler) | Core handler in `plugins/graph/query.py` | Core hook on `CONTEXT_BUILDING` |
+| `service` | Inside `lumogis-graph` container | KG service (HTTP) | KG service (APScheduler) | KG service (APScheduler) | Core proxy ToolSpec → KG `/tools/query_graph` | Core proxy → KG `/context` (40 ms client timeout) |
+| `disabled` | Not loaded anywhere | Nobody | Nobody | Nobody | Not registered | Not invoked |
+
+### Plugin self-disable (`inprocess` vs `service`)
+
+To prevent silent double-projection, `orchestrator/plugins/graph/__init__.py` reads `config.get_graph_mode()` at import time and self-disables when the mode is anything other than `inprocess`:
+
+```python
+_MODE = _core_config.get_graph_mode()
+if _MODE != "inprocess":
+    # Set router = None; do NOT register hook handlers, query handlers,
+    # or the reconciliation job. The KG service owns all of these in
+    # `service` mode; in `disabled` mode nobody owns them.
+    router = None
+else:
+    _register_hook_handlers()
+    _register_query_handlers()
+    _register_reconciliation_job()
+```
+
+### Wiring sequence
+
+`orchestrator/main.py` lifespan calls `_wire_graph_mode_handlers(config.get_graph_mode())` once at startup:
+
+- **`inprocess`** — does nothing extra. The plugin's import-time self-init already registered everything.
+- **`service`** — calls `services.graph_webhook_dispatcher.register_core_callbacks()` (wires hook listeners that POST `WebhookEnvelope` to the KG service) and `services.tools.register_query_graph_proxy()` (registers the `query_graph` ToolSpec whose handler proxies LLM calls to the KG service).
+- **`disabled`** — does nothing.
+
+Additionally, the weekly quality job (`run_weekly_quality_job`) is scheduled by Core only when the mode is `inprocess`; in `service` mode the KG service's APScheduler owns it (controlled by `KG_SCHEDULER_ENABLED`). See §8.1 for the full ownership matrix.
+
+### What lives in Core vs. the KG service
+
+| Concern | `inprocess` | `service` |
+|---------|-------------|-----------|
+| Hook callbacks (`on_entity_created`, `on_session_ended`, ...) | `plugins/graph/writer.py` | `services/graph_webhook_dispatcher.py` (Core POST) → `lumogis-graph` `/webhook` (handles) |
+| `project_*` helpers | `plugins/graph/writer.py` (in Core process) | `services/lumogis-graph/graph/writer.py` (vendored copy in KG container) |
+| Reconciliation job | `plugins/graph/reconcile.py` (Core APScheduler @ 03:00) | `services/lumogis-graph/graph/reconcile.py` (KG APScheduler @ 03:00) |
+| Weekly quality job | `services/edge_quality.py:run_weekly_quality_job()` (Core) | `services/lumogis-graph/quality/edge_quality.py` (KG) |
+| `query_graph` LLM tool | `plugins/graph/query.py:query_graph_tool` | Core proxy in `services/tools.py:_query_graph_proxy_handler` → KG `/tools/query_graph` |
+| `/context` injection during chat | Core hook on `CONTEXT_BUILDING` | Core HTTP call from `routes/chat.py` → KG `/context` (hard 40 ms timeout) |
+| `/graph/mgm` operator UI | Core (`routes/admin.py:graph_mgm`) | KG service `/mgm` (hidden from host by default; see §6.4) |
+| `query_graph` MCP surface | Core `/mcp` | KG service `/mcp` (FastMCP at `kg_mcp/`) |
+
 ---
 
 ## 2. Graph Schema
@@ -146,7 +205,11 @@ Unknown entity types fall back to `Concept`.
 
 ### 2.4 Node Identity
 
-All nodes are merged on `(lumogis_id, user_id)`. These two properties form the stable external identity. The FalkorDB internal `id()` is used for edge creation within a single projection call but is never persisted cross-store.
+In the **Core in-process** writer, entity and information-object nodes are MERGEd in FalkorDB on **`(lumogis_id, user_id)`** (see `falkordb_store` module docstring). The FalkorDB internal `id()` is used for edge creation within a single projection call but is not the cross-store identity.
+
+**Memory scopes (ADR-015).** The canonical Postgres `entities` table also carries `scope` and `published_from`. The **`lumogis-graph` service** applies `orchestrator/visibility.py` (Core) and `services/lumogis-graph/visibility.py` (KG mirror) for **Postgres reads** and injects a **`visible_cypher_fragment` / `scope` model** in graph queries and projections where shared/system visibility applies. Relying on `user_id` alone is not sufficient for read paths in a household deployment—use the same helpers the code uses.
+
+**Known debt:** `GET /graph/stats` on some stacks still hard-filters Cypher to `user_id = 'default'` (see follow-up **FP-042** / backlog BL-042); do not treat global stats as household-complete until that is fixed.
 
 ### 2.5 Text Property Limit
 
@@ -214,7 +277,7 @@ Read-only graph query helpers for M3.
 | `shortest_path` | `(gs, from_entity_id: str, to_entity_id: str, user_id: str, max_depth: int = 4) -> dict` | Shortest path between two entity nodes (any edge type, max depth 4) | `{found, path_length, node_ids, node_names, ...}` |
 | `mention_sources` | `(gs, entity_id: str, user_id: str, limit: int = 10) -> dict` | Information objects with `MENTIONS` edges to entity, ordered by timestamp DESC | `{entity_id, sources, duration_ms}` |
 | `query_graph_tool` | `(input_: dict) -> str` | ToolSpec handler for `query_graph` tool. Modes: `ego`, `path`, `mentions`. Returns JSON string. | JSON string |
-| `on_context_building` | `(*, query: str, context_fragments: list, **_kw) -> None` | Detect entities in query (max 3, word-boundary regex), fetch ego networks (max 5 edges), append `[Graph]` context lines | None |
+| `on_context_building` | `(*, query: str, context_fragments: list, **_kw) -> None` | Detect entities in query (max 3, word-boundary regex), fetch ego networks (max 5 edges), append `[Graph]` context lines. **Still hard-codes `user_id = "default"`** in the function body: the `CONTEXT_BUILDING` hook has no `user_id` in its kwargs. (The KG `/context` route receives a `user_id` in the JSON body but, as of 2026-04-24, does not pass it into `on_context_building`.) | None |
 
 Edge quality filtering in `ego_network`: edges with `edge_quality IS NULL` use the co-occurrence gate only. Edges with a non-NULL `edge_quality` must also be `>= GRAPH_EDGE_QUALITY_THRESHOLD` (default 0.3).
 
@@ -397,17 +460,17 @@ Added for Phase 3 / Quality Pipeline:
 
 ### 3.18 `orchestrator/routes/admin.py`
 
-Added for the quality pipeline and KG Management Page:
+Added for the quality pipeline and KG Management Page (see **§6.0** for `AUTH_ENABLED` gating: most routes are **`require_admin`**, `POST /review-queue/decide` is **`require_user`**, `GET /graph/health` is global-auth middleware only):
 
 | Endpoint | Purpose |
 |----------|---------|
-| `GET /graph/health` | Six KG quality metrics from Postgres |
+| `GET /graph/health` | Six KG quality metrics from Postgres (currently scoped to `user_id='default'` in SQL) |
 | `GET /graph/mgm` | Serve the KG Management Page SPA (`orchestrator/static/graph_mgm.html`) |
-| `GET /review-queue` | Legacy merge candidates (backward compatible) |
-| `GET /review-queue?source=all` | Unified prioritised queue across all four item types |
-| `POST /review-queue/decide` | Process operator decisions on queue items |
-| `POST /entities/merge` | Manual entity merge endpoint |
-| `POST /entities/deduplicate` | Launch ad-hoc deduplication job (returns 202) |
+| `GET /review-queue` | Legacy merge candidates (admin cross-user) |
+| `GET /review-queue?source=all` | Unified prioritised queue across all four item types (admin) |
+| `POST /review-queue/decide` | Process operator decisions (authenticated user; admin on-behalf allowed) |
+| `POST /entities/merge` | Manual entity merge endpoint (admin) |
+| `POST /entities/deduplicate` | Launch ad-hoc deduplication job (admin; returns 202) |
 | `GET /kg/settings` | Return all 13 hot-reload KG settings with current value, type, default, and source |
 | `POST /kg/settings` | Upsert one or more KG settings; invalidates TTL cache immediately |
 | `DELETE /kg/settings/{key}` | Remove a setting from DB, reverting it to env var / hardcoded default |
@@ -464,13 +527,17 @@ class MergeResult(BaseModel):
 | `context_tags` | `TEXT[]` | `'{}'` | `NOT NULL` | Domain/topic tags for resolution |
 | `mention_count` | `INTEGER` | `1` | `NOT NULL` | Running count of mentions |
 | `user_id` | `TEXT` | `'default'` | `NOT NULL` | User scope |
+| `scope` | `TEXT` | `'personal'` | `NOT NULL, CHECK` | `personal` \| `shared` \| `system` — **ADR-015** (migration 013) |
+| `published_from` | `UUID` | `NULL` | `FK → entities` | Non-null = published clone of a personal source row. **(migration 013)** |
 | `created_at` | `TIMESTAMPTZ` | `NOW()` | `NOT NULL` | Row creation time |
 | `updated_at` | `TIMESTAMPTZ` | `NOW()` | `NOT NULL` | Last modification time |
 | `extraction_quality` | `DOUBLE PRECISION` | `NULL` | — | Heuristic quality score [0,1]. NULL = pre-Pass-1 row. **(Added by migration 004)** |
 | `is_staged` | `BOOLEAN` | `FALSE` | `NOT NULL` | Staged = quarantined from graph/queries. **(Added by migration 004)** |
 | `graph_projected_at` | `TIMESTAMPTZ` | `NULL` | — | Last successful FalkorDB projection. **(Added by migration 003)** |
 
-**Indexes:**
+**Indexes (selection):** also `entities_user_scope_idx` `(user_id, scope)`; partial unique `(published_from, scope)` where `published_from` is not null; see migration 013.
+
+**Indexes (legacy in doc):**
 - `idx_entities_staged` — `(user_id, is_staged) WHERE is_staged = TRUE` — fast lookup of staged entities
 - `idx_entities_name_lower` — `LOWER(name)` — case-insensitive name lookup for CONTEXT_BUILDING
 - `idx_entities_aliases_gin` — `GIN (aliases)` — alias search
@@ -780,17 +847,61 @@ Both values are ISO 8601 UTC timestamps. Writes are wrapped in `try/except` — 
 
 Returns the resolved filesystem path to `stop_entities.txt`. Used by `GET /kg/stop-entities` and `POST /kg/stop-entities` to locate the file without hardcoding the path. Respects `STOP_ENTITIES_PATH` env var; falls back to `_resolve_config_file("stop_entities.txt")` which checks `/app/config/` then `/opt/lumogis/config/`. Does not check whether the file exists — callers handle `FileNotFoundError`.
 
+### 5.4 Service-Mode Variables
+
+These variables are read by Core (orchestrator) and/or by the standalone `lumogis-graph` service. They have no effect when `GRAPH_MODE=inprocess`.
+
+| Variable | Default | Type | Read By | Purpose |
+|----------|---------|------|---------|---------|
+| `GRAPH_MODE` | `"inprocess"` | enum | `config.get_graph_mode()`, `plugins/graph/__init__.py`, `main.py:_wire_graph_mode_handlers`, `routes/chat.py:_inject_context`, `services/tools.py:register_query_graph_proxy` | `inprocess` \| `service` \| `disabled`. Selected once at orchestrator startup; see §1.6. |
+| `KG_SERVICE_URL` | `"http://lumogis-graph:8001"` | string | `services/graph_webhook_dispatcher.py`, `services/tools.py` | Base URL for Core → KG service HTTP calls (webhooks, `/context`, `/tools/query_graph`). |
+| `GRAPH_WEBHOOK_SECRET` | `""` | string | Core dispatcher (`Authorization: Bearer ...`); KG `routes/webhook.py:check_webhook_auth` (`hmac.compare_digest`); same gate is reused on `/context`. | Shared secret authenticating Core → KG calls on `/webhook` and `/context`. When unset, see `KG_ALLOW_INSECURE_WEBHOOKS`. |
+| `KG_ALLOW_INSECURE_WEBHOOKS` | `false` (process default); `true` in `docker-compose.premium.yml` for local dev | bool | KG `config.kg_allow_insecure_webhooks()` | When `GRAPH_WEBHOOK_SECRET` is unset, controls whether unauthenticated callers are accepted (`true` → 202) or rejected (`false` → 503). **Never set to `true` in production**: combined with an empty secret it disables auth on `/webhook` and `/context`. Has no effect once a secret is set. |
+| `GRAPH_ADMIN_TOKEN` | `""` | string | KG service admin write routes (e.g. `POST /webhook` admin variants, future write endpoints) | When set, KG service requires `X-Graph-Admin-Token` on admin write paths. Independent of webhook auth. |
+| `KG_SERVICE_PORT` | `8001` | int | KG service uvicorn binding | Port the KG service listens on inside its container. |
+| `KG_SCHEDULER_ENABLED` | `true` | bool | KG service `main.py` lifespan | When `false` AND `GRAPH_MODE=service`, the KG service does NOT register reconciliation or weekly jobs (useful in tests, parity runs, and when running multiple KG replicas where only one should schedule). |
+| `KG_MANAGEMENT_URL` | `"http://lumogis-graph:8001/mgm"` | string | KG service `CapabilityManifest` builder | Absolute URL advertised by `GET /capabilities` for the operator-facing UI. In production this should point to the reverse-proxy URL of the KG service. |
+| `KG_MEM_LIMIT` | `4g` | size | `docker-compose.premium.yml` | Memory cap for the KG container. Override to `1g` on small dev machines. |
+| `KG_MEM_RESERVATION` | `512m` | size | `docker-compose.premium.yml` | Memory reservation for the KG container. |
+| `LUMOGIS_CORE_BASE_URL` | `"http://orchestrator:8000"` | string | KG service (when it needs to call back into Core, e.g. for shared utilities) | Base URL the KG service uses to reach Core. |
+| `CAPABILITY_SERVICE_URLS` | `""` | comma-list | Core capability discovery | Comma-separated list of capability service base URLs Core should poll for `GET /capabilities`. Set to `http://lumogis-graph:8001` to enable discovery in `service` mode. |
+
+**Auth matrix for KG `/webhook` and `/context`** (implemented in `routes/webhook.py:check_webhook_auth`, reused by `routes/context.py`):
+
+| `GRAPH_WEBHOOK_SECRET` set | `KG_ALLOW_INSECURE_WEBHOOKS` | Result |
+|---------------------------|-----------------------------|--------|
+| Yes | (any) | Bearer token required: 202 on match, 401 on mismatch / missing |
+| No | Yes | Accepted without auth → 202 (dev only) |
+| No | No | Rejected → 503 with `detail="webhook auth not configured"` (KG still starts; every call returns 503) |
+
 ---
 
 ## 6. API Endpoints
+
+### 6.0 Core authentication matrix (`AUTH_ENABLED`)
+
+| `AUTH_ENABLED` | Effect |
+|----------------|--------|
+| `false` (default in many dev `.env` files) | `require_user` / `require_admin` are **no-ops**. `get_user` returns a **synthetic** `user_id="default"`, `role=admin` context so legacy `curl` without headers still works. |
+| `true` (family-LAN) | Unauthenticated API calls to protected routes return **401**. Admin routes require a JWT whose role is **admin**. Some routes (notably `POST /review-queue/decide`) use **`require_user`**: a normal user may act on their own queue items; an admin may act for others. |
+
+**Graph read endpoints** (`/graph/ego`, `/graph/path`, `/graph/search`, `/graph/stats`, `/graph/viz`) resolve **`user_id` from the JWT** when `AUTH_ENABLED=true` (see `plugins/graph/viz_routes._require_auth`). `user_id` is **never** read from query parameters.
+
+**Admin / operator JSON routes on Core** (all require **`require_admin`** when `AUTH_ENABLED=true`): `GET /graph/mgm`, `GET/POST/DELETE /kg/settings`, `GET /kg/job-status`, `POST /kg/trigger-weekly`, `GET/POST /kg/stop-entities`, `GET /review-queue` (incl. `?source=all`), `POST /entities/merge`, `POST /entities/deduplicate`. **`POST /review-queue/decide`** uses **`require_user`** (not `require_admin`).
+
+**`GET /graph/health`** is **not** a public bypass: with `AUTH_ENABLED=true` the **auth middleware** requires a **Bearer** token (`test_graph_health.py`).
+
+**`POST /graph/backfill`**: uses `plugins/graph/routes._check_admin` — **not** `require_admin` (any authenticated user when `AUTH_ENABLED=true`, plus `X-Graph-Admin-Token` when `GRAPH_ADMIN_TOKEN` is set).
+
+**Operator HTML** is served from `GET /graph/mgm` (Core, admin-gated when auth is on) and the KG service’s `GET /mgm`.
 
 ### 6.1 Graph Plugin Endpoints
 
 #### `POST /graph/backfill`
 
-Trigger a one-time graph reconciliation (admin-only).
+Trigger a one-time graph reconciliation (privilege model in `plugins/graph/routes._check_admin`, **not** `require_admin`).
 
-- **Auth**: `GRAPH_ADMIN_TOKEN` header when set; `AUTH_ENABLED` standard auth otherwise
+- **Auth**: If `AUTH_ENABLED=true`, any **authenticated** user may call the route (401 if unauthenticated). If `GRAPH_ADMIN_TOKEN` is set in the environment, **`X-Graph-Admin-Token`** must match it (403 otherwise). When `AUTH_ENABLED=false` and `GRAPH_ADMIN_TOKEN` is empty, the route is open (dev default).
 - **Parameters**: `limit_per_type` (query, optional int) — cap per table
 - **Response 202**: `{"status": "backfill_started", "limit_per_type": ..., "message": ...}`
 - **Response 401**: Not authenticated
@@ -842,9 +953,9 @@ Serve the Cytoscape.js visualization HTML page.
 
 #### `GET /graph/health`
 
-Six KG quality metrics from Postgres (never queries FalkorDB).
+Six KG quality metrics from Postgres (never queries FalkorDB). All SQL in the handler currently scopes aggregations to **`user_id = 'default'`** (admin dashboard / legacy bucket).
 
-- **Auth**: None required
+- **Auth**: Unauthenticated when `AUTH_ENABLED=false`. When `AUTH_ENABLED=true`, **requires Bearer JWT** (same as other non-exempt API routes) — 401 if missing/invalid.
 - **Response 200**:
 
 ```json
@@ -864,14 +975,14 @@ Six KG quality metrics from Postgres (never queries FalkorDB).
 
 Legacy review queue (backward compatible).
 
-- **Auth**: None
+- **Auth**: **`require_admin`** when `AUTH_ENABLED=true` (cross-user god-mode; items include `user_id` / `scope` for badges).
 - **Response**: Array of `{id, reason, created_at, candidate_a: {name, type}, candidate_b: {name, type}}`
 
 #### `GET /review-queue?source=all`
 
 Unified prioritised review queue.
 
-- **Auth**: None
+- **Auth**: **`require_admin`**
 - **Response**: `{items: [...], next_cursor: null}`
 - **Item types and priorities**:
   - `ambiguous_entity` (priority 1.0) — merge candidates with `{candidate_a, candidate_b, reason}`
@@ -883,8 +994,8 @@ Unified prioritised review queue.
 
 Process an operator decision.
 
-- **Auth**: None
-- **Request body**: `{item_type, item_id, action, user_id}`
+- **Auth**: **`require_user`** — non-admins may only act on their own `user_id`; admins can act for any item (see ADR-023 and `orchestrator/routes/admin.py`).
+- **Request body**: `{item_type, item_id, action, user_id?}`
 - **Valid actions per item type**:
   - `ambiguous_entity`: `merge` (merges entities), `distinct` (adds to known_distinct_entity_pairs, deletes queue row)
   - `staged_entity`: `promote` (sets is_staged=FALSE, graph_projected_at=NULL), `discard` (deletes entity)
@@ -896,8 +1007,8 @@ Process an operator decision.
 
 Manual entity merge.
 
-- **Auth**: None (single-user LAN deployment)
-- **Request body**: `{winner_id: UUID, loser_id: UUID, user_id: "default"}`
+- **Auth**: **`require_admin`**
+- **Request body**: `{winner_id: UUID, loser_id: UUID, user_id: str}` (owner of the data; default `"default"` in the Pydantic model for back-compat)
 - **Response 200**: `{status: "ok", winner_id, loser_id, aliases_merged, relations_moved, sessions_updated, qdrant_cleaned}`
 - **Response 400**: Same winner/loser, invalid UUID
 - **Response 404**: Entity not found
@@ -907,7 +1018,7 @@ Manual entity merge.
 
 Launch ad-hoc deduplication job.
 
-- **Auth**: None
+- **Auth**: **`require_admin`**
 - **Response 202**: `{status: "started", run_id: UUID}`
 - **Response 409**: Deduplication already running
 
@@ -917,7 +1028,7 @@ Launch ad-hoc deduplication job.
 
 Return all 13 hot-reload KG settings.
 
-- **Auth**: None
+- **Auth**: **`require_admin`**
 - **Response 200**:
 
 ```json
@@ -942,7 +1053,7 @@ Return all 13 hot-reload KG settings.
 
 Upsert one or more KG settings.
 
-- **Auth**: None
+- **Auth**: **`require_admin`**
 - **Request body**: `{settings: [{key: string, value: string}]}` — **value must be a string** even for numeric types; Pydantic will reject JSON numbers.
 - **Response 200**: `{status: "ok", updated: [key, ...]}`
 - **Response 400**: Unknown key, type mismatch, or out-of-range value
@@ -953,7 +1064,7 @@ Upsert one or more KG settings.
 
 Remove a setting from the DB, reverting it to its env var / hardcoded default.
 
-- **Auth**: None
+- **Auth**: **`require_admin`**
 - **Response 200**: `{status: "ok", key: string, reverted_to: <default_value>}`
 - **Response 400**: Unknown key
 - **Response 500**: DB delete failed
@@ -962,7 +1073,7 @@ Remove a setting from the DB, reverting it to its env var / hardcoded default.
 
 Serve the Knowledge Graph Management Page single-page application.
 
-- **Auth**: None
+- **Auth**: **`require_admin`**
 - **Response 200**: `text/html` — `orchestrator/static/graph_mgm.html`
 - **Response 404**: HTML file not found on disk
 
@@ -970,7 +1081,7 @@ Serve the Knowledge Graph Management Page single-page application.
 
 Return last-run timestamps and status for the three KG background jobs. Reads `_job_last_reconciliation` and `_job_last_weekly` directly from `kg_settings` (bypassing the 30s TTL cache). Derives deduplication status from `deduplication_runs`. Returns graceful nulls on any field failure.
 
-- **Auth**: None
+- **Auth**: **`require_admin`**
 - **Response 200**:
 
 ```json
@@ -997,7 +1108,7 @@ All fields are nullable. `running` is always a boolean (never null).
 
 Trigger the weekly KG quality maintenance job on demand as a FastAPI `BackgroundTask`.
 
-- **Auth**: None
+- **Auth**: **`require_admin`**
 - **Response 202**: `{status: "started", message: "Weekly KG quality job started in background."}`
 - **Response 409**: A deduplication job is already running (the weekly job includes deduplication and cannot run concurrently). Detail message explains the conflict.
 - **Response 500**: DB error when checking for in-progress runs
@@ -1006,7 +1117,7 @@ Trigger the weekly KG quality maintenance job on demand as a FastAPI `Background
 
 Return the current stop entity list.
 
-- **Auth**: None
+- **Auth**: **`require_admin`**
 - **Response 200**: `{phrases: [string, ...], count: int, source_path: string}` — phrases are sorted alphabetically (case-insensitive). Returns empty list with count 0 when the file does not exist.
 - **Response 500**: File exists but cannot be read (permissions error, etc.)
 
@@ -1014,13 +1125,80 @@ Return the current stop entity list.
 
 Add or remove a phrase from the stop entity list. Writes atomically via `tempfile.mkstemp` + `os.replace()` — never leaves a partially-written file.
 
-- **Auth**: None
+- **Auth**: **`require_admin`**
 - **Request body**: `{action: "add" | "remove", phrase: string}`
 - **Validation**: action must be `"add"` or `"remove"`; phrase after strip must be non-empty, ≤ 200 characters, no newlines or control characters (ASCII < 32).
 - **Response 200**: `{status: "ok", count: <new_count>}`
 - **Response 400**: Invalid action; empty phrase; phrase too long; phrase contains newlines/control chars; `"add"` with a phrase already in list (case-insensitive); `"remove"` with a phrase not in list
 - **Response 500**: File read or write error
 - Calls `config.invalidate_settings_cache()` on success.
+
+### 6.4 lumogis-graph Service Endpoints
+
+These endpoints live on the `lumogis-graph` container, NOT in Core. They exist only when `GRAPH_MODE=service`. The service listens on `KG_SERVICE_PORT` (default 8001) and is reached at `KG_SERVICE_URL` (default `http://lumogis-graph:8001`). All routes share the same Postgres + Qdrant + FalkorDB as Core.
+
+**Auth is not identical to Core** (§6.0). The KG process uses `services/lumogis-graph/auth.py:auth_middleware` plus per-route gates:
+
+| Layer | Behaviour |
+|-------|-----------|
+| **Always open (no JWT)** | `GET /health`, `POST /webhook`, `POST /context`, `GET /capabilities` — middleware bypasses JWT; service-specific auth is **Bearer `GRAPH_WEBHOOK_SECRET`** on `/webhook` and `/context` via `check_webhook_auth` (§5.4 matrix). |
+| **`AUTH_ENABLED=false` (KG default)** | Middleware injects a synthetic `UserContext(user_id="default", role="admin")` for every other path — **LAN-trusted** posture. |
+| **`AUTH_ENABLED=true` on the KG container** | Middleware requires a **valid Lumogis JWT** (same `AUTH_SECRET` as Core) on **all routes except** the open list above. **`GET /mgm` requires `role=admin`** in the JWT (`auth._requires_admin`). The middleware docstring still mentions `/api/graph` / `/api/viz` prefixes; **actual routes use `/graph/...`** — graph JSON and HTML are **any authenticated user**, not admin-only, matching `graph/viz_routes._require_auth`. |
+| **`X-Graph-Admin-Token`** | `routes/graph_admin_routes._require_admin` enforces this header **when `GRAPH_ADMIN_TOKEN` is set** on **mutating** admin routes (`POST`/`DELETE` on `/kg/*`, `GET /graph/health` on the KG copy, `POST /kg/stop-entities`, `POST /kg/trigger-weekly`). When `GRAPH_ADMIN_TOKEN` is **empty**, that check is a no-op (dev default). |
+
+**`graph_admin_routes` read vs write (token header):**
+
+- **Unauthenticated reads (no `_require_admin` in handler):** `GET /kg/settings`, `GET /kg/job-status`, `GET /kg/stop-entities`.
+- **Reads gated by `_require_admin` (X-Graph-Admin-Token when `GRAPH_ADMIN_TOKEN` set):** `GET /graph/health` **only on the KG service** — Core’s `GET /graph/health` uses **Core** global auth instead (§6.2).
+- **Writes all call `_require_admin`:** `POST`/`DELETE` on `/kg/settings`, `POST /kg/trigger-weekly`, `POST /kg/stop-entities`.
+
+**Core vs KG — same path, different envelope:** On **Core**, `GET /kg/*` and `GET /graph/mgm` use **`require_admin`** (JWT role). On **KG**, with **`AUTH_ENABLED=true`**, `GET /kg/settings` only needs **any** valid JWT (middleware does not require admin for that path). Prefer **calling operator JSON APIs on Core** for a single auth story; use **KG direct** for `/webhook`, `/context`, service health, and Docker-internal checks.
+
+#### Service-internal contract (called by Core)
+
+| Endpoint | Auth | Caller | Purpose |
+|----------|------|--------|---------|
+| `POST /webhook` | Bearer (`GRAPH_WEBHOOK_SECRET`); see §5.4 auth matrix | `services/graph_webhook_dispatcher.py` (Core) | Receive `WebhookEnvelope` (`event`, `schema_version`, `payload`), validate, enqueue projection on `webhook_queue.submit()`. Returns 202 immediately; projection runs on the KG service's background ThreadPoolExecutor. |
+| `POST /context` | Same Bearer gate | `routes/chat.py:_inject_context` (Core, on every chat request when `GRAPH_MODE=service`) | Run `graph.query.on_context_building` for `query`. Hard 35 ms in-route budget; Core wraps the call in a 40 ms client timeout. Returns `{fragments: list[str]}`. |
+
+The `WebhookEnvelope` model is defined in `services/lumogis-graph/models/webhook.py` (and mirrored in `orchestrator/services/graph_webhook_dispatcher.py`):
+
+```python
+class WebhookEnvelope(BaseModel):
+    schema_version: int            # SUPPORTED_SCHEMA_VERSIONS = [1]
+    event: WebhookEvent            # enum value == graph.writer.on_<value> handler name
+    payload: dict                  # validated against _PAYLOAD_BY_EVENT[event]
+```
+
+`WebhookEvent` enum values: `on_document_ingested`, `on_entity_created`, `on_session_ended`, `on_note_captured`, `on_audio_transcribed`, `on_entity_merged`. The enum value equals the handler function name in `graph.writer` by design.
+
+#### Public service endpoints (operator, debugging, and browser UIs)
+
+| Endpoint | Auth on KG | Purpose |
+|----------|------------|---------|
+| `GET /health` | **Open** (middleware bypass) | Liveness + readiness. Docker healthcheck, capability poller. |
+| `GET /capabilities` | **Open** (middleware bypass) | `CapabilityManifest`; `management_url` from `KG_MANAGEMENT_URL`. |
+| `GET /mgm` | `AUTH_ENABLED=false`: open. `AUTH_ENABLED=true`: **Bearer JWT with `role=admin`** (middleware) | Serves `static/graph_mgm.html` with `LUMOGIS_CORE_BASE_URL` injected. Host port often not published; use Core’s `/graph/mgm` or exec/curl. |
+| `POST /tools/query_graph` | **`GRAPH_WEBHOOK_SECRET`** Bearer (`check_webhook_auth`, same as `/webhook`) | Core’s `query_graph` proxy. Not “open LAN”. |
+| `POST /graph/backfill` | Same **`_check_admin`** as Core’s `graph/routes.py` (JWT if `AUTH_ENABLED` on **KG** + `X-Graph-Admin-Token` when `GRAPH_ADMIN_TOKEN` set) | Stale-row reconciliation. |
+| `GET /graph/ego`, `GET /graph/path`, `GET /graph/search`, `GET /graph/stats`, `GET /graph/viz` | `AUTH_ENABLED=false`: open. `AUTH_ENABLED=true`: **Bearer JWT** (any role); `viz_routes` scopes `user_id` from `get_user` | Same handlers as Core’s plugin; on KG, middleware enforces JWT when auth is on. |
+| `GET /graph/health` | **`_require_admin` in `graph_admin_routes`** → `X-Graph-Admin-Token` when `GRAPH_ADMIN_TOKEN` set. If `AUTH_ENABLED=true`, **Bearer JWT** is also required (path is not in middleware open list). | Same six metrics as §6.2; **not** the same auth story as **Core** `/graph/health` (see §6.2). |
+| `GET /kg/settings` | `AUTH_ENABLED=true`: **Bearer JWT** (any role, unlike Core’s admin-only). No `X-Graph-Admin-Token` on GET. | Read knobs from shared `kg_settings`. |
+| `POST /kg/settings`, `DELETE /kg/settings/{key}` | JWT if `AUTH_ENABLED` + **`_require_admin`** → `X-Graph-Admin-Token` when `GRAPH_ADMIN_TOKEN` set | Write knobs. |
+| `GET /kg/job-status` | JWT if `AUTH_ENABLED` | Job timestamps. |
+| `GET /kg/stop-entities` | JWT if `AUTH_ENABLED` | Read stop list. |
+| `POST /kg/trigger-weekly` | JWT if `AUTH_ENABLED` + **`_require_admin`** (admin token header when set) | Triggers `run_weekly_quality_job` in-process on KG. |
+| `POST /kg/stop-entities` | JWT if `AUTH_ENABLED` + **`_require_admin`** (admin token header when set) | Mutate stop file on KG’s filesystem. |
+| `/mcp/*` | **`MCP_AUTH_TOKEN`** (separate mount in `main.py`) | FastMCP tools. |
+
+#### Core → KG client contracts
+
+| Core module | Calls | Timeout / failure mode |
+|-------------|-------|------------------------|
+| `services/graph_webhook_dispatcher.py` | `POST /webhook` per fired event (`ENTITY_CREATED`, `SESSION_ENDED`, `NOTE_CAPTURED`, `AUDIO_TRANSCRIBED`, `ENTITY_MERGED`, `DOCUMENT_INGESTED`) | Fire-and-forget on a Core ThreadPoolExecutor. Network errors are logged at WARNING and dropped — reconciliation in the KG service will replay missed projections within 24 h. |
+| `routes/chat.py:_inject_context` | `POST /context` once per chat turn | 40 ms client timeout. On timeout / non-200 / connection error the chat path proceeds with an empty `[Graph]` context — the only observable effect is the chat response missing graph-derived hints for that turn. |
+| `services/tools.py:_query_graph_proxy_handler` | `POST /tools/query_graph` per LLM tool call | Configurable per-call; failures surface to the LLM as a tool error. |
+| Capability discovery (`routes/capabilities.py`) | `GET /capabilities` on each entry in `CAPABILITY_SERVICE_URLS` | Polled once at startup and on demand. Failures are logged; the manifest is simply not registered. |
 
 ---
 
@@ -1251,6 +1429,8 @@ prob = 0.45 * jaro_winkler_name
 | 2b. Alias uniqueness check | `check_alias_uniqueness("default")` | Inserts/resolves `constraint_violations` rows | Yes |
 | 3. Probabilistic deduplication | `run_deduplication_job("default")` | Auto-merges, inserts `dedup_candidates` + `review_queue` rows, updates `deduplication_runs` | Yes |
 
+**Per-household note:** the weekly job still passes **`user_id="default"`** to these steps. Multi-user households that never remapped the legacy id may see correct work; for purely non-`default` data, a **per-user (or all-users) job** is not yet the shipped behaviour—run targeted maintenance per user in future work.
+
 ### Failure Isolation
 
 Each step is wrapped in its own try/except. A failure in step 1 does not prevent steps 2 or 3 from running. A failure in step 3 does not affect the results of steps 1 and 2. The overall job never raises — it returns a combined summary dict and logs a structured INFO message.
@@ -1258,6 +1438,18 @@ Each step is wrapped in its own try/except. A failure in step 1 does not prevent
 ### Separate Reconciliation Job
 
 The daily reconciliation job (`plugins/graph/reconcile.py:run_reconciliation`) runs independently at 03:00 daily (not part of the weekly quality job). It is registered by `plugins/graph/__init__.py`.
+
+### 8.1 Job Ownership by Mode
+
+The same APScheduler entries exist in both the Core process and the KG service container; only one of the two should ever schedule them in a given deployment. The selection is made by `GRAPH_MODE` (Core side) and `KG_SCHEDULER_ENABLED` (KG side).
+
+| Job | `GRAPH_MODE=inprocess` | `GRAPH_MODE=service` (default `KG_SCHEDULER_ENABLED=true`) | `GRAPH_MODE=service`, `KG_SCHEDULER_ENABLED=false` |
+|-----|------------------------|---------------------------------------------------------|--------------------------------------------------|
+| Reconciliation (daily 03:00 UTC) | Core | KG service | Nobody — operator must trigger via `POST /graph/backfill` |
+| Weekly quality maintenance (Sun `DEDUP_CRON_HOUR_UTC`) | Core (`main.py`) | KG service | Nobody — operator must trigger via `POST /kg/trigger-weekly` |
+| Live webhook projection | Core in-process hooks | KG `webhook_queue` ThreadPoolExecutor | Same as middle column (the queue does not depend on the scheduler) |
+
+The "nobody" column is the supported configuration for multi-replica KG deployments where exactly one replica should schedule cron work; all replicas still accept and process webhook traffic.
 
 ---
 
@@ -1308,8 +1500,11 @@ The `Knowledge Graph` footer link in LibreChat points to `/graph/mgm`:
 | **Sentence/paragraph granularity evidence** | `evidence_granularity` column exists and weights are defined, but all current extraction produces `'document'` granularity only. | Sentence-level NER or chunked extraction |
 | **Per-edge-type decay** | Half-lives defined for `MENTIONS` and `DISCUSSED_IN` but only `RELATES_TO` decay is computed. | Separate decay computation per edge type in the weekly job |
 | **Drift detection** | Not implemented. Would monitor graph metrics over time and alert on degradation. | Baseline metric collection, alerting infrastructure |
-| **Multi-user isolation** | All endpoints use `user_id="default"`. `CONTEXT_BUILDING` hard-codes `user_id="default"` because the hook payload doesn't carry it. | Authentication + user_id propagation in hook payloads |
-| **Qdrant-based semantic entity resolution** | Deferred from M3. Entity resolution in queries uses deterministic Postgres name/alias lookup only. Fuzzy/semantic fallback remains in `query_entity` (tools.py) only. | Evaluation of resolution quality vs. latency |
+| **Chat `[Graph]` user scope** | `on_context_building` **hard-codes `user_id="default"`** in both Core and `lumogis-graph` (the hook has no `user_id`; the KG `/context` handler does not yet thread `ContextRequest.user_id` into the function). | Pass `user_id` into the handler, or add `user_id` to the `CONTEXT_BUILDING` hook and fire it from `routes/chat` after scoping. |
+| **Viz + graph JSON APIs** | **Solved (JWT scoping).** `viz_routes` uses `_require_auth` → `user_id` from JWT when `AUTH_ENABLED=true`. | — |
+| **GET /graph/health** | **Still aggregates only `user_id="default"`** in SQL. | Per-user or all-users admin metrics. |
+| **GET /graph/stats global counts** | **May still use `user_id="default"` in Cypher** (debt item FP-042 / BL-042). | Wire stats to the same scoping as `/graph/ego`. |
+| **Qdrant-based semantic entity resolution** | Deferred from M3. Entity resolution in queries uses deterministic Postgres name/alias lookup (plus `visible_filter` for multi-scope). Fuzzy/semantic fallback remains in `query_entity` (tools.py) only. | Evaluation of resolution quality vs. latency |
 | **FalkorDB `from_url()` constructor** | Documented in the plan but does not exist in falkordb v1.6.x. Per-call `FalkorDB(host, port).select_graph(name)` is used instead. | falkordb package update |
 | **`constraint_violations` in backup** | Excluded because violations are transient and recomputable. If persistent violation history is needed, add to `_BACKUP_TABLES`. | Decision on retention requirements |
 | **`sessions`, `notes`, `audio_memos` in backup** | These tables were added in migration 003 after the backup/restore system was built. They are not yet in `_BACKUP_TABLES`. | Add to backup table list |
@@ -1317,5 +1512,39 @@ The `Knowledge Graph` footer link in LibreChat points to `/graph/mgm`:
 ### 10.2 Discrepancies Between Plan and Implementation
 
 - **ADR-007 and ADR-008**: The finalised ADRs exist at `docs/decisions/007-graph-plugin-architecture.md` and `docs/decisions/008-graph-provenance-model.md` (note: filenames omit the `ADR-` prefix).
+- **ADR-011**: `docs/decisions/011-lumogis-graph-service-extraction.md` records the lumogis-graph extraction.
 - **FalkorDB constructor**: Plan specified `FalkorDB.from_url(url)`. Implementation uses `FalkorDB(host=host, port=port)` because `from_url` does not exist in falkordb v1.6.x.
-- **`CONTEXT_BUILDING` user_id**: Plan assumed user_id would be available in hook payload. Implementation hard-codes `"default"` because it is not.
+- **`CONTEXT_BUILDING` user_id**: The hook is still **kwargs without `user_id`**. The implementation hard-codes `"default"`. In **`GRAPH_MODE=service`**, Core’s chat path passes the real `user_id` in the **HTTP body to KG `/context`**, but the KG `post_context` handler does not yet pass that `user_id` into `on_context_building` (same hard-coded `"default"` in `services/lumogis-graph/graph/query.py` until a small wiring PR lands).
+
+---
+
+## 11. Parity Verification
+
+`tests/integration/test_graph_parity.py` verifies that `GRAPH_MODE=inprocess` and `GRAPH_MODE=service` produce byte-identical FalkorDB graph state for the same fixture set. It is the canonical regression test for the lumogis-graph extraction.
+
+### What it does
+
+1. Brings up the live stack twice with the same Postgres + Qdrant + FalkorDB volumes, swapping `GRAPH_MODE` between phases.
+2. Ingests the fixture set (`tests/fixtures/`) via Core's `/ingest` endpoint mounted at `/fixtures` inside the orchestrator container (mount defined in `docker-compose.parity.yml`).
+3. Waits for the projection queue to drain (`tests/integration/wait_for_idle.py`).
+4. Snapshots FalkorDB and diffs the two snapshots (`tests/integration/diff_snapshots.py`). Differences fail the test.
+
+### How to run
+
+```
+make test-graph-parity
+```
+
+The Make target wires the right compose overlays and runs `pytest -m integration tests/integration/test_graph_parity.py`. It is destructive: the named Docker volumes for Postgres, FalkorDB, and Qdrant are wiped between phases. The dev stack should be `docker compose down -v` first.
+
+### Compose overlay layout
+
+| Overlay | When loaded | Purpose |
+|---------|-------------|---------|
+| `docker-compose.yml` | Both phases | Core stack |
+| `docker-compose.falkordb.yml` | Both phases | Pinned to `falkordb/falkordb:v4.18.1` (the `v4.4.4` tag was retired from Docker Hub) |
+| `docker-compose.parity.yml` | Both phases | Mounts `tests/fixtures` at `/fixtures` (NOT `/data/fixtures`, because `/data` is bind-mounted read-only by the base file) |
+| `docker-compose.premium.yml` | `service` phase only | Brings up the `lumogis-graph` container |
+| `docker-compose.parity-premium.yml` | `service` phase only | Exposes `lumogis-graph:8001` to the host so the test can poll `/health` directly |
+
+The test deliberately starts only a subset of services (`orchestrator`, `falkordb`, `postgres`, `qdrant`, `mongodb`, `ollama`, `stack-control`, plus `lumogis-graph` in the second phase) — `librechat` is excluded because its healthcheck blocks `docker compose up --wait` indefinitely on a cold cache.

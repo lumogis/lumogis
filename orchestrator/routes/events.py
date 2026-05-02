@@ -27,6 +27,7 @@ import hooks
 from auth import get_user
 from events import Event
 from fastapi import APIRouter
+from fastapi import HTTPException
 from fastapi import Request
 from fastapi.responses import StreamingResponse
 
@@ -55,22 +56,32 @@ _event_counter = 0
 # ---------------------------------------------------------------------------
 
 
-def _make_sse_event(event_type: str, data: dict, user_id: str = "default") -> str:
-    """Build an SSE message string."""
+# Phase 3 — every event must carry a real owner. We do not silently
+# accept "default" anymore. Hook callbacks must be invoked with a
+# concrete user_id; missing it logs+drops rather than fanning out to
+# all listeners.
+
+
+def _make_sse_event(event_type: str, data: dict, *, user_id: str) -> str:
+    """Build an SSE message string. ``user_id`` is required."""
     global _event_counter
     _event_counter += 1
     event_id = str(_event_counter)
     payload = json.dumps(data, default=str)
     msg = f"id: {event_id}\nevent: {event_type}\ndata: {payload}\n\n"
-
-    # Buffer for reconnection.
     _buffer.append((event_id, user_id, msg, time.monotonic()))
     return msg
 
 
-def _push_to_connections(event_type: str, data: dict, user_id: str = "default") -> None:
-    """Called from hook callbacks (background thread). Thread-safe push."""
-    event_str = _make_sse_event(event_type, data, user_id)
+def _push_to_connections(event_type: str, data: dict, *, user_id: str) -> None:
+    """Thread-safe fanout. ``user_id`` is required and used for routing."""
+    if not user_id:
+        _log.warning(
+            "SSE %s dropped: missing user_id (Phase 3 requires explicit ownership)",
+            event_type,
+        )
+        return
+    event_str = _make_sse_event(event_type, data, user_id=user_id)
     for conn_user, queue, loop in list(_connections):
         if conn_user != user_id and conn_user != "__all__":
             continue
@@ -84,6 +95,10 @@ def on_signal_received(**kwargs) -> None:
     signal = kwargs.get("signal")
     if signal is None:
         return
+    user_id = getattr(signal, "user_id", None)
+    if not user_id:
+        _log.warning("signal_received hook: signal has no user_id; dropping")
+        return
     _push_to_connections(
         "signal_received",
         {
@@ -93,11 +108,15 @@ def on_signal_received(**kwargs) -> None:
             "importance_score": signal.importance_score,
             "relevance_score": signal.relevance_score,
         },
-        user_id=getattr(signal, "user_id", "default"),
+        user_id=user_id,
     )
 
 
 def on_action_executed(**kwargs) -> None:
+    user_id = kwargs.get("user_id")
+    if not user_id:
+        _log.warning("action_executed hook: missing user_id; dropping SSE fanout")
+        return
     _push_to_connections(
         "action_executed",
         {
@@ -107,11 +126,17 @@ def on_action_executed(**kwargs) -> None:
             "reverse_token": kwargs.get("reverse_token"),
             "audit_id": kwargs.get("audit_id"),
         },
-        user_id=kwargs.get("user_id", "default"),
+        user_id=user_id,
     )
 
 
 def on_routine_elevation_ready(**kwargs) -> None:
+    user_id = kwargs.get("user_id")
+    if not user_id:
+        _log.warning(
+            "routine_elevation_ready hook: missing user_id; dropping SSE fanout"
+        )
+        return
     _push_to_connections(
         "routine_elevation_ready",
         {
@@ -119,7 +144,7 @@ def on_routine_elevation_ready(**kwargs) -> None:
             "action_type": kwargs.get("action_type"),
             "approval_count": kwargs.get("approval_count"),
         },
-        user_id="default",
+        user_id=user_id,
     )
 
 
@@ -144,7 +169,9 @@ async def sse_stream(request: Request):
     newer than the provided ID (up to 5 minutes old).
     """
     user = get_user(request)
-    user_id = user.user_id if user else "default"
+    if user is None:
+        raise HTTPException(status_code=401, detail="Authentication required for SSE")
+    user_id = user.user_id
 
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue = asyncio.Queue(maxsize=200)

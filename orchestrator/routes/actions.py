@@ -14,7 +14,10 @@ POST /permissions/{connector}/elevate — explicit routine Do elevation
 
 import logging
 
+from auth import UserContext
+from authz import require_user
 from fastapi import APIRouter
+from fastapi import Depends
 from fastapi import HTTPException
 from fastapi import Query
 from pydantic import BaseModel
@@ -61,11 +64,14 @@ def get_audit(
     connector: str | None = Query(None),
     action_type: str | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
+    user: UserContext = Depends(require_user),
 ):
-    """Return recent audit log entries."""
+    """Return recent audit log entries scoped to the calling user."""
     from actions.audit import get_audit as _get
 
-    rows = _get(connector=connector, action_type=action_type, limit=limit)
+    rows = _get(
+        connector=connector, action_type=action_type, limit=limit, user_id=user.user_id
+    )
     result = []
     for r in rows:
         result.append(
@@ -86,11 +92,18 @@ def get_audit(
 
 
 @router.post("/audit/{reverse_token}/reverse")
-def reverse_action(reverse_token: str):
-    """Attempt to reverse a previously executed action."""
+def reverse_action(
+    reverse_token: str,
+    user: UserContext = Depends(require_user),
+):
+    """Attempt to reverse a previously executed action.
+
+    Reversal is scoped to the calling user — you can only reverse
+    actions that you (or an admin acting as you) originally executed.
+    """
     from actions.reversibility import attempt_reverse
 
-    result = attempt_reverse(reverse_token)
+    result = attempt_reverse(reverse_token, user_id=user.user_id)
     if not result.success:
         raise HTTPException(status_code=400, detail=result.error)
     return {"status": "reversed", "output": result.output}
@@ -102,17 +115,17 @@ def reverse_action(reverse_token: str):
 
 
 @router.get("/routines")
-def list_routines():
+def list_routines(user: UserContext = Depends(require_user)):
     from services.routines import list_routines as _list
 
-    return {"routines": _list()}
+    return {"routines": _list(user_id=user.user_id)}
 
 
 @router.post("/routines/{name}/approve")
-def approve_routine(name: str):
+def approve_routine(name: str, user: UserContext = Depends(require_user)):
     from services.routines import approve_routine as _approve
 
-    ok = _approve(name)
+    ok = _approve(name, user_id=user.user_id)
     if not ok:
         raise HTTPException(
             status_code=404, detail=f"Routine {name!r} not found or approval failed"
@@ -121,20 +134,20 @@ def approve_routine(name: str):
 
 
 @router.post("/routines/{name}/run")
-def run_routine(name: str):
+def run_routine(name: str, user: UserContext = Depends(require_user)):
     from services.routines import run_routine as _run
 
-    result = _run(name)
+    result = _run(name, user_id=user.user_id)
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result.get("error", "Run failed"))
     return {"status": "ok", "output": result.get("output", "")}
 
 
 @router.delete("/routines/{name}/approve")
-def revoke_routine(name: str):
+def revoke_routine(name: str, user: UserContext = Depends(require_user)):
     from services.routines import revoke_routine as _revoke
 
-    ok = _revoke(name)
+    ok = _revoke(name, user_id=user.user_id)
     if not ok:
         raise HTTPException(status_code=404, detail=f"Routine {name!r} not found")
     return {"status": "revoked", "routine": name}
@@ -146,10 +159,19 @@ def revoke_routine(name: str):
 
 
 @router.post("/permissions/{connector}/elevate")
-def elevate_permission(connector: str, body: ElevateRequest):
-    """Explicitly elevate an action_type to routine Do for a connector.
+def elevate_permission(
+    connector: str,
+    body: ElevateRequest,
+    user: UserContext = Depends(require_user),
+):
+    """Explicitly elevate an action_type to routine Do for the calling user.
 
     Returns 403 for action_types that can never be elevated (hard limits).
+    Closes a pre-existing unauthenticated-elevation hole — pre plan
+    ``per_user_connector_permissions`` this route had no auth gate, so
+    any anonymous caller could elevate any (user, connector,
+    action_type) triple. Now gated by ``require_user`` and the
+    elevation is recorded against the calling user's row.
     """
     if body.action_type in _HARD_LIMITED:
         raise HTTPException(
@@ -161,7 +183,11 @@ def elevate_permission(connector: str, body: ElevateRequest):
         )
     from permissions import elevate_to_routine
 
-    elevate_to_routine(connector, body.action_type)
+    elevate_to_routine(
+        user_id=user.user_id,
+        connector=connector,
+        action_type=body.action_type,
+    )
     return {
         "status": "elevated",
         "connector": connector,

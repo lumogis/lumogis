@@ -1,6 +1,6 @@
 ![Lumogis](branding/readme-banner.svg)
 
-**[Quickstart](#getting-started) · [Architecture](#architecture) · [Extending Lumogis](#contributing) · [Community Plugins](COMMUNITY-PLUGINS.md) · [Security](SECURITY.md)**
+**[Quickstart](#getting-started) · [Architecture](#architecture) · [Reference manual](docs/LUMOGIS_REFERENCE_MANUAL.md) · [Extending Lumogis](#contributing) · [Community Plugins](COMMUNITY-PLUGINS.md) · [Security](SECURITY.md)**
 
 # lumogis
 
@@ -145,6 +145,24 @@ _† FalkorDB and Redis are only started when the graph plugin is present._
 | **Signals** | `signals/` | Source monitors that detect and score incoming signals |
 | **Actions** | `actions/` | Executable operations with audit logging and Ask/Do enforcement |
 
+**Reference manual:** For a single consolidated guide (operators + contributors, roadmap disambiguation, extension use cases), see [`docs/LUMOGIS_REFERENCE_MANUAL.md`](docs/LUMOGIS_REFERENCE_MANUAL.md).
+
+---
+
+## Lumogis Web
+
+**Lumogis Web** is the first-party browser client (React + Vite) in `clients/lumogis-web/`, shipped as static files behind **Caddy** in the default compose stack. One origin keeps refresh cookies on `Path=/api/v1/auth` workable with `SameSite=Strict` and lines up the orchestrator’s `Origin` check for cookie-authenticated calls.
+
+| Where | URL / port (default) |
+|---|---|
+| **Same-origin (recommended)** | **http://localhost/** — Caddy on **80** (and **443** when you set `CADDY_DOMAIN` to a real hostname) routes `/api/*`, `/events`, `/v1/*`, `/mcp/*`, `/health`, and **legacy root-mounted** orchestrator admin paths (e.g. `/dashboard`, `/settings`, `/graph/*`, `/kg/*`, `/review-queue`, `/backup`) to the orchestrator; the SPA is the fallback. |
+| **Orchestrator only** | **http://localhost:8000** — Swagger at `/docs`, same APIs without Caddy. |
+| **LibreChat (optional profile)** | **http://localhost:3080** when `COMPOSE_PROFILES` includes `librechat` |
+
+**Auth / refresh safety (family LAN, `AUTH_ENABLED=true`):** set `LUMOGIS_PUBLIC_ORIGIN` in `.env` to the exact browser URL (scheme and host) you use. When Caddy terminates TLS or sits on a Docker network, set `LUMOGIS_TRUSTED_PROXIES` so the login rate limiter can trust `X-Forwarded-For` from the proxy. `docker-compose.yml` passes through both from `.env` with local defaults; see `.env.example`.
+
+**Browser e2e (Playwright + axe):** with the stack up, `cd clients/lumogis-web && npx playwright install chromium` once, then set `LUMOGIS_WEB_SMOKE_EMAIL` and `LUMOGIS_WEB_SMOKE_PASSWORD` (≥ 12 characters). Run **`make web-e2e`** to allow skipping when creds are absent, or **`make web-e2e-prove`** to require creds and fail the build if the test does not run. **Mobile Lighthouse (`/chat`):** after `npm run build` + `npm run preview` in `clients/lumogis-web`, run **`npm run lighthouse:chat`** (needs Chrome/Chromium — see **`clients/lumogis-web/README.md`**). **Caddy security headers:** with the full stack up (`caddy` + `lumogis-web` + `orchestrator`), `make web-caddy-headers` runs pytest in the orchestrator image and fetches the default Caddy service at `http://caddy` (override with `LUMOGIS_WEB_BASE_URL`). Use `make web-caddy-headers-prove` in automation (fails if Caddy is down). For pytest on the **host** against `http://127.0.0.1:80`, set `LUMOGIS_WEB_BASE_URL` accordingly. See `tests/integration/test_caddy_security_headers.py`.
+
 ---
 
 ## Why not X?
@@ -188,7 +206,7 @@ The self-hosted AI space is crowded. Here is how Lumogis differs from the projec
 | **recommended** | 8–16 GB | 32 GB | Comfortable everyday use (RTX 3080, RTX 4070, etc.) |
 | **power** | 16 GB+ | 64 GB | Large context, parallel inference (RTX 4090, A100, etc.) |
 
-Minimum to run: 8 GB RAM, 20 GB free disk. No API keys required — all models run locally via Ollama. Add `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` to `.env` to enable cloud model routing.
+Minimum to run: 8 GB RAM, 20 GB free disk. No API keys required — all models run locally via Ollama. Add `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` to `.env` to enable cloud model routing in single-user mode; in multi-user mode (`AUTH_ENABLED=true`) each household member manages their own LLM provider keys via the dashboard's **My LLM keys** tile (see [Step 9g](docs/connect-and-verify.md#step-9g--per-user-llm-provider-keys-auth_enabledtrue)).
 
 ---
 
@@ -217,9 +235,11 @@ git clone https://github.com/lumogis/lumogis.git $HOME\lumogis
 cd "$HOME\lumogis"; Copy-Item .env.example .env; docker compose up -d
 ```
 
-Open **[http://localhost:8000/dashboard](http://localhost:8000/dashboard)** — the setup wizard guides you through adding an API key or pulling a local model.
+Open the **Lumogis Web** UI at **[http://localhost/](http://localhost/)** (same-origin Caddy) or the orchestrator **dashboard** at **[http://localhost:8000/dashboard](http://localhost:8000/dashboard)** / **[http://localhost/dashboard](http://localhost/dashboard)** through Caddy. The setup wizard guides you through adding an API key or pulling a local model.
 
-**LibreChat:** `config/librechat.yaml` is runtime-generated (gitignored). Commit only `config/librechat.coldstart.yaml` — the orchestrator entrypoint seeds `librechat.yaml` on first boot, then replaces it from `models.yaml` and Ollama.
+**LibreChat:** `config/librechat.yaml` is runtime-generated (gitignored). Commit only `config/librechat.coldstart.yaml` — the orchestrator entrypoint seeds `librechat.yaml` on first boot, then replaces it from `models.yaml` and Ollama. The path must be a **file**; if you ever see a **directory** at `config/librechat.yaml` (or `EISDIR` in LibreChat logs), remove it and let the entrypoint re-seed, or copy from `librechat.coldstart.yaml` and `docker compose up -d --force-recreate librechat`.
+
+**Postgres schema:** `postgres/init.sql` runs once on a fresh data volume; subsequent schema changes live in `postgres/migrations/*.sql`. The orchestrator entrypoint applies any pending migrations on every boot via `orchestrator/db_migrations.py` and tracks them in a `schema_migrations` table — fresh installs and existing installs converge automatically. Inspect with `docker compose logs orchestrator | grep '[migrations]'` and `docker compose exec -T postgres psql -U lumogis -d lumogis -c "SELECT filename, applied_at FROM schema_migrations ORDER BY filename"`.
 
 - **Chat:** [http://localhost:3080](http://localhost:3080)
 - **Dashboard:** [http://localhost:8000/dashboard](http://localhost:8000/dashboard)
@@ -357,9 +377,64 @@ CAPABILITY_SERVICE_URLS=http://my-capability:8000
 
 Restart the orchestrator. Core fetches the manifest, refuses to register the service if its `min_core_version` exceeds Core's, probes `/health` immediately and every 60 s thereafter, and re-fetches the manifest every 5 minutes. Registered services appear in `GET /` and on the dashboard. A service being down is logged as a warning, never escalated to Core's overall health — Core boots cleanly even when every declared service is unreachable.
 
-To call Core back from a capability service, point an MCP client at `http://orchestrator:8000/mcp/` (note the trailing slash — the canonical, redirect-free path). Five read-only community tools are exposed: `memory.search`, `memory.get_recent`, `entity.lookup`, `entity.search`, `context.build`. Set `MCP_AUTH_TOKEN` in `.env` to require a Bearer token on every `/mcp/*` request; leave it unset for single-user local setups.
+To call Core back from a capability service, point an MCP client at `http://orchestrator:8000/mcp/` (note the trailing slash — the canonical, redirect-free path). Five read-only community tools are exposed: `memory.search`, `memory.get_recent`, `entity.lookup`, `entity.search`, `context.build`. Auth is **per-user** in family-LAN mode (`AUTH_ENABLED=true`): mint an opaque `lmcp_…` bearer for each MCP client via the dashboard's "MCP tokens" tile or `POST /api/v1/me/mcp-tokens`, then send it as `Authorization: Bearer lmcp_…` (see [Step 9d](docs/connect-and-verify.md#step-9d--per-user-mcp-tokens-lmcp_)). The legacy single-secret `MCP_AUTH_TOKEN` is the single-user fallback only — it is fail-closed in multi-user mode and a one-shot CRITICAL log line points at the per-user mint flow.
+
+Per-user **connector credentials** (e.g. ntfy push tokens, future calendar/IMAP secrets) are managed in the dashboard's **Connector credentials** tile — collapsed by default, with admin "manage on behalf of" support inline. Plaintext is encrypted with `LUMOGIS_CREDENTIAL_KEY[S]` and never re-shown after save; rotation stays operator-driven via `python -m scripts.rotate_credential_key`. See [docs/connector-credentials.md](docs/connector-credentials.md) for the user/admin flows, security posture, error codes, and the matching HTTP API.
 
 See [docs/extending-the-stack.md](docs/extending-the-stack.md#out-of-process-capability-services) and [ADR-010 — Ecosystem plumbing](docs/decisions/010-ecosystem-plumbing.md) for the full design.
+
+**Speech-to-text (STT-2B):** transcription is opt-in via `.env`. Default **`STT_BACKEND=none`** — `POST /api/v1/voice/transcribe` returns **503** `stt_disabled`. **`STT_BACKEND=fake_stt`** is dev/CI deterministic stub. **`STT_BACKEND=whisper_sidecar`** calls the local sidecar defined in the optional Compose overlay **`docker-compose.stt.yml`**, merged with **`COMPOSE_FILE=docker-compose.yml:docker-compose.stt.yml`**. STT-2B uses this **overlay pattern**, not a **`profiles: ["stt"]`** service on the base file — the **`lumogis-stt`** container does not start unless the operator includes **`docker-compose.stt.yml`** (so **`docker compose --profile stt`** against **`docker-compose.yml` alone does not enable STT).
+
+The **Speaches** image is the selected **batch / local STT** sidecar for this HTTP contract; it satisfies **`POST /api/v1/voice/transcribe`** via the **`whisper_sidecar`** adapter but is **not** a Jarvis-style conversational voice runtime. **Wake word, VAD, TTS, barge-in, and full conversational voice remain outside STT-2B** (separate companion or app programme). Speaches may be reused later for broader local speech capabilities; **STT-2B** only wires this STT path.
+
+```
+# 1. Add sidecar compose file and set env vars in .env:
+COMPOSE_FILE=docker-compose.yml:docker-compose.stt.yml
+STT_BACKEND=whisper_sidecar
+STT_SIDECAR_URL=http://lumogis-stt:8000
+# Speaches 0.8.x: use a HuggingFace faster-whisper id (or install via sidecar API — see README)
+STT_MODEL=Systran/faster-whisper-base.en
+
+# 2. Build orchestrator after git pull if /api/v1/voice/transcribe returns 404 (image code lives in /app):
+# docker compose build orchestrator && docker compose up -d orchestrator
+
+# 3. Start sidecar (pulls image; model priming may be required — see prose below):
+docker compose up -d lumogis-stt
+
+# 4. Verify sidecar is healthy (service is not on the host — probe inside the container):
+docker compose exec lumogis-stt curl -fsS http://127.0.0.1:8000/health
+
+# 5. Probe transcription end-to-end (AUTH_ENABLED=true requires a real bearer):
+curl -s -X POST http://localhost:8000/api/v1/voice/transcribe \
+  -H "Authorization: Bearer <token>" \
+  -F "file=@sample.webm;type=audio/webm"
+```
+
+**Speaches + `STT_MODEL`:** With **Speaches `0.8.3-cpu`**, set **`STT_MODEL`** to a **HuggingFace faster‑whisper model id** understood by the sidecar (e.g. **`Systran/faster-whisper-base.en`**). The shorthand **`base`** is **not** sufficient until that name is installed inside Speaches; you can **`POST /v1/models/Systran%2Ffaster-whisper-base.en`** then **`POST /api/ps/Systran%2Ffaster-whisper-base.en`** inside the container, or rely on **`DEFAULT_MODEL`** in **`docker-compose.stt.yml`** mirroring **`STT_MODEL`** after you set it in `.env`.
+
+**Orchestrator image:** Transcription code is shipped in the image under **`/app`**. If **`POST /api/v1/voice/transcribe`** returns **404** after upgrading the repo, rebuild: **`docker compose build orchestrator`** then **`docker compose up -d orchestrator`**.
+
+**Hardware — model RAM guide (CPU, approximate):**
+
+| Tier | RAM | Notes |
+|------|-----|-------|
+| `tiny` | ~390 MB | Fast, lower accuracy |
+| `base` | ~740 MB | **Default** — good balance |
+| `small` | ~2.3 GB | Better accuracy |
+| `medium` | ~4.7 GB | High accuracy |
+| `large-v2` / `large-v3` | ~9.8 GB | Best accuracy, slow on CPU |
+
+**Troubleshooting:**
+
+- **Transcription 404 / “Model … is not installed” from Speaches:** install the model (`POST /v1/models/...`) and load it (`POST /api/ps/...`), or set **`STT_MODEL`** to the full HF id.
+- Sidecar slow to start: model downloads on first boot; check `docker compose logs lumogis-stt`. `start_period: 120s` gives it time before healthcheck marks it unhealthy.
+- Orchestrator reports `transcribe_available: false` in `/api/v1/admin/diagnostics`: sidecar is not reachable — confirm `STT_SIDECAR_URL=http://lumogis-stt:8000` and both containers are on the same Compose network.
+- `stt_processing_error` (503): sidecar returned an error or timed out; raise `STT_TIMEOUT_SEC` for large files or a slow host.
+- Reclaim model disk: `docker volume rm lumogis_lumogis_stt_models` (prefix = `COMPOSE_PROJECT_NAME`).
+
+**CUDA (optional):** replace the `image:` line in `docker-compose.stt.yml` with a CUDA variant (e.g. `ghcr.io/speaches-ai/speaches:0.8.3-cuda-12.6.3`) and add the NVIDIA runtime block from `docker-compose.gpu.yml` to the `lumogis-stt` service. Pin the CUDA image by digest the same way.
+
+In-process **`faster_whisper`** (single-container, heavier image) remains deferred. No cloud STT, wake word, Capture UI, or transcript persistence on this route. Details: **`docs/architecture/lumogis-speech-to-text-foundation-plan.md`**, ADR **`docs/decisions/031-local-speech-to-text-voice-input.md`**.
 
 ---
 
@@ -500,6 +575,28 @@ To report a vulnerability, see [SECURITY.md](SECURITY.md). Do not open a public 
 
 The initial security audit (SQL injection, path traversal, MCP boundary, Ask/Do enforcement) is documented in [`docs/SECURITY-AUDIT-001.md`](docs/SECURITY-AUDIT-001.md).
 
+### Per-user backups
+
+Each user can export their own data as a portable ZIP archive via
+`POST /api/v1/me/export` (admins can target another user via the body
+field `target_user_id` — unknown ids return `404`, never a silent empty
+archive). Archives carry a `manifest.json`, redact every
+credential-shaped column (passwords are never carried — operators
+choose a fresh password at import time), and re-import on a fresh
+instance through `POST /api/v1/admin/user-imports`. Successful imports
+return `201 Created` with `Location: /api/v1/admin/users/{new_user_id}`;
+`dry_run: true` returns `200 OK` with a structured plan and writes
+nothing. Refused imports (email collision, parent UUID collision, unsafe
+archive entries, etc.) emit a dedicated `__user_import__.refused` audit
+row distinct from `__user_import__.failed`. The legacy whole-instance
+NDJSON dump at `GET /api/v1/admin/export` returns `410 Gone` and points
+to the new per-user endpoint as its successor. See
+[`docs/per-user-export-format.md`](docs/per-user-export-format.md) for
+the manifest schema, the refusal-reason → HTTP-status table, the audit
+lifecycle, and the v1 CSRF/Bearer posture, and
+[`docs/connect-and-verify.md`](docs/connect-and-verify.md) Step 9c for
+end-to-end `curl` verification.
+
 ---
 
 ## Code of conduct
@@ -510,7 +607,13 @@ This project follows the [Contributor Covenant v2.1](CODE_OF_CONDUCT.md).
 
 ## License
 
-[Lumogis is licensed under AGPL-3.0](LICENSE).
+Lumogis is licensed under the GNU Affero General Public License v3.0 only.
+
+Unless otherwise stated, all source files in this repository are licensed under:
+
+`SPDX-License-Identifier: AGPL-3.0-only`
+
+A copy of the GNU Affero General Public License v3.0 is provided in the [LICENSE](LICENSE) file.
 
 ---
 

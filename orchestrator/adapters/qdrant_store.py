@@ -24,6 +24,7 @@ from qdrant_client.models import Fusion
 from qdrant_client.models import FusionQuery
 from qdrant_client.models import MatchValue
 from qdrant_client.models import Modifier
+from qdrant_client.models import PayloadSchemaType
 from qdrant_client.models import PointStruct
 from qdrant_client.models import Prefetch
 from qdrant_client.models import SparseIndexParams
@@ -101,6 +102,44 @@ class QdrantStore:
             vector_size,
             sparse_cfg is not None,
         )
+
+    def ensure_payload_index(self, collection: str, field: str) -> None:
+        """Create a keyword payload index on `field` if it does not exist.
+
+        Idempotent: Qdrant raises a recognisable ``"already exists"`` /
+        ``"already indexed"`` error when the index is present, which we
+        swallow. Any other failure is logged at WARNING and re-raised by
+        the underlying client only when we genuinely cannot tell.
+
+        Required for the household-visibility filter to be selective at
+        scale — without indexes on ``user_id`` and ``scope`` every search
+        scans the full collection payload (see plan §4 / Qdrant pass).
+        """
+        try:
+            self._client.create_payload_index(
+                collection_name=collection,
+                field_name=field,
+                field_schema=PayloadSchemaType.KEYWORD,
+            )
+            _log.info(
+                "Created Qdrant keyword payload index '%s.%s'", collection, field
+            )
+        except Exception as exc:
+            msg = str(exc).lower()
+            if "already" in msg or "exist" in msg:
+                _log.debug(
+                    "Qdrant payload index '%s.%s' already exists — skipping",
+                    collection,
+                    field,
+                )
+                return
+            _log.warning(
+                "Qdrant payload index create failed for '%s.%s': %s — visible filter "
+                "will still work but searches may scan full payload.",
+                collection,
+                field,
+                exc,
+            )
 
     def _ensure_sparse_config(self, collection_name: str) -> None:
         """Add BM25 sparse vector config to an existing collection if absent.

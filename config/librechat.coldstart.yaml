@@ -5,6 +5,8 @@
 # or the dashboard; change the default bootstrap shape by editing this file.
 version: 1.3.5
 cache: true
+interface:
+  customFooter: "[Dashboard](http://localhost:8000/dashboard) | [Knowledge Graph](http://localhost:8000/graph/mgm)"
 endpoints:
   custom:
   - name: Lumogis

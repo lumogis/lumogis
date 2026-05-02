@@ -1,0 +1,164 @@
+# IMPORTANT: When phrases are managed via the Knowledge Graph settings page,
+# this file is rewritten with a standard header. Manual section comments
+# (like "# --- Meeting references ---") will not be preserved.
+# To preserve custom structure, edit this file directly and avoid using the UI.
+#
+# Lumogis KG Quality — stop entity list
+# Format: UTF-8, one phrase per line, leading/trailing whitespace stripped.
+# Lines starting with # are comments and are ignored.
+# Matching is case-insensitive against the normalised entity name.
+# Add project-specific noise phrases below to prevent them entering the graph.
+# Phrases added here are discarded regardless of their extraction_quality score.
+
+# --- Meeting references ---
+the meeting
+this meeting
+our meeting
+a meeting
+last meeting
+next meeting
+the call
+this call
+our call
+a call
+the session
+this session
+the discussion
+this discussion
+our discussion
+the conversation
+this conversation
+the standup
+the catchup
+the check-in
+the sync
+
+# --- Project references ---
+the project
+this project
+the initiative
+this initiative
+the programme
+this programme
+the program
+a project
+the effort
+this effort
+the workstream
+the delivery
+
+# --- People references ---
+the client
+the customer
+the user
+the team
+the manager
+the stakeholder
+the stakeholders
+the sponsor
+the vendor
+the partner
+the contractor
+the consultant
+the reviewer
+the approver
+the owner
+the lead
+the admin
+the administrator
+
+# --- Time / scheduling references ---
+this week
+next week
+last week
+today
+tomorrow
+yesterday
+next month
+last month
+this month
+next quarter
+last quarter
+this quarter
+next steps
+action items
+action item
+follow-up
+follow-ups
+the deadline
+the timeline
+the milestone
+the due date
+
+# --- Document references ---
+the document
+the report
+the email
+the attachment
+the file
+the spreadsheet
+the presentation
+the slide
+the slides
+the deck
+the draft
+the brief
+the proposal
+the contract
+the agreement
+the spec
+the specification
+the requirements
+
+# --- Generic phrases ---
+the issue
+the problem
+the solution
+the update
+the change
+the request
+the question
+the answer
+the result
+the process
+the system
+the approach
+the plan
+the goal
+the task
+the item
+the point
+the topic
+the subject
+the matter
+the area
+the context
+the detail
+the details
+the decision
+the outcome
+the output
+the input
+the note
+the notes
+the comment
+the feedback
+the review
+the summary
+the overview
+the status
+the progress
+the risk
+the concern
+the blocker
+the dependency
+the requirement
+the feature
+the bug
+the error
+the fix
+the patch
+the release
+the version
+the deployment
+team

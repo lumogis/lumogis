@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "outDir": "./.tsbuild/node",
+    "emitDeclarationOnly": true,
+    "skipLibCheck": true,
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowSyntheticDefaultImports": true,
+    "types": ["node"],
+    "strict": true
+  },
+  "include": ["vite.config.ts", "playwright.config.ts"]
+}

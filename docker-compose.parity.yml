@@ -1,0 +1,26 @@
+# Lumogis parity-test overlay — used ONLY by `make test-graph-parity`.
+#
+# Purpose: bind-mount the repo-root `tests/fixtures/` directory into the
+# orchestrator container at `/fixtures` so the parity ingest can read
+# `ada_lovelace.md` without depending on a host-side `./data/fixtures`
+# directory that may or may not exist on a given CI runner.
+#
+# Mounted at /fixtures (NOT /data/fixtures) because the base compose file
+# already bind-mounts the host data root at /data with `:ro`, which makes
+# /data a read-only fs and prevents Docker from creating a /data/fixtures
+# sub-mountpoint at container start. VERIFY-PLAN: corrected from /data/.
+#
+# Enable by appending to COMPOSE_FILE:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.falkordb.yml:docker-compose.premium.yml:docker-compose.parity.yml
+#
+# This file is single-purpose. Do NOT add other test-only changes here —
+# every additional bit of test plumbing makes the parity stack drift from
+# the production stack, which is the whole reason we run a separate parity
+# overlay rather than mutating `docker-compose.override.yml`.
+
+services:
+  orchestrator:
+    volumes:
+      # Read-only: parity tests must never mutate fixtures (they assert on
+      # ingest counts; a mutated fixture would silently break repeatability).
+      - ./tests/fixtures:/fixtures:ro

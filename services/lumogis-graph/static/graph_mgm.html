@@ -1,0 +1,2554 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lumogis · KG Management</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48' fill='none'%3E%3Ccircle cx='24' cy='24' r='11' fill='%23E8632A' opacity='0.12'/%3E%3Ccircle cx='24' cy='24' r='8.5' fill='%23FDE8D8' opacity='0.55'/%3E%3Ccircle cx='24' cy='24' r='5.5' fill='%23E8632A'/%3E%3Ccircle cx='24' cy='24' r='2.6' fill='%23FDE8D8'/%3E%3C/svg%3E">
+
+<!-- Cytoscape.js 3.28.1 — same pinned version as graph_viz.html -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"
+        integrity="sha512-1qhH9fxNjz0GvRb/aTxdxmH3ysqMD+Jl8E1SBWDQ7PjZPWJEGHFpVJGu3xpFO5/eaOagQrLFGDFZ0rByPlhg=="
+        crossorigin="anonymous"
+        referrerpolicy="no-referrer"
+        onerror="loadCytoscapeLocal()">
+</script>
+<script>
+function loadCytoscapeLocal() {
+  var s = document.createElement('script');
+  s.src = '/static/cytoscape.min.js';
+  document.head.appendChild(s);
+}
+</script>
+
+<!-- Alpine.js 3.14.8 from CDN with local fallback -->
+<script src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.8/dist/cdn.min.js"
+        crossorigin="anonymous"
+        defer
+        onerror="loadAlpineLocal()">
+</script>
+<script>
+function loadAlpineLocal() {
+  var s = document.createElement('script');
+  s.src = '/static/alpine.min.js';
+  s.defer = true;
+  document.head.appendChild(s);
+}
+</script>
+
+<style>
+/* ── CSS variables — identical to dashboard/index.html ─────────────── */
+:root {
+  --bg:              #0d1117;
+  --surface:         #161b22;
+  --border:          #30363d;
+  --txt:             #e6edf3;
+  --txt2:            #8b949e;
+  --accent:          #d9a878;
+  --accent-muted:    rgba(217,168,120,0.22);
+  --accent-btn-fg:   #14110e;
+  --green:           #3fb950;
+  --yellow:          #d29922;
+  --red:             #f85149;
+  --radius:          6px;
+  --mono:            ui-monospace, SFMono-Regular, Menlo, monospace;
+  --header-h:        52px;
+  --nav-h:           41px;
+  --graph-sidebar-w: 280px;
+}
+[data-theme="light"] {
+  --bg:              #ffffff;
+  --surface:         #f6f8fa;
+  --border:          #d0d7de;
+  --txt:             #1f2328;
+  --txt2:            #656d76;
+  --accent:          #a85c32;
+  --accent-muted:    rgba(168,92,50,0.14);
+  --accent-btn-fg:   #faf7f4;
+  --green:           #1a7f37;
+  --yellow:          #9a6700;
+  --red:             #cf222e;
+}
+
+/* ── Reset ─────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+[x-cloak] { display: none !important; }
+html, body {
+  height: 100%;
+}
+body {
+  background: var(--bg); color: var(--txt);
+  font: 14px/1.5 system-ui, sans-serif;
+  display: flex; flex-direction: column;
+  /* No overflow:hidden on body so scrollable tabs still work */
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+button {
+  cursor: pointer; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface); color: var(--txt); padding: 5px 14px; font-size: 13px;
+  transition: border-color .15s, background .15s;
+}
+button:hover { border-color: var(--accent); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+input, select {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); color: var(--txt);
+  padding: 5px 9px; font-size: 12px; outline: none; width: 100%;
+}
+input:focus, select:focus { border-color: var(--accent); }
+
+/* ── Shell ──────────────────────────────────────────────────────────── */
+/* The shell wraps header + nav + the tab router.
+   When the Graph tab is active, #tab-graph fills the remaining viewport. */
+#shell {
+  display: flex; flex-direction: column;
+  height: 100vh; /* full viewport */
+}
+
+/* ── Header ────────────────────────────────────────────────────────── */
+.header {
+  display: flex; align-items: center; gap: 16px; padding: 0 24px;
+  height: var(--header-h); border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  background: var(--bg); z-index: 100;
+}
+.logo { font-weight: 700; font-size: 15px; letter-spacing: -.3px; color: var(--txt);
+        display: flex; align-items: center; gap: 8px; }
+.spacer { flex: 1; }
+.header-link { font-size: 12px; color: var(--txt2); }
+.theme-btn { font-size: 16px; background: none; border: none; padding: 4px; }
+.theme-btn:hover { background: none; border: none; color: var(--accent); }
+
+/* ── Nav tabs ──────────────────────────────────────────────────────── */
+.nav {
+  display: flex; gap: 2px; padding: 0 24px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.nav-tab {
+  padding: 10px 16px; font-size: 13px; background: none; border: none;
+  border-bottom: 2px solid transparent; border-radius: 0; color: var(--txt2);
+  cursor: pointer; transition: color .15s, border-color .15s;
+}
+.nav-tab:hover { color: var(--txt); background: none; }
+.nav-tab.active { color: var(--txt); border-bottom-color: var(--accent); }
+
+/* ── Tab router ─────────────────────────────────────────────────────── */
+/* Fills all remaining height after header + nav */
+#tab-router {
+  flex: 1;
+  min-height: 0; /* critical for flex children to shrink */
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Scrollable tabs (Overview, Queue, Settings) ─────────────────── */
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+/* scrollable panels get padding and overflow */
+.tab-scrollable {
+  overflow-y: auto;
+  padding: 24px;
+  max-width: 1200px;
+  width: 100%;
+  margin: 0 auto;
+  flex: 1;
+}
+
+/* The graph tab takes full remaining height, no padding, no max-width */
+#tab-graph {
+  display: none;
+  flex: 1;
+  min-height: 0;
+}
+#tab-graph.active {
+  display: flex;
+}
+
+/* ── Graph tab layout ────────────────────────────────────────────── */
+#graph-sidebar {
+  width: var(--graph-sidebar-w);
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+.gsb-section {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.gsb-section h3 {
+  font-size: 11px; font-weight: 600; color: var(--txt2);
+  text-transform: uppercase; letter-spacing: .05em; margin-bottom: 8px;
+}
+.gsb-field { margin-bottom: 8px; }
+.gsb-field label { display: block; font-size: 11px; color: var(--txt2); margin-bottom: 3px; }
+.gsb-field-row { display: flex; gap: 6px; align-items: flex-end; }
+.gsb-field-row input { flex: 1; }
+
+/* Segmented mode control */
+.mode-seg {
+  display: flex; border: 1px solid var(--border); border-radius: var(--radius);
+  overflow: hidden; font-size: 11px;
+}
+.mode-seg button {
+  flex: 1; padding: 5px 4px; border: none; border-radius: 0;
+  border-right: 1px solid var(--border); font-size: 11px;
+  background: var(--surface); color: var(--txt2);
+  transition: background .12s, color .12s;
+}
+.mode-seg button:last-child { border-right: none; }
+.mode-seg button.active { background: var(--accent-muted); color: var(--txt); }
+.mode-seg button:hover:not(.active) { background: var(--bg); }
+
+/* Autocomplete */
+.ac-wrap { position: relative; }
+.ac-list {
+  position: absolute; top: 100%; left: 0; right: 0; z-index: 200;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); max-height: 180px; overflow-y: auto;
+  box-shadow: 0 4px 12px rgba(0,0,0,.35);
+}
+.ac-item {
+  padding: 5px 10px; cursor: pointer; font-size: 12px;
+  display: flex; justify-content: space-between; gap: 8px;
+}
+.ac-item:hover { background: var(--bg); }
+.ac-type { font-size: 10px; color: var(--txt2); }
+
+/* Type filter checkboxes */
+.type-filters { display: flex; flex-wrap: wrap; gap: 4px 8px; }
+.type-filter {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 11px; cursor: pointer; user-select: none;
+}
+.type-filter input[type=checkbox] { width: auto; cursor: pointer; }
+
+/* Node info panel — sticks to bottom of sidebar */
+#graph-info-panel {
+  padding: 12px 14px;
+  background: var(--bg); border-top: 1px solid var(--border);
+  margin-top: auto;
+}
+#graph-info-panel h4 { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+.info-row { font-size: 11px; color: var(--txt2); margin-bottom: 2px; }
+.info-row strong { color: var(--txt); }
+.info-id { font-size: 10px; color: var(--txt2); margin-top: 4px; }
+
+/* Canvas area */
+#graph-canvas-wrap {
+  flex: 1; position: relative; min-width: 0; background: var(--bg);
+}
+#graph-cy { width: 100%; height: 100%; }
+
+/* Canvas overlay messages */
+#graph-canvas-msg {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 12px; text-align: center; padding: 24px;
+  pointer-events: none; color: var(--txt2); font-size: 14px;
+}
+#graph-canvas-msg.hidden { display: none; }
+.canvas-msg-title { font-size: 16px; font-weight: 600; color: var(--txt); }
+.canvas-loading { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+
+/* Canvas loading spinner (larger than action spinner) */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spinner-lg {
+  width: 28px; height: 28px;
+  border: 3px solid var(--border); border-top-color: var(--accent);
+  border-radius: 50%; animation: spin .8s linear infinite;
+}
+
+/* Fit button */
+#graph-fit-btn {
+  position: absolute; bottom: 16px; right: 16px; z-index: 10;
+  background: var(--surface); border: 1px solid var(--border);
+  padding: 6px 12px; font-size: 12px;
+}
+#graph-fit-btn:hover { border-color: var(--accent); }
+
+/* Truncation warning banner */
+.trunc-banner {
+  position: absolute; top: 8px; right: 8px; z-index: 20;
+  background: rgba(210,153,34,.18); color: var(--yellow);
+  border: 1px solid rgba(210,153,34,.4); border-radius: var(--radius);
+  padding: 4px 10px; font-size: 11px; pointer-events: none;
+}
+
+/* ── Overview / queue / settings styles ─────────────────────────── */
+.section-title {
+  font-size: 16px; font-weight: 600; margin-bottom: 16px;
+  display: flex; align-items: center; gap: 10px;
+}
+.section-gap { margin-top: 28px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.card-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; border-bottom: 1px solid var(--border);
+  font-weight: 600; font-size: 13px;
+}
+
+/* Metric cards */
+.metrics-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px; margin-bottom: 28px;
+}
+.metric-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 16px; position: relative;
+}
+.metric-label {
+  font-size: 11px; color: var(--txt2); text-transform: uppercase;
+  letter-spacing: .5px; margin-bottom: 6px; display: flex; align-items: center; gap: 6px;
+}
+.metric-value { font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.metric-sub { font-size: 12px; color: var(--txt2); margin-top: 4px; }
+.metric-info-btn {
+  position: absolute; top: 12px; right: 12px;
+  font-size: 14px; color: var(--txt2); background: none; border: none;
+  padding: 0; line-height: 1; cursor: pointer;
+}
+.metric-info-btn:hover { color: var(--accent); }
+.metric-tooltip {
+  margin-top: 10px; padding: 8px 10px;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: var(--radius); font-size: 12px; color: var(--txt2); line-height: 1.5;
+}
+
+/* Skeleton shimmer */
+@keyframes shimmer {
+  0%   { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+.skeleton {
+  border-radius: var(--radius);
+  background: linear-gradient(90deg, var(--border) 25%, var(--surface) 50%, var(--border) 75%);
+  background-size: 800px 100%; animation: shimmer 1.4s ease-in-out infinite;
+}
+.skeleton-text { height: 14px; margin-bottom: 6px; }
+.skeleton-value { height: 38px; width: 60%; margin-bottom: 4px; }
+
+/* Job status */
+.job-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; margin-bottom: 28px; }
+.job-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; }
+.job-name { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+.job-ts { font-size: 12px; color: var(--txt2); }
+.job-badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; margin-top: 6px; }
+.job-badge.ok   { background: rgba(63,185,80,.15); color: var(--green); }
+.job-badge.warn { background: rgba(210,153,34,.15); color: var(--yellow); }
+.job-badge.none { background: var(--border); color: var(--txt2); }
+.job-badge.running { background: rgba(217,168,120,.20); color: var(--accent); }
+.job-detail { font-size: 12px; color: var(--txt2); margin-top: 4px; }
+
+/* Quick actions */
+.actions-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-start; }
+.action-block { display: flex; flex-direction: column; gap: 6px; }
+.action-btn { display: inline-flex; align-items: center; gap: 8px; padding: 7px 16px; font-size: 13px; font-weight: 500; }
+.action-btn.primary { background: var(--accent); color: var(--accent-btn-fg); border-color: var(--accent); font-weight: 600; }
+.action-btn.primary:hover { filter: brightness(1.06); }
+.action-feedback { font-size: 12px; padding: 4px 0; min-height: 18px; }
+.action-feedback.ok   { color: var(--green); }
+.action-feedback.warn { color: var(--yellow); }
+.action-feedback.err  { color: var(--red); }
+
+/* Small spinner */
+@keyframes spin-sm { to { transform: rotate(360deg); } }
+.spinner {
+  display: inline-block; width: 13px; height: 13px;
+  border: 2px solid var(--border); border-top-color: currentColor;
+  border-radius: 50%; animation: spin-sm .7s linear infinite; flex-shrink: 0;
+}
+
+/* Error / retry */
+.error-box {
+  background: rgba(248,81,73,.08); border: 1px solid rgba(248,81,73,.3);
+  border-radius: var(--radius); padding: 14px 16px;
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 13px; color: var(--red);
+}
+.retry-btn { font-size: 12px; color: var(--accent); background: none; border: none; padding: 0; cursor: pointer; }
+.retry-btn:hover { text-decoration: underline; }
+
+/* Placeholder */
+.placeholder-box {
+  border: 2px dashed var(--border); border-radius: var(--radius);
+  padding: 64px 32px; text-align: center; color: var(--txt2);
+}
+.placeholder-box h3 { font-size: 16px; color: var(--txt); margin-bottom: 8px; }
+
+/* ── Review Queue ───────────────────────────────────────────────────── */
+.q-badge {
+  display: inline-block; padding: 2px 8px; border-radius: 10px;
+  font-size: 11px; font-weight: 600; margin-left: 8px;
+}
+.q-badge-total { background: rgba(217,168,120,.20); color: var(--accent); }
+.q-badge-active { background: rgba(217,168,120,.15); color: var(--accent); }
+.q-badge-zero { background: var(--border); color: var(--txt2); }
+
+.q-accordion {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  margin-bottom: 8px; overflow: hidden;
+}
+.q-accordion.q-acc-empty { opacity: .7; }
+
+.q-acc-header {
+  width: 100%; display: flex; align-items: center; gap: 8px;
+  padding: 12px 16px; background: var(--surface);
+  border: none; border-radius: 0; font-size: 13px; font-weight: 600;
+  text-align: left; color: var(--txt);
+  transition: background .12s;
+}
+.q-acc-header:hover:not([style*="cursor:default"]) { background: var(--bg); border-color: var(--border); }
+.q-acc-title { flex: 1; }
+
+/* Accordion animation via max-height */
+.q-acc-body { overflow: hidden; }
+.q-acc-enter { transition: max-height .25s ease, opacity .2s ease; }
+.q-acc-enter-start { max-height: 0; opacity: 0; }
+.q-acc-enter-end { max-height: 2000px; opacity: 1; }
+.q-acc-leave { transition: max-height .2s ease, opacity .15s ease; }
+.q-acc-leave-start { max-height: 2000px; opacity: 1; }
+.q-acc-leave-end { max-height: 0; opacity: 0; }
+
+.q-item {
+  padding: 12px 16px; border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+.q-item:first-child { border-top: none; }
+
+.q-item-row {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 12px; margin-bottom: 6px;
+}
+.q-item-reason { font-size: 11px; color: var(--txt2); margin-bottom: 6px; }
+.q-item-detail { font-size: 12px; color: var(--txt2); margin-bottom: 4px; line-height: 1.4; }
+.q-item-id { font-size: 10px; color: var(--txt2); font-family: var(--mono); margin-bottom: 6px; }
+
+.q-item-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.q-btn {
+  padding: 4px 12px; font-size: 12px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface); color: var(--txt); cursor: pointer;
+  transition: border-color .12s;
+}
+.q-btn:hover { border-color: var(--accent); }
+.q-btn:disabled { opacity: .45; cursor: not-allowed; }
+.q-btn-primary { background: var(--accent); color: var(--accent-btn-fg); border-color: var(--accent); font-weight: 600; }
+.q-btn-primary:hover { filter: brightness(1.06); }
+.q-btn-danger { border-color: var(--red); color: var(--red); }
+.q-btn-danger:hover { background: rgba(248,81,73,.1); border-color: var(--red); }
+
+/* Entity pair (ambiguous_entity) */
+.q-entity-pair {
+  display: flex; gap: 10px; align-items: flex-start; flex: 1;
+}
+.q-entity-card {
+  flex: 1; background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 8px 10px;
+}
+.q-entity-name { font-weight: 600; font-size: 13px; color: var(--txt); margin-bottom: 2px; }
+.q-entity-type { font-size: 11px; color: var(--txt2); text-transform: uppercase; letter-spacing: .03em; }
+.q-entity-meta { display: flex; flex-direction: column; gap: 4px; align-items: flex-end; flex-shrink: 0; }
+
+.q-meta-pill {
+  display: inline-block; padding: 1px 7px; border-radius: 10px;
+  font-size: 11px; background: var(--border); color: var(--txt2); white-space: nowrap;
+}
+
+.q-severity-badge {
+  display: inline-block; padding: 2px 7px; border-radius: 4px;
+  font-size: 11px; font-weight: 700; letter-spacing: .04em;
+}
+.q-sev-critical { background: rgba(248,81,73,.15); color: var(--red); }
+
+.q-rule-name { font-weight: 600; font-size: 13px; color: var(--txt); }
+
+/* ── Settings tab ───────────────────────────────────────────────────── */
+.s-accordion {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  margin-bottom: 10px; overflow: hidden;
+}
+.s-acc-header {
+  width: 100%; display: flex; align-items: center; gap: 8px;
+  padding: 12px 16px; background: var(--surface);
+  border: none; border-radius: 0; font-size: 13px; font-weight: 600;
+  text-align: left; color: var(--txt); cursor: pointer;
+  transition: background .12s;
+}
+.s-acc-header:hover { background: var(--bg); border-color: var(--border); }
+.s-acc-arrow { font-size: 11px; color: var(--txt2); min-width: 14px; }
+.s-acc-title { flex: 1; }
+
+.s-acc-body { background: var(--bg); }
+
+.s-row {
+  display: grid; grid-template-columns: 1fr auto;
+  align-items: start; gap: 12px;
+  padding: 12px 16px; border-top: 1px solid var(--border);
+}
+.s-row:first-child { border-top: none; }
+.s-label { font-size: 12px; font-weight: 500; color: var(--txt); margin-bottom: 2px; }
+.s-input-wrap { display: flex; align-items: center; gap: 6px; }
+.s-input {
+  width: 100px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); color: var(--txt);
+  padding: 4px 8px; font-size: 13px; outline: none;
+  transition: border-color .15s;
+}
+.s-input:focus { border-color: var(--accent); }
+.s-input.dirty { border-color: var(--yellow); }
+.s-input.dirty:focus { border-color: var(--yellow); }
+.s-desc { font-size: 11px; color: var(--txt2); margin-top: 4px; line-height: 1.4; }
+.s-default { font-size: 11px; color: var(--txt2); margin-top: 2px; }
+.s-source-badge {
+  display: inline-block; padding: 1px 7px; border-radius: 10px;
+  font-size: 10px; font-weight: 600; margin-top: 4px;
+}
+.s-source-db  { background: rgba(217,168,120,.20); color: var(--accent); }
+.s-source-def { background: var(--border); color: var(--txt2); }
+.s-info-btn {
+  font-size: 12px; color: var(--txt2); background: none; border: none;
+  padding: 0; cursor: pointer; line-height: 1;
+}
+.s-info-btn:hover { color: var(--accent); }
+.s-reset-btn {
+  font-size: 11px; color: var(--txt2); background: none; border: none;
+  padding: 0 4px; cursor: pointer; line-height: 1;
+}
+.s-reset-btn:hover { color: var(--red); }
+
+.s-row-controls { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; padding-top: 18px; }
+
+.s-group-footer {
+  padding: 12px 16px; border-top: 1px solid var(--border);
+  background: var(--surface);
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.s-save-btn {
+  padding: 5px 16px; font-size: 12px; font-weight: 600;
+  background: var(--accent); color: var(--accent-btn-fg);
+  border: 1px solid var(--accent); border-radius: var(--radius);
+  cursor: pointer; transition: filter .12s;
+}
+.s-save-btn:hover { filter: brightness(1.06); }
+.s-save-btn:disabled { opacity: .45; cursor: not-allowed; }
+.s-save-ok  { font-size: 12px; color: var(--green); }
+.s-save-err { font-size: 12px; color: var(--red); }
+
+/* Stop entity section */
+.se-section {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  margin-top: 20px; overflow: hidden;
+}
+.se-header {
+  padding: 12px 16px; background: var(--surface);
+  font-weight: 600; font-size: 13px;
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 8px;
+}
+.se-count { font-size: 11px; font-weight: 600; color: var(--txt2); }
+.se-add-row {
+  padding: 10px 16px; border-bottom: 1px solid var(--border);
+  display: flex; gap: 8px; align-items: center; background: var(--bg);
+}
+.se-add-row input {
+  flex: 1; font-size: 12px; padding: 4px 8px;
+}
+.se-add-btn {
+  padding: 4px 14px; font-size: 12px; font-weight: 600;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); cursor: pointer; white-space: nowrap;
+  transition: border-color .12s;
+}
+.se-add-btn:hover { border-color: var(--accent); }
+.se-add-btn:disabled { opacity: .45; cursor: not-allowed; }
+.se-add-err { font-size: 11px; color: var(--red); padding: 0 16px 8px; background: var(--bg); }
+.se-list {
+  max-height: 300px; overflow-y: auto; background: var(--bg);
+}
+.se-item {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 16px; border-bottom: 1px solid var(--border);
+  font-size: 12px; transition: opacity .3s ease;
+}
+.se-item:last-child { border-bottom: none; }
+.se-phrase { color: var(--txt); font-family: var(--mono); }
+.se-remove-btn {
+  font-size: 13px; color: var(--txt2); background: none; border: none;
+  cursor: pointer; padding: 0 4px; line-height: 1; flex-shrink: 0;
+}
+.se-remove-btn:hover { color: var(--red); }
+.se-empty { padding: 20px 16px; text-align: center; color: var(--txt2); font-size: 12px; }
+
+/* ── Responsive — 768px breakpoint ──────────────────────────────── */
+@media (max-width: 768px) {
+  /* Graph sidebar collapses to a narrow strip; canvas takes full width */
+  #tab-graph { flex-direction: column; }
+  #graph-sidebar {
+    width: 100%;
+    max-height: 220px;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    overflow-y: auto;
+  }
+  #graph-canvas-wrap { min-height: 0; flex: 1; }
+
+  /* Health metric and job cards wrap to single column */
+  .metrics-grid { grid-template-columns: 1fr; }
+  .job-grid     { grid-template-columns: 1fr; }
+
+  /* Quick action buttons stack vertically */
+  .actions-row { flex-direction: column; gap: 10px; }
+
+  /* Settings tab: prevent horizontal overflow */
+  .s-row { flex-wrap: wrap; gap: 6px; }
+  .s-input { max-width: 100%; }
+
+  /* Tab nav scrolls horizontally on very small screens */
+  .nav { overflow-x: auto; flex-wrap: nowrap; padding: 0 12px; }
+  .nav-tab { white-space: nowrap; }
+
+  /* Clamp scrollable panels to avoid overflow */
+  .tab-scrollable { padding: 16px; }
+}
+</style>
+</head>
+
+<body x-cloak>
+<div id="shell" x-data="mgmApp()" x-init="init()">
+
+<!-- ── Header ────────────────────────────────────────────────────────── -->
+<header class="header">
+  <div class="logo">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none" width="24" height="24" aria-hidden="true">
+      <circle cx="24" cy="24" r="11" fill="#E8632A" opacity="0.12"/>
+      <circle cx="24" cy="24" r="8.5" fill="#FDE8D8" opacity="0.55"/>
+      <line x1="24" y1="24" x2="10" y2="10" stroke="#D9D4CE" stroke-width="1.25" stroke-linecap="round"/>
+      <line x1="24" y1="24" x2="38" y2="10" stroke="#D9D4CE" stroke-width="1.25" stroke-linecap="round"/>
+      <line x1="24" y1="24" x2="10" y2="38" stroke="#D9D4CE" stroke-width="1.25" stroke-linecap="round"/>
+      <line x1="24" y1="24" x2="38" y2="38" stroke="#D9D4CE" stroke-width="1.25" stroke-linecap="round"/>
+      <circle cx="24" cy="24" r="5.5" fill="#E8632A"/>
+      <circle cx="24" cy="24" r="2.6" fill="#FDE8D8"/>
+    </svg>
+    KG Management
+  </div>
+  <div class="spacer"></div>
+  <a class="header-link" href="/dashboard">← Dashboard</a>
+  <a class="header-link" href="/graph/viz" style="margin-left:12px">Graph Viz ↗</a>
+  <button class="theme-btn" id="themeBtn" title="Toggle dark/light" @click="toggleTheme()">☀️</button>
+</header>
+
+<!-- ── Nav ───────────────────────────────────────────────────────────── -->
+<nav class="nav" role="tablist">
+  <button class="nav-tab" :class="{ active: tab === 'overview' }"
+          @click="switchTab('overview')" role="tab">Overview</button>
+  <button class="nav-tab" :class="{ active: tab === 'graph' }"
+          @click="switchTab('graph')" role="tab">Graph</button>
+  <button class="nav-tab" :class="{ active: tab === 'queue' }"
+          @click="switchTab('queue')" role="tab">
+    Review Queue
+    <span x-show="queueTotalCount > 0"
+          style="display:inline-block;margin-left:5px;padding:1px 6px;border-radius:10px;
+                 font-size:11px;font-weight:700;background:rgba(217,168,120,.20);color:var(--accent)"
+          x-text="queueTotalCount"></span>
+  </button>
+  <button class="nav-tab" :class="{ active: tab === 'settings' }"
+          @click="switchTab('settings')" role="tab">Settings</button>
+</nav>
+
+<!-- ── Tab router ────────────────────────────────────────────────────── -->
+<div id="tab-router">
+
+  <!-- ── Overview tab ──────────────────────────────────────────────── -->
+  <div id="tab-overview" class="tab-panel tab-scrollable" :class="{ active: tab === 'overview' }" role="tabpanel">
+
+    <div class="section-title">
+      Graph Health
+      <button class="retry-btn" style="font-size:12px" @click="loadHealth()" title="Refresh metrics">↺ Refresh</button>
+    </div>
+
+    <div x-show="healthError && !healthLoading" class="error-box" style="margin-bottom:20px">
+      <span x-text="healthError"></span>
+      <button class="retry-btn" @click="loadHealth()">Retry</button>
+    </div>
+
+    <div x-show="healthLoading" class="metrics-grid">
+      <template x-for="i in 6" :key="i">
+        <div class="metric-card">
+          <div class="skeleton skeleton-text" style="width:60%"></div>
+          <div class="skeleton skeleton-value"></div>
+          <div class="skeleton skeleton-text" style="width:40%"></div>
+        </div>
+      </template>
+    </div>
+
+    <div x-show="!healthLoading && !healthError" class="metrics-grid">
+      <div class="metric-card">
+        <button class="metric-info-btn" @click="tooltipOpen = tooltipOpen === 'dupes' ? null : 'dupes'" title="Explanation">ⓘ</button>
+        <div class="metric-label">Duplicate candidates</div>
+        <div class="metric-value" x-text="health.duplicate_candidate_count ?? '–'"></div>
+        <div class="metric-sub">Pending in review queue</div>
+        <div class="metric-tooltip" x-show="tooltipOpen === 'dupes'">
+          Number of entity pairs flagged as probable duplicates waiting for a decision (merge or mark distinct).
+          Values above 20 suggest the weekly deduplication job should be run.
+        </div>
+      </div>
+      <div class="metric-card">
+        <button class="metric-info-btn" @click="tooltipOpen = tooltipOpen === 'orphan' ? null : 'orphan'" title="Explanation">ⓘ</button>
+        <div class="metric-label">Orphan entities %</div>
+        <div class="metric-value" x-text="health.orphan_entity_pct != null ? health.orphan_entity_pct.toFixed(1) + '%' : '–'"></div>
+        <div class="metric-sub">No evidence edge</div>
+        <div class="metric-tooltip" x-show="tooltipOpen === 'orphan'">
+          Percentage of non-staged entities with no evidence edges (MENTIONS). Values above 10 % indicate ingest problems — try Trigger Backfill.
+        </div>
+      </div>
+      <div class="metric-card">
+        <button class="metric-info-btn" @click="tooltipOpen = tooltipOpen === 'qual' ? null : 'qual'" title="Explanation">ⓘ</button>
+        <div class="metric-label">Mean entity quality</div>
+        <div class="metric-value" x-text="health.mean_entity_completeness != null ? health.mean_entity_completeness.toFixed(3) : '–'"></div>
+        <div class="metric-sub">Score [0 – 1]</div>
+        <div class="metric-tooltip" x-show="tooltipOpen === 'qual'">
+          Average heuristic quality score. Scores above 0.60 indicate good extraction quality.
+        </div>
+      </div>
+      <div class="metric-card">
+        <button class="metric-info-btn" @click="tooltipOpen = tooltipOpen === 'crit' ? null : 'crit'" title="Explanation">ⓘ</button>
+        <div class="metric-label">Critical violations</div>
+        <div class="metric-value"
+             :style="(health.constraint_violation_counts?.CRITICAL ?? 0) > 0 ? 'color:var(--red)' : ''"
+             x-text="health.constraint_violation_counts?.CRITICAL ?? '–'"></div>
+        <div class="metric-sub">
+          <span x-text="(health.constraint_violation_counts?.WARNING ?? 0) + ' warning(s)'"></span>
+        </div>
+        <div class="metric-tooltip" x-show="tooltipOpen === 'crit'">
+          Count of unresolved CRITICAL constraint violations. Any non-zero value should be reviewed in the Review Queue tab.
+        </div>
+      </div>
+      <div class="metric-card">
+        <button class="metric-info-btn" @click="tooltipOpen = tooltipOpen === 'trend' ? null : 'trend'" title="Explanation">ⓘ</button>
+        <div class="metric-label">Quality trend (7 d)</div>
+        <div class="metric-value" x-text="health.ingestion_quality_trend_7d != null ? health.ingestion_quality_trend_7d.toFixed(3) : '–'"></div>
+        <div class="metric-sub">Avg score, last 7 days</div>
+        <div class="metric-tooltip" x-show="tooltipOpen === 'trend'">
+          Average extraction quality score for entities created in the last 7 days.
+        </div>
+      </div>
+      <div class="metric-card">
+        <button class="metric-info-btn" @click="tooltipOpen = tooltipOpen === 'fresh' ? null : 'fresh'" title="Explanation">ⓘ</button>
+        <div class="metric-label">Temporal freshness</div>
+        <div class="metric-value" x-text="health.temporal_freshness ? health.temporal_freshness.last_7d : '–'"></div>
+        <div class="metric-sub">
+          Entities updated in last 7 d —
+          <span x-text="health.temporal_freshness ? health.temporal_freshness['90d_plus'] + ' older than 90 d' : ''"></span>
+        </div>
+        <div class="metric-tooltip" x-show="tooltipOpen === 'fresh'">
+          Distribution of non-staged entities by last-updated date.
+        </div>
+      </div>
+    </div>
+
+    <div class="section-gap">
+      <div class="section-title">
+        Background Jobs
+        <button class="retry-btn" style="font-size:12px" @click="loadJobStatus()" title="Refresh">↺ Refresh</button>
+      </div>
+      <div x-show="jobError && !jobLoading" class="error-box" style="margin-bottom:20px">
+        <span x-text="jobError"></span>
+        <button class="retry-btn" @click="loadJobStatus()">Retry</button>
+      </div>
+      <div x-show="jobLoading" class="job-grid">
+        <template x-for="i in 3" :key="i">
+          <div class="job-card">
+            <div class="skeleton skeleton-text" style="width:50%"></div>
+            <div class="skeleton skeleton-text" style="width:70%;margin-top:8px"></div>
+          </div>
+        </template>
+      </div>
+      <div x-show="!jobLoading" class="job-grid">
+        <div class="job-card">
+          <div class="job-name">Graph Reconciliation</div>
+          <div class="job-ts" x-text="jobs.reconciliation?.last_run ? 'Last run: ' + relTime(jobs.reconciliation.last_run) : 'Never run'"></div>
+          <span class="job-badge" :class="jobs.reconciliation?.last_run ? 'ok' : 'none'"
+                x-text="jobs.reconciliation?.last_run ? 'ran ' + relTime(jobs.reconciliation.last_run) : 'not yet run'"></span>
+          <div class="job-detail">Daily at 03:00 UTC · Replays stale Postgres rows into FalkorDB</div>
+        </div>
+        <div class="job-card">
+          <div class="job-name">Weekly Quality Job</div>
+          <div class="job-ts" x-text="jobs.weekly_quality?.last_run ? 'Last run: ' + relTime(jobs.weekly_quality.last_run) : 'Never run'"></div>
+          <span class="job-badge" :class="jobs.weekly_quality?.last_run ? 'ok' : 'none'"
+                x-text="jobs.weekly_quality?.last_run ? 'ran ' + relTime(jobs.weekly_quality.last_run) : 'not yet run'"></span>
+          <div class="job-detail">Sundays 02:00 UTC · Edge scoring, constraint checks, deduplication</div>
+        </div>
+        <div class="job-card">
+          <div class="job-name">Deduplication</div>
+          <div class="job-ts" x-text="jobs.deduplication?.last_run ? 'Last run: ' + relTime(jobs.deduplication.last_run) : 'Never run'"></div>
+          <span class="job-badge"
+                :class="jobs.deduplication?.running ? 'running' : (jobs.deduplication?.last_run ? 'ok' : 'none')"
+                x-text="jobs.deduplication?.running ? '⟳ running' : (jobs.deduplication?.last_run ? 'ran ' + relTime(jobs.deduplication.last_run) : 'not yet run')"></span>
+          <div class="job-detail" x-show="jobs.deduplication?.last_candidate_count != null">
+            Last run: <span x-text="jobs.deduplication?.last_candidate_count"></span> candidates,
+            <span x-text="jobs.deduplication?.last_auto_merged"></span> auto-merged,
+            <span x-text="jobs.deduplication?.last_queued_for_review"></span> queued
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-gap">
+      <div class="section-title">Quick Actions</div>
+      <div class="actions-row">
+        <div class="action-block">
+          <button class="action-btn" :disabled="actions.backfill.loading" @click="triggerBackfill()">
+            <span x-show="actions.backfill.loading" class="spinner"></span>
+            <span x-show="!actions.backfill.loading">↺</span>
+            Trigger Backfill
+          </button>
+          <div class="action-feedback" :class="actions.backfill.status" x-text="actions.backfill.msg" x-show="actions.backfill.msg"></div>
+        </div>
+        <div class="action-block">
+          <button class="action-btn" :disabled="actions.dedup.loading" @click="triggerDedup()">
+            <span x-show="actions.dedup.loading" class="spinner"></span>
+            <span x-show="!actions.dedup.loading">⚙</span>
+            Trigger Deduplication
+          </button>
+          <div class="action-feedback" :class="actions.dedup.status" x-text="actions.dedup.msg" x-show="actions.dedup.msg"></div>
+        </div>
+        <div class="action-block">
+          <button class="action-btn primary" :disabled="actions.weekly.loading" @click="triggerWeekly()">
+            <span x-show="actions.weekly.loading" class="spinner"></span>
+            <span x-show="!actions.weekly.loading">▶</span>
+            Trigger Weekly Job
+          </button>
+          <div class="action-feedback" :class="actions.weekly.status" x-text="actions.weekly.msg" x-show="actions.weekly.msg"></div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /tab-overview -->
+
+  <!-- ── Graph tab (Pass 2) ─────────────────────────────────────────── -->
+  <!--
+    Manual verification steps:
+      1. Search for an entity — autocomplete appears after 2 chars
+      2. Select entity and click Explore — ego network renders with cose layout
+      3. Switch to Path mode, enter two entities — path renders
+      4. Switch to Mentions mode, enter entity — source documents rendered
+      5. Click a node — info panel appears in sidebar
+      6. Double-click a node — ego network reloads for that entity
+      7. Switch away from Graph tab and back — Cytoscape destroyed and recreated cleanly
+      8. Toggle theme while on Graph tab — node/edge colors update without page reload
+      9. Uncheck a node type — nodes of that type hidden immediately
+     10. Drag edge to view label tooltip
+
+    API coverage for Graph tab endpoints: see orchestrator/tests/test_viz_routes.py
+  -->
+  <div id="tab-graph" :class="{ active: tab === 'graph' }" role="tabpanel">
+
+    <!-- Sidebar -->
+    <div id="graph-sidebar">
+
+      <!-- Stats bar -->
+      <div class="gsb-section" style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+        <span id="graph-avail-badge"
+              style="padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;background:rgba(248,81,73,.15);color:#f85149">
+          loading…
+        </span>
+        <span style="font-size:12px;color:var(--txt2)">
+          <strong id="graph-stat-nodes" style="color:var(--txt)">–</strong> nodes ·
+          <strong id="graph-stat-edges" style="color:var(--txt)">–</strong> edges
+        </span>
+      </div>
+
+      <!-- Mode selector -->
+      <div class="gsb-section">
+        <h3>Mode</h3>
+        <div class="mode-seg">
+          <button :class="{ active: graphMode === 'ego' }" @click="graphMode = 'ego'">Ego</button>
+          <button :class="{ active: graphMode === 'path' }" @click="graphMode = 'path'">Path</button>
+          <button :class="{ active: graphMode === 'mentions' }" @click="graphMode = 'mentions'">Mentions</button>
+        </div>
+      </div>
+
+      <!-- Ego mode controls -->
+      <div class="gsb-section" x-show="graphMode === 'ego'">
+        <h3>Explore entity</h3>
+        <div class="gsb-field">
+          <label for="graph-ego-input">Entity name</label>
+          <div class="ac-wrap">
+            <input id="graph-ego-input" type="text" placeholder="e.g. Ada Lovelace" autocomplete="off"
+                   x-model="egoInput"
+                   @input="onAcInput('ego')"
+                   @keydown.enter="acLists.ego = []; graphLoadEgo()"
+                   @keydown.escape="acLists.ego = []"
+                   @blur="setTimeout(() => { acLists.ego = [] }, 150)">
+            <div class="ac-list" x-show="acLists.ego.length > 0">
+              <template x-for="item in acLists.ego" :key="item.id || item.name">
+                <div class="ac-item"
+                     @mousedown.prevent="egoInput = item.name; acLists.ego = []">
+                  <span x-text="item.name"></span>
+                  <span class="ac-type" x-text="item.type"></span>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+        <div class="gsb-field">
+          <label>Edge strength ≥ <span x-text="edgeStrength"></span>
+            <span style="font-size:10px;color:var(--txt2)" x-show="graphCoocThreshold > 0">
+              (server floor: <span x-text="graphCoocThreshold"></span>)
+            </span>
+          </label>
+          <input type="range" min="0" max="20" step="1"
+                 x-model.number="edgeStrength">
+        </div>
+        <div class="gsb-field-row">
+          <button class="primary" style="flex:1;font-size:12px;background:var(--accent);color:var(--accent-btn-fg);border-color:var(--accent)"
+                  :disabled="graphLoading || !egoInput.trim()"
+                  @click="graphLoadEgo()">Explore</button>
+          <button style="font-size:12px" @click="graphReset()">Reset</button>
+        </div>
+      </div>
+
+      <!-- Path mode controls -->
+      <div class="gsb-section" x-show="graphMode === 'path'">
+        <h3>Find path</h3>
+        <div class="gsb-field">
+          <label>From</label>
+          <div class="ac-wrap">
+            <input type="text" placeholder="Entity A" autocomplete="off"
+                   x-model="pathFrom"
+                   @input="onAcInput('pathFrom')"
+                   @keydown.enter="acLists.pathFrom = []"
+                   @keydown.escape="acLists.pathFrom = []"
+                   @blur="setTimeout(() => { acLists.pathFrom = [] }, 150)">
+            <div class="ac-list" x-show="acLists.pathFrom.length > 0">
+              <template x-for="item in acLists.pathFrom" :key="item.id || item.name">
+                <div class="ac-item" @mousedown.prevent="pathFrom = item.name; acLists.pathFrom = []">
+                  <span x-text="item.name"></span><span class="ac-type" x-text="item.type"></span>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+        <div class="gsb-field">
+          <label>To</label>
+          <div class="ac-wrap">
+            <input type="text" placeholder="Entity B" autocomplete="off"
+                   x-model="pathTo"
+                   @input="onAcInput('pathTo')"
+                   @keydown.enter="acLists.pathTo = []"
+                   @keydown.escape="acLists.pathTo = []"
+                   @blur="setTimeout(() => { acLists.pathTo = [] }, 150)">
+            <div class="ac-list" x-show="acLists.pathTo.length > 0">
+              <template x-for="item in acLists.pathTo" :key="item.id || item.name">
+                <div class="ac-item" @mousedown.prevent="pathTo = item.name; acLists.pathTo = []">
+                  <span x-text="item.name"></span><span class="ac-type" x-text="item.type"></span>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+        <button style="width:100%;font-size:12px" :disabled="graphLoading || !pathFrom.trim() || !pathTo.trim()"
+                @click="graphLoadPath()">Find path</button>
+      </div>
+
+      <!-- Mentions mode controls -->
+      <div class="gsb-section" x-show="graphMode === 'mentions'">
+        <h3>Find mentions</h3>
+        <div class="gsb-field">
+          <label>Entity name</label>
+          <div class="ac-wrap">
+            <input type="text" placeholder="e.g. Ada Lovelace" autocomplete="off"
+                   x-model="mentionsInput"
+                   @input="onAcInput('mentions')"
+                   @keydown.enter="acLists.mentions = []; graphLoadMentions()"
+                   @keydown.escape="acLists.mentions = []"
+                   @blur="setTimeout(() => { acLists.mentions = [] }, 150)">
+            <div class="ac-list" x-show="acLists.mentions.length > 0">
+              <template x-for="item in acLists.mentions" :key="item.id || item.name">
+                <div class="ac-item" @mousedown.prevent="mentionsInput = item.name; acLists.mentions = []">
+                  <span x-text="item.name"></span><span class="ac-type" x-text="item.type"></span>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+        <button style="width:100%;font-size:12px"
+                :disabled="graphLoading || !mentionsInput.trim()"
+                @click="graphLoadMentions()">Find mentions</button>
+      </div>
+
+      <!-- Node type filters -->
+      <div class="gsb-section">
+        <h3>Node types</h3>
+        <div class="type-filters">
+          <template x-for="t in allNodeTypes" :key="t">
+            <label class="type-filter">
+              <input type="checkbox" :checked="!hiddenTypes.has(t)"
+                     @change="toggleTypeFilter(t, $event.target.checked)">
+              <span :style="`display:inline-block;width:8px;height:8px;border-radius:50%;background:${nodeColor(t)}`"></span>
+              <span x-text="fmtType(t)"></span>
+            </label>
+          </template>
+        </div>
+      </div>
+
+      <!-- Fit to screen -->
+      <div class="gsb-section">
+        <button style="width:100%;font-size:12px" @click="graphFit()">↔ Fit to screen</button>
+      </div>
+
+      <!-- Node info panel -->
+      <div id="graph-info-panel" x-show="selectedNode !== null" style="display:none">
+        <h4>Node info</h4>
+        <div class="info-row"><strong x-text="selectedNode?.label || selectedNode?.id || '–'"></strong></div>
+        <div class="info-row">Type: <strong x-text="selectedNode?.type || '–'"></strong></div>
+        <div class="info-row">Mentions: <strong x-text="selectedNode?.mention_count ?? '–'"></strong></div>
+        <div class="info-id" x-text="selectedNode ? 'ID: ' + selectedNode.id : ''"></div>
+        <button style="margin-top:8px;width:100%;font-size:11px" @click="graphExploreSelected()">
+          Explore this entity
+        </button>
+      </div>
+
+    </div><!-- /graph-sidebar -->
+
+    <!-- Canvas -->
+    <div id="graph-canvas-wrap">
+      <div id="graph-cy" x-ref="cyContainer"></div>
+
+      <!-- Canvas overlay message (loading / empty / error states) -->
+      <div id="graph-canvas-msg" :class="{ hidden: graphHasData }">
+        <div x-show="graphLoading" class="canvas-loading">
+          <div class="spinner-lg"></div>
+          <div class="canvas-msg-title" x-text="graphMsgTitle"></div>
+          <div x-text="graphMsgBody"></div>
+        </div>
+        <div x-show="!graphLoading">
+          <div class="canvas-msg-title" x-text="graphMsgTitle"></div>
+          <div x-text="graphMsgBody"></div>
+          <button x-show="graphCanRetry" style="margin-top:12px;pointer-events:auto"
+                  @click="graphRetry()">Try again</button>
+        </div>
+      </div>
+
+      <!-- Truncation warning -->
+      <div class="trunc-banner" x-show="graphTruncated" x-text="graphTruncMsg"></div>
+
+      <!-- Fit button (shown once graph has data) -->
+      <button id="graph-fit-btn" x-show="graphHasData" @click="graphFit()">↔ Fit</button>
+
+    </div><!-- /canvas-wrap -->
+
+  </div><!-- /tab-graph -->
+
+  <!-- ── Review Queue tab (Pass 3) ─────────────────────────────────── -->
+  <!--
+    Manual verification steps:
+      1. Load the tab — all four sections appear with correct item counts
+      2. Expand a section — items render with correct fields per type
+      3. Click Merge on an ambiguous entity — confirmation modal appears with entity names
+      4. Confirm merge — item fades out, section badge and tab badge both update
+      5. Click Keep Separate on an ambiguous entity — no confirmation, fades immediately
+      6. Click Promote on a staged entity — no confirmation, fades immediately
+      7. Click Discard on a staged entity — confirmation modal appears
+      8. Click Suppress on a constraint violation — no confirmation, fades immediately
+      9. Click Dismiss on an orphan entity — no confirmation, fades immediately
+     10. Resolve all items — "Queue is clear" empty state appears
+     11. Load More button: if next_cursor is non-null, appends next page
+     12. Tab badge reflects total count and decrements after each action
+
+    API coverage: orchestrator/tests/test_review_queue.py
+  -->
+  <div id="tab-queue" class="tab-panel tab-scrollable" :class="{ active: tab === 'queue' }" role="tabpanel">
+
+    <!-- Loading skeleton -->
+    <div x-show="queueLoading" style="padding:8px 0">
+      <template x-for="i in 4" :key="i">
+        <div style="margin-bottom:10px;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
+          <div class="skeleton" style="height:44px;border-radius:0"></div>
+        </div>
+      </template>
+    </div>
+
+    <!-- Error state -->
+    <div x-show="queueError && !queueLoading" class="error-box" style="margin-bottom:20px">
+      <span x-text="queueError"></span>
+      <button class="retry-btn" @click="loadQueue()">Retry</button>
+    </div>
+
+    <!-- Empty queue -->
+    <div x-show="!queueLoading && !queueError && queueTotalCount === 0"
+         style="text-align:center;padding:64px 32px;color:var(--txt2)">
+      <div style="font-size:36px;margin-bottom:12px">✓</div>
+      <div style="font-size:16px;font-weight:600;color:var(--green);margin-bottom:6px">Queue is clear</div>
+      <div style="font-size:13px">Nothing to review right now.</div>
+      <button style="margin-top:16px;font-size:12px" @click="loadQueue()">↺ Refresh</button>
+    </div>
+
+    <!-- Accordion sections -->
+    <div x-show="!queueLoading && !queueError && queueTotalCount > 0">
+
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <div class="section-title" style="margin-bottom:0">
+          Review Queue
+          <span class="q-badge q-badge-total" x-text="queueTotalCount"></span>
+        </div>
+        <button style="font-size:12px" @click="loadQueue()">↺ Refresh</button>
+      </div>
+
+      <template x-for="section in queueSections" :key="section.key">
+        <div class="q-accordion" :class="{ 'q-acc-empty': section.items.length === 0 }">
+
+          <!-- Accordion header -->
+          <button class="q-acc-header"
+                  @click="section.items.length > 0 && (section.open = !section.open)"
+                  :style="section.items.length === 0 ? 'cursor:default;opacity:.55' : ''">
+            <span class="q-acc-arrow" x-text="section.open ? '▾' : '▸'"
+                  style="font-size:11px;color:var(--txt2);min-width:14px"></span>
+            <span class="q-acc-title" x-text="section.label"></span>
+            <span class="q-badge" :class="section.items.length > 0 ? 'q-badge-active' : 'q-badge-zero'"
+                  x-text="section.items.length + (section.items.length === 1 ? ' item' : ' items')"></span>
+          </button>
+
+          <!-- Accordion body -->
+          <div class="q-acc-body" x-show="section.open && section.items.length > 0"
+               x-transition:enter="q-acc-enter" x-transition:enter-start="q-acc-enter-start"
+               x-transition:enter-end="q-acc-enter-end"
+               x-transition:leave="q-acc-leave" x-transition:leave-start="q-acc-leave-start"
+               x-transition:leave-end="q-acc-leave-end">
+
+            <template x-for="(item, idx) in section.items" :key="item.item_id">
+              <div class="q-item" :id="'qi-' + item.item_id"
+                   style="transition:opacity .3s ease">
+
+                <!-- ── ambiguous_entity ──────────────────────────── -->
+                <template x-if="item.item_type === 'ambiguous_entity'">
+                  <div>
+                    <div class="q-item-row">
+                      <div class="q-entity-pair">
+                        <div class="q-entity-card">
+                          <div class="q-entity-name" x-text="item.candidate_a?.name || '–'"></div>
+                          <div class="q-entity-type" x-text="item.candidate_a?.entity_type || ''"></div>
+                        </div>
+                        <div style="color:var(--txt2);font-size:12px;align-self:center">≈</div>
+                        <div class="q-entity-card">
+                          <div class="q-entity-name" x-text="item.candidate_b?.name || '–'"></div>
+                          <div class="q-entity-type" x-text="item.candidate_b?.entity_type || ''"></div>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="q-item-reason" x-show="item.reason" x-text="'Reason: ' + (item.reason || '')"></div>
+                    <div class="q-item-actions">
+                      <button class="q-btn q-btn-danger"
+                              @click="queueAct(section, item, 'merge', true,
+                                `Merge &quot;${item.candidate_a?.name}&quot; into &quot;${item.candidate_b?.name}&quot;? This cannot be undone.`)">
+                        Merge
+                      </button>
+                      <button class="q-btn"
+                              @click="queueAct(section, item, 'distinct', false)">
+                        Keep Separate
+                      </button>
+                    </div>
+                  </div>
+                </template>
+
+                <!-- ── constraint_violation ─────────────────────── -->
+                <template x-if="item.item_type === 'constraint_violation'">
+                  <div>
+                    <div class="q-item-row" style="gap:8px;flex-wrap:wrap">
+                      <span class="q-severity-badge q-sev-critical">CRITICAL</span>
+                      <span class="q-rule-name" x-text="item.violation?.rule_name || '–'"></span>
+                    </div>
+                    <div class="q-item-detail" x-show="item.violation?.detail" x-text="item.violation?.detail"></div>
+                    <div class="q-item-id" x-show="item.violation?.entity_id"
+                         x-text="'Entity: ' + (item.violation?.entity_id || '')"></div>
+                    <div class="q-item-actions">
+                      <button class="q-btn"
+                              @click="queueAct(section, item, 'suppress', false)">
+                        Suppress
+                      </button>
+                    </div>
+                  </div>
+                </template>
+
+                <!-- ── staged_entity ────────────────────────────── -->
+                <template x-if="item.item_type === 'staged_entity'">
+                  <div>
+                    <div class="q-item-row">
+                      <div>
+                        <div class="q-entity-name" x-text="item.entity?.name || '–'"></div>
+                        <div class="q-entity-type" x-text="item.entity?.entity_type || ''"></div>
+                      </div>
+                      <div class="q-entity-meta">
+                        <span class="q-meta-pill"
+                              x-text="item.entity?.extraction_quality != null
+                                ? Math.round(item.entity.extraction_quality * 100) + '% quality'
+                                : '–'">
+                        </span>
+                        <span class="q-meta-pill"
+                              x-text="(item.entity?.mention_count ?? '–') + ' mentions'">
+                        </span>
+                      </div>
+                    </div>
+                    <div class="q-item-actions">
+                      <button class="q-btn q-btn-primary"
+                              @click="queueAct(section, item, 'promote', false)">
+                        Promote
+                      </button>
+                      <button class="q-btn q-btn-danger"
+                              @click="queueAct(section, item, 'discard', true,
+                                `Discard &quot;${item.entity?.name}&quot;? The entity will be permanently deleted.`)">
+                        Discard
+                      </button>
+                    </div>
+                  </div>
+                </template>
+
+                <!-- ── orphan_entity ────────────────────────────── -->
+                <template x-if="item.item_type === 'orphan_entity'">
+                  <div>
+                    <div class="q-item-row">
+                      <div>
+                        <div class="q-entity-name" x-text="item.entity?.name || '–'"></div>
+                        <div class="q-entity-type" x-text="item.entity?.entity_type || ''"></div>
+                      </div>
+                      <div class="q-entity-meta">
+                        <span class="q-meta-pill"
+                              x-text="(item.entity?.mention_count ?? '–') + ' mentions'">
+                        </span>
+                        <span class="q-meta-pill" x-show="item.entity?.created_at"
+                              x-text="'Created ' + relDate(item.entity?.created_at)">
+                        </span>
+                      </div>
+                    </div>
+                    <div class="q-item-actions">
+                      <button class="q-btn"
+                              @click="queueAct(section, item, 'dismiss', false)">
+                        Dismiss
+                      </button>
+                    </div>
+                  </div>
+                </template>
+
+              </div><!-- /q-item -->
+            </template><!-- /x-for items -->
+
+          </div><!-- /q-acc-body -->
+        </div><!-- /q-accordion -->
+      </template><!-- /x-for sections -->
+
+      <!-- Load more -->
+      <div x-show="queueNextCursor" style="text-align:center;padding:16px 0">
+        <button :disabled="queueLoadingMore" @click="loadMoreQueue()"
+                style="font-size:12px;padding:6px 18px">
+          <span x-show="queueLoadingMore" class="spinner" style="vertical-align:middle;margin-right:6px"></span>
+          Load more
+        </button>
+      </div>
+
+    </div><!-- /accordion wrapper -->
+
+    <!-- Confirmation modal -->
+    <div x-show="confirmModal.open" style="position:fixed;inset:0;z-index:500;display:flex;align-items:center;justify-content:center">
+      <div style="position:absolute;inset:0;background:rgba(0,0,0,.6)" @click="confirmModal.open = false"></div>
+      <div style="position:relative;background:var(--surface);border:1px solid var(--border);border-radius:10px;
+                  width:min(440px,96vw);padding:24px;box-shadow:0 20px 60px rgba(0,0,0,.5)">
+        <div style="font-weight:600;font-size:14px;margin-bottom:10px">Confirm action</div>
+        <div style="font-size:13px;color:var(--txt2);margin-bottom:20px;line-height:1.5"
+             x-text="confirmModal.message"></div>
+        <div style="display:flex;gap:10px;justify-content:flex-end">
+          <button @click="confirmModal.open = false" style="font-size:13px">Cancel</button>
+          <button class="q-btn q-btn-danger" style="font-size:13px"
+                  :disabled="confirmModal.pending"
+                  @click="confirmModal.confirm()">
+            <span x-show="confirmModal.pending" class="spinner"></span>
+            Confirm
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast notification -->
+    <div x-show="toast.visible" x-transition
+         style="position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:600;
+                background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+                padding:10px 18px;font-size:13px;box-shadow:0 4px 16px rgba(0,0,0,.4);max-width:480px;
+                display:flex;align-items:center;gap:10px">
+      <span :style="toast.type === 'error' ? 'color:var(--red)' : (toast.type === 'warn' ? 'color:var(--yellow)' : 'color:var(--green)')">
+        <span x-show="toast.type === 'error'">✕</span>
+        <span x-show="toast.type === 'warn'">⚠</span>
+        <span x-show="toast.type === 'ok'">✓</span>
+      </span>
+      <span x-text="toast.message"></span>
+    </div>
+
+  </div><!-- /tab-queue -->
+
+  <!-- ── Settings tab (Pass 4) ─────────────────────────────────────── -->
+  <div id="tab-settings" class="tab-panel tab-scrollable" :class="{ active: tab === 'settings' }" role="tabpanel">
+
+    <!-- Loading skeleton -->
+    <div x-show="settingsLoading" style="padding:8px 0">
+      <template x-for="i in 5" :key="i">
+        <div style="margin-bottom:10px;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
+          <div class="skeleton" style="height:44px;border-radius:0"></div>
+          <div style="padding:14px 16px;background:var(--bg)">
+            <div class="skeleton skeleton-text" style="width:40%"></div>
+            <div class="skeleton skeleton-text" style="width:60%;margin-top:6px"></div>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- Error state -->
+    <div x-show="settingsError && !settingsLoading" class="error-box" style="margin-bottom:20px">
+      <span x-text="settingsError"></span>
+      <button class="retry-btn" @click="loadSettings()">Retry</button>
+    </div>
+
+    <!-- Settings groups -->
+    <div x-show="!settingsLoading && !settingsError">
+
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <div class="section-title" style="margin-bottom:0">KG Settings</div>
+        <button style="font-size:12px" @click="loadSettings()">↺ Refresh</button>
+      </div>
+
+      <template x-for="group in settingsGroups" :key="group.key">
+        <div class="s-accordion">
+
+          <button class="s-acc-header" @click="group.open = !group.open">
+            <span class="s-acc-arrow" x-text="group.open ? '▾' : '▸'"></span>
+            <span class="s-acc-title" x-text="group.label"></span>
+            <span x-show="groupDirtyCount(group) > 0"
+                  style="font-size:11px;color:var(--yellow);font-weight:600"
+                  x-text="groupDirtyCount(group) + ' unsaved'"></span>
+          </button>
+
+          <div class="s-acc-body" x-show="group.open"
+               x-transition:enter="q-acc-enter" x-transition:enter-start="q-acc-enter-start"
+               x-transition:enter-end="q-acc-enter-end"
+               x-transition:leave="q-acc-leave" x-transition:leave-start="q-acc-leave-start"
+               x-transition:leave-end="q-acc-leave-end">
+
+            <template x-for="key in group.keys" :key="key">
+              <div class="s-row" x-show="settingsMeta[key]">
+                <div>
+                  <div class="s-label" x-text="fmtSettingLabel(key)"></div>
+                  <div class="s-input-wrap">
+                    <input class="s-input" :class="{ dirty: isSettingDirty(key) }"
+                           :type="settingsMeta[key]?.type === 'float' ? 'number' : 'number'"
+                           :step="settingsMeta[key]?.type === 'float' ? '0.01' : '1'"
+                           :min="settingsRangeMin[key] ?? ''"
+                           :max="settingsRangeMax[key] ?? ''"
+                           :value="settingsValues[key]"
+                           @input="onSettingInput(key, $event.target.value)"
+                    >
+                    <button class="s-info-btn" title="Description"
+                            @click="settingsInfoOpen[key] = !settingsInfoOpen[key]">ⓘ</button>
+                    <button class="s-reset-btn" title="Reset to default"
+                            x-show="settingsSource[key] === 'database'"
+                            @click="resetSetting(key)">↺</button>
+                  </div>
+                  <div class="s-default"
+                       x-text="'Default: ' + (settingsMeta[key]?.default ?? '–')"></div>
+                  <div class="s-source-badge"
+                       :class="settingsSource[key] === 'database' ? 's-source-db' : 's-source-def'"
+                       x-text="settingsSource[key] === 'database' ? 'database' : 'default'"></div>
+                  <div class="s-desc" x-show="settingsInfoOpen[key]"
+                       x-text="settingsMeta[key]?.description"></div>
+                </div>
+              </div>
+            </template>
+
+            <!-- Group footer with Save -->
+            <div class="s-group-footer">
+              <button class="s-save-btn"
+                      :disabled="groupDirtyCount(group) === 0 || group.saving"
+                      @click="saveGroup(group)">
+                <span x-show="group.saving" class="spinner" style="margin-right:4px"></span>
+                Save
+              </button>
+              <span class="s-save-ok" x-show="group.savedOk" x-text="group.savedOk"></span>
+              <span class="s-save-err" x-show="group.savedErr" x-text="group.savedErr"></span>
+            </div>
+
+          </div><!-- /s-acc-body -->
+        </div><!-- /s-accordion -->
+      </template>
+
+      <!-- Stop entity list -->
+      <div class="se-section">
+        <div class="se-header">
+          Stop Entity List
+          <span class="se-count" x-text="'(' + stopEntities.length + ' phrases)'"></span>
+          <span x-show="stopEntitiesLoading" class="spinner" style="margin-left:8px"></span>
+        </div>
+
+        <!-- Add phrase row -->
+        <div class="se-add-row">
+          <input type="text" placeholder="Add a phrase to suppress…"
+                 x-model="stopEntityInput"
+                 @keydown.enter="addStopEntity()"
+                 maxlength="200">
+          <button class="se-add-btn"
+                  :disabled="!stopEntityInput.trim() || stopEntityAdding"
+                  @click="addStopEntity()">
+            <span x-show="stopEntityAdding" class="spinner"></span>
+            <span x-show="!stopEntityAdding">Add</span>
+          </button>
+        </div>
+        <div class="se-add-err" x-show="stopEntityAddErr" x-text="stopEntityAddErr"></div>
+
+        <!-- Error state for list load -->
+        <div x-show="stopEntitiesError && !stopEntitiesLoading"
+             class="error-box" style="margin:10px 16px;font-size:12px">
+          <span x-text="stopEntitiesError"></span>
+          <button class="retry-btn" @click="loadStopEntities()">Retry</button>
+        </div>
+
+        <!-- Loading skeleton -->
+        <div x-show="stopEntitiesLoading && stopEntities.length === 0" class="se-list">
+          <template x-for="i in 5" :key="i">
+            <div style="padding:8px 16px">
+              <div class="skeleton skeleton-text" style="width:40%"></div>
+            </div>
+          </template>
+        </div>
+
+        <!-- Empty state -->
+        <div x-show="!stopEntitiesLoading && !stopEntitiesError && stopEntities.length === 0"
+             class="se-empty">
+          No stop phrases yet. Add phrases above to prevent them entering the graph.
+        </div>
+
+        <!-- Phrase list -->
+        <div class="se-list" x-show="stopEntities.length > 0">
+          <template x-for="phrase in stopEntities" :key="phrase">
+            <div class="se-item" :id="'se-' + encodeURIComponent(phrase)">
+              <span class="se-phrase" x-text="phrase"></span>
+              <button class="se-remove-btn" title="Remove"
+                      @click="removeStopEntity(phrase)">×</button>
+            </div>
+          </template>
+        </div>
+
+      </div><!-- /se-section -->
+
+    </div><!-- /settings body -->
+
+  </div><!-- /tab-settings -->
+
+</div><!-- /tab-router -->
+</div><!-- /x-data #shell -->
+
+<script>
+'use strict';
+
+// ── Shared constants — ported exactly from graph_viz.html ────────────────────
+const _ALL_NODE_TYPES = [
+  'PERSON','ORGANISATION','DOCUMENT','PROJECT','CONCEPT','SESSION','NOTE','AUDIO_MEMO'
+];
+const _NODE_COLORS = {
+  PERSON:       '#58a6ff',
+  ORGANISATION: '#2ec4b6',
+  DOCUMENT:     '#e88a2e',
+  PROJECT:      '#bc8cff',
+  CONCEPT:      '#8b949e',
+  SESSION:      '#3fb950',
+  NOTE:         '#d29922',
+  AUDIO_MEMO:   '#f85149',
+};
+const _NODE_SHAPES = {
+  PERSON:       'ellipse',
+  ORGANISATION: 'rectangle',
+  DOCUMENT:     'diamond',
+  PROJECT:      'pentagon',
+  CONCEPT:      'ellipse',
+  SESSION:      'ellipse',
+  NOTE:         'rectangle',
+  AUDIO_MEMO:   'ellipse',
+};
+
+// ── buildStyle — ported exactly from graph_viz.html, adapted to read
+//   CSS variables for theme-awareness ────────────────────────────────────────
+function buildCyStyle() {
+  const dark = document.documentElement.dataset.theme !== 'light';
+  const nodeLabelColor   = dark ? '#e6edf3' : '#1f2328';
+  const nodeOutlineColor = dark ? '#0d1117'  : '#ffffff';
+  const edgeBg           = dark ? '#0d1117'  : '#ffffff';
+
+  const nodeStyle = _ALL_NODE_TYPES.map(t => ({
+    selector: `node[type="${t}"]`,
+    style: {
+      'background-color': _NODE_COLORS[t] || '#8b949e',
+      'shape':            _NODE_SHAPES[t] || 'ellipse',
+    }
+  }));
+
+  return [
+    {
+      selector: 'node',
+      style: {
+        'label':              'data(label)',
+        'width':              36,
+        'height':             36,
+        'font-size':          9,
+        'color':              nodeLabelColor,
+        'text-valign':        'bottom',
+        'text-margin-y':      4,
+        'text-outline-width': 2,
+        'text-outline-color': nodeOutlineColor,
+        'text-max-width':     80,
+        'text-wrap':          'ellipsis',
+        'border-width':       2,
+        'border-color':       'rgba(255,255,255,0.15)',
+        'transition-property':'border-color, border-width',
+        'transition-duration':'0.15s',
+      }
+    },
+    {
+      selector: 'node[?center]',
+      style: { 'width': 52, 'height': 52, 'border-width': 3, 'border-color': '#d9a878' }
+    },
+    {
+      selector: 'node:selected',
+      style: { 'border-color': '#d9a878', 'border-width': 3 }
+    },
+    ...nodeStyle,
+    {
+      selector: 'edge',
+      style: {
+        'width':                    1.5,
+        'line-color':               '#30363d',
+        'target-arrow-color':       '#30363d',
+        'target-arrow-shape':       'triangle',
+        'curve-style':              'bezier',
+        'font-size':                8,
+        'color':                    '#8b949e',
+        'text-background-color':    edgeBg,
+        'text-background-opacity':  0.8,
+        'text-background-padding':  2,
+        'label':                    '',
+      }
+    },
+    {
+      selector: 'edge[type="RELATES_TO"]',
+      style: {
+        'line-style':         'solid',
+        'width':              'mapData(strength, 1, 20, 1.2, 4)',
+        'line-color':         '#444c56',
+        'target-arrow-color': '#444c56',
+      }
+    },
+    {
+      selector: 'edge[type="MENTIONS"]',
+      style: { 'line-style': 'solid', 'width': 1.2, 'line-color': '#30363d' }
+    },
+    {
+      selector: 'edge[type="DISCUSSED_IN"]',
+      style: { 'line-style': 'dashed', 'line-color': '#3fb950', 'target-arrow-color': '#3fb950' }
+    },
+    {
+      selector: 'edge[type="DERIVED_FROM"]',
+      style: { 'line-style': 'dotted', 'line-color': '#bc8cff', 'target-arrow-color': '#bc8cff' }
+    },
+  ];
+}
+
+// ── Utilities ────────────────────────────────────────────────────────────────
+function relTime(iso) {
+  if (!iso) return '–';
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  const diff = Date.now() - d.getTime();
+  if (diff < 0)           return 'just now';
+  if (diff < 60000)       return 'just now';
+  if (diff < 3600000)     return Math.floor(diff / 60000) + 'm ago';
+  if (diff < 86400000)    return Math.floor(diff / 3600000) + 'h ago';
+  if (diff < 7*86400000)  return Math.floor(diff / 86400000) + 'd ago';
+  return d.toLocaleDateString();
+}
+
+async function apiFetch(path, opts = {}) {
+  const r = await fetch(path, {
+    headers: { 'Content-Type': 'application/json' }, ...opts,
+  });
+  if (!r.ok) {
+    let detail = `${r.status} ${r.statusText}`;
+    try { const j = await r.clone().json(); detail = j.detail || detail; } catch (_) {}
+    const err = new Error(detail);
+    err.status = r.status;
+    throw err;
+  }
+  return r.json();
+}
+
+// ── Theme ────────────────────────────────────────────────────────────────────
+function initTheme() {
+  const saved = localStorage.getItem('lm-theme') || 'dark';
+  document.documentElement.dataset.theme = saved;
+  const btn = document.getElementById('themeBtn');
+  if (btn) btn.textContent = saved === 'dark' ? '☀️' : '🌙';
+}
+initTheme();
+
+// ── Debounce helper ──────────────────────────────────────────────────────────
+function makeDebounce(fn, ms) {
+  let t = null;
+  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+}
+
+// ── Alpine component ─────────────────────────────────────────────────────────
+function mgmApp() {
+  return {
+    // ── Navigation ──────────────────────────────────────────────────
+    tab: 'overview',
+
+    // ── Overview state ───────────────────────────────────────────────
+    health: {},
+    healthLoading: true,
+    healthError: null,
+    jobs: {},
+    jobLoading: true,
+    jobError: null,
+    tooltipOpen: null,
+    actions: {
+      backfill: { loading: false, msg: '', status: '' },
+      dedup:    { loading: false, msg: '', status: '' },
+      weekly:   { loading: false, msg: '', status: '' },
+    },
+    _refreshTimer: null,
+
+    // ── Graph tab state ──────────────────────────────────────────────
+    graphMode: 'ego',          // 'ego' | 'path' | 'mentions'
+    egoInput: '',
+    pathFrom: '',
+    pathTo: '',
+    mentionsInput: '',
+    edgeStrength: 0,
+    graphCoocThreshold: 0,     // populated from GET /graph/stats
+    acLists: { ego: [], pathFrom: [], pathTo: [], mentions: [] },
+    _acDebounce: {},           // keyed per input field
+
+    allNodeTypes: _ALL_NODE_TYPES,
+    hiddenTypes: new Set(),    // non-reactive — managed via Cytoscape style calls
+
+    // canvas state
+    graphLoading: false,
+    graphHasData: false,
+    graphMsgTitle: 'Knowledge Graph',
+    graphMsgBody: 'Search for an entity above to explore its connections.',
+    graphCanRetry: false,
+    graphRetryFn: null,
+    graphTruncated: false,
+    graphTruncMsg: '',
+
+    // selected node info
+    selectedNode: null,
+
+    // Cytoscape instance — never exposed to Alpine reactivity
+    _cy: null,
+
+    // ── Lifecycle ────────────────────────────────────────────────────
+    init() {
+      const hash = window.location.hash.replace('#', '');
+      if (['overview', 'graph', 'queue', 'settings'].includes(hash)) {
+        this.tab = hash;
+      }
+      this.loadHealth();
+      this.loadJobStatus();
+      this._startAutoRefresh();
+
+      // Load queue if starting on queue tab
+      if (this.tab === 'queue') {
+        this.loadQueue();
+      }
+
+      // Load settings if starting on settings tab
+      if (this.tab === 'settings') {
+        this.loadSettings();
+        this.loadStopEntities();
+      }
+
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+          this._stopAutoRefresh();
+        } else {
+          this.loadHealth();
+          this.loadJobStatus();
+          this._startAutoRefresh();
+        }
+      });
+
+      // Initialise debounce callbacks per autocomplete field
+      const self = this;
+      ['ego', 'pathFrom', 'pathTo', 'mentions'].forEach(field => {
+        self._acDebounce[field] = makeDebounce(q => self._fetchAc(field, q), 200);
+      });
+
+      // If starting on graph tab, init cytoscape immediately
+      if (this.tab === 'graph') {
+        this.$nextTick(() => this._initCytoscape());
+      }
+    },
+
+    // ── Tab routing ──────────────────────────────────────────────────
+    switchTab(name) {
+      const prev = this.tab;
+      this.tab = name;
+      window.location.hash = name;
+
+      if (name === 'graph' && prev !== 'graph') {
+        this.$nextTick(() => this._initCytoscape());
+      } else if (name !== 'graph' && prev === 'graph') {
+        this._destroyCytoscape();
+      }
+
+      // Load queue on first activation (or re-activation if not yet loaded)
+      if (name === 'queue' && !this.queueLoading && this.queueTotalCount === 0 && !this.queueError) {
+        this.loadQueue();
+      }
+
+      // Load settings on first activation
+      if (name === 'settings' && !this.settingsLoading && Object.keys(this.settingsValues).length === 0) {
+        this.loadSettings();
+        this.loadStopEntities();
+      }
+    },
+
+    // ── Theme ────────────────────────────────────────────────────────
+    toggleTheme() {
+      const root = document.documentElement;
+      const next = root.dataset.theme === 'dark' ? 'light' : 'dark';
+      root.dataset.theme = next;
+      document.getElementById('themeBtn').textContent = next === 'dark' ? '☀️' : '🌙';
+      localStorage.setItem('lm-theme', next);
+      // Rebuild Cytoscape styles if graph tab is active
+      if (this._cy) {
+        this._cy.style(buildCyStyle());
+      }
+    },
+
+    relTime,
+
+    // ── Cytoscape lifecycle ──────────────────────────────────────────
+    _initCytoscape() {
+      if (this._cy) return; // already alive
+      const container = this.$refs.cyContainer;
+      if (!container) return;
+
+      this._cy = cytoscape({
+        container,
+        elements: [],
+        style: buildCyStyle(),
+        layout: { name: 'preset' },
+        minZoom: 0.1,
+        maxZoom: 4,
+      });
+
+      const self = this;
+
+      this._cy.on('tap', 'node', function(evt) {
+        const d = evt.target.data();
+        self.selectedNode = {
+          id:            d.id,
+          label:         d.label,
+          type:          d.type,
+          mention_count: d.mention_count,
+        };
+      });
+
+      this._cy.on('dbltap', 'node', function(evt) {
+        const label = evt.target.data('label');
+        if (label) {
+          self.egoInput = label;
+          self.graphMode = 'ego';
+          self.graphLoadEgo();
+        }
+      });
+
+      this._cy.on('tap', function(evt) {
+        if (evt.target === self._cy) {
+          self.selectedNode = null;
+        }
+      });
+
+      // Edge hover: show label
+      this._cy.on('mouseover', 'edge', function(evt) {
+        evt.target.style('label', evt.target.data('type') || '');
+      });
+      this._cy.on('mouseout', 'edge', function(evt) {
+        evt.target.style('label', '');
+      });
+
+      // Load stats once when entering
+      this._loadGraphStats();
+    },
+
+    _destroyCytoscape() {
+      if (this._cy) {
+        this._cy.destroy();
+        this._cy = null;
+      }
+      this.selectedNode = null;
+      this.graphHasData = false;
+      this.graphTruncated = false;
+    },
+
+    // ── Graph stats (availability + node/edge counts) ────────────────
+    async _loadGraphStats() {
+      try {
+        const data = await fetch('/graph/stats').then(r => r.json());
+        const badge = document.getElementById('graph-avail-badge');
+        if (!data.available) {
+          badge.textContent = 'Graph unavailable';
+          badge.style.background = 'rgba(248,81,73,.15)';
+          badge.style.color = '#f85149';
+          this._setCanvasMsg('Graph unavailable',
+            'FalkorDB is not configured. Set GRAPH_BACKEND=falkordb to enable graph features.');
+          return;
+        }
+        badge.textContent = 'Graph active';
+        badge.style.background = 'rgba(63,185,80,.15)';
+        badge.style.color = '#3fb950';
+        document.getElementById('graph-stat-nodes').textContent =
+          (data.node_count || 0).toLocaleString();
+        document.getElementById('graph-stat-edges').textContent =
+          (data.edge_count || 0).toLocaleString();
+        this.graphCoocThreshold = data.cooccurrence_threshold || 0;
+      } catch (_) {
+        const badge = document.getElementById('graph-avail-badge');
+        if (badge) { badge.textContent = 'Unreachable'; }
+      }
+    },
+
+    // ── Autocomplete ─────────────────────────────────────────────────
+    onAcInput(field) {
+      let q = '';
+      if (field === 'ego')      q = this.egoInput;
+      if (field === 'pathFrom') q = this.pathFrom;
+      if (field === 'pathTo')   q = this.pathTo;
+      if (field === 'mentions') q = this.mentionsInput;
+      q = q.trim();
+      if (q.length < 2) { this.acLists[field] = []; return; }
+      this._acDebounce[field](q);
+    },
+
+    async _fetchAc(field, q) {
+      try {
+        const data = await fetch(
+          `/graph/search?q=${encodeURIComponent(q)}&limit=10`
+        ).then(r => r.json());
+        this.acLists[field] = data.results || [];
+      } catch (_) {
+        this.acLists[field] = [];
+      }
+    },
+
+    // ── Graph loaders ────────────────────────────────────────────────
+    async graphLoadEgo() {
+      const name = this.egoInput.trim();
+      if (!name) return;
+      this._setCanvasLoading(`Fetching ego network for "${name}"…`);
+      const self = this;
+      this.graphRetryFn = () => self.graphLoadEgo();
+      try {
+        const url = `/graph/ego?entity=${encodeURIComponent(name)}&limit=100&min_strength=${this.edgeStrength}`;
+        const data = await fetch(url).then(r => r.json());
+        if (!data.available) {
+          this._setCanvasMsg('Graph unavailable',
+            'FalkorDB is not configured. Set GRAPH_BACKEND=falkordb to enable graph features.');
+          return;
+        }
+        if (!data.found) {
+          this._setCanvasMsg('Entity not found',
+            `"${name}" was not found in the knowledge graph.`);
+          return;
+        }
+        this._renderGraph(data);
+      } catch (e) {
+        this._setCanvasError('Could not load the graph. Is the orchestrator reachable?');
+      }
+    },
+
+    async graphLoadPath() {
+      const from = this.pathFrom.trim();
+      const to   = this.pathTo.trim();
+      if (!from || !to) return;
+      this._setCanvasLoading(`Finding path from "${from}" to "${to}"…`);
+      const self = this;
+      this.graphRetryFn = () => self.graphLoadPath();
+      try {
+        const url = `/graph/path?from_entity=${encodeURIComponent(from)}&to_entity=${encodeURIComponent(to)}`;
+        const data = await fetch(url).then(r => r.json());
+        if (!data.available) {
+          this._setCanvasMsg('Graph unavailable',
+            'FalkorDB is not configured. Set GRAPH_BACKEND=falkordb to enable graph features.');
+          return;
+        }
+        if (!data.found) {
+          this._setCanvasMsg('Entity not found', data.message || '');
+          return;
+        }
+        if (!data.path_found) {
+          this._setCanvasMsg('No path found',
+            data.message || `No path found between "${from}" and "${to}".`);
+          return;
+        }
+        this._renderGraph(data);
+      } catch (e) {
+        this._setCanvasError('Could not load the path. Is the orchestrator reachable?');
+      }
+    },
+
+    async graphLoadMentions() {
+      const name = this.mentionsInput.trim();
+      if (!name) return;
+      this._setCanvasLoading(`Finding documents that mention "${name}"…`);
+      const self = this;
+      this.graphRetryFn = () => self.graphLoadMentions();
+      try {
+        // Uses the ego endpoint which returns MENTIONS edges to DOCUMENTs/SESSIONs/NOTEs
+        const url = `/graph/ego?entity=${encodeURIComponent(name)}&limit=100&min_strength=0`;
+        const data = await fetch(url).then(r => r.json());
+        if (!data.available) {
+          this._setCanvasMsg('Graph unavailable',
+            'FalkorDB is not configured. Set GRAPH_BACKEND=falkordb to enable graph features.');
+          return;
+        }
+        if (!data.found) {
+          this._setCanvasMsg('Entity not found',
+            `"${name}" was not found in the knowledge graph.`);
+          return;
+        }
+        // Filter to MENTIONS edges only to highlight source documents
+        const filteredData = {
+          ...data,
+          edges: (data.edges || []).filter(e => e.type === 'MENTIONS' || e.type === 'DISCUSSED_IN'),
+        };
+        this._renderGraph(filteredData);
+      } catch (e) {
+        this._setCanvasError('Could not load mentions. Is the orchestrator reachable?');
+      }
+    },
+
+    graphRetry() {
+      if (this.graphRetryFn) this.graphRetryFn();
+    },
+
+    graphReset() {
+      this.egoInput = '';
+      this.selectedNode = null;
+      this.graphTruncated = false;
+      if (this._cy) this._cy.elements().remove();
+      this.graphHasData = false;
+      this._setCanvasMsg('Knowledge Graph', 'Search for an entity above to explore its connections.');
+    },
+
+    graphFit() {
+      if (this._cy && this._cy.elements().length > 0) this._cy.fit(40);
+    },
+
+    graphExploreSelected() {
+      if (!this.selectedNode || !this._cy) return;
+      const node = this._cy.getElementById(this.selectedNode.id);
+      if (!node.length) return;
+      this.egoInput = node.data('label') || '';
+      this.graphMode = 'ego';
+      this.graphLoadEgo();
+    },
+
+    // ── Type filter ──────────────────────────────────────────────────
+    toggleTypeFilter(type, visible) {
+      if (visible) {
+        this.hiddenTypes.delete(type);
+        if (this._cy) this._cy.nodes(`[type="${type}"]`).style('display', 'element');
+      } else {
+        this.hiddenTypes.add(type);
+        if (this._cy) this._cy.nodes(`[type="${type}"]`).style('display', 'none');
+      }
+    },
+
+    _reapplyFilters() {
+      if (!this._cy) return;
+      this.hiddenTypes.forEach(t => {
+        this._cy.nodes(`[type="${t}"]`).style('display', 'none');
+      });
+    },
+
+    // ── Render ───────────────────────────────────────────────────────
+    _renderGraph(data) {
+      if (!this._cy) return;
+
+      const nodes = (data.nodes || []).map(n => ({
+        group: 'nodes',
+        data: {
+          id:            n.id,
+          label:         (n.label || n.id || '').slice(0, 20),
+          type:          n.type || 'CONCEPT',
+          mention_count: n.mention_count || 0,
+          center:        !!n.center,
+        }
+      }));
+
+      const edges = (data.edges || []).map((e, i) => ({
+        group: 'edges',
+        data: {
+          id:       `e${i}-${e.source}-${e.target}`,
+          source:   e.source,
+          target:   e.target,
+          type:     e.type || 'RELATES_TO',
+          strength: e.strength || 1,
+        }
+      }));
+
+      this._cy.elements().remove();
+      this._cy.add([...nodes, ...edges]);
+
+      this._cy.layout({
+        name:             'cose',
+        animate:          true,
+        animationDuration: 500,
+        nodeRepulsion:    () => 8000,
+        idealEdgeLength:  () => 80,
+        gravity:          0.6,
+        numIter:          1000,
+        fit:              true,
+        padding:          40,
+      }).run();
+
+      this._reapplyFilters();
+
+      this.graphHasData = true;
+      this.graphLoading = false;
+
+      if (data.truncated) {
+        this.graphTruncated = true;
+        this.graphTruncMsg = `Showing ${data.node_count} nodes / ${data.edge_count} edges (truncated to cap)`;
+        setTimeout(() => { this.graphTruncated = false; }, 6000);
+      } else {
+        this.graphTruncated = false;
+      }
+    },
+
+    // ── Canvas message helpers ───────────────────────────────────────
+    _setCanvasLoading(body) {
+      this.graphLoading = true;
+      this.graphHasData = false;
+      this.graphTruncated = false;
+      this.graphCanRetry = false;
+      this.graphMsgTitle = 'Loading…';
+      this.graphMsgBody = body;
+      if (this._cy) this._cy.elements().remove();
+    },
+
+    _setCanvasMsg(title, body) {
+      this.graphLoading = false;
+      this.graphHasData = false;
+      this.graphCanRetry = false;
+      this.graphMsgTitle = title;
+      this.graphMsgBody = body;
+    },
+
+    _setCanvasError(body) {
+      this.graphLoading = false;
+      this.graphHasData = false;
+      this.graphCanRetry = true;
+      this.graphMsgTitle = 'Error';
+      this.graphMsgBody = body;
+    },
+
+    // ── Node color / label helpers (used in template) ────────────────
+    nodeColor(type) {
+      return _NODE_COLORS[type] || '#8b949e';
+    },
+
+    fmtType(t) {
+      return t.charAt(0) + t.slice(1).toLowerCase().replace('_', ' ');
+    },
+
+    // ── Review Queue state ───────────────────────────────────────────
+    queueLoading: false,
+    queueLoadingMore: false,
+    queueError: null,
+    queueNextCursor: null,
+    queueTotalCount: 0,
+
+    // Four accordion sections in priority order
+    queueSections: [
+      { key: 'ambiguous_entity',    label: 'Ambiguous Entities',   items: [], open: true  },
+      { key: 'constraint_violation',label: 'Critical Violations',  items: [], open: true  },
+      { key: 'staged_entity',       label: 'Staged Entities',      items: [], open: true  },
+      { key: 'orphan_entity',       label: 'Orphan Entities',      items: [], open: false },
+    ],
+
+    // Confirmation modal
+    confirmModal: {
+      open: false,
+      message: '',
+      pending: false,
+      _resolve: null,
+      confirm() {
+        if (this._resolve) this._resolve(true);
+      },
+    },
+
+    // Toast
+    toast: { visible: false, message: '', type: 'ok', _timer: null },
+
+    // ── Review Queue methods ─────────────────────────────────────────
+    async loadQueue() {
+      this.queueLoading = true;
+      this.queueError = null;
+      try {
+        const data = await apiFetch('/review-queue?source=all');
+        this._applyQueueData(data, false);
+      } catch (e) {
+        this.queueError = 'Failed to load review queue: ' + e.message;
+      } finally {
+        this.queueLoading = false;
+      }
+    },
+
+    async loadMoreQueue() {
+      if (!this.queueNextCursor || this.queueLoadingMore) return;
+      this.queueLoadingMore = true;
+      try {
+        const data = await apiFetch('/review-queue?source=all&cursor=' + encodeURIComponent(this.queueNextCursor));
+        this._applyQueueData(data, true);
+      } catch (e) {
+        this._showToast('Failed to load more items: ' + e.message, 'error');
+      } finally {
+        this.queueLoadingMore = false;
+      }
+    },
+
+    _applyQueueData(data, append) {
+      const items = data.items || [];
+      this.queueNextCursor = data.next_cursor || null;
+
+      // Group by item_type
+      const byType = {};
+      for (const item of items) {
+        (byType[item.item_type] = byType[item.item_type] || []).push(item);
+      }
+
+      for (const sec of this.queueSections) {
+        if (append) {
+          sec.items = sec.items.concat(byType[sec.key] || []);
+        } else {
+          sec.items = byType[sec.key] || [];
+          // Auto-open sections with items; collapse empty ones
+          sec.open = sec.items.length > 0 && sec.key !== 'orphan_entity';
+        }
+      }
+
+      this.queueTotalCount = this.queueSections.reduce((s, sec) => s + sec.items.length, 0);
+    },
+
+    // queueAct — main action handler
+    // section: the section object, item: the item, action: string,
+    // needsConfirm: bool, confirmMsg: string
+    async queueAct(section, item, action, needsConfirm, confirmMsg) {
+      if (needsConfirm) {
+        const confirmed = await this._askConfirm(confirmMsg || 'Are you sure?');
+        if (!confirmed) return;
+      }
+      try {
+        await apiFetch('/review-queue/decide', {
+          method: 'POST',
+          body: JSON.stringify({
+            item_type: item.item_type,
+            item_id:   item.item_id,
+            action,
+            user_id:   'default',
+          }),
+        });
+        this._fadeOutItem(section, item);
+      } catch (e) {
+        if (e.status === 404) {
+          this._showToast('Item already resolved — refreshing queue', 'warn');
+          setTimeout(() => this.loadQueue(), 800);
+        } else {
+          this._showToast('Error: ' + e.message, 'error');
+        }
+      }
+    },
+
+    _fadeOutItem(section, item) {
+      const el = document.getElementById('qi-' + item.item_id);
+      if (el) {
+        el.style.opacity = '0';
+        setTimeout(() => {
+          section.items = section.items.filter(i => i.item_id !== item.item_id);
+          this.queueTotalCount = this.queueSections.reduce((s, sec) => s + sec.items.length, 0);
+        }, 320);
+      } else {
+        section.items = section.items.filter(i => i.item_id !== item.item_id);
+        this.queueTotalCount = this.queueSections.reduce((s, sec) => s + sec.items.length, 0);
+      }
+    },
+
+    _askConfirm(message) {
+      return new Promise(resolve => {
+        this.confirmModal.message = message;
+        this.confirmModal.pending = false;
+        this.confirmModal.open = true;
+        this.confirmModal._resolve = (val) => {
+          this.confirmModal.open = false;
+          this.confirmModal._resolve = null;
+          resolve(val);
+        };
+      });
+    },
+
+    _showToast(message, type = 'ok') {
+      if (this.toast._timer) clearTimeout(this.toast._timer);
+      this.toast.message = message;
+      this.toast.type = type;
+      this.toast.visible = true;
+      this.toast._timer = setTimeout(() => { this.toast.visible = false; }, 5000);
+    },
+
+    // Helper: format a date string as a relative or short date
+    relDate(iso) {
+      if (!iso) return '';
+      const d = new Date(iso);
+      if (isNaN(d)) return iso;
+      const diff = Date.now() - d.getTime();
+      if (diff < 86400000) return 'today';
+      if (diff < 7*86400000) return Math.floor(diff/86400000) + 'd ago';
+      return d.toLocaleDateString();
+    },
+
+    // ── Settings tab state ───────────────────────────────────────────
+    settingsLoading: false,
+    settingsError: null,
+    // Keyed dicts for each setting
+    settingsValues:   {},   // { key: current display value (number) }
+    settingsLoaded:   {},   // { key: value as loaded from API (to detect dirty) }
+    settingsMeta:     {},   // { key: { type, default, description } }
+    settingsSource:   {},   // { key: 'database' | 'default' }
+    settingsInfoOpen: {},   // { key: bool }
+    // Range hints for min/max attributes
+    settingsRangeMin: {
+      entity_quality_lower:           0,
+      entity_quality_upper:           0,
+      graph_edge_quality_threshold:   0,
+      entity_promote_on_mention_count:1,
+      graph_cooccurrence_threshold:   1,
+      graph_min_mention_count:        1,
+      graph_max_cooccurrence_pairs:   1,
+      graph_viz_max_nodes:            1,
+      graph_viz_max_edges:            1,
+      decay_half_life_relates_to:     1,
+      decay_half_life_mentions:       1,
+      decay_half_life_discussed_in:   1,
+      dedup_cron_hour_utc:            0,
+    },
+    settingsRangeMax: {
+      entity_quality_lower:           1,
+      entity_quality_upper:           1,
+      graph_edge_quality_threshold:   1,
+      dedup_cron_hour_utc:            23,
+    },
+
+    // Five accordion groups matching _SETTING_META groups
+    settingsGroups: [
+      {
+        key:   'entity_quality',
+        label: 'Entity Quality',
+        open:  true, saving: false, savedOk: '', savedErr: '',
+        keys:  ['entity_quality_lower','entity_quality_upper','entity_promote_on_mention_count'],
+      },
+      {
+        key:   'graph_traversal',
+        label: 'Graph Traversal',
+        open:  true, saving: false, savedOk: '', savedErr: '',
+        keys:  ['graph_edge_quality_threshold','graph_cooccurrence_threshold',
+                'graph_min_mention_count','graph_max_cooccurrence_pairs'],
+      },
+      {
+        key:   'visualization',
+        label: 'Visualization',
+        open:  true, saving: false, savedOk: '', savedErr: '',
+        keys:  ['graph_viz_max_nodes','graph_viz_max_edges'],
+      },
+      {
+        key:   'temporal_decay',
+        label: 'Temporal Decay',
+        open:  true, saving: false, savedOk: '', savedErr: '',
+        keys:  ['decay_half_life_relates_to','decay_half_life_mentions','decay_half_life_discussed_in'],
+      },
+      {
+        key:   'maintenance',
+        label: 'Maintenance',
+        open:  true, saving: false, savedOk: '', savedErr: '',
+        keys:  ['dedup_cron_hour_utc'],
+      },
+    ],
+
+    // Stop entity list state
+    stopEntities:      [],
+    stopEntitiesLoading: false,
+    stopEntitiesError: null,
+    stopEntityInput:   '',
+    stopEntityAdding:  false,
+    stopEntityAddErr:  '',
+
+    // ── Settings methods ─────────────────────────────────────────────
+    async loadSettings() {
+      this.settingsLoading = true;
+      this.settingsError = null;
+      try {
+        const data = await apiFetch('/kg/settings');
+        const items = data.settings || [];
+        const values = {}, loaded = {}, meta = {}, source = {};
+        for (const s of items) {
+          values[s.key]  = s.value;
+          loaded[s.key]  = s.value;
+          meta[s.key]    = { type: s.type, default: s.default, description: s.description };
+          source[s.key]  = s.source;
+        }
+        this.settingsValues   = values;
+        this.settingsLoaded   = loaded;
+        this.settingsMeta     = meta;
+        this.settingsSource   = source;
+        this.settingsInfoOpen = {};
+        // Clear all group feedback
+        for (const g of this.settingsGroups) {
+          g.savedOk = ''; g.savedErr = '';
+        }
+      } catch (e) {
+        this.settingsError = 'Failed to load settings: ' + e.message;
+      } finally {
+        this.settingsLoading = false;
+      }
+    },
+
+    onSettingInput(key, rawVal) {
+      const meta = this.settingsMeta[key];
+      if (!meta) return;
+      // Store as number for proper dirty comparison; keep raw during typing
+      const parsed = meta.type === 'float' ? parseFloat(rawVal) : parseInt(rawVal, 10);
+      this.settingsValues[key] = isNaN(parsed) ? rawVal : parsed;
+    },
+
+    isSettingDirty(key) {
+      return this.settingsValues[key] !== this.settingsLoaded[key];
+    },
+
+    groupDirtyCount(group) {
+      return group.keys.filter(k => this.isSettingDirty(k)).length;
+    },
+
+    fmtSettingLabel(key) {
+      return key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    },
+
+    async saveGroup(group) {
+      const dirty = group.keys.filter(k => this.isSettingDirty(k));
+      if (!dirty.length) return;
+      group.saving = true; group.savedOk = ''; group.savedErr = '';
+      try {
+        const settings = dirty.map(k => ({
+          key:   k,
+          value: String(this.settingsValues[k]),  // must be string per API contract
+        }));
+        await apiFetch('/kg/settings', {
+          method: 'POST',
+          body: JSON.stringify({ settings }),
+        });
+        // On success: update loaded values and source badges
+        for (const k of dirty) {
+          this.settingsLoaded[k]  = this.settingsValues[k];
+          this.settingsSource[k]  = 'database';
+        }
+        group.savedOk = '✓ Saved';
+        setTimeout(() => { group.savedOk = ''; }, 3000);
+      } catch (e) {
+        group.savedErr = e.status === 400
+          ? (e.message || 'Validation error')
+          : 'Save failed — ' + e.message;
+        setTimeout(() => { group.savedErr = ''; }, 6000);
+      } finally {
+        group.saving = false;
+      }
+    },
+
+    async resetSetting(key) {
+      try {
+        const data = await apiFetch(`/kg/settings/${encodeURIComponent(key)}`, {
+          method: 'DELETE',
+        });
+        // Revert to default
+        const def = data.reverted_to ?? this.settingsMeta[key]?.default;
+        this.settingsValues[key]  = def;
+        this.settingsLoaded[key]  = def;
+        this.settingsSource[key]  = 'default';
+      } catch (e) {
+        this._showToast('Reset failed: ' + e.message, 'error');
+      }
+    },
+
+    // ── Stop entity methods ──────────────────────────────────────────
+    async loadStopEntities() {
+      this.stopEntitiesLoading = true;
+      this.stopEntitiesError = null;
+      try {
+        const data = await apiFetch('/kg/stop-entities');
+        this.stopEntities = data.phrases || [];
+      } catch (e) {
+        this.stopEntitiesError = 'Failed to load stop entity list: ' + e.message;
+      } finally {
+        this.stopEntitiesLoading = false;
+      }
+    },
+
+    async addStopEntity() {
+      const phrase = this.stopEntityInput.trim();
+      if (!phrase) return;
+      this.stopEntityAdding = true;
+      this.stopEntityAddErr = '';
+      try {
+        const data = await apiFetch('/kg/stop-entities', {
+          method: 'POST',
+          body: JSON.stringify({ action: 'add', phrase }),
+        });
+        // Prepend, then re-sort alphabetically
+        this.stopEntities = [...this.stopEntities, phrase].sort((a, b) =>
+          a.toLowerCase().localeCompare(b.toLowerCase())
+        );
+        this.stopEntityInput = '';
+      } catch (e) {
+        if (e.status === 400) {
+          this.stopEntityAddErr = e.message;
+        } else {
+          this._showToast('Error adding phrase: ' + e.message, 'error');
+        }
+      } finally {
+        this.stopEntityAdding = false;
+      }
+    },
+
+    async removeStopEntity(phrase) {
+      // Fade out the element
+      const safeId = 'se-' + encodeURIComponent(phrase);
+      const el = document.getElementById(safeId);
+      if (el) el.style.opacity = '0';
+      try {
+        await apiFetch('/kg/stop-entities', {
+          method: 'POST',
+          body: JSON.stringify({ action: 'remove', phrase }),
+        });
+        setTimeout(() => {
+          this.stopEntities = this.stopEntities.filter(p => p !== phrase);
+        }, 320);
+      } catch (e) {
+        if (el) el.style.opacity = '1'; // restore on error
+        if (e.status === 400) {
+          this._showToast('Could not remove: ' + e.message, 'warn');
+        } else {
+          this._showToast('Error removing phrase: ' + e.message, 'error');
+        }
+      }
+    },
+
+    // ── Auto-refresh (overview only) ─────────────────────────────────
+    _startAutoRefresh() {
+      this._stopAutoRefresh();
+      this._refreshTimer = setInterval(() => {
+        if (this.tab === 'overview') {
+          this.loadHealth();
+          this.loadJobStatus();
+        }
+      }, 60000);
+    },
+
+    _stopAutoRefresh() {
+      if (this._refreshTimer) {
+        clearInterval(this._refreshTimer);
+        this._refreshTimer = null;
+      }
+    },
+
+    // ── Data loaders ─────────────────────────────────────────────────
+    async loadHealth() {
+      this.healthLoading = true;
+      this.healthError = null;
+      try {
+        this.health = await apiFetch('/graph/health');
+      } catch (e) {
+        this.healthError = 'Failed to load health metrics: ' + e.message;
+      } finally {
+        this.healthLoading = false;
+      }
+    },
+
+    async loadJobStatus() {
+      this.jobLoading = true;
+      this.jobError = null;
+      try {
+        this.jobs = await apiFetch('/kg/job-status');
+      } catch (e) {
+        this.jobError = 'Failed to load job status: ' + e.message;
+      } finally {
+        this.jobLoading = false;
+      }
+    },
+
+    // ── Quick actions ────────────────────────────────────────────────
+    async triggerBackfill() {
+      const a = this.actions.backfill;
+      a.loading = true; a.msg = ''; a.status = '';
+      try {
+        await apiFetch('/graph/backfill', { method: 'POST' });
+        a.msg = 'Backfill started in background. Check logs for progress.';
+        a.status = 'ok';
+      } catch (e) {
+        if (e.status === 409) { a.msg = 'A backfill is already running.'; a.status = 'warn'; }
+        else if (e.status === 503) { a.msg = 'Graph store not configured (FalkorDB not enabled).'; a.status = 'warn'; }
+        else { a.msg = 'Error: ' + e.message; a.status = 'err'; }
+      } finally { a.loading = false; }
+    },
+
+    async triggerDedup() {
+      const a = this.actions.dedup;
+      a.loading = true; a.msg = ''; a.status = '';
+      try {
+        await apiFetch('/entities/deduplicate', { method: 'POST' });
+        a.msg = 'Deduplication started. Refresh job status in a moment.';
+        a.status = 'ok';
+        setTimeout(() => this.loadJobStatus(), 2000);
+      } catch (e) {
+        if (e.status === 409) { a.msg = 'Deduplication is already running.'; a.status = 'warn'; }
+        else { a.msg = 'Error: ' + e.message; a.status = 'err'; }
+      } finally { a.loading = false; }
+    },
+
+    async triggerWeekly() {
+      const a = this.actions.weekly;
+      a.loading = true; a.msg = ''; a.status = '';
+      try {
+        await apiFetch('/kg/trigger-weekly', { method: 'POST' });
+        a.msg = 'Weekly quality job started. This may take several minutes.';
+        a.status = 'ok';
+        setTimeout(() => this.loadJobStatus(), 3000);
+      } catch (e) {
+        if (e.status === 409) { a.msg = 'Cannot start: ' + e.message; a.status = 'warn'; }
+        else { a.msg = 'Error: ' + e.message; a.status = 'err'; }
+      } finally { a.loading = false; }
+    },
+  };
+}
+</script>
+</body>
+</html>

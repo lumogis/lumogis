@@ -8,6 +8,8 @@ testpaths = ["orchestrator/tests"]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests that require running Docker stack (see make test-integration)",
+    "manual: marks operator-driven gates (skipped by default compose integration)",
+    "public_rc: deterministic subset for verify-public-rc (no external RSS/CalDAV/ntfy; see Makefile)",
 ]
 asyncio_mode = "auto"
 

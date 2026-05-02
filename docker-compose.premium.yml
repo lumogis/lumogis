@@ -1,0 +1,87 @@
+# Lumogis premium overlay — adds the out-of-process `lumogis-graph`
+# knowledge-graph service.
+#
+# Enable by appending to COMPOSE_FILE in .env (or on the command line):
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.falkordb.yml:docker-compose.premium.yml
+#
+# Then set in .env:
+#   GRAPH_MODE=service
+#   KG_SERVICE_URL=http://lumogis-graph:8001
+#   GRAPH_WEBHOOK_SECRET=<long random hex>
+#   CAPABILITY_SERVICE_URLS=http://lumogis-graph:8001
+#   # optional dev override on small machines:
+#   # KG_MEM_LIMIT=1g
+#
+# Notes:
+#   * The KG service deliberately does NOT publish a host port. Operators
+#     who need direct browser access (e.g. visiting `/mgm`) reach it via
+#     a reverse proxy or by `docker compose exec` + `curl`. The reverse-
+#     proxy URL is what `KG_MANAGEMENT_URL` should point to in production.
+#   * `depends_on: postgres / falkordb / qdrant: condition: service_healthy`
+#     gates start-up so the FalkorDB cold-warm-up step in KG's lifespan
+#     never races the database container.
+#   * Memory limits are env-overridable; on small dev machines set
+#     `KG_MEM_LIMIT=1g` in `.env`. See
+#     `services/lumogis-graph/README.md` for the exact knobs.
+#   * Core MUST be configured with `GRAPH_MODE=service` (read by
+#     `orchestrator/main.py:_wire_graph_mode_handlers`). Without that env
+#     var Core stays in `inprocess` mode and the KG container will run
+#     idle (no webhooks arriving), which is harmless but wastes RAM.
+
+services:
+  lumogis-graph:
+    build:
+      context: .
+      dockerfile: services/lumogis-graph/Dockerfile
+      target: runtime
+    image: lumogis-graph:dev
+    env_file: .env
+    environment:
+      # Override these in .env. Keep the explicit defaults here so a fresh
+      # checkout starts a working KG container even before .env is filled in.
+      GRAPH_BACKEND: ${GRAPH_BACKEND:-falkordb}
+      FALKORDB_URL: ${FALKORDB_URL:-redis://falkordb:6379}
+      FALKORDB_GRAPH_NAME: ${FALKORDB_GRAPH_NAME:-lumogis}
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_USER: ${POSTGRES_USER:-lumogis}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lumogis-dev}
+      POSTGRES_DB: ${POSTGRES_DB:-lumogis}
+      KG_SERVICE_PORT: ${KG_SERVICE_PORT:-8001}
+      KG_SCHEDULER_ENABLED: ${KG_SCHEDULER_ENABLED:-true}
+      # Dev-only fallback: when no shared secret is configured, accept
+      # webhooks. In production set GRAPH_WEBHOOK_SECRET and remove this line.
+      KG_ALLOW_INSECURE_WEBHOOKS: ${KG_ALLOW_INSECURE_WEBHOOKS:-true}
+      KG_MANAGEMENT_URL: ${KG_MANAGEMENT_URL:-http://lumogis-graph:8001/mgm}
+      LUMOGIS_CORE_BASE_URL: ${LUMOGIS_CORE_BASE_URL:-http://orchestrator:8000}
+      GRAPH_MODE: service
+    depends_on:
+      postgres:
+        condition: service_healthy
+      falkordb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8001/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    mem_limit: ${KG_MEM_LIMIT:-4g}
+    mem_reservation: ${KG_MEM_RESERVATION:-512m}
+    restart: unless-stopped
+
+  # Wait for the KG service to be healthy before Core starts firing webhooks.
+  # Without this, Core's first hooks after startup may post to an unready KG
+  # and degrade silently to the WARNING-and-continue path.
+  orchestrator:
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+      stack-control:
+        condition: service_started
+      lumogis-graph:
+        condition: service_healthy

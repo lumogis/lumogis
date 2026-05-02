@@ -6,47 +6,90 @@
 -- Tracks every ingested document: path, content hash, chunk count, OCR flag.
 -- file_hash enables re-ingest skip: if hash unchanged, skip chunking + embedding.
 CREATE TABLE IF NOT EXISTS file_index (
-    id          SERIAL PRIMARY KEY,
-    file_path   TEXT UNIQUE NOT NULL,
-    file_hash   TEXT NOT NULL,
-    file_type   TEXT NOT NULL,
-    chunk_count INTEGER NOT NULL DEFAULT 0,
-    ocr_used    BOOLEAN NOT NULL DEFAULT FALSE,
-    user_id     TEXT NOT NULL DEFAULT 'default',
-    ingested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    id              SERIAL PRIMARY KEY,
+    file_path       TEXT NOT NULL,
+    file_hash       TEXT NOT NULL,
+    file_type       TEXT NOT NULL,
+    chunk_count     INTEGER NOT NULL DEFAULT 0,
+    ocr_used        BOOLEAN NOT NULL DEFAULT FALSE,
+    user_id         TEXT NOT NULL DEFAULT 'default',
+    ingested_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- Memory-scopes (migration 013): see
+    -- .cursor/plans/personal_shared_system_memory_scopes.plan.md.
+    -- `scope` partitions visibility into personal/shared/system; `published_from`
+    -- back-references the personal source row when this row is a projection.
+    scope           TEXT NOT NULL DEFAULT 'personal'
+                    CHECK (scope IN ('personal','shared','system')),
+    published_from  INTEGER REFERENCES file_index(id) ON DELETE CASCADE
 );
+CREATE UNIQUE INDEX IF NOT EXISTS file_index_published_from_scope_uniq
+    ON file_index (published_from, scope) WHERE published_from IS NOT NULL;
+CREATE INDEX IF NOT EXISTS file_index_user_scope_idx ON file_index (user_id, scope);
+
+-- Per-user uniqueness: two users can independently ingest the same absolute
+-- path; (user_id, file_path) is the canonical "file identity" tuple. Also
+-- serves as the read-side index for SELECT/UPSERT lookups against
+-- (user_id, file_path); no separate non-unique helper index is needed.
+-- See postgres/migrations/011-per-user-file-index.sql.
+CREATE UNIQUE INDEX IF NOT EXISTS file_index_user_path_uniq
+    ON file_index (user_id, file_path);
 
 -- Extracted entities: people, organisations, projects, concepts.
 -- context_tags drive entity resolution: overlap >= 2 tags -> merge.
 -- aliases accumulates alternative names seen across sessions/documents.
 -- Note: if upgrading from an earlier schema, apply:
 --   ALTER TABLE entities ADD COLUMN IF NOT EXISTS user_id TEXT NOT NULL DEFAULT 'default';
+-- extraction_quality: heuristic score [0,1] assigned at extraction time (NULL = pre-Pass-1 rows).
+-- is_staged: TRUE = entity is quarantined; excluded from graph projection and queries.
 CREATE TABLE IF NOT EXISTS entities (
-    entity_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name         TEXT NOT NULL,
-    entity_type  TEXT NOT NULL,        -- PERSON | ORG | PROJECT | CONCEPT | FILE
-    aliases      TEXT[] NOT NULL DEFAULT '{}',
-    context_tags TEXT[] NOT NULL DEFAULT '{}',
-    mention_count INTEGER NOT NULL DEFAULT 1,
-    user_id      TEXT NOT NULL DEFAULT 'default',
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    entity_id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name               TEXT NOT NULL,
+    entity_type        TEXT NOT NULL,        -- PERSON | ORG | PROJECT | CONCEPT | FILE
+    aliases            TEXT[] NOT NULL DEFAULT '{}',
+    context_tags       TEXT[] NOT NULL DEFAULT '{}',
+    mention_count      INTEGER NOT NULL DEFAULT 1,
+    user_id            TEXT NOT NULL DEFAULT 'default',
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    extraction_quality DOUBLE PRECISION,
+    is_staged          BOOLEAN NOT NULL DEFAULT FALSE,
+    -- Memory-scopes (migration 013): see plan personal_shared_system_memory_scopes.
+    scope              TEXT NOT NULL DEFAULT 'personal'
+                       CHECK (scope IN ('personal','shared','system')),
+    published_from     UUID REFERENCES entities(entity_id) ON DELETE CASCADE
 );
+CREATE UNIQUE INDEX IF NOT EXISTS entities_published_from_scope_uniq
+    ON entities (published_from, scope) WHERE published_from IS NOT NULL;
+CREATE INDEX IF NOT EXISTS entities_user_scope_idx ON entities (user_id, scope);
 
 -- Provenance edges: where was each entity seen?
 -- relation_type: MENTIONED_IN_SESSION | MENTIONED_IN_DOCUMENT | RELATED_TO
 -- evidence_type: SESSION | DOCUMENT
 -- evidence_id:   session UUID or file_path
+-- evidence_granularity: 'sentence' | 'paragraph' | 'document' (default)
 CREATE TABLE IF NOT EXISTS entity_relations (
-    id            SERIAL PRIMARY KEY,
-    source_id     UUID NOT NULL REFERENCES entities(entity_id) ON DELETE CASCADE,
-    relation_type TEXT NOT NULL,
-    evidence_type TEXT NOT NULL,
-    evidence_id   TEXT NOT NULL,
-    user_id       TEXT NOT NULL DEFAULT 'default',
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    id                   SERIAL PRIMARY KEY,
+    source_id            UUID NOT NULL REFERENCES entities(entity_id) ON DELETE CASCADE,
+    relation_type        TEXT NOT NULL,
+    evidence_type        TEXT NOT NULL,
+    evidence_id          TEXT NOT NULL,
+    user_id              TEXT NOT NULL DEFAULT 'default',
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    evidence_granularity TEXT NOT NULL DEFAULT 'document'
 );
+
+-- Per-evidence dedup contract: every (source_id, evidence_id, relation_type)
+-- triple per user is a single durable claim, not a re-ingest-frequency
+-- multiplier. Writer (services/entities.py) uses ON CONFLICT DO NOTHING.
+-- Restore path (routes/admin.py) uses generic ON CONFLICT DO NOTHING (no
+-- inference target) and is forward-compatible with this index automatically.
+-- See postgres/migrations/012-entity-relations-evidence-uniq.sql.
+CREATE UNIQUE INDEX IF NOT EXISTS entity_relations_evidence_uniq
+    ON entity_relations (source_id, evidence_id, relation_type, user_id);
+
+-- Partial index: fast lookup of staged entities per user (reconcile + promotion queries).
+CREATE INDEX IF NOT EXISTS idx_entities_staged ON entities (user_id, is_staged) WHERE is_staged = TRUE;
 
 -- Ambiguous entity merge candidates flagged for manual review.
 -- Inspect and resolve via GET /review-queue.
@@ -56,8 +99,16 @@ CREATE TABLE IF NOT EXISTS review_queue (
     candidate_b_id  UUID REFERENCES entities(entity_id) ON DELETE CASCADE,
     reason          TEXT NOT NULL,
     user_id         TEXT NOT NULL DEFAULT 'default',
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- Memory-scopes (migration 013): forward-compatibility scaffolding only.
+    -- No v1 writer ever produces shared/system rows on review_queue / action_log
+    -- / audit_log; reads go through admin-bypass per §8 of the plan. If a future
+    -- chunk activates household-visible review, it must add `published_from` and
+    -- a publish path consistent with §7.
+    scope           TEXT NOT NULL DEFAULT 'personal'
+                    CHECK (scope IN ('personal','shared','system'))
 );
+CREATE INDEX IF NOT EXISTS review_queue_user_scope_idx ON review_queue (user_id, scope);
 
 -- Ask/Do permission model: per-connector, per-action-type enforcement.
 -- Every MCP connector starts in ASK mode. DO mode is explicitly enabled
@@ -101,8 +152,12 @@ CREATE TABLE IF NOT EXISTS action_log (
     result_summary  TEXT,
     reverse_action  JSONB,                 -- null if irreversible
     user_id         TEXT NOT NULL DEFAULT 'default',
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- Memory-scopes (migration 013): forward-compat scaffolding (see review_queue note).
+    scope           TEXT NOT NULL DEFAULT 'personal'
+                    CHECK (scope IN ('personal','shared','system'))
 );
+CREATE INDEX IF NOT EXISTS action_log_user_scope_idx ON action_log (user_id, scope);
 
 -- ==========================================================================
 -- Signal infrastructure
@@ -144,11 +199,23 @@ CREATE TABLE IF NOT EXISTS signals (
     importance_score FLOAT NOT NULL DEFAULT 0.0,
     relevance_score  FLOAT NOT NULL DEFAULT 0.0,
     notified        BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- Memory-scopes (migration 013): see plan personal_shared_system_memory_scopes.
+    -- `source_url` / `source_label` denormalize sources(url, name) so shared/system
+    -- signals are renderable without joining `sources` (which is intentionally NOT
+    -- in the scope-bearing set per §2.12 of the plan).
+    scope           TEXT NOT NULL DEFAULT 'personal'
+                    CHECK (scope IN ('personal','shared','system')),
+    published_from  UUID REFERENCES signals(signal_id) ON DELETE CASCADE,
+    source_url      TEXT,
+    source_label    TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_signals_user_created ON signals (user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_signals_relevance ON signals (user_id, relevance_score DESC);
 CREATE INDEX IF NOT EXISTS idx_signals_url ON signals (url);
+CREATE UNIQUE INDEX IF NOT EXISTS signals_published_from_scope_uniq
+    ON signals (published_from, scope) WHERE published_from IS NOT NULL;
+CREATE INDEX IF NOT EXISTS signals_user_scope_idx ON signals (user_id, scope);
 
 -- Relevance profiles: per-user topic/location/entity/keyword tracking.
 CREATE TABLE IF NOT EXISTS relevance_profiles (
@@ -236,10 +303,14 @@ CREATE TABLE IF NOT EXISTS audit_log (
     reverse_token   UUID,                   -- NULL if not reversible
     reverse_action  JSONB,                  -- NULL if not reversible
     executed_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    reversed_at     TIMESTAMPTZ             -- set on successful reversal
+    reversed_at     TIMESTAMPTZ,            -- set on successful reversal
+    -- Memory-scopes (migration 013): forward-compat scaffolding (see review_queue note).
+    scope           TEXT NOT NULL DEFAULT 'personal'
+                    CHECK (scope IN ('personal','shared','system'))
 );
 CREATE INDEX IF NOT EXISTS idx_audit_user_time ON audit_log (user_id, executed_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_reverse_token ON audit_log (reverse_token) WHERE reverse_token IS NOT NULL;
+CREATE INDEX IF NOT EXISTS audit_log_user_scope_idx ON audit_log (user_id, scope);
 
 -- Scheduled routines registry. schedule_cron follows APScheduler CronTrigger format.
 -- steps: JSONB array of {action_name, input} objects.
@@ -265,3 +336,123 @@ CREATE TABLE IF NOT EXISTS app_settings (
     value       TEXT NOT NULL,
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- ==========================================================================
+-- KG Quality Pipeline — Pass 2
+-- ==========================================================================
+
+-- Constraint violations: data quality rule violations detected at ingestion time.
+-- severity: CRITICAL = data integrity issue; WARNING = quality concern; INFO = completeness hint.
+-- resolved_at: set when the condition no longer holds (auto-resolved on next constraint check).
+CREATE TABLE IF NOT EXISTS constraint_violations (
+    violation_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id         TEXT NOT NULL DEFAULT 'default',
+    entity_id       UUID REFERENCES entities(entity_id) ON DELETE CASCADE,
+    rule_name       TEXT NOT NULL,
+    severity        TEXT NOT NULL CHECK (severity IN ('CRITICAL', 'WARNING', 'INFO')),
+    detail          TEXT,
+    detected_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    resolved_at     TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_constraint_violations_open
+    ON constraint_violations (user_id, severity, detected_at DESC)
+    WHERE resolved_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_constraint_violations_entity
+    ON constraint_violations (entity_id)
+    WHERE resolved_at IS NULL;
+
+-- Pass 3: PPMI-based edge quality scores between co-occurring entity pairs.
+-- entity_id_a < entity_id_b enforces canonical direction, matching writer.py ordering.
+-- NOT in backup tables — recomputable from entity_relations by the weekly quality job.
+CREATE TABLE IF NOT EXISTS edge_scores (
+    id                BIGSERIAL PRIMARY KEY,
+    user_id           TEXT NOT NULL DEFAULT 'default',
+    entity_id_a       UUID NOT NULL REFERENCES entities(entity_id) ON DELETE CASCADE,
+    entity_id_b       UUID NOT NULL REFERENCES entities(entity_id) ON DELETE CASCADE,
+    ppmi_score        DOUBLE PRECISION,
+    edge_quality      DOUBLE PRECISION,
+    decay_factor      DOUBLE PRECISION,
+    last_evidence_at  TIMESTAMPTZ,
+    computed_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (user_id, entity_id_a, entity_id_b),
+    CHECK (entity_id_a < entity_id_b)
+);
+
+CREATE INDEX IF NOT EXISTS idx_edge_scores_user ON edge_scores (user_id);
+
+-- Pass 4a: operator-confirmed distinct entity pairs (suppresses future merge candidates)
+CREATE TABLE IF NOT EXISTS known_distinct_entity_pairs (
+    user_id         TEXT NOT NULL DEFAULT 'default',
+    entity_id_a     UUID NOT NULL REFERENCES entities(entity_id) ON DELETE CASCADE,
+    entity_id_b     UUID NOT NULL REFERENCES entities(entity_id) ON DELETE CASCADE,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (user_id, entity_id_a, entity_id_b),
+    CHECK (entity_id_a < entity_id_b)
+);
+
+-- Pass 4a: audit trail for all operator review queue decisions
+CREATE TABLE IF NOT EXISTS review_decisions (
+    decision_id     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id         TEXT NOT NULL DEFAULT 'default',
+    item_type       TEXT NOT NULL,
+    item_id         TEXT NOT NULL,
+    action          TEXT NOT NULL,
+    payload         JSONB,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_review_decisions_user_time
+    ON review_decisions (user_id, created_at DESC);
+
+-- Pass 4b: lifecycle record for each automated Splink deduplication job
+CREATE TABLE IF NOT EXISTS deduplication_runs (
+    run_id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id             TEXT NOT NULL DEFAULT 'default',
+    started_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    finished_at         TIMESTAMPTZ,
+    candidate_count     INT,
+    auto_merged         INT,
+    queued_for_review   INT,
+    known_distinct      INT,
+    error_message       TEXT
+);
+
+-- Pass 4b: Splink-scored candidate pairs; rows >= 0.50 enter review_queue for human decision
+CREATE TABLE IF NOT EXISTS dedup_candidates (
+    id                  BIGSERIAL PRIMARY KEY,
+    run_id              UUID NOT NULL REFERENCES deduplication_runs(run_id) ON DELETE CASCADE,
+    user_id             TEXT NOT NULL DEFAULT 'default',
+    entity_id_a         UUID NOT NULL REFERENCES entities(entity_id) ON DELETE CASCADE,
+    entity_id_b         UUID NOT NULL REFERENCES entities(entity_id) ON DELETE CASCADE,
+    match_probability   DOUBLE PRECISION NOT NULL,
+    features            JSONB,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (entity_id_a < entity_id_b)
+);
+
+CREATE INDEX IF NOT EXISTS idx_dedup_candidates_run
+    ON dedup_candidates (run_id, match_probability DESC);
+
+CREATE INDEX IF NOT EXISTS idx_dedup_candidates_user
+    ON dedup_candidates (user_id, match_probability DESC)
+    WHERE match_probability >= 0.5;
+
+-- Hot-reload KG settings: tunable graph/quality parameters with DB-first lookup.
+-- Config getters check this table first (TTL-cached) and fall back to env vars.
+-- This table IS in _BACKUP_TABLES — settings are user data and must survive restore.
+CREATE TABLE IF NOT EXISTS kg_settings (
+    key         TEXT PRIMARY KEY,
+    value       TEXT NOT NULL,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE OR REPLACE FUNCTION update_kg_settings_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN NEW.updated_at = NOW(); RETURN NEW; END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE TRIGGER kg_settings_updated_at
+    BEFORE UPDATE ON kg_settings
+    FOR EACH ROW EXECUTE FUNCTION update_kg_settings_updated_at();

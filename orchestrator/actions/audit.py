@@ -15,6 +15,8 @@ from datetime import datetime
 from datetime import timezone
 from typing import Optional
 
+import structlog
+
 from models.actions import AuditEntry
 
 import config
@@ -22,8 +24,30 @@ import config
 _log = logging.getLogger(__name__)
 
 
+def _audit_logger():
+    """Return the stdlib-bridged structlog logger for audit events.
+
+    Resolved per call (NOT cached at module import) so that
+    ``structlog.testing.capture_logs()`` in tests can intercept
+    ``audit.executed`` / ``audit.write_failed`` events that fire from
+    inside the ``with capture_logs()`` block. The dedicated logger
+    name ``lumogis.audit`` lets log-aggregation rules pin on the
+    audit-mirror channel without scraping the module path. The mirror
+    NEVER emits payload bodies (input_summary / result_summary /
+    reverse_token / reverse_action) — those stay in the Postgres
+    audit_log row, cross-referenced via ``audit_id``.
+    """
+    return structlog.get_logger("lumogis.audit")
+
+
 def write_audit(entry: AuditEntry, reverse_token: Optional[str] = None) -> Optional[int]:
-    """Insert an AuditEntry into audit_log. Returns the row id, or None on failure."""
+    """Insert an AuditEntry into audit_log. Returns the row id, or None on failure.
+
+    On success, mirrors a single ``audit.executed`` structured event to
+    stdout with cross-reference fields (``audit_id``, ``user_id``,
+    ``action_name``, ``connector``, ``mode``, ``is_reversible``). Payload
+    bodies stay in the DB row.
+    """
     try:
         ms = config.get_metadata_store()
         row = ms.fetch_one(
@@ -44,19 +68,48 @@ def write_audit(entry: AuditEntry, reverse_token: Optional[str] = None) -> Optio
                 entry.executed_at or datetime.now(timezone.utc),
             ),
         )
-        return row["id"] if row else None
+        audit_id = row["id"] if row else None
+        if audit_id is not None:
+            _audit_logger().info(
+                "audit.executed",
+                audit_id=audit_id,
+                user_id=entry.user_id,
+                action_name=entry.action_name,
+                connector=entry.connector,
+                mode=entry.mode,
+                is_reversible=bool(reverse_token),
+            )
+        return audit_id
     except Exception as exc:
-        _log.error("audit write error: %s", exc)
+        # NEVER include the AuditEntry payload (input_summary /
+        # result_summary / reverse_action) in the failure event — the
+        # whole reason the row failed to land may be that one of those
+        # fields was malformed, and the redaction processor cannot reason
+        # about every connector's payload shape. Keep stdout minimal;
+        # the operator who needs more re-runs with DEBUG logging.
+        _audit_logger().error(
+            "audit.write_failed",
+            error=type(exc).__name__,
+            message=str(exc),
+        )
         return None
 
 
 def get_audit(
     connector: Optional[str] = None,
     action_type: Optional[str] = None,
-    user_id: str = "default",
+    *,
+    user_id: str,
     limit: int = 50,
 ) -> list[dict]:
-    """Fetch recent audit log entries. Filter by connector or action_type."""
+    """Fetch recent audit log entries. Filter by connector or action_type.
+
+    Phase 3: ``user_id`` is keyword-only and required. The audit log is
+    a per-user record; never bulk-return everyone's actions because a
+    caller forgot to scope.
+    """
+    if not isinstance(user_id, str) or not user_id:
+        raise TypeError("get_audit: user_id (keyword-only) is required")
     conditions = ["user_id = %s"]
     params: list = [user_id]
 

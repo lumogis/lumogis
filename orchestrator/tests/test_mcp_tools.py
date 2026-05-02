@@ -111,6 +111,11 @@ def test_lookup_by_name_returns_dict_when_found(monkeypatch):
         "mention_count": 7,
         "aliases": ["Ada"],
         "context_tags": ["computing"],
+        # Scope was added when personal/shared/system memory scopes
+        # landed (see services.entities.lookup_by_name). The MCP
+        # entity.lookup schema requires this field, so the lookup
+        # result must surface it back to the caller.
+        "scope": "personal",
     }
     ms = _config.get_metadata_store()
     monkeypatch.setattr(ms, "fetch_one", lambda q, p=None: row)

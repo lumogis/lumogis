@@ -1,0 +1,13 @@
+# Non-default overlay: tiny second capability for Phase 5 compose / contract smoke.
+# Does not extend the household stack by default.
+#
+#   docker compose -f docker-compose.mock-capability.yml up --build
+#
+services:
+  lumogis-mock-capability:
+    build:
+      context: ./services/lumogis-mock-capability
+    ports:
+      - "18080:8080"
+    environment:
+      MOCK_CAPABILITY_SHARED_SECRET: ${MOCK_CAPABILITY_SHARED_SECRET:?Set MOCK_CAPABILITY_SHARED_SECRET for mock capability smoke}

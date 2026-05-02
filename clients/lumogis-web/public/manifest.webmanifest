@@ -1,0 +1,57 @@
+{
+  "name": "Lumogis",
+  "short_name": "Lumogis",
+  "description": "Local-first Lumogis Web client for your self-hosted AI assistant — chat, memory search, and approvals; your data stays on your infrastructure.",
+  "start_url": "/chat",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f7f7f9",
+  "theme_color": "#2747d3",
+  "categories": ["productivity", "utilities"],
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Chat",
+      "short_name": "Chat",
+      "description": "Open the chat shell",
+      "url": "/chat",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Search",
+      "short_name": "Search",
+      "description": "Open memory search",
+      "url": "/search",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Quick capture",
+      "short_name": "Capture",
+      "description": "Open QuickCapture — note, link, or voice staging",
+      "url": "/capture",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    }
+  ],
+  "share_target": {
+    "action": "/capture",
+    "method": "GET",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url"
+    }
+  }
+}

@@ -9,9 +9,11 @@ class SessionSummary(BaseModel):
     topics: list[str] = []
     entities: list[str] = []
     entity_ids: list[str] = []
+    scope: str = "personal"
 
 
 class ContextHit(BaseModel):
     session_id: str
     summary: str
     score: float
+    scope: str = "personal"

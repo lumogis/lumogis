@@ -72,7 +72,7 @@ class TestExecuteUnknownAction:
     def test_returns_error_for_unknown_action(self, monkeypatch):
         monkeypatch.setattr("actions.executor.get_action", lambda name: None)
 
-        result = execute("nonexistent_action")
+        result = execute("nonexistent_action", user_id="test-user")
 
         assert result.success is False
         assert "Unknown action" in result.error
@@ -108,7 +108,7 @@ class TestExecutePermissionDenied:
             lambda entry, **kw: audit_calls.append(entry) or "id",
         )
 
-        execute("test_write_action")
+        execute("test_write_action", user_id="test-user")
         assert len(audit_calls) == 1
 
 
@@ -124,7 +124,7 @@ class TestExecuteSuccess:
         monkeypatch.setattr("permissions.routine_check", lambda *a, **kw: None)
         monkeypatch.setattr("actions.executor.write_audit", lambda entry, **kw: "audit-1")
         monkeypatch.setattr("hooks.fire_background", lambda *a, **kw: None)
-        return execute(spec.name)
+        return execute(spec.name, user_id="test-user")
 
     def test_handler_result_returned(self, monkeypatch):
         spec = _make_spec(handler=lambda inp: ActionResult(success=True, output="file contents"))
@@ -163,7 +163,7 @@ class TestExecuteSuccess:
         )
         monkeypatch.setattr("hooks.fire_background", lambda *a, **kw: None)
 
-        execute(spec.name)
+        execute(spec.name, user_id="test-user")
         assert len(audit_calls) == 1
         assert audit_calls[0].action_name == "test_action"
 
@@ -179,5 +179,5 @@ class TestExecuteSuccess:
         monkeypatch.setattr("actions.executor.write_audit", lambda entry, **kw: "id")
         monkeypatch.setattr("hooks.fire_background", lambda *a, **kw: None)
 
-        execute(spec.name)
+        execute(spec.name, user_id="test-user")
         assert routine_calls == []

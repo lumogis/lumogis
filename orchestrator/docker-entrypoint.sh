@@ -6,6 +6,12 @@
 # Seed from the tracked cold-start template so fresh clones and single-file mounts work.
 _LIBRECHAT_CFG="/project/config/librechat.yaml"
 _LIBRECHAT_TEMPLATE="/project/config/librechat.coldstart.yaml"
+# Docker can create `librechat.yaml` as an empty directory when the bind-mount
+# source path was missing on first boot; LibreChat then logs EISDIR / invalid YAML.
+if [ -d "$_LIBRECHAT_CFG" ]; then
+    rm -rf "$_LIBRECHAT_CFG"
+    echo "[entrypoint] Removed directory at ${_LIBRECHAT_CFG}; expected a regular file — re-seeding below"
+fi
 if [ ! -f "$_LIBRECHAT_CFG" ] || [ ! -s "$_LIBRECHAT_CFG" ]; then
     if [ -f "$_LIBRECHAT_TEMPLATE" ]; then
         cp "$_LIBRECHAT_TEMPLATE" "$_LIBRECHAT_CFG"
@@ -47,6 +53,84 @@ fi
 # Warn if /data is not mounted (misconfigured FILESYSTEM_ROOT)
 if [ ! -d "/data" ]; then
     echo "[entrypoint] WARNING: /data is not mounted. Check FILESYSTEM_ROOT in .env." >&2
+fi
+
+# ── AUTH_SECRET hardening (post-/verify-plan follow-up) ─────────────────────
+# Refuse to boot when AUTH_ENABLED=true but AUTH_SECRET is unset or a known
+# placeholder. The entrypoint auto-rotates JWT_SECRET / JWT_REFRESH_SECRET /
+# RESTART_SECRET above, but intentionally does NOT auto-rotate AUTH_SECRET —
+# operators flip family-LAN mode on deliberately and must own that secret.
+# A duplicate Python-side guard lives in main._enforce_auth_consistency for
+# the case where the entrypoint is bypassed (e.g. local dev `uvicorn main:app`).
+_AUTH_ENABLED_NORM="$(echo "${AUTH_ENABLED:-false}" | tr '[:upper:]' '[:lower:]' | xargs)"
+if [ "$_AUTH_ENABLED_NORM" = "true" ]; then
+    _AUTH_SECRET_NORM="$(echo "${AUTH_SECRET:-}" | xargs)"
+    case "$_AUTH_SECRET_NORM" in
+        ""|"change-me-in-production"|"__GENERATE_ME__")
+            echo "[entrypoint] FATAL: AUTH_ENABLED=true but AUTH_SECRET is unset or a placeholder." >&2
+            echo "[entrypoint]        Generate a real secret with: openssl rand -hex 32" >&2
+            echo "[entrypoint]        Then set AUTH_SECRET in .env and restart." >&2
+            echo "[entrypoint]        AUTH_SECRET is intentionally NOT auto-rotated — see" >&2
+            echo "[entrypoint]        .cursor/plans/family_lan_multi_user.plan.md follow-ups." >&2
+            exit 1
+            ;;
+    esac
+fi
+
+# ── LUMOGIS_CREDENTIAL_KEY[S] hardening ─────────────────────────────────────
+# Refuse to boot when AUTH_ENABLED=true but no usable Fernet key is configured
+# for the per-user connector credential subsystem (services/connector_credentials.py).
+# Without a key, every credential PUT/GET/resolve would raise at request time
+# and the container would otherwise come up "healthy". A duplicate Python-side
+# guard lives in main._enforce_auth_consistency for the case where the
+# entrypoint is bypassed (e.g. local dev `uvicorn main:app`).
+#
+# Honour LUMOGIS_CREDENTIAL_KEYS (CSV, newest first) over LUMOGIS_CREDENTIAL_KEY
+# when set — same precedence as services.connector_credentials._load_keys().
+#
+# Critical: NOT auto-rotated by the loop above. Auto-generating this key would
+# silently destroy every existing encrypted credential on the next boot if
+# .env is ever re-bootstrapped. Operators must own this key.
+if [ "$_AUTH_ENABLED_NORM" = "true" ]; then
+    _CRED_KEYS_NORM="$(echo "${LUMOGIS_CREDENTIAL_KEYS:-${LUMOGIS_CREDENTIAL_KEY:-}}" | xargs)"
+    case "$_CRED_KEYS_NORM" in
+        ""|"change-me-in-production"|"__GENERATE_ME__")
+            echo "[entrypoint] FATAL: AUTH_ENABLED=true but LUMOGIS_CREDENTIAL_KEY[S] is unset or a placeholder." >&2
+            echo "[entrypoint]        Generate with: python3 -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\"" >&2
+            echo "[entrypoint]        Then set LUMOGIS_CREDENTIAL_KEY in .env (or LUMOGIS_CREDENTIAL_KEYS for a CSV during rotation) and restart." >&2
+            echo "[entrypoint]        Key is intentionally NOT auto-rotated — losing it makes every per-user connector credential unrecoverable." >&2
+            exit 1
+            ;;
+    esac
+fi
+
+# ── Apply Postgres migrations ────────────────────────────────────────────────
+# postgres/init.sql only runs on first init of an empty data volume; subsequent
+# schema changes live in postgres/migrations/*.sql and must be applied manually
+# unless something runs them. We do that here so existing installs heal on boot.
+# The runner is idempotent and tracks applied files in a schema_migrations table.
+if [ -f "/app/db_migrations.py" ]; then
+    echo "[entrypoint] Running Postgres migrations..."
+    if ! python3 /app/db_migrations.py; then
+        echo "[entrypoint] WARNING: migration runner exited non-zero — see logs above." >&2
+        echo "[entrypoint] Continuing startup; orchestrator may run in degraded mode." >&2
+    fi
+fi
+
+# ── Legacy `user_id='default'` remap (post-013 scope model) ──────────────────
+# The 013-memory-scopes.sql migration introduces a first-class `scope` column
+# whose `personal` arm gates visibility on `user_id`. Any leftover rows from
+# the pre-multi-user dev period that still carry `user_id='default'` would be
+# stranded under nobody's account once `AUTH_ENABLED=true` is flipped on.
+# The remap script is idempotent (subsequent boots are no-ops) and is the only
+# mutating operation that touches existing data — kept separate from the
+# migration runner so the SQL file stays pure-SQL and operationally debuggable.
+if [ -f "/app/db_default_user_remap.py" ]; then
+    echo "[entrypoint] Running legacy default-user remap..."
+    if ! python3 /app/db_default_user_remap.py; then
+        echo "[entrypoint] WARNING: default-user remap exited non-zero — see WARN line above." >&2
+        echo "[entrypoint] Continuing startup; legacy 'default'-user rows remain in place." >&2
+    fi
 fi
 
 echo "[entrypoint] Waiting for Ollama at $OLLAMA_URL ..."

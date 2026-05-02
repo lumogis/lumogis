@@ -15,6 +15,7 @@ from typing import Any
 from typing import Literal
 
 from pydantic import BaseModel
+from pydantic import Field
 
 
 class CapabilityTransport(str, Enum):
@@ -61,8 +62,13 @@ class CapabilityManifest(BaseModel):
         during registration (Area 2).
 
     Endpoints:
-        `health_endpoint` and `capabilities_endpoint` are paths relative to
-        the service's base URL — the registry composes the full URL.
+        `health_endpoint` is the path Core probes for liveness (relative to
+        the service base URL).
+
+        `capabilities_endpoint` is **documentary in v1**: Lumogis Core
+        always discovers manifests via hardcoded ``GET {base_url}/capabilities``
+        (see :mod:`services.capability_registry`). Manifests SHOULD set this
+        field to ``/capabilities``; other values do not change discovery.
     """
 
     name: str
@@ -75,8 +81,23 @@ class CapabilityManifest(BaseModel):
     description: str
     tools: list[CapabilityTool]
     health_endpoint: str
-    capabilities_endpoint: str
+    capabilities_endpoint: str = Field(
+        description=(
+            "Documentary path for tooling and authors. v1 Core ignores this for "
+            "discovery and always requests GET {base_url}/capabilities. Use "
+            "/capabilities."
+        ),
+    )
     permissions_required: list[str]
     config_schema: dict[str, Any]
     min_core_version: str
     maintainer: str
+    management_url: str | None = None
+    """Optional absolute URL the operator's browser can reach to administer
+    the service (e.g. an /mgm page). When `None`, the service has no
+    operator-facing UI. When set, MUST be an absolute URL — not a relative
+    path — because external clients (Core's status page, future MCP
+    marketplaces) resolve it relative to their own origin, not the
+    capability service's container hostname. Backward-compatible: existing
+    manifests without this field validate unchanged.
+    """

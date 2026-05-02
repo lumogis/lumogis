@@ -1,6 +1,15 @@
 # Lumogis model registry — static default.
 # This is the cold-start default. The dashboard (Settings → Models) manages
 # Ollama model pulls and enables/disables optional providers at runtime.
+#
+# Cloud models reference an `api_key_env` for naming purposes.
+# Resolution under AUTH_ENABLED=true reads from the per-user
+# `user_connector_credentials` table (connector ids `llm_anthropic`,
+# `llm_openai`, `llm_xai`, `llm_perplexity`, `llm_gemini`, `llm_mistral`).
+# The matching environment variable / `app_settings` row is honoured only
+# under AUTH_ENABLED=false (single-user / legacy mode). See
+# `services/llm_connector_map.py` for the env→connector mapping and
+# `docs/connect-and-verify.md` for the per-user setup walkthrough.
 
 models:
   claude:

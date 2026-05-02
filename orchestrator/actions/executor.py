@@ -48,20 +48,32 @@ _HARD_LIMITED = frozenset(
 def execute(
     name: str,
     input: dict[str, Any] | None = None,
-    user_id: str = "default",
+    *,
+    user_id: str,
 ) -> ActionResult:
-    """Execute a registered action by name. Never bypasses permission check."""
+    """Execute a registered action by name. Never bypasses permission check.
+
+    Phase 3: ``user_id`` is keyword-only and required. Every audit row,
+    permission log entry, and ACTION_EXECUTED hook payload carries the
+    caller's identity end-to-end. Callers that forget the kwarg fail
+    loud at import-call time with :class:`TypeError`.
+    """
+    if not isinstance(user_id, str) or not user_id:
+        raise TypeError("actions.executor.execute: user_id (keyword-only) is required")
     input = input or {}
 
     spec = get_action(name)
     if spec is None:
         return ActionResult(success=False, output="", error=f"Unknown action: {name!r}")
 
-    # Permission check via permissions module.
+    # Permission check via permissions module — user_id propagates so
+    # action_log captures who attempted what, even on denials.
     from permissions import check_permission
     from permissions import routine_check
 
-    allowed = check_permission(spec.connector, spec.action_type, spec.is_write)
+    allowed = check_permission(
+        spec.connector, spec.action_type, spec.is_write, user_id=user_id
+    )
     if not allowed:
         result = ActionResult(
             success=False,
@@ -89,7 +101,7 @@ def execute(
     # Routine elevation check — only for successful DO-mode writes.
     if result.success and spec.is_write and spec.action_type not in _HARD_LIMITED:
         try:
-            routine_check(spec.connector, spec.action_type)
+            routine_check(spec.connector, spec.action_type, user_id=user_id)
         except Exception as exc:
             _log.debug("routine_check error: %s", exc)
 

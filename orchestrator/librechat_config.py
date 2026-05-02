@@ -92,7 +92,18 @@ def generate_librechat_yaml() -> bool:
 
         specs_list = []
         for alias, cfg in all_models.items():
-            if not app_config.is_model_enabled(alias):
+            # Plan llm_provider_keys_per_user_migration Pass 3.13: the
+            # generated ``librechat.yaml`` is a **household** model list
+            # (per question 3 of the plan: LibreChat keeps the household
+            # view; per-user filtering happens dynamically at the
+            # ``/v1/models`` endpoint). Passing ``user_id=None`` is
+            # explicit so the auth-on semantics are unambiguous: under
+            # ``AUTH_ENABLED=true`` cloud models are listed iff the
+            # household optional toggle is on (the substrate has no
+            # household-level "any user has a key" aggregate by design).
+            # Users without their own key get a 424 at chat time, mapped
+            # to a friendly message in the chat UI.
+            if not app_config.is_model_enabled(alias, user_id=None):
                 continue
 
             ollama_model = cfg.get("model", "")
@@ -128,9 +139,20 @@ def generate_librechat_yaml() -> bool:
 
             specs_list.append(spec)
 
+        # Build the Knowledge Graph footer link.  The orchestrator URL uses the
+        # ORCHESTRATOR_EXTERNAL_URL env var when set (e.g. behind a reverse proxy),
+        # otherwise falls back to the default localhost:8000.
+        _ext_url = os.environ.get("ORCHESTRATOR_EXTERNAL_URL", "http://localhost:8000").rstrip("/")
+        _dashboard_url = f"{_ext_url}/dashboard"
+        _graph_url = f"{_ext_url}/graph/mgm"
+        _custom_footer = f"[Dashboard]({_dashboard_url}) | [Knowledge Graph]({_graph_url})"
+
         librechat_cfg = {
             "version": "1.3.5",
             "cache": True,
+            "interface": {
+                "customFooter": _custom_footer,
+            },
             "endpoints": {
                 "custom": [{
                     "name": "Lumogis",

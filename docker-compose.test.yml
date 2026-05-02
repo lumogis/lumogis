@@ -1,0 +1,28 @@
+# Overlay for deterministic public RC integration tests (merge explicitly).
+#
+#   COMPOSE_PROFILES= COMPOSE_FILE=docker-compose.yml:docker-compose.test.yml \
+#     docker compose --env-file config/test.env.example up -d
+#
+# Pair with docker-compose.public-rc-stack.yml (via scripts/integration-public-rc.sh)
+# for FalkorDB + lumogis-graph + mock-capability + GRAPH_MODE=service.
+# When only this file is merged, GRAPH_MODE=inprocess keeps lightweight overrides.
+
+services:
+  orchestrator:
+    environment:
+      # Family-LAN mode so Playwright can exercise POST /api/v1/auth/login against the
+      # isolated lumogis-test Postgres. Smoke credentials + AUTH_SECRET / credential key
+      # live only in config/test.env.example (local CI stack — never production).
+      AUTH_ENABLED: "true"
+      AUTH_SECRET: ${AUTH_SECRET}
+      LUMOGIS_CREDENTIAL_KEY: ${LUMOGIS_CREDENTIAL_KEY}
+      LUMOGIS_PUBLIC_ORIGIN: ${LUMOGIS_PUBLIC_ORIGIN:-http://127.0.0.1}
+      LUMOGIS_BOOTSTRAP_ADMIN_EMAIL: ${LUMOGIS_BOOTSTRAP_ADMIN_EMAIL:-}
+      LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD: ${LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD:-}
+      LUMOGIS_WEB_SMOKE_EMAIL: ${LUMOGIS_WEB_SMOKE_EMAIL:-}
+      LUMOGIS_WEB_SMOKE_PASSWORD: ${LUMOGIS_WEB_SMOKE_PASSWORD:-}
+      GRAPH_MODE: "inprocess"
+      CAPABILITY_SERVICE_URLS: ""
+      MCP_AUTH_TOKEN: ""
+      STT_BACKEND: "none"
+      OLLAMA_EXTRA_MODELS: ""

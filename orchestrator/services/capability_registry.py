@@ -3,8 +3,10 @@
 """Capability service registry (Area 2 ecosystem plumbing).
 
 Discovers, validates, and holds out-of-process Lumogis capability services.
-Each service must expose GET /capabilities returning a CapabilityManifest
-(see orchestrator/models/capability.py).
+Discovery always uses **GET {base_url}/capabilities** (hardcoded path). The
+manifest field ``capabilities_endpoint`` is documentary in v1 — see
+``CapabilityManifest`` docs. Each successful response must validate as
+:class:`~models.capability.CapabilityManifest`.
 
 Lifecycle:
     Startup: main.py lifespan calls `await registry.discover(urls)` once.
@@ -32,15 +34,14 @@ from datetime import datetime
 from datetime import timezone
 
 import httpx
-from packaging.version import InvalidVersion
-from packaging.version import Version
-from pydantic import BaseModel
-from pydantic import ValidationError
-
 from __version__ import __version__ as CORE_VERSION
 from models.capability import CapabilityLicenseMode
 from models.capability import CapabilityManifest
 from models.capability import CapabilityTool
+from packaging.version import InvalidVersion
+from packaging.version import Version
+from pydantic import BaseModel
+from pydantic import ValidationError
 
 _log = logging.getLogger(__name__)
 
@@ -219,6 +220,15 @@ class CapabilityRegistry:
                 exc,
             )
             return False
+
+        ce = (manifest.capabilities_endpoint or "").strip()
+        if ce and ce != "/capabilities":
+            _log.warning(
+                "Capability service %s declares capabilities_endpoint=%r; v1 Core "
+                "always discovers at /capabilities only (field is documentary)",
+                manifest.id,
+                ce,
+            )
 
         if not self._is_compatible(manifest):
             return False

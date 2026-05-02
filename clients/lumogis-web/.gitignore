@@ -1,0 +1,16 @@
+node_modules
+dist
+dist-ssr
+.cache
+.vite
+.parcel-cache
+*.log
+.env
+.env.local
+.env.*.local
+src/api/generated/
+*.tsbuildinfo
+.tsbuild/
+playwright-report/
+test-results/
+blob-report/

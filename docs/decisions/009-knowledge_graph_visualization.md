@@ -25,7 +25,7 @@ Provide **first-party, read-only graph exploration** using **Cytoscape.js**, dri
 - **Neo4j NVL** — embeddable WebGL stack; licence and npm-bundler friction vs MIT Cytoscape for AGPL core unless explicitly vetted.
 - **react-force-graph / React island** — viable if the project adopts a bundler for this surface; unnecessary while static Cytoscape meets requirements.
 
-Full evaluation: `.cursor/explorations/knowledge_graph_visualization.md` (initial), `.cursor/explorations/knowledge_graph_visualization_v2.md` (full-featured page, 2026-04-15).
+Full evaluation: *(maintainer-local only; not part of the tracked repository)* (initial), *(maintainer-local only; not part of the tracked repository)* (full-featured page, 2026-04-15).
 
 ## Consequences
 

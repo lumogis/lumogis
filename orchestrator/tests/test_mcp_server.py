@@ -79,20 +79,31 @@ def test_capabilities_route_returns_valid_manifest_json():
 def test_memory_search_tool_wraps_retrieve_context(monkeypatch):
     import mcp_server
 
-    fake_hits = [ContextHit(session_id="s1", summary="hello", score=0.91)]
+    monkeypatch.setenv("MCP_DEFAULT_USER_ID", "test-user")
+    fake_hits = [
+        ContextHit(session_id="s1", summary="hello", score=0.91, scope="shared"),
+    ]
     monkeypatch.setattr(
         "services.memory.retrieve_context",
         lambda query, limit, user_id: fake_hits,
     )
     out = mcp_server.memory_search(query="anything", limit=3)
     assert out == {
-        "results": [{"session_id": "s1", "summary": "hello", "score": 0.91}],
+        "results": [
+            {
+                "session_id": "s1",
+                "summary": "hello",
+                "score": 0.91,
+                "scope": "shared",
+            },
+        ],
     }
 
 
 def test_memory_get_recent_tool_wraps_recent_sessions(monkeypatch):
     import mcp_server
 
+    monkeypatch.setenv("MCP_DEFAULT_USER_ID", "test-user")
     monkeypatch.setattr(
         "services.memory.recent_sessions",
         lambda limit, user_id: [
@@ -101,6 +112,7 @@ def test_memory_get_recent_tool_wraps_recent_sessions(monkeypatch):
                 summary="x",
                 topics=["a"],
                 entities=["E"],
+                scope="system",
             ),
         ],
     )
@@ -112,6 +124,7 @@ def test_memory_get_recent_tool_wraps_recent_sessions(monkeypatch):
                 "summary": "x",
                 "topics": ["a"],
                 "entities": ["E"],
+                "scope": "system",
             },
         ],
     }
@@ -120,12 +133,14 @@ def test_memory_get_recent_tool_wraps_recent_sessions(monkeypatch):
 def test_entity_lookup_tool_wraps_lookup_by_name(monkeypatch):
     import mcp_server
 
+    monkeypatch.setenv("MCP_DEFAULT_USER_ID", "test-user")
     fake = {
         "name": "Ada",
         "entity_type": "PERSON",
         "mention_count": 1,
         "aliases": [],
         "context_tags": [],
+        "scope": "personal",
     }
     monkeypatch.setattr(
         "services.entities.lookup_by_name",
@@ -137,6 +152,7 @@ def test_entity_lookup_tool_wraps_lookup_by_name(monkeypatch):
 def test_entity_lookup_tool_returns_none_entity_when_not_found(monkeypatch):
     import mcp_server
 
+    monkeypatch.setenv("MCP_DEFAULT_USER_ID", "test-user")
     monkeypatch.setattr(
         "services.entities.lookup_by_name",
         lambda name, user_id: None,
@@ -147,6 +163,7 @@ def test_entity_lookup_tool_returns_none_entity_when_not_found(monkeypatch):
 def test_entity_search_tool_wraps_search_by_name(monkeypatch):
     import mcp_server
 
+    monkeypatch.setenv("MCP_DEFAULT_USER_ID", "test-user")
     rows = [
         {
             "name": "Lumogis",
@@ -154,6 +171,7 @@ def test_entity_search_tool_wraps_search_by_name(monkeypatch):
             "mention_count": 4,
             "aliases": [],
             "context_tags": [],
+            "scope": "shared",
         }
     ]
     monkeypatch.setattr(
@@ -165,6 +183,8 @@ def test_entity_search_tool_wraps_search_by_name(monkeypatch):
 
 def test_context_build_combines_search_and_memory(monkeypatch):
     import mcp_server
+
+    monkeypatch.setenv("MCP_DEFAULT_USER_ID", "test-user")
 
     class _DocHit:
         def __init__(self, text, source):
@@ -199,6 +219,8 @@ def test_context_build_combines_search_and_memory(monkeypatch):
 def test_context_build_recovers_from_underlying_failures(monkeypatch):
     """semantic_search and retrieve_context failures must not raise."""
     import mcp_server
+
+    monkeypatch.setenv("MCP_DEFAULT_USER_ID", "test-user")
 
     def boom(*a, **k):
         raise RuntimeError("backend down")

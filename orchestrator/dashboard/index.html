@@ -220,6 +220,21 @@ tr:hover td { background: var(--surface); }
   display: inline-block; padding: 1px 7px; border-radius: 10px;
   font-size: 11px; background: var(--border); color: var(--txt2); margin: 1px;
 }
+/* Scope badge — read-only visibility marker on list rows.
+   Plan §2.17: no publish UI in v1, only a small column showing whether
+   a row is personal (owner-only), shared (household-visible), or system
+   (org-wide). Colour-coding mirrors the household risk gradient:
+     personal → neutral grey (least visible)
+     shared   → soft accent (household-visible)
+     system   → warm amber (org-wide; rare, prominent) */
+.scope-badge {
+  display: inline-block; padding: 1px 6px; border-radius: 8px;
+  font-size: 10px; font-weight: 600; letter-spacing: .3px;
+  text-transform: uppercase; line-height: 14px;
+}
+.scope-badge.personal { background: var(--border);     color: var(--txt2); }
+.scope-badge.shared   { background: rgba(80,160,220,.18); color: #4ea1d8; }
+.scope-badge.system   { background: rgba(220,170,80,.18); color: #d8a14e; }
 .section-gap { margin-top: 24px; }
 .toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
 .toolbar input { max-width: 280px; }
@@ -329,8 +344,58 @@ tr:hover td { background: var(--surface); }
       <span id="sseLabel">connecting…</span>
     </div>
     <div class="spacer"></div>
+    <!-- Current user / role widget — populated by /api/v1/auth/me -->
+    <div id="authWidget" style="display:flex;align-items:center;gap:8px;color:var(--txt2);font-size:12px">
+      <span id="authWidgetLabel">…</span>
+      <a id="authWidgetLogout" href="#" style="display:none" onclick="lumogisLogout(event)">Logout</a>
+    </div>
     <button class="theme-btn" id="themeBtn" title="Toggle light/dark mode" onclick="toggleTheme()">☀️</button>
   </header>
+
+  <div style="margin:12px 0;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--txt2);font-size:13px">
+    New Lumogis Web is available at <a href="/chat">/chat</a> for chat, search, approvals, settings, and admin workflows.
+  </div>
+
+  <script>
+  // Inline auth widget — Family-LAN multi-user, plan §7 row "dashboard/index.html".
+  // Single fetch to /api/v1/auth/me; renders email + role; offers Logout.
+  // Falls back to "Single-user mode (admin)" when AUTH_ENABLED=false (the
+  // endpoint returns the synthesised dev admin in that case).
+  (function () {
+    var label  = document.getElementById('authWidgetLabel');
+    var logout = document.getElementById('authWidgetLogout');
+    var token  = null;
+    try { token = window.localStorage.getItem('lumogis_access_token'); } catch (e) { token = null; }
+    var headers = { 'Accept': 'application/json' };
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+    fetch('/api/v1/auth/me', { headers: headers, credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
+      .then(function (me) {
+        if (me && me.email === 'dev@local.lan') {
+          label.textContent = 'Single-user mode (admin)';
+          logout.style.display = 'none';
+        } else if (me && me.email) {
+          label.textContent = me.email + ' (' + (me.role || 'user') + ')';
+          logout.style.display = '';
+        } else {
+          label.textContent = '';
+        }
+      })
+      .catch(function () { label.textContent = 'Not signed in'; });
+  })();
+  function lumogisLogout(ev) {
+    ev.preventDefault();
+    var token = null;
+    try { token = window.localStorage.getItem('lumogis_access_token'); } catch (e) { token = null; }
+    var headers = {};
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+    fetch('/api/v1/auth/logout', { method: 'POST', headers: headers, credentials: 'same-origin' })
+      .finally(function () {
+        try { window.localStorage.removeItem('lumogis_access_token'); } catch (e) { /* ignore */ }
+        window.location.reload();
+      });
+  }
+  </script>
 
   <!-- Nav -->
   <nav class="nav" role="tablist">
@@ -339,6 +404,8 @@ tr:hover td { background: var(--surface); }
     <button class="nav-tab" role="tab" onclick="switchTab('sources')">Sources</button>
     <button class="nav-tab" role="tab" onclick="switchTab('entities')">Entities</button>
     <button class="nav-tab" role="tab" onclick="switchTab('activity')">Activity</button>
+    <button class="nav-tab" role="tab" onclick="switchTab('graphhealth')">Graph Health</button>
+    <button class="nav-tab" role="tab" onclick="switchTab('reviewqueue')">Review Queue <span id="reviewQueueBadge" class="live-badge" style="display:none"></span></button>
     <button class="nav-tab" role="tab" onclick="switchTab('export')">Export</button>
     <button class="nav-tab" role="tab" onclick="switchTab('settings')">Settings</button>
   </nav>
@@ -459,6 +526,31 @@ tr:hover td { background: var(--surface); }
       </div>
     </section>
 
+    <!-- ── Graph Health ──────────────────────────────────────── -->
+    <section class="panel" id="panel-graphhealth">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+        <div class="panel-title">Graph Health</div>
+        <button class="refresh-btn" onclick="loadGraphHealth()">↺ Refresh</button>
+      </div>
+      <div id="graphHealthError" style="display:none" class="empty" style="color:var(--red)"></div>
+      <div id="graphHealthContent">
+        <div id="graphHealthStats" class="grid-3"></div>
+        <div class="grid-3" id="graphHealthViolations"></div>
+        <div class="grid-3" id="graphHealthFreshness"></div>
+      </div>
+    </section>
+
+    <!-- ── Review Queue ──────────────────────────────────────── -->
+    <section class="panel" id="panel-reviewqueue">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+        <div class="panel-title">Review Queue</div>
+        <button class="refresh-btn" onclick="loadReviewQueue()">↺ Refresh</button>
+      </div>
+      <div id="reviewQueueSummary" style="margin-bottom:16px;color:var(--txt2);font-size:13px"></div>
+      <div id="reviewQueueError" style="display:none" class="empty" style="color:var(--red)"></div>
+      <div id="reviewQueueList"></div>
+    </section>
+
     <!-- ── Export ────────────────────────────────────────────── -->
     <section class="panel" id="panel-export">
       <div class="panel-title">Export</div>
@@ -530,6 +622,14 @@ const fmt = {
     return d.toLocaleDateString();
   },
   tags: (arr) => (arr || []).map(t => `<span class="tag">${esc(t)}</span>`).join(''),
+  // scope: read-only visibility marker — plan §2.17. Defaults to
+  // 'personal' so legacy rows that pre-date migration 013 still render
+  // a sensible badge instead of an empty cell.
+  scope: (s) => {
+    const v = (s || 'personal').toLowerCase();
+    const cls = ['personal','shared','system'].includes(v) ? v : 'personal';
+    return `<span class="scope-badge ${cls}">${cls}</span>`;
+  },
   esc: (s) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'),
 };
 function esc(s) { return fmt.esc(s); }
@@ -555,20 +655,20 @@ function toggleTheme() {
   const next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
   html.setAttribute('data-theme', next);
   $('themeBtn').textContent = next === 'dark' ? '☀️' : '🌙';
-  localStorage.setItem('lg-theme', next);
+  localStorage.setItem('lm-theme', next);
 }
 (function initTheme() {
-  const saved = localStorage.getItem('lg-theme') || 'dark';
+  const saved = localStorage.getItem('lm-theme') || 'dark';
   document.documentElement.setAttribute('data-theme', saved);
   $('themeBtn').textContent = saved === 'dark' ? '☀️' : '🌙';
 })();
 
 // ── Tab routing ───────────────────────────────────────────────────
-const LOADERS = { health: loadHealth, signals: loadSignals, sources: loadSources, entities: loadEntities, activity: loadActivity, settings: loadSettings };
+const LOADERS = { health: loadHealth, signals: loadSignals, sources: loadSources, entities: loadEntities, activity: loadActivity, graphhealth: loadGraphHealth, reviewqueue: loadReviewQueue, settings: loadSettings };
 function switchTab(name) {
   state.tab = name;
   document.querySelectorAll('.nav-tab').forEach((b, i) => {
-    const tabs = ['health','signals','sources','entities','activity','export','settings'];
+    const tabs = ['health','signals','sources','entities','activity','graphhealth','reviewqueue','export','settings'];
     b.classList.toggle('active', tabs[i] === name);
   });
   document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === `panel-${name}`));
@@ -1616,10 +1716,11 @@ async function loadSignals() {
     $('signalsCount').textContent = `${rows.length} of ${d.total ?? rows.length}`;
     if (!rows.length) { setHtml('signalsTable', '<div class="empty">No signals yet. Add a source to start monitoring.</div>'); return; }
     setHtml('signalsTable', `<table>
-      <thead><tr><th>Title</th><th>Source</th><th>Importance</th><th>Relevance</th><th>Topics</th><th>When</th></tr></thead>
+      <thead><tr><th>Title</th><th>Source</th><th>Scope</th><th>Importance</th><th>Relevance</th><th>Topics</th><th>When</th></tr></thead>
       <tbody>${rows.map(r => `<tr>
         <td><a href="${esc(r.url)}" target="_blank" rel="noopener" class="truncate" style="display:block;max-width:280px">${esc(r.title || '—')}</a></td>
         <td class="mono truncate" style="max-width:120px">${esc(r.source_id?.slice(0,8) || '—')}</td>
+        <td>${fmt.scope(r.scope)}</td>
         <td>${fmt.score(r.importance_score)}</td>
         <td>${fmt.score(r.relevance_score)}</td>
         <td>${fmt.tags(r.topics)}</td>
@@ -1724,10 +1825,11 @@ function renderEntities() {
   $('entitiesCount').textContent = `${rows.length} shown`;
   if (!rows.length) { setHtml('entitiesTable', '<div class="empty">No entities yet. Ingest documents or end a session to extract them.</div>'); return; }
   setHtml('entitiesTable', `<table>
-    <thead><tr><th>Name</th><th>Type</th><th>Mentions</th><th>Aliases</th><th>Tags</th></tr></thead>
+    <thead><tr><th>Name</th><th>Type</th><th>Scope</th><th>Mentions</th><th>Aliases</th><th>Tags</th></tr></thead>
     <tbody>${rows.map(r => `<tr>
       <td><strong>${esc(r.name)}</strong></td>
       <td><span class="tag">${esc(r.entity_type || '?')}</span></td>
+      <td>${fmt.scope(r.scope)}</td>
       <td style="font-variant-numeric:tabular-nums">${r.mention_count ?? 0}</td>
       <td>${(r.aliases || []).map(a => `<span class="tag">${esc(a)}</span>`).join('')}</td>
       <td>${fmt.tags(r.context_tags)}</td>
@@ -1781,6 +1883,167 @@ async function undoAction(reverseToken, rowId) {
     }
   } catch (e) {
     showToast(`Undo failed: ${e.message}`);
+  }
+}
+
+// ── Graph Health panel ────────────────────────────────────────────
+async function loadGraphHealth() {
+  const errEl = $('graphHealthError');
+  const contentEl = $('graphHealthContent');
+  if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+  if (contentEl) contentEl.style.display = 'block';
+
+  try {
+    const d = await api('/graph/health');
+
+    const trend = d.ingestion_quality_trend_7d != null
+      ? `${(d.ingestion_quality_trend_7d * 100).toFixed(1)}%`
+      : 'No data';
+
+    const vc = d.constraint_violation_counts || {};
+    const violationSummary = `${vc.CRITICAL ?? 0} critical, ${vc.WARNING ?? 0} warning, ${vc.INFO ?? 0} info`;
+
+    setHtml('graphHealthStats', [
+      { label: 'Duplicate candidates', value: d.duplicate_candidate_count ?? 0, sub: 'open in review queue' },
+      { label: 'Orphan entities', value: `${(d.orphan_entity_pct ?? 0).toFixed(1)}%`, sub: 'zero edges' },
+      { label: 'Mean completeness', value: `${((d.mean_entity_completeness ?? 0) * 100).toFixed(1)}%`, sub: 'extraction quality' },
+      { label: 'Quality trend (7d)', value: trend, sub: 'avg extraction quality' },
+    ].map(s =>
+      `<div class="stat-card">
+        <div class="stat-label">${s.label}</div>
+        <div class="stat-value">${esc(String(s.value))}</div>
+        <div class="stat-sub">${s.sub}</div>
+      </div>`
+    ).join(''));
+
+    setHtml('graphHealthViolations', `
+      <div class="stat-card" style="grid-column:1/-1">
+        <div class="stat-label">Constraint violations (open)</div>
+        <div style="display:flex;gap:24px;margin-top:8px;flex-wrap:wrap">
+          <span><span class="score-pill low">${vc.CRITICAL ?? 0}</span> &nbsp;critical</span>
+          <span><span class="score-pill mid">${vc.WARNING ?? 0}</span> &nbsp;warnings</span>
+          <span><span class="score-pill">${vc.INFO ?? 0}</span> &nbsp;info</span>
+        </div>
+      </div>
+    `);
+
+    const tf = d.temporal_freshness || {};
+    setHtml('graphHealthFreshness', [
+      { label: 'Last 7 days', value: tf.last_7d ?? 0 },
+      { label: '8–30 days', value: tf['8_30d'] ?? 0 },
+      { label: '31–90 days', value: tf['31_90d'] ?? 0 },
+      { label: 'Over 90 days', value: tf['90d_plus'] ?? 0 },
+    ].map(s =>
+      `<div class="stat-card">
+        <div class="stat-label">${s.label}</div>
+        <div class="stat-value">${s.value}</div>
+        <div class="stat-sub">entities updated</div>
+      </div>`
+    ).join(''));
+
+  } catch (e) {
+    if (contentEl) contentEl.style.display = 'none';
+    if (errEl) {
+      errEl.style.display = 'block';
+      errEl.style.color = 'var(--red)';
+      errEl.textContent = `Graph unavailable: ${e.message}`;
+    }
+  }
+}
+
+// ── Review Queue panel ────────────────────────────────────────────
+
+const _ITEM_TYPE_LABEL = {
+  ambiguous_entity:    'Ambiguous merge candidate',
+  constraint_violation:'Critical constraint',
+  staged_entity:       'Staged entity',
+  orphan_entity:       'Orphan entity',
+};
+const _PRIORITY_COLOR = { 1.0: 'var(--red)', 0.9: 'var(--yellow)', 0.7: 'var(--accent)', 0.5: 'var(--txt2)' };
+
+async function reviewQueueDecide(itemType, itemId, action, extraPayload) {
+  try {
+    await api('/review-queue/decide', {
+      method: 'POST',
+      body: JSON.stringify({ item_type: itemType, item_id: String(itemId), action, user_id: 'default', ...extraPayload }),
+    });
+    loadReviewQueue();
+  } catch(e) {
+    alert(`Action failed: ${e.message}`);
+  }
+}
+
+function _renderReviewItem(item) {
+  const typeLabel = _ITEM_TYPE_LABEL[item.item_type] || item.item_type;
+  const priColor  = _PRIORITY_COLOR[item.priority] || 'var(--txt2)';
+  let desc = '';
+  let actions = '';
+
+  if (item.item_type === 'ambiguous_entity') {
+    const a = item.candidate_a || {}, b = item.candidate_b || {};
+    desc = `<span style="font-weight:600">${esc(a.name)}</span> <span style="color:var(--txt2)">(${esc(a.entity_type)})</span> vs <span style="font-weight:600">${esc(b.name)}</span> <span style="color:var(--txt2)">(${esc(b.entity_type)})</span><br><span style="color:var(--txt2);font-size:12px">${esc(item.reason || '')}</span>`;
+    actions = `<button onclick="reviewQueueDecide('ambiguous_entity','${esc(item.item_id)}','merge')">Merge</button>
+               <button onclick="reviewQueueDecide('ambiguous_entity','${esc(item.item_id)}','distinct')">Mark distinct</button>`;
+  } else if (item.item_type === 'constraint_violation') {
+    const v = item.violation || {};
+    desc = `<span style="font-weight:600">${esc(v.rule_name)}</span><br><span style="color:var(--txt2);font-size:12px">${esc(v.detail || '')}</span>`;
+    actions = `<button onclick="reviewQueueDecide('constraint_violation','${esc(item.item_id)}','suppress')">Suppress</button>`;
+  } else if (item.item_type === 'staged_entity') {
+    const e = item.entity || {};
+    desc = `<span style="font-weight:600">${esc(e.name)}</span> <span style="color:var(--txt2)">(${esc(e.entity_type)})</span> &nbsp; quality ${e.extraction_quality != null ? (e.extraction_quality * 100).toFixed(0)+'%' : '—'} &nbsp; ${e.mention_count} mention(s)`;
+    actions = `<button onclick="reviewQueueDecide('staged_entity','${esc(item.item_id)}','promote')">Promote</button>
+               <button onclick="reviewQueueDecide('staged_entity','${esc(item.item_id)}','discard')">Discard</button>`;
+  } else if (item.item_type === 'orphan_entity') {
+    const e = item.entity || {};
+    desc = `<span style="font-weight:600">${esc(e.name)}</span> <span style="color:var(--txt2)">(${esc(e.entity_type)})</span> &nbsp; created ${fmt.date(e.created_at)}`;
+    actions = `<button onclick="reviewQueueDecide('orphan_entity','${esc(item.item_id)}','dismiss')">Dismiss</button>`;
+  }
+
+  return `<div class="card" style="margin-bottom:8px">
+    <div class="card-body" style="display:flex;align-items:flex-start;gap:16px;padding:12px 16px">
+      <div style="min-width:120px;color:${priColor};font-size:12px;font-weight:600;padding-top:2px">${typeLabel}</div>
+      <div style="flex:1;font-size:13px">${desc}</div>
+      <div style="display:flex;gap:6px;flex-shrink:0">${actions}</div>
+    </div>
+  </div>`;
+}
+
+async function loadReviewQueue() {
+  const errEl  = $('reviewQueueError');
+  const listEl = $('reviewQueueList');
+  const sumEl  = $('reviewQueueSummary');
+  if (errEl)  { errEl.style.display = 'none'; errEl.textContent = ''; }
+  if (listEl) listEl.innerHTML = '<div class="empty">Loading…</div>';
+
+  try {
+    const d = await api('/review-queue?source=all');
+    const items = d.items || [];
+
+    // Summary counts by type
+    const counts = {};
+    for (const it of items) counts[it.item_type] = (counts[it.item_type] || 0) + 1;
+    const parts = [];
+    if (counts.ambiguous_entity)    parts.push(`${counts.ambiguous_entity} ambiguous`);
+    if (counts.constraint_violation) parts.push(`${counts.constraint_violation} critical violation${counts.constraint_violation > 1 ? 's' : ''}`);
+    if (counts.staged_entity)        parts.push(`${counts.staged_entity} staged`);
+    if (counts.orphan_entity)        parts.push(`${counts.orphan_entity} orphan${counts.orphan_entity > 1 ? 's' : ''}`);
+    if (sumEl) sumEl.textContent = parts.length ? parts.join(' · ') : 'No items to review.';
+
+    // Badge on nav tab
+    const badge = $('reviewQueueBadge');
+    if (badge) {
+      if (items.length > 0) { badge.textContent = items.length; badge.style.display = 'inline'; }
+      else badge.style.display = 'none';
+    }
+
+    if (listEl) {
+      listEl.innerHTML = items.length
+        ? items.map(_renderReviewItem).join('')
+        : '<div class="empty">Queue is clear — no items to review.</div>';
+    }
+  } catch(e) {
+    if (errEl)  { errEl.style.display = 'block'; errEl.style.color = 'var(--red)'; errEl.textContent = `Could not load review queue: ${e.message}`; }
+    if (listEl) listEl.innerHTML = '';
   }
 }
 

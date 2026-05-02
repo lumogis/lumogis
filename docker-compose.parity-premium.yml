@@ -1,0 +1,17 @@
+# Lumogis parity-test premium overlay — used ONLY by the service-mode
+# phase of `make test-graph-parity`.
+#
+# Purpose: expose the lumogis-graph host port (8001) so the parity test
+# (which runs on the host) can poll its /health endpoint. The production
+# premium overlay deliberately hides this port behind a reverse proxy.
+#
+# Layered AFTER docker-compose.premium.yml so the lumogis-graph service
+# already exists and we only add the port mapping. Do NOT layer this in
+# the inprocess phase — without docker-compose.premium.yml the service
+# definition is invalid (no image/build context) and `docker compose
+# config` will reject the merged project. VERIFY-PLAN.
+
+services:
+  lumogis-graph:
+    ports:
+      - "8001:8001"

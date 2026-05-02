@@ -1,0 +1,1527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lumogis Web — Sign in</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Ccircle cx='24' cy='24' r='8' fill='%23E8632A'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg:       #0d1117;
+    --surface:  #161b22;
+    --border:   #30363d;
+    --txt:      #e6edf3;
+    --txt2:     #8b949e;
+    --accent:   #d9a878;
+    --accent-fg:#14110e;
+    --green:    #3fb950;
+    --red:      #f85149;
+    --yellow:   #d29922;
+    --radius:   6px;
+    --mono:     ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--txt);
+    font: 14px/1.5 system-ui, -apple-system, sans-serif;
+    min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    padding: 24px;
+  }
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 32px; width: 100%; max-width: 460px;
+  }
+  h1 {
+    font-size: 20px; font-weight: 600; margin-bottom: 6px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  h1::before {
+    content: ''; display: inline-block; width: 14px; height: 14px;
+    border-radius: 50%; background: var(--accent);
+  }
+  .subtitle { color: var(--txt2); font-size: 13px; margin-bottom: 24px; }
+  label {
+    display: block; font-size: 12px; color: var(--txt2);
+    margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  input[type="email"], input[type="password"] {
+    background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+    color: var(--txt); padding: 10px 12px; font-size: 14px; outline: none; width: 100%;
+    margin-bottom: 16px; transition: border-color 0.15s;
+  }
+  input:focus { border-color: var(--accent); }
+  button.primary {
+    background: var(--accent); color: var(--accent-fg); border: none;
+    border-radius: var(--radius); padding: 10px 20px; font-size: 14px;
+    font-weight: 600; cursor: pointer; width: 100%; transition: opacity 0.15s;
+  }
+  button.primary:hover { opacity: 0.92; }
+  button.primary:disabled { opacity: 0.45; cursor: not-allowed; }
+  button.secondary {
+    background: transparent; color: var(--txt2); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 6px 14px; font-size: 13px;
+    cursor: pointer; transition: border-color 0.15s, color 0.15s;
+  }
+  button.secondary:hover { border-color: var(--accent); color: var(--txt); }
+  .row { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 999px;
+    font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .badge.admin { background: rgba(217, 168, 120, 0.18); color: var(--accent); }
+  .badge.user  { background: rgba(63, 185, 80, 0.16); color: var(--green); }
+  .banner {
+    padding: 10px 12px; border-radius: var(--radius); font-size: 13px;
+    margin-bottom: 16px; line-height: 1.4;
+  }
+  .banner.error { background: rgba(248, 81, 73, 0.10); color: var(--red);
+                  border: 1px solid rgba(248, 81, 73, 0.25); }
+  .banner.info  { background: rgba(217, 168, 120, 0.08); color: var(--accent);
+                  border: 1px solid rgba(217, 168, 120, 0.20); }
+  /* Acting-on-behalf banner for the credential tile (plan
+     credential_management_ux D7 + UX-R1). Yellow rather than info-orange
+     so admins notice they're impersonating someone else. */
+  .banner.warn  { background: rgba(210, 153, 34, 0.10); color: var(--yellow);
+                  border: 1px solid rgba(210, 153, 34, 0.30); }
+  .field { margin-bottom: 16px; padding: 12px; background: var(--bg);
+           border: 1px solid var(--border); border-radius: var(--radius); }
+  .field-label { font-size: 11px; color: var(--txt2); text-transform: uppercase;
+                 letter-spacing: 0.05em; margin-bottom: 4px; }
+  .field-value { font-family: var(--mono); font-size: 13px; word-break: break-all; }
+  .api-result {
+    background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 12px; font-family: var(--mono); font-size: 12px;
+    max-height: 220px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+    color: var(--txt2);
+  }
+  .footer { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border);
+            font-size: 12px; color: var(--txt2); display: flex;
+            justify-content: space-between; align-items: center; }
+  /* MCP token tile (plan mcp_token_user_map D13) */
+  details.mcp-tile {
+    margin-bottom: 16px; background: var(--bg);
+    border: 1px solid var(--border); border-radius: var(--radius);
+  }
+  details.mcp-tile > summary {
+    cursor: pointer; padding: 12px;
+    font-size: 12px; color: var(--txt2);
+    text-transform: uppercase; letter-spacing: 0.05em;
+    list-style: none;
+  }
+  details.mcp-tile > summary::-webkit-details-marker { display: none; }
+  details.mcp-tile > summary::after {
+    content: "▸"; float: right; transition: transform 0.15s;
+  }
+  details.mcp-tile[open] > summary::after { transform: rotate(90deg); }
+  details.mcp-tile > .mcp-body { padding: 0 12px 12px 12px; }
+  .mcp-list {
+    list-style: none; padding: 0; margin: 8px 0; font-family: var(--mono);
+    font-size: 12px;
+  }
+  .mcp-list li {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 6px 0; border-bottom: 1px dashed var(--border); gap: 8px;
+  }
+  .mcp-list li:last-child { border-bottom: none; }
+  .mcp-list .label { color: var(--txt); }
+  .mcp-list .meta  { color: var(--txt2); font-size: 11px; }
+  .mcp-list button.danger {
+    background: transparent; color: var(--red); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 2px 8px; font-size: 11px; cursor: pointer;
+  }
+  .mcp-list button.danger:hover { border-color: var(--red); }
+  .mcp-empty { color: var(--txt2); font-size: 12px; padding: 6px 0; }
+  /* Plaintext-once dialog. Polyfilled to a position:fixed div when
+     <dialog> is unsupported (D13 fallback). */
+  dialog.mcp-mint-dialog,
+  div.mcp-mint-dialog-fallback {
+    background: var(--surface); color: var(--txt);
+    border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 24px; max-width: 520px; width: 92%;
+  }
+  div.mcp-mint-dialog-fallback {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    z-index: 9999; box-shadow: 0 12px 36px rgba(0,0,0,0.6);
+  }
+  dialog.mcp-mint-dialog::backdrop { background: rgba(0,0,0,0.55); }
+  .mcp-plaintext {
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 10px; font-family: var(--mono);
+    font-size: 12px; word-break: break-all; margin: 12px 0;
+  }
+  .mcp-warn {
+    color: var(--yellow); font-size: 12px; margin-bottom: 12px;
+  }
+  /* Connector credentials tile (plan credential_management_ux D6+D11+D24).
+     Reuses .mcp-tile / .mcp-list shape; the cred-specific overrides
+     below are layout-only (multi-line rows for connector + meta + buttons,
+     bigger payload textarea). */
+  .cred-list { list-style: none; padding: 0; margin: 8px 0;
+               font-family: var(--mono); font-size: 12px; }
+  .cred-list > li {
+    padding: 8px 0; border-bottom: 1px dashed var(--border);
+    display: flex; justify-content: space-between; gap: 8px; align-items: flex-start;
+  }
+  .cred-list > li:last-child { border-bottom: none; }
+  .cred-list .cred-row-main { display: flex; flex-direction: column; gap: 2px; }
+  .cred-list .cred-row-main .label { color: var(--txt); font-weight: 600; }
+  .cred-list .cred-row-main .meta  { color: var(--txt2); font-size: 11px; }
+  .cred-list .cred-row-actions { display: flex; gap: 6px; flex-shrink: 0; }
+  .cred-list button.danger {
+    background: transparent; color: var(--red); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 2px 8px; font-size: 11px; cursor: pointer;
+  }
+  .cred-list button.danger:hover { border-color: var(--red); }
+  .cred-list button.tertiary {
+    background: transparent; color: var(--txt2); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 2px 8px; font-size: 11px; cursor: pointer;
+  }
+  .cred-list button.tertiary:hover:not(:disabled) {
+    border-color: var(--accent); color: var(--txt);
+  }
+  .cred-list button.tertiary:disabled { opacity: 0.45; cursor: not-allowed; }
+  .cred-list .cred-badge {
+    display: inline-block; padding: 1px 6px; border-radius: 999px;
+    font-size: 10px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.04em; margin-left: 6px;
+  }
+  .cred-list .cred-badge.current  { background: rgba(63, 185, 80, 0.16); color: var(--green); }
+  .cred-list .cred-badge.older    { background: rgba(210, 153, 34, 0.16); color: var(--yellow); }
+  .cred-list .cred-badge.stale    { background: rgba(248, 81, 73, 0.12); color: var(--red); }
+  .cred-empty { color: var(--txt2); font-size: 12px; padding: 6px 0; }
+  .cred-warn { color: var(--yellow); font-size: 12px; margin-bottom: 12px; }
+  /* Add/replace dialog (mirror of .mcp-mint-dialog). */
+  dialog.cred-put-dialog,
+  div.cred-put-dialog-fallback {
+    background: var(--surface); color: var(--txt);
+    border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 24px; max-width: 560px; width: 92%;
+  }
+  div.cred-put-dialog-fallback {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    z-index: 9999; box-shadow: 0 12px 36px rgba(0,0,0,0.6);
+  }
+  dialog.cred-put-dialog::backdrop { background: rgba(0,0,0,0.55); }
+  .cred-put-dialog label,
+  .cred-put-dialog-fallback label {
+    margin-top: 8px;
+  }
+  .cred-put-dialog select,
+  .cred-put-dialog input[type="text"],
+  .cred-put-dialog textarea,
+  .cred-put-dialog-fallback select,
+  .cred-put-dialog-fallback input[type="text"],
+  .cred-put-dialog-fallback textarea {
+    width: 100%; background: var(--bg); border: 1px solid var(--border);
+    border-radius: var(--radius); color: var(--txt);
+    padding: 8px 10px; font-size: 13px; font-family: var(--mono);
+    margin-bottom: 8px; outline: none;
+  }
+  .cred-put-dialog textarea,
+  .cred-put-dialog-fallback textarea {
+    min-height: 120px; resize: vertical;
+  }
+  .cred-put-dialog .cred-dialog-actions,
+  .cred-put-dialog-fallback .cred-dialog-actions {
+    display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px;
+  }
+  .cred-put-dialog .cred-dialog-actions button.secondary,
+  .cred-put-dialog .cred-dialog-actions button.primary,
+  .cred-put-dialog-fallback .cred-dialog-actions button.secondary,
+  .cred-put-dialog-fallback .cred-dialog-actions button.primary {
+    width: auto; padding: 8px 16px;
+  }
+  /* Admin "act on behalf" picker block. */
+  #cred-admin-row {
+    display: flex; gap: 8px; align-items: center; margin: 8px 0;
+  }
+  #cred-admin-row select {
+    flex: 1; background: var(--bg); border: 1px solid var(--border);
+    border-radius: var(--radius); color: var(--txt);
+    padding: 6px 8px; font-size: 12px;
+  }
+  #cred-tile .mcp-body button.primary {
+    width: auto; padding: 6px 14px; font-size: 12px;
+  }
+  #cred-tile .mcp-body button.secondary {
+    padding: 6px 14px;
+  }
+  [hidden] { display: none !important; }
+  .spinner {
+    display: inline-block; width: 12px; height: 12px;
+    border: 2px solid var(--border); border-top-color: var(--accent);
+    border-radius: 50%; animation: spin 0.8s linear infinite;
+    vertical-align: middle; margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<!-- Login view -->
+<div id="login-view" class="card" hidden>
+  <h1>Lumogis Web</h1>
+  <p class="subtitle">Sign in with your family-LAN account.</p>
+
+  <div id="login-error" class="banner error" hidden></div>
+
+  <form id="login-form" autocomplete="on">
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" required autocomplete="username"
+           placeholder="you@home.lan">
+
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" required
+           autocomplete="current-password" minlength="12">
+
+    <button id="login-submit" type="submit" class="primary">Sign in</button>
+  </form>
+
+  <div class="footer">
+    <span>First slice — `/api/v1/auth/*`</span>
+  </div>
+</div>
+
+<!-- Authenticated view -->
+<div id="user-view" class="card" hidden>
+  <div class="row" style="margin-bottom: 24px;">
+    <div>
+      <h1>Signed in</h1>
+      <p class="subtitle" id="mode-line">family-LAN mode</p>
+    </div>
+    <button id="logout-btn" class="secondary">Logout</button>
+  </div>
+
+  <div class="field">
+    <div class="field-label">Email</div>
+    <div class="field-value" id="me-email">—</div>
+  </div>
+
+  <div class="field">
+    <div class="field-label">Role</div>
+    <div class="field-value">
+      <span id="me-role-badge" class="badge user">user</span>
+      <span id="me-id" style="color: var(--txt2); margin-left: 8px;
+                              font-family: var(--mono); font-size: 11px;">—</span>
+    </div>
+  </div>
+
+  <div class="field">
+    <div class="field-label">
+      Authenticated endpoint demo · <code style="font-family: var(--mono);">GET /signals?limit=5</code>
+      <button id="refresh-signals" class="secondary"
+              style="float: right; padding: 1px 8px; font-size: 11px;">Refresh</button>
+    </div>
+    <div id="api-result" class="api-result">loading…</div>
+  </div>
+
+  <!-- Per-user MCP tokens (plan mcp_token_user_map D13). Collapsed by
+       default: this is an advanced "give an MCP client a long-lived
+       bearer for me" surface, not the day-one signed-in dashboard. -->
+  <details class="mcp-tile" id="mcp-tile">
+    <summary>MCP tokens</summary>
+    <div class="mcp-body">
+      <p class="subtitle" style="margin-bottom: 8px;">
+        Per-user bearers (<code>lmcp_…</code>) for external MCP clients
+        such as Claude Desktop or Thunderbolt. The plaintext is shown
+        exactly once when minted &mdash; the server only stores a
+        SHA-256 hash.
+      </p>
+      <div style="display:flex; gap:8px; align-items:center; margin-top: 8px;">
+        <input id="mcp-label" type="text" maxlength="64"
+               placeholder="Label (e.g. claude-desktop)"
+               style="flex:1; background: var(--bg); border: 1px solid var(--border);
+                      border-radius: var(--radius); color: var(--txt);
+                      padding: 6px 8px; font-size: 12px;">
+        <button id="mcp-mint" class="secondary" type="button">Mint new token</button>
+      </div>
+      <div id="mcp-error" class="banner error" hidden style="margin-top: 8px;"></div>
+
+      <div style="margin-top: 16px;">
+        <div class="field-label">Active</div>
+        <ul id="mcp-active-list" class="mcp-list">
+          <li class="mcp-empty">No active tokens.</li>
+        </ul>
+      </div>
+
+      <details style="margin-top: 12px;">
+        <summary class="field-label" style="cursor:pointer; padding: 4px 0;">
+          Revoked (audit trail)
+        </summary>
+        <ul id="mcp-revoked-list" class="mcp-list">
+          <li class="mcp-empty">No revoked tokens.</li>
+        </ul>
+      </details>
+    </div>
+  </details>
+
+  <!-- Per-user connector credentials (plan credential_management_ux
+       D6+D7+D11+D20). Collapsed by default like the MCP-tokens tile;
+       admins see an extra "Manage on behalf" picker that switches the
+       CRUD calls onto the admin prefix. The static warning at the top
+       ("plaintext is never shown after save") is repeated inside the
+       modal — D11 calls for the redundancy intentionally. -->
+  <details class="mcp-tile" id="cred-tile">
+    <summary>Connector credentials</summary>
+    <div class="mcp-body">
+      <p class="cred-warn">
+        Connector credentials are stored encrypted. The plaintext is
+        never displayed after you save it &mdash; replace the entire
+        JSON payload to update.
+      </p>
+
+      <!-- Admin-only: pick a target user to act on behalf of (D7). -->
+      <div id="cred-admin-row" hidden>
+        <label for="cred-target-user" style="margin: 0; flex-shrink: 0;">Manage on behalf of</label>
+        <select id="cred-target-user" aria-label="Target user for credential management">
+          <option value="">Myself</option>
+        </select>
+      </div>
+      <div id="cred-acting-banner" class="banner warn" hidden></div>
+
+      <div style="display:flex; gap:8px; align-items:center; margin-top: 8px;">
+        <button id="cred-add" class="primary" type="button">Add or replace credential</button>
+        <button id="cred-refresh" class="secondary" type="button">Refresh</button>
+      </div>
+
+      <div id="cred-error" class="banner error" role="status" aria-live="polite"
+           hidden style="margin-top: 8px;"></div>
+
+      <ul id="cred-list" class="cred-list">
+        <li class="cred-empty">No connector credentials yet &mdash; click <em>Add or replace credential</em> to create one.</li>
+      </ul>
+
+      <!-- Admin-only key-rotation diagnostic line (D10 + D3). Hidden in
+           non-admin mode and when the diagnostic fetch failed. -->
+      <div id="cred-fingerprint" class="cred-empty" hidden></div>
+    </div>
+  </details>
+
+  <!-- Add/replace dialog (plan D8+D9+D11+D13+D23+D24). Mirrors the MCP
+       mint dialog's <dialog> + showModal-feature-detected fallback. -->
+  <dialog id="cred-put-dialog" class="cred-put-dialog">
+    <h3 style="margin-bottom: 8px;">Add or replace credential</h3>
+    <p class="cred-warn">
+      The plaintext is encrypted on save and never displayed again.
+      To rotate or fix a credential, paste the full new JSON payload here.
+    </p>
+
+    <!-- D23 registry-failure explainer. Hidden in dropdown mode; shown
+         when the connector dropdown couldn't be built (the registry
+         endpoint failed or returned an empty list). -->
+    <p id="cred-registry-fallback" class="cred-warn" hidden>
+      Connector list unavailable right now. Enter the connector id manually.
+    </p>
+
+    <label for="cred-conn-select">Connector</label>
+    <select id="cred-conn-select" hidden></select>
+    <input id="cred-conn-text" type="text" maxlength="64"
+           placeholder="connector id (lowercase letters, digits, underscores)" hidden>
+    <div id="cred-conn-error" class="banner error" role="status"
+         aria-live="polite" hidden></div>
+
+    <label for="cred-payload">Payload (JSON object, max 64 KiB)</label>
+    <textarea id="cred-payload"
+              placeholder='{"username": "alice", "password": "…"}'></textarea>
+    <div id="cred-payload-error" class="banner error" role="status"
+         aria-live="polite" hidden></div>
+
+    <div class="cred-dialog-actions">
+      <button type="button" id="cred-cancel" class="secondary">Cancel</button>
+      <button type="button" id="cred-submit" class="primary">Save</button>
+    </div>
+  </dialog>
+
+  <!-- Plaintext-once dialog. <dialog> is the modern affordance and is
+       used when supported; the showModal feature-detection fallback
+       below renders an inline modal-styled <div> so legacy browsers
+       without HTMLDialogElement still see the plaintext exactly once. -->
+  <dialog id="mcp-mint-dialog" class="mcp-mint-dialog">
+    <h3 style="margin-bottom: 8px;">New MCP token</h3>
+    <p class="mcp-warn">
+      Copy this token now. The server only stores a SHA-256 hash &mdash;
+      this is your only chance to see the plaintext.
+    </p>
+    <div class="mcp-plaintext" id="mcp-plaintext">—</div>
+    <div style="display:flex; gap: 8px; justify-content: flex-end;">
+      <button type="button" id="mcp-copy" class="secondary">Copy</button>
+      <button type="button" id="mcp-close" class="primary"
+              style="width: auto; padding: 8px 16px;">I've copied it</button>
+    </div>
+  </dialog>
+
+  <div class="footer">
+    <span id="token-status">access token in memory</span>
+  </div>
+</div>
+
+<!-- Boot view (shown briefly while we decide which view to render) -->
+<div id="boot-view" class="card">
+  <h1>Lumogis Web</h1>
+  <p class="subtitle"><span class="spinner"></span>Checking session…</p>
+</div>
+
+<script>
+"use strict";
+(function () {
+  const STORAGE_KEY = "lumogis_access_token";
+
+  // ── DOM refs ──────────────────────────────────────────────────────
+  const $ = (id) => document.getElementById(id);
+  const loginView   = $("login-view");
+  const userView    = $("user-view");
+  const bootView    = $("boot-view");
+  const loginForm   = $("login-form");
+  const loginError  = $("login-error");
+  const loginBtn    = $("login-submit");
+  const emailInput  = $("email");
+  const passInput   = $("password");
+  const meEmail     = $("me-email");
+  const meRoleBadge = $("me-role-badge");
+  const meId        = $("me-id");
+  const modeLine    = $("mode-line");
+  const apiResult   = $("api-result");
+  const refreshBtn  = $("refresh-signals");
+  const logoutBtn   = $("logout-btn");
+  const tokenStatus = $("token-status");
+
+  // ── Session helpers ───────────────────────────────────────────────
+  function getToken() {
+    try { return sessionStorage.getItem(STORAGE_KEY) || ""; }
+    catch (_e) { return ""; }
+  }
+  function setToken(t) {
+    try { if (t) sessionStorage.setItem(STORAGE_KEY, t);
+          else   sessionStorage.removeItem(STORAGE_KEY); }
+    catch (_e) { /* ignore quota / disabled storage */ }
+  }
+  function authHeaders() {
+    const t = getToken();
+    return t ? { "Authorization": "Bearer " + t } : {};
+  }
+
+  // ── View switchers ────────────────────────────────────────────────
+  function showLogin(message, isInfo) {
+    bootView.hidden = true;
+    userView.hidden = true;
+    loginView.hidden = false;
+    if (message) {
+      loginError.textContent = message;
+      loginError.hidden = false;
+      loginError.className = "banner " + (isInfo ? "info" : "error");
+    } else {
+      loginError.hidden = true;
+    }
+    setTimeout(() => emailInput.focus(), 0);
+  }
+  function showUser(me, devMode) {
+    bootView.hidden = true;
+    loginView.hidden = true;
+    userView.hidden = false;
+    meEmail.textContent = me.email || "(unknown)";
+    meId.textContent = me.id ? "#" + me.id.slice(0, 8) : "";
+    meRoleBadge.textContent = me.role || "user";
+    meRoleBadge.className = "badge " + (me.role === "admin" ? "admin" : "user");
+    modeLine.textContent = devMode
+      ? "single-user dev mode (AUTH_ENABLED=false)"
+      : "family-LAN mode";
+    tokenStatus.textContent = devMode
+      ? "no bearer required in dev mode"
+      : "access token in sessionStorage";
+    if (devMode) {
+      logoutBtn.disabled = true;
+      logoutBtn.title = "Logout disabled in single-user dev mode";
+    } else {
+      logoutBtn.disabled = false;
+      logoutBtn.title = "";
+    }
+    // Wire the credential tile to the signed-in identity so the admin
+    // row appears immediately for admins (without waiting for the user
+    // to expand the tile).
+    if (typeof credApplyMe === "function") credApplyMe(me);
+  }
+
+  // ── API calls ─────────────────────────────────────────────────────
+  async function fetchMe() {
+    const r = await fetch("/api/v1/auth/me", {
+      headers: { ...authHeaders(), "Accept": "application/json" },
+      credentials: "same-origin",
+    });
+    return r;
+  }
+
+  async function fetchSignals() {
+    apiResult.textContent = "loading…";
+    try {
+      const r = await fetch("/signals?limit=5", {
+        headers: { ...authHeaders(), "Accept": "application/json" },
+        credentials: "same-origin",
+      });
+      if (r.status === 401) {
+        apiResult.textContent = "401 Unauthorized — session expired, please sign in again.";
+        await doLogout(/*serverSide=*/false);
+        return;
+      }
+      const text = await r.text();
+      let pretty = text;
+      try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch (_e) {}
+      apiResult.textContent = "HTTP " + r.status + "\n\n" + pretty;
+    } catch (err) {
+      apiResult.textContent = "network error: " + err.message;
+    }
+  }
+
+  async function doLogin(email, password) {
+    const r = await fetch("/api/v1/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ email, password }),
+    });
+    if (r.status === 503) {
+      // AUTH_ENABLED=false; just bounce back to /me which will succeed.
+      const me = await fetchMe();
+      if (me.ok) { showUser(await me.json(), /*devMode=*/true); fetchSignals(); return; }
+      throw new Error("login is disabled and /me is not reachable");
+    }
+    if (!r.ok) {
+      const detail = await r.json().catch(() => ({}));
+      throw new Error(detail.detail || ("login failed (" + r.status + ")"));
+    }
+    const body = await r.json();
+    setToken(body.access_token);
+    showUser(body.user, /*devMode=*/false);
+    fetchSignals();
+  }
+
+  async function doLogout(serverSide) {
+    if (serverSide !== false) {
+      try {
+        await fetch("/api/v1/auth/logout", {
+          method: "POST",
+          headers: { ...authHeaders() },
+          credentials: "same-origin",
+        });
+      } catch (_e) { /* server may be down — clear client state anyway */ }
+    }
+    setToken("");
+    if (typeof credResetSession === "function") credResetSession();
+    showLogin("Signed out.", /*isInfo=*/true);
+  }
+
+  // ── Boot ──────────────────────────────────────────────────────────
+  async function boot() {
+    let me;
+    try { me = await fetchMe(); }
+    catch (_e) { showLogin("Cannot reach the server.", false); return; }
+
+    if (me.ok) {
+      const body = await me.json();
+      // dev mode: server returned a user without us sending a bearer
+      const devMode = !getToken();
+      showUser(body, devMode);
+      fetchSignals();
+      return;
+    }
+    if (me.status === 401) {
+      // Token expired or missing — drop it and show login.
+      setToken("");
+      showLogin();
+      return;
+    }
+    showLogin("Unexpected server response (" + me.status + ").", false);
+  }
+
+  // ── MCP token tile (plan mcp_token_user_map D13) ──────────────────
+  //
+  // Mint flow lives behind an explicit button in a collapsed
+  // <details> tile rather than auto-loading on every page render —
+  // it's an advanced surface and we don't want to fire DELETE
+  // affordances at users who never asked for an MCP integration.
+  const mcpLabelInput   = $("mcp-label");
+  const mcpMintBtn      = $("mcp-mint");
+  const mcpErrorBanner  = $("mcp-error");
+  const mcpActiveList   = $("mcp-active-list");
+  const mcpRevokedList  = $("mcp-revoked-list");
+  const mcpTile         = $("mcp-tile");
+  const mcpDialog       = $("mcp-mint-dialog");
+  const mcpPlaintextEl  = $("mcp-plaintext");
+  const mcpCopyBtn      = $("mcp-copy");
+  const mcpCloseBtn     = $("mcp-close");
+
+  function mcpShowError(msg) {
+    if (!msg) { mcpErrorBanner.hidden = true; return; }
+    mcpErrorBanner.textContent = msg;
+    mcpErrorBanner.hidden = false;
+  }
+
+  function mcpFmt(ts) {
+    if (!ts) return "never";
+    try { return new Date(ts).toLocaleString(); } catch (_e) { return ts; }
+  }
+
+  function mcpRenderRow(t, isRevoked) {
+    const li = document.createElement("li");
+    const labelEl = document.createElement("span");
+    labelEl.className = "label";
+    labelEl.textContent = t.label;
+    const metaEl = document.createElement("span");
+    metaEl.className = "meta";
+    metaEl.textContent = isRevoked
+      ? "revoked " + mcpFmt(t.revoked_at)
+      : "last used " + mcpFmt(t.last_used_at);
+    const left = document.createElement("div");
+    left.style.display = "flex"; left.style.flexDirection = "column";
+    left.appendChild(labelEl); left.appendChild(metaEl);
+    li.appendChild(left);
+    if (!isRevoked) {
+      const btn = document.createElement("button");
+      btn.className = "danger"; btn.type = "button"; btn.textContent = "Revoke";
+      btn.addEventListener("click", () => mcpRevoke(t.id));
+      li.appendChild(btn);
+    }
+    return li;
+  }
+
+  async function mcpReload() {
+    if (!mcpTile.open) return;
+    try {
+      const r = await fetch("/api/v1/me/mcp-tokens?include_revoked=true", {
+        headers: { ...authHeaders(), "Accept": "application/json" },
+        credentials: "same-origin",
+      });
+      if (!r.ok) {
+        mcpShowError("Could not load MCP tokens (HTTP " + r.status + ")");
+        return;
+      }
+      const rows = await r.json();
+      const active = rows.filter(t => !t.revoked_at);
+      const revoked = rows.filter(t => t.revoked_at);
+      mcpActiveList.innerHTML = "";
+      if (active.length === 0) {
+        const li = document.createElement("li");
+        li.className = "mcp-empty"; li.textContent = "No active tokens.";
+        mcpActiveList.appendChild(li);
+      } else {
+        active.forEach(t => mcpActiveList.appendChild(mcpRenderRow(t, false)));
+      }
+      mcpRevokedList.innerHTML = "";
+      if (revoked.length === 0) {
+        const li = document.createElement("li");
+        li.className = "mcp-empty"; li.textContent = "No revoked tokens.";
+        mcpRevokedList.appendChild(li);
+      } else {
+        revoked.forEach(t => mcpRevokedList.appendChild(mcpRenderRow(t, true)));
+      }
+    } catch (err) {
+      mcpShowError("Network error loading MCP tokens: " + err.message);
+    }
+  }
+
+  function mcpShowPlaintext(plaintext) {
+    mcpPlaintextEl.textContent = plaintext;
+    // Feature-detect HTMLDialogElement.showModal — Safari < 15.4 and
+    // some embedded browsers ship the element shape without showModal.
+    if (mcpDialog && typeof mcpDialog.showModal === "function") {
+      mcpDialog.showModal();
+      return;
+    }
+    // Fallback: render an inline modal-styled <div> so legacy browsers
+    // still surface the plaintext exactly once. The class swap is so
+    // the same close button affordance keeps working.
+    mcpDialog.classList.remove("mcp-mint-dialog");
+    mcpDialog.classList.add("mcp-mint-dialog-fallback");
+    mcpDialog.removeAttribute("hidden");
+    mcpDialog.style.display = "block";
+  }
+
+  function mcpClosePlaintext() {
+    mcpPlaintextEl.textContent = "—";
+    if (mcpDialog && typeof mcpDialog.close === "function" &&
+        mcpDialog.classList.contains("mcp-mint-dialog")) {
+      try { mcpDialog.close(); } catch (_e) {}
+    } else {
+      mcpDialog.style.display = "none";
+    }
+  }
+
+  async function mcpMint() {
+    mcpShowError("");
+    const label = (mcpLabelInput.value || "").trim();
+    if (!label) {
+      mcpShowError("Label is required.");
+      return;
+    }
+    mcpMintBtn.disabled = true;
+    try {
+      const r = await fetch("/api/v1/me/mcp-tokens", {
+        method: "POST",
+        headers: { ...authHeaders(), "Content-Type": "application/json",
+                   "Accept": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ label }),
+      });
+      if (!r.ok) {
+        const detail = await r.json().catch(() => ({}));
+        mcpShowError(detail.detail
+          ? (typeof detail.detail === "string"
+              ? detail.detail
+              : JSON.stringify(detail.detail))
+          : ("Mint failed (HTTP " + r.status + ")"));
+        return;
+      }
+      const body = await r.json();
+      mcpShowPlaintext(body.plaintext);
+      mcpLabelInput.value = "";
+      mcpReload();
+    } catch (err) {
+      mcpShowError("Network error: " + err.message);
+    } finally {
+      mcpMintBtn.disabled = false;
+    }
+  }
+
+  async function mcpRevoke(tokenId) {
+    mcpShowError("");
+    if (!window.confirm(
+        "Revoke this MCP token? Any client using it will lose access.")) {
+      return;
+    }
+    try {
+      const r = await fetch("/api/v1/me/mcp-tokens/" + encodeURIComponent(tokenId), {
+        method: "DELETE",
+        headers: { ...authHeaders(), "Accept": "application/json" },
+        credentials: "same-origin",
+      });
+      if (!r.ok) {
+        mcpShowError("Revoke failed (HTTP " + r.status + ")");
+        return;
+      }
+      mcpReload();
+    } catch (err) {
+      mcpShowError("Network error: " + err.message);
+    }
+  }
+
+  mcpTile.addEventListener("toggle", () => mcpReload());
+  mcpMintBtn.addEventListener("click", mcpMint);
+  mcpCloseBtn.addEventListener("click", mcpClosePlaintext);
+  mcpCopyBtn.addEventListener("click", () => {
+    const txt = mcpPlaintextEl.textContent || "";
+    if (!navigator.clipboard) return;
+    navigator.clipboard.writeText(txt).catch(() => { /* user can select manually */ });
+  });
+
+  // ── Connector credentials tile (plan credential_management_ux) ────
+  //
+  // Shape mirrors the MCP-tokens tile above:
+  //   * collapsed <details> with auto-load on every open (D12)
+  //   * <dialog>-with-polyfill modal for add/replace (D8 + D24)
+  // Admin-on-behalf is inline (D7) — a target-user dropdown switches
+  // every CRUD URL onto the admin prefix and tags an amber acting
+  // banner. D21 force-resets the modal whenever the picker switches
+  // so a payload typed for one user can never be saved against another.
+  const credTile        = $("cred-tile");
+  const credAdminRow    = $("cred-admin-row");
+  const credTargetSel   = $("cred-target-user");
+  const credActingBan   = $("cred-acting-banner");
+  const credAddBtn      = $("cred-add");
+  const credRefreshBtn  = $("cred-refresh");
+  const credErrorBan    = $("cred-error");
+  const credList        = $("cred-list");
+  const credFingerprint = $("cred-fingerprint");
+  const credDialog      = $("cred-put-dialog");
+  const credConnSelect  = $("cred-conn-select");
+  const credConnText    = $("cred-conn-text");
+  const credConnError   = $("cred-conn-error");
+  const credPayload     = $("cred-payload");
+  const credPayloadErr  = $("cred-payload-error");
+  const credCancelBtn   = $("cred-cancel");
+  const credSubmitBtn   = $("cred-submit");
+  const credRegFallback = $("cred-registry-fallback");
+
+  // Per-page-session state. Reset by credResetSession() on logout.
+  let _credMe                = null;     // {id, email, role}
+  let _credRegistryLoaded    = false;    // first /registry call attempted this session?
+  let _credRegistryItems     = null;     // [{id, description}, ...] or null on failure
+  let _credRegistryIds       = null;     // Set<string> for stale-row detection (D20)
+  let _credFingerprintLoaded = false;    // admin-only: first fingerprint fetch attempted?
+  let _credCurrentKeyVersion = null;     // int from diagnostic, or null on failure / non-admin
+  let _credActingUserId      = "";       // "" = self; else admin acting on behalf of <id>
+  let _credActingUserEmail   = "";
+  let _credPutContext        = null;     // {connector?: string} when modal opened in "replace" mode
+  let _credModalOpener       = null;     // element to return focus to on close (D24)
+  let _credEscListener       = null;     // polyfill-only: doc-level keydown for Escape (D24)
+
+  // D14a friendly-error table — frozen wire copy, mapped from server
+  // detail.code values. Kept verbatim so QA copy-edits in the table
+  // ripple to every error path automatically.
+  const CRED_ERROR_MESSAGES = Object.freeze({
+    bad_connector_id:
+      "Connector id must be lowercase letters, digits, or underscores (1–64 chars).",
+    unknown_connector:
+      "That connector isn't registered on this server. Pick one from the list.",
+    connector_not_configured:
+      "No credential exists for that connector yet — use Add to create one.",
+    credential_unavailable:
+      "The server can't decrypt or seal credentials right now (key issue). " +
+      "Your input was not lost; try again after the operator fixes the key.",
+    user_not_found:
+      "That user no longer exists. Refresh the page and try again.",
+  });
+  const CRED_422_FALLBACK =
+    "The credential JSON failed validation: object required, non-empty, ≤ 64 KiB.";
+
+  function credBasePrefix() {
+    // Admin acting on behalf of someone else → admin prefix; otherwise
+    // self-service prefix. Never assemble a URL by hand at the call
+    // site — go through this helper so the D21 reset semantics match.
+    if (_credActingUserId) {
+      return "/api/v1/admin/users/" + encodeURIComponent(_credActingUserId)
+           + "/connector-credentials";
+    }
+    return "/api/v1/me/connector-credentials";
+  }
+
+  function credShowError(msg) {
+    if (!msg) { credErrorBan.hidden = true; return; }
+    credErrorBan.textContent = msg;
+    credErrorBan.hidden = false;
+  }
+
+  function credShowConnError(msg) {
+    if (!msg) { credConnError.hidden = true; return; }
+    credConnError.textContent = msg;
+    credConnError.hidden = false;
+  }
+
+  function credShowPayloadError(msg) {
+    if (!msg) { credPayloadErr.hidden = true; return; }
+    credPayloadErr.textContent = msg;
+    credPayloadErr.hidden = false;
+  }
+
+  function credFmt(ts) {
+    if (!ts) return "never";
+    try { return new Date(ts).toLocaleString(); } catch (_e) { return ts; }
+  }
+
+  // D14 — single, unified response handler. NEVER calls r.json()
+  // unconditionally because DELETE returns 204 No Content (no body)
+  // and a generic .json() would throw on the empty body.
+  async function credHandleResponse(r) {
+    // 204 No Content — DELETE success. No body to parse.
+    if (r.status === 204) return { ok: true, body: null, message: "" };
+
+    let body = null;
+    try {
+      body = await r.json();
+    } catch (_e) { /* body may be empty / non-JSON — handled below */ }
+
+    if (r.ok) return { ok: true, body, message: "" };
+
+    // Pull the server-side error code, supporting both shapes:
+    //   * domain errors:        body.detail = {code: "..."}
+    //   * Pydantic 422 errors:  body.detail = [{loc, msg, type}, ...]
+    let code = null;
+    const detail = body && body.detail;
+    if (detail && typeof detail === "object" && !Array.isArray(detail)) {
+      code = detail.code || null;
+    }
+    let message = code && CRED_ERROR_MESSAGES[code]
+      ? CRED_ERROR_MESSAGES[code]
+      : null;
+
+    if (!message && r.status === 422) message = CRED_422_FALLBACK;
+    if (!message) message = "Server error (HTTP " + r.status + ").";
+
+    return { ok: false, body, message, code };
+  }
+
+  function credResetSession() {
+    // Called on logout — drop any in-memory cache so a different user
+    // signing in on the same browser tab doesn't see the previous
+    // session's registry/fingerprint state.
+    _credMe = null;
+    _credRegistryLoaded = false;
+    _credRegistryItems = null;
+    _credRegistryIds = null;
+    _credFingerprintLoaded = false;
+    _credCurrentKeyVersion = null;
+    _credActingUserId = "";
+    _credActingUserEmail = "";
+    credForceCloseModal();
+    if (credList) { credList.innerHTML = ""; }
+    if (credFingerprint) { credFingerprint.hidden = true; credFingerprint.textContent = ""; }
+  }
+
+  function credApplyMe(me) {
+    // Wire the tile to the signed-in user's identity. Called from
+    // showUser() so the admin row is visible the moment the user view
+    // renders, and the acting banner picks up the right meUserId.
+    _credMe = me || null;
+    const isAdmin = !!(me && me.role === "admin");
+    credAdminRow.hidden = !isAdmin;
+    if (isAdmin) {
+      credLoadAdminUserPicker();  // fire-and-forget; failure is non-fatal
+    }
+  }
+
+  async function credLoadAdminUserPicker() {
+    try {
+      const r = await fetch("/api/v1/admin/users", {
+        headers: { ...authHeaders(), "Accept": "application/json" },
+        credentials: "same-origin",
+      });
+      if (!r.ok) return;
+      const users = await r.json();
+      // Reset to "Myself" + freshly-loaded options. textContent never
+      // innerHTML — the email/id come from the server but XSS hygiene
+      // here is cheap and stays consistent across the tile (D5.1).
+      credTargetSel.innerHTML = "";
+      const meOpt = document.createElement("option");
+      meOpt.value = ""; meOpt.textContent = "Myself";
+      credTargetSel.appendChild(meOpt);
+      users
+        .filter(u => !u.disabled && _credMe && u.id !== _credMe.id)
+        .forEach(u => {
+          const opt = document.createElement("option");
+          opt.value = u.id;
+          opt.textContent = u.email + " (" + u.role + ")";
+          credTargetSel.appendChild(opt);
+        });
+    } catch (_e) { /* admin picker is best-effort */ }
+  }
+
+  function credUpdateActingBanner() {
+    if (!_credActingUserId) {
+      credActingBan.hidden = true;
+      credActingBan.textContent = "";
+      return;
+    }
+    // textContent (not innerHTML) — admin-id from auth is server-trusted
+    // but the email could in principle carry markup; stay defensive.
+    credActingBan.textContent =
+      "Acting as: " + _credActingUserEmail
+      + " — actions audited as admin:" + (_credMe ? _credMe.id : "?");
+    credActingBan.hidden = false;
+  }
+
+  async function credLoadRegistry() {
+    _credRegistryLoaded = true;
+    try {
+      const r = await fetch("/api/v1/me/connector-credentials/registry", {
+        headers: { ...authHeaders(), "Accept": "application/json" },
+        credentials: "same-origin",
+      });
+      if (!r.ok) {
+        _credRegistryItems = null;
+        _credRegistryIds = null;
+        return;
+      }
+      const body = await r.json();
+      const items = Array.isArray(body && body.items) ? body.items : null;
+      if (!items || items.length === 0) {
+        _credRegistryItems = null;
+        _credRegistryIds = null;
+        return;
+      }
+      _credRegistryItems = items;
+      _credRegistryIds = new Set(items.map(i => i.id));
+    } catch (_e) {
+      _credRegistryItems = null;
+      _credRegistryIds = null;
+    }
+  }
+
+  async function credLoadFingerprint() {
+    _credFingerprintLoaded = true;
+    if (!_credMe || _credMe.role !== "admin") return;
+    try {
+      const r = await fetch("/api/v1/admin/diagnostics/credential-key-fingerprint", {
+        headers: { ...authHeaders(), "Accept": "application/json" },
+        credentials: "same-origin",
+      });
+      if (!r.ok) {
+        _credCurrentKeyVersion = null;
+        credFingerprint.hidden = true;
+        return;
+      }
+      const body = await r.json();
+      _credCurrentKeyVersion = body.current_key_version;
+      // Per ADR `credential_scopes_shared_system` the wire shape is
+      // now per-tier: rows_by_key_version is { user: {...}, household:
+      // {...}, system: {...} }. Aggregate across tiers for the
+      // headline summary; if any non-user tier has rows, append a
+      // per-tier breakdown so admins see where the work is.
+      const perTier = (body && body.rows_by_key_version) || {};
+      const userCounts = perTier.user || {};
+      const householdCounts = perTier.household || {};
+      const systemCounts = perTier.system || {};
+      const totals = {};
+      for (const tierMap of [userCounts, householdCounts, systemCounts]) {
+        for (const [k, n] of Object.entries(tierMap)) {
+          totals[k] = (totals[k] || 0) + (n | 0);
+        }
+      }
+      const totalSummary = Object.keys(totals).length === 0
+        ? "no encrypted rows yet"
+        : Object.entries(totals)
+            .map(([k, n]) => "key#" + k + ": " + n)
+            .join("  ");
+      const householdHasRows = Object.keys(householdCounts).length > 0;
+      const systemHasRows = Object.keys(systemCounts).length > 0;
+      let breakdown = "";
+      if (householdHasRows || systemHasRows) {
+        const fmtTier = (label, m) => {
+          const entries = Object.entries(m);
+          if (entries.length === 0) return label + ": 0";
+          return label + " " + entries.map(([k, n]) => "key#" + k + ":" + n).join(",");
+        };
+        breakdown = "  ["
+          + fmtTier("user", userCounts) + " | "
+          + fmtTier("household", householdCounts) + " | "
+          + fmtTier("system", systemCounts) + "]";
+      }
+      credFingerprint.textContent =
+        "current key#" + _credCurrentKeyVersion + " — " + totalSummary + breakdown;
+      credFingerprint.hidden = false;
+    } catch (_e) {
+      _credCurrentKeyVersion = null;
+      credFingerprint.hidden = true;
+    }
+  }
+
+  function credRenderEmpty() {
+    credList.innerHTML = "";
+    const li = document.createElement("li");
+    li.className = "cred-empty";
+    li.textContent = _credActingUserId
+      ? "No credentials yet for this user."
+      : "No connector credentials yet — click Add or replace credential to create one.";
+    credList.appendChild(li);
+  }
+
+  function credRenderRow(row) {
+    const li = document.createElement("li");
+
+    const main = document.createElement("div");
+    main.className = "cred-row-main";
+
+    const labelLine = document.createElement("div");
+    const labelEl = document.createElement("span");
+    labelEl.className = "label";
+    labelEl.textContent = row.connector;
+    labelLine.appendChild(labelEl);
+
+    // Stale-badge ONLY when we have positive evidence (registry loaded
+    // successfully AND the connector id is missing from it). When the
+    // registry fetch failed we don't know — D20 says don't call rows
+    // unregistered without evidence.
+    const isStale = (_credRegistryIds !== null)
+                  && !_credRegistryIds.has(row.connector);
+    if (isStale) {
+      const b = document.createElement("span");
+      b.className = "cred-badge stale";
+      b.textContent = "unregistered connector";
+      labelLine.appendChild(b);
+    }
+
+    // Admin-only key_version badge (current vs older). Only when the
+    // diagnostic fetch succeeded so we can compare meaningfully.
+    const isAdmin = !!(_credMe && _credMe.role === "admin");
+    if (isAdmin && _credCurrentKeyVersion !== null
+        && typeof row.key_version === "number") {
+      const b = document.createElement("span");
+      const isCurrent = row.key_version === _credCurrentKeyVersion;
+      b.className = "cred-badge " + (isCurrent ? "current" : "older");
+      b.textContent = isCurrent
+        ? "current key"
+        : "older key — re-encrypt via rotation script";
+      labelLine.appendChild(b);
+    }
+
+    main.appendChild(labelLine);
+
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    const createdBy = row.created_by || "?";
+    const updatedBy = row.updated_by || "?";
+    let metaText = "created by " + createdBy + " " + credFmt(row.created_at)
+                 + " · updated by " + updatedBy + " " + credFmt(row.updated_at);
+    if (isAdmin && typeof row.key_version === "number") {
+      metaText += " · key_version=" + row.key_version;
+    }
+    meta.textContent = metaText;
+    main.appendChild(meta);
+
+    li.appendChild(main);
+
+    const actions = document.createElement("div");
+    actions.className = "cred-row-actions";
+
+    const replaceBtn = document.createElement("button");
+    replaceBtn.type = "button";
+    replaceBtn.className = "tertiary";
+    replaceBtn.textContent = "Replace";
+    if (isStale) {
+      // Replace would 422 unknown_connector server-side; disable with
+      // a clear tooltip rather than letting the user click into an
+      // error.
+      replaceBtn.disabled = true;
+      replaceBtn.title =
+        "This connector is no longer registered on this server. "
+        + "Delete the row, or have an operator re-register the connector.";
+    } else {
+      replaceBtn.addEventListener("click", () => credOpenDialog(row.connector));
+    }
+    actions.appendChild(replaceBtn);
+
+    const delBtn = document.createElement("button");
+    delBtn.type = "button";
+    delBtn.className = "danger";
+    delBtn.textContent = "Delete";
+    delBtn.addEventListener("click", () => credDeleteRow(row.connector));
+    actions.appendChild(delBtn);
+
+    li.appendChild(actions);
+    return li;
+  }
+
+  async function credLoadRows() {
+    credShowError("");
+    try {
+      const r = await fetch(credBasePrefix(), {
+        headers: { ...authHeaders(), "Accept": "application/json" },
+        credentials: "same-origin",
+      });
+      const out = await credHandleResponse(r);
+      if (!out.ok) {
+        credShowError(out.message);
+        credRenderEmpty();
+        return;
+      }
+      const items = (out.body && out.body.items) || [];
+      if (items.length === 0) {
+        credRenderEmpty();
+        return;
+      }
+      credList.innerHTML = "";
+      items.forEach(row => credList.appendChild(credRenderRow(row)));
+    } catch (err) {
+      credShowError("Network error loading credentials: " + err.message);
+    }
+  }
+
+  async function credReload() {
+    if (!credTile.open) return;
+    // Cache registry + (admin) fingerprint on first open of this
+    // session; ALWAYS reload the row list on every open (D12). Rows
+    // MUST render even if registry fetch failed (D4.2).
+    if (!_credRegistryLoaded) await credLoadRegistry();
+    if (_credMe && _credMe.role === "admin" && !_credFingerprintLoaded) {
+      await credLoadFingerprint();
+    }
+    await credLoadRows();
+  }
+
+  // ── Add/Replace dialog (D8 + D9 + D11 + D13 + D23 + D24 + D25) ──
+
+  function credShowAsModal() {
+    // Polyfill path — render the <dialog> as a positioned div. Adds a
+    // doc-level Escape listener for parity with native <dialog> (D24).
+    credDialog.classList.remove("cred-put-dialog");
+    credDialog.classList.add("cred-put-dialog-fallback");
+    credDialog.removeAttribute("hidden");
+    credDialog.style.display = "block";
+    if (!_credEscListener) {
+      _credEscListener = (e) => { if (e.key === "Escape") credCloseDialog(); };
+      document.addEventListener("keydown", _credEscListener);
+    }
+  }
+
+  function credCloseDialog() {
+    if (credDialog && typeof credDialog.close === "function"
+        && credDialog.classList.contains("cred-put-dialog")) {
+      try { credDialog.close(); } catch (_e) {}
+    } else {
+      credDialog.style.display = "none";
+    }
+    if (_credEscListener) {
+      document.removeEventListener("keydown", _credEscListener);
+      _credEscListener = null;
+    }
+    if (_credModalOpener && typeof _credModalOpener.focus === "function") {
+      try { _credModalOpener.focus(); } catch (_e) {}
+    }
+    _credModalOpener = null;
+    _credPutContext = null;
+  }
+
+  function credForceCloseModal() {
+    // D21 — called by the admin-picker change handler and the Refresh
+    // button. Resets the modal completely so a payload typed for one
+    // target user can never be saved against a different one.
+    if (credDialog && credDialog.open) {
+      try { credDialog.close(); } catch (_e) {}
+    }
+    credDialog.style.display = "none";
+    if (_credEscListener) {
+      document.removeEventListener("keydown", _credEscListener);
+      _credEscListener = null;
+    }
+    credPayload.value = "";
+    credConnText.value = "";
+    if (credConnSelect.options.length > 0) credConnSelect.selectedIndex = 0;
+    credShowConnError("");
+    credShowPayloadError("");
+    _credPutContext = null;
+    _credModalOpener = null;
+  }
+
+  function credOpenDialog(replaceConnectorId) {
+    _credPutContext = replaceConnectorId
+      ? { connector: replaceConnectorId }
+      : {};
+    _credModalOpener = document.activeElement;
+
+    // Reset any leftover field/error state.
+    credPayload.value = "";
+    credShowConnError("");
+    credShowPayloadError("");
+
+    const useDropdown = (_credRegistryItems !== null);
+    if (useDropdown) {
+      credConnSelect.innerHTML = "";
+      _credRegistryItems.forEach(item => {
+        const opt = document.createElement("option");
+        opt.value = item.id;
+        opt.textContent = item.id + " — " + item.description;
+        credConnSelect.appendChild(opt);
+      });
+      credConnSelect.hidden = false;
+      credConnText.hidden = true;
+      credRegFallback.hidden = true;
+      if (replaceConnectorId
+          && _credRegistryIds && _credRegistryIds.has(replaceConnectorId)) {
+        credConnSelect.value = replaceConnectorId;
+      }
+    } else {
+      // Registry unavailable — fall back to free-text input and show
+      // the D23 explainer paragraph so the user understands why the
+      // dropdown disappeared.
+      credConnSelect.hidden = true;
+      credConnText.hidden = false;
+      credRegFallback.hidden = false;
+      credConnText.value = replaceConnectorId || "";
+    }
+
+    // Dialog open — feature-detect HTMLDialogElement.showModal.
+    if (credDialog && typeof credDialog.showModal === "function") {
+      try { credDialog.showModal(); }
+      catch (_e) { credShowAsModal(); }
+    } else {
+      credShowAsModal();
+    }
+
+    // D24 — focus the first interactive field (queued so showModal's
+    // own focus management runs first).
+    setTimeout(() => {
+      const target = useDropdown ? credConnSelect : credConnText;
+      try { target.focus(); } catch (_e) {}
+    }, 0);
+  }
+
+  function credValidatePayload(text) {
+    // D13 — client-side validation before PUT. JSON object, non-empty,
+    // ≤ 64 KiB UTF-8 bytes. Server-side stays the source of truth.
+    let parsed;
+    try { parsed = JSON.parse(text); }
+    catch (_e) { return { ok: false, message: "Payload must be valid JSON." }; }
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { ok: false, message: "Payload must be a JSON object (not an array, string, or null)." };
+    }
+    if (Object.keys(parsed).length === 0) {
+      return { ok: false, message: "Payload must contain at least one key." };
+    }
+    let bytes;
+    try { bytes = new TextEncoder().encode(JSON.stringify(parsed)).length; }
+    catch (_e) { bytes = text.length; }
+    if (bytes > 64 * 1024) {
+      return { ok: false, message: "Payload exceeds 64 KiB (encoded size: " + bytes + " bytes)." };
+    }
+    return { ok: true, value: parsed };
+  }
+
+  async function credSubmit() {
+    credShowConnError("");
+    credShowPayloadError("");
+
+    const useDropdown = !credConnSelect.hidden;
+    const connector = useDropdown
+      ? credConnSelect.value
+      : (credConnText.value || "").trim();
+    if (!connector) {
+      credShowConnError("Pick or enter a connector id.");
+      return;
+    }
+    if (!useDropdown && !/^[a-z0-9_]+$/.test(connector)) {
+      credShowConnError(CRED_ERROR_MESSAGES.bad_connector_id);
+      return;
+    }
+
+    const v = credValidatePayload(credPayload.value || "");
+    if (!v.ok) { credShowPayloadError(v.message); return; }
+
+    credSubmitBtn.disabled = true;
+    try {
+      const url = credBasePrefix() + "/" + encodeURIComponent(connector);
+      const r = await fetch(url, {
+        method: "PUT",
+        headers: { ...authHeaders(), "Content-Type": "application/json",
+                   "Accept": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ payload: v.value }),
+      });
+      const out = await credHandleResponse(r);
+      if (!out.ok) {
+        // D25 — registry cache invalidation on unknown_connector. The
+        // dropdown the user saw may be stale (server-side registration
+        // could have changed). Mark dirty + fire-and-forget reload so
+        // the next modal open sees the up-to-date list.
+        if (out.code === "unknown_connector") {
+          _credRegistryLoaded = false;
+          _credRegistryItems = null;
+          _credRegistryIds = null;
+          credLoadRegistry();
+        }
+        // Surface the friendly message in the appropriate banner.
+        // Connector-id failures land in the connector banner; payload
+        // failures (422 with the fallback copy) land in the payload
+        // banner; anything else lands in the connector banner because
+        // the payload banner is field-specific by convention.
+        if (out.code === "bad_connector_id" || out.code === "unknown_connector") {
+          credShowConnError(out.message);
+        } else if (r.status === 422) {
+          credShowPayloadError(out.message);
+        } else {
+          credShowConnError(out.message);
+        }
+        return;
+      }
+      // Modal stays open until success — keeps the typed payload safe
+      // in the failure path (D14a especially for 503).
+      credCloseDialog();
+      credReload();
+    } catch (err) {
+      credShowConnError("Network error: " + err.message);
+    } finally {
+      credSubmitBtn.disabled = false;
+    }
+  }
+
+  async function credDeleteRow(connectorId) {
+    credShowError("");
+    // D22 — explicit, target-aware confirm copy. Prevents a wrong-user
+    // delete in admin-on-behalf mode by naming both the connector AND
+    // the target user. Template-literal interpolation into a
+    // window.confirm() string is XSS-safe (confirm dialogs do not
+    // parse HTML).
+    const who = _credActingUserId
+      ? _credActingUserEmail
+      : "your account";
+    const msg = "Delete credential '" + connectorId + "' for " + who + "?";
+    if (!window.confirm(msg)) return;
+
+    try {
+      const url = credBasePrefix() + "/" + encodeURIComponent(connectorId);
+      const r = await fetch(url, {
+        method: "DELETE",
+        headers: { ...authHeaders(), "Accept": "application/json" },
+        credentials: "same-origin",
+      });
+      const out = await credHandleResponse(r);
+      if (!out.ok) {
+        credShowError(out.message);
+        return;
+      }
+      credReload();
+    } catch (err) {
+      credShowError("Network error: " + err.message);
+    }
+  }
+
+  // ── Wiring for the credential tile ────────────────────────────────
+  credTile.addEventListener("toggle", () => credReload());
+  credAddBtn.addEventListener("click", () => credOpenDialog(null));
+  credCancelBtn.addEventListener("click", () => credCloseDialog());
+  credSubmitBtn.addEventListener("click", () => credSubmit());
+  credDialog.addEventListener("close", () => {
+    // <dialog>'s native close event also fires for ESC closes; reuse
+    // the same focus-return + state-reset path as our explicit close.
+    if (_credModalOpener && typeof _credModalOpener.focus === "function") {
+      try { _credModalOpener.focus(); } catch (_e) {}
+    }
+    _credModalOpener = null;
+    _credPutContext = null;
+  });
+
+  credTargetSel.addEventListener("change", () => {
+    // D21 — FIRST hard-reset any in-flight modal state, BEFORE swapping
+    // the prefix. A secret typed for the previous target must never
+    // PUT against the new target's user_id.
+    credForceCloseModal();
+    _credActingUserId = credTargetSel.value || "";
+    if (_credActingUserId) {
+      const opt = credTargetSel.options[credTargetSel.selectedIndex];
+      _credActingUserEmail = (opt && opt.textContent || "").split(" (")[0];
+    } else {
+      _credActingUserEmail = "";
+    }
+    credUpdateActingBanner();
+    // Reset the row list and refetch — registry/fingerprint are global,
+    // do NOT re-fetch them.
+    if (credList) credList.innerHTML = "";
+    credLoadRows();
+  });
+
+  credRefreshBtn.addEventListener("click", async () => {
+    // Same defensive force-close + reset as the picker change handler:
+    // the user is declaring "rebuild state from server", so an open
+    // modal is already in an inconsistent state.
+    credForceCloseModal();
+    _credRegistryLoaded = false;
+    _credFingerprintLoaded = false;
+    await credReload();
+  });
+
+  // ── Wiring ────────────────────────────────────────────────────────
+  loginForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    loginError.hidden = true;
+    loginBtn.disabled = true;
+    const original = loginBtn.textContent;
+    loginBtn.textContent = "Signing in…";
+    try {
+      await doLogin(emailInput.value.trim(), passInput.value);
+    } catch (err) {
+      loginError.textContent = err.message || "Sign in failed";
+      loginError.hidden = false;
+      loginError.className = "banner error";
+      passInput.value = "";
+      passInput.focus();
+    } finally {
+      loginBtn.disabled = false;
+      loginBtn.textContent = original;
+    }
+  });
+  logoutBtn.addEventListener("click", () => doLogout(true));
+  refreshBtn.addEventListener("click", () => fetchSignals());
+
+  boot();
+})();
+</script>
+
+</body>
+</html>

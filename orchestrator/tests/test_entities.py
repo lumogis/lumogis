@@ -2,7 +2,9 @@
 # Copyright (C) 2026 Lumogis
 """Tests for services/entities.py and POST /entities/extract."""
 
+import inspect
 import json
+import re
 import uuid
 from unittest.mock import patch
 
@@ -176,7 +178,7 @@ class TestStoreEntities:
         assert ms.executed == []
         assert vs.count("entities") == 0
 
-    @patch("services.entities.hooks.fire")
+    @patch("services.entities.hooks.fire_background")
     def test_new_entity_inserted(self, mock_fire):
         ms, vs = self._setup(existing_entity=None)
         entity = ExtractedEntity(
@@ -204,7 +206,7 @@ class TestStoreEntities:
         assert fired_kwargs["name"] == "Diana"
         assert fired_kwargs["evidence_type"] == "SESSION"
 
-    @patch("services.entities.hooks.fire")
+    @patch("services.entities.hooks.fire_background")
     def test_existing_entity_updated_not_inserted(self, mock_fire):
         # Two overlapping context_tags (>= 2) → merge decision
         existing = {
@@ -237,7 +239,7 @@ class TestStoreEntities:
         assert "leadership" in merged_tags
         assert "strategy" in merged_tags
 
-    @patch("services.entities.hooks.fire")
+    @patch("services.entities.hooks.fire_background")
     def test_relation_type_document(self, mock_fire):
         ms, vs = self._setup(existing_entity=None)
         entity = ExtractedEntity(name="Acme", entity_type="ORG")
@@ -248,7 +250,7 @@ class TestStoreEntities:
         assert relation_params[1] == "MENTIONED_IN_DOCUMENT"
         assert relation_params[2] == "DOCUMENT"
 
-    @patch("services.entities.hooks.fire")
+    @patch("services.entities.hooks.fire_background")
     def test_qdrant_upsert_idempotent_same_entity(self, mock_fire):
         ms, vs = self._setup(existing_entity=None)
         entity = ExtractedEntity(name="Eve", entity_type="PERSON", context_tags=["security"])
@@ -264,7 +266,7 @@ class TestStoreEntities:
 
         assert point_id_first == point_id_second, "Same entity should produce same Qdrant point ID"
 
-    @patch("services.entities.hooks.fire")
+    @patch("services.entities.hooks.fire_background")
     def test_multiple_entities_each_fires_hook(self, mock_fire):
         ms, vs = self._setup(existing_entity=None)
         entities = [
@@ -278,7 +280,7 @@ class TestStoreEntities:
         fired_names = {c.kwargs["name"] for c in mock_fire.call_args_list}
         assert fired_names == {"Frank", "GovOrg"}
 
-    @patch("services.entities.hooks.fire")
+    @patch("services.entities.hooks.fire_background")
     def test_one_entity_failure_does_not_abort_others(self, mock_fire):
         ms, vs = self._setup(existing_entity=None)
         entities = [
@@ -300,7 +302,7 @@ class TestStoreEntities:
         assert mock_fire.call_count == 1
         assert mock_fire.call_args.kwargs["name"] == "Good Entity"
 
-    @patch("services.entities.hooks.fire")
+    @patch("services.entities.hooks.fire_background")
     def test_alias_same_as_name_excluded(self, mock_fire):
         ms, vs = self._setup(existing_entity=None)
         entity = ExtractedEntity(
@@ -316,6 +318,205 @@ class TestStoreEntities:
         assert "Alice" not in aliases_stored
         assert "Ali" in aliases_stored
 
+    # ----------------------------------------------------------------------
+    # Migration 012 — entity_relations evidence dedup contract
+    # See .cursor/plans/entity_relations_evidence_dedup.plan.md
+    # ----------------------------------------------------------------------
+
+    @patch("services.entities.hooks.fire_background")
+    def test_store_entities_writer_emits_on_conflict_do_nothing(self, mock_fire):
+        """The entity_relations INSERT must carry the dedup ON CONFLICT clause.
+
+        Regression gate for migration 012: if a future edit drops the
+        ON CONFLICT target or changes its column list, this test fails
+        loudly before the writer can re-introduce duplicate rows.
+
+        Limitation: this regex inspects the *literal* INSERT string passed
+        to ms.execute(). Dynamically assembled SQL (e.g. concatenation of
+        "ON " + "CONFLICT") would slip past it. That is out of scope for an
+        honest-edit regression gate.
+        """
+        ms, _ = self._setup(existing_entity=None)
+        entity = ExtractedEntity(name="OnConflictTest", entity_type="ORG")
+
+        store_entities([entity], evidence_id="sess-oc", evidence_type="SESSION", user_id="u1")
+
+        relation_queries = [q for q, _p in ms.executed if "INSERT INTO entity_relations" in q]
+        assert len(relation_queries) == 1, (
+            f"expected exactly one entity_relations INSERT, got {len(relation_queries)}"
+        )
+        query = relation_queries[0]
+        # Tolerate whitespace variation; lock the column tuple + DO NOTHING action.
+        pattern = re.compile(
+            r"ON\s+CONFLICT\s*\(\s*source_id\s*,\s*evidence_id\s*,\s*"
+            r"relation_type\s*,\s*user_id\s*\)\s*DO\s+NOTHING",
+            re.IGNORECASE,
+        )
+        assert pattern.search(query), (
+            "entity_relations INSERT is missing the post-012 dedup clause "
+            "ON CONFLICT (source_id, evidence_id, relation_type, user_id) DO NOTHING. "
+            f"Got query: {query!r}"
+        )
+
+    @patch("services.entities.hooks.fire_background")
+    def test_store_entities_is_idempotent_on_repeat_evidence(self, mock_fire):
+        """Writer-shape idempotency contract (NOT row-collapse — see below).
+
+        Mocks cannot exercise the real Postgres ON CONFLICT path, so this
+        test does not verify that the database collapses duplicate rows
+        (that is owned by the unique index from migration 012). What it
+        DOES verify is the writer-side contract that downstream subscribers
+        depend on: every store_entities call for a given (entity, evidence)
+        pair fires exactly one ENTITY_CREATED hook and emits exactly one
+        entity_relations INSERT carrying the ON CONFLICT clause — even on
+        repeat ingest. Together with Test 1 (clause shape) and the unique
+        index itself (migration 012), this nails down the end-to-end dedup
+        contract from this layer's perspective.
+        """
+        ms, _ = self._setup(existing_entity=None)
+        entity = ExtractedEntity(name="RepeatEntity", entity_type="PERSON")
+
+        store_entities([entity], evidence_id="sess-rep", evidence_type="SESSION", user_id="u1")
+        ms._existing = None  # second call: writer also sees no prior row
+        store_entities([entity], evidence_id="sess-rep", evidence_type="SESSION", user_id="u1")
+
+        relation_queries = [q for q, _p in ms.executed if "INSERT INTO entity_relations" in q]
+        assert len(relation_queries) == 2, (
+            f"expected one entity_relations INSERT per call, got {len(relation_queries)}"
+        )
+        for query in relation_queries:
+            assert "ON CONFLICT" in query.upper(), (
+                "every entity_relations INSERT must carry the dedup clause"
+            )
+
+        assert mock_fire.call_count == 2, (
+            "ENTITY_CREATED must fire on every call — downstream subscribers "
+            "(graph projection, audit) depend on this signal even when the "
+            "underlying row is dropped by ON CONFLICT DO NOTHING"
+        )
+
+    def test_tools_query_entity_uses_distinct_on_for_recent_relations(self):
+        """services/tools.py:_query_entity must use DISTINCT ON wrapped in a
+        subquery with an outer ORDER BY created_at DESC LIMIT 10.
+
+        The subquery wrapper preserves "10 most recent distinct mentions"
+        semantics. A naked DISTINCT ON ... ORDER BY evidence_id, ... LIMIT 10
+        would return the 10 alphabetically-first evidence_ids instead — a
+        silent correctness regression. This test fails on that shape.
+        """
+        from services import tools as tools_module
+
+        source = inspect.getsource(tools_module._query_entity)
+        # Collapse Python string-concatenation whitespace and quote chars so
+        # the SQL pattern matches across split string literals (e.g.
+        # `") sub " "ORDER BY..."`).
+        flat = re.sub(r"['\"\s]+", " ", source)
+
+        # Lock the canonical shape: DISTINCT ON inside a subquery, with
+        # outer ORDER BY created_at DESC LIMIT 10 outside the closing ")".
+        inner_pattern = re.compile(
+            r"DISTINCT\s+ON\s*\(\s*evidence_id\s*,\s*relation_type\s*\)",
+            re.IGNORECASE,
+        )
+        assert inner_pattern.search(flat), (
+            "services/tools.py:_query_entity must use DISTINCT ON "
+            "(evidence_id, relation_type) on the entity_relations SELECT."
+        )
+
+        outer_pattern = re.compile(
+            r"\)\s*sub\s+ORDER\s+BY\s+created_at\s+DESC\s+LIMIT\s+10",
+            re.IGNORECASE,
+        )
+        assert outer_pattern.search(flat), (
+            "services/tools.py:_query_entity DISTINCT ON SELECT must be "
+            "wrapped in a subquery aliased `sub`, with the outer query "
+            "applying ORDER BY created_at DESC LIMIT 10. A naked DISTINCT "
+            "ON ... LIMIT 10 returns the 10 alphabetically-first "
+            "evidence_ids instead of the 10 most recent — a silent "
+            "correctness regression."
+        )
+
+    def test_tools_query_entity_qdrant_fallback_uses_visible_filter(self):
+        """services/tools.py:_query_entity Qdrant fallback MUST go through
+        :func:`visibility.visible_qdrant_filter`, mirroring the Postgres
+        path's :func:`visibility.visible_filter` use.
+
+        Asymmetry here is a real household-sharing leak: Alice publishes
+        an entity as ``shared``; Bob's exact-name lookup hits the Postgres
+        path and finds it (visible_filter admits shared/system); but if
+        the Qdrant fallback uses a raw ``user_id`` payload filter, Bob's
+        near-miss semantic lookup silently drops the row. Pin both halves
+        of the contract by source inspection so a regression cannot
+        re-introduce a bare ``{"key": "user_id", "match": ...}`` shape on
+        this code path.
+        """
+        from services import tools as tools_module
+
+        source = inspect.getsource(tools_module._query_entity)
+
+        # Both helpers must be referenced — Postgres path AND Qdrant path
+        # resolve through the household visibility rule.
+        assert "visible_filter" in source, (
+            "services/tools.py:_query_entity Postgres lookup must use "
+            "visibility.visible_filter so shared/system entities are "
+            "reachable by exact name."
+        )
+        assert "visible_qdrant_filter" in source, (
+            "services/tools.py:_query_entity Qdrant fallback must use "
+            "visibility.visible_qdrant_filter so shared/system entities "
+            "are reachable by semantic similarity. A raw "
+            '`{"key": "user_id", ...}` payload filter is a sharing leak.'
+        )
+
+        # Defence-in-depth: forbid a bare user_id-only payload-filter
+        # shape on the Qdrant call site (collapse whitespace + quotes
+        # like the existing DISTINCT ON test). This catches the legacy
+        # `filter={"must": [{"key": "user_id", "match": {"value": ...}}]}`
+        # being re-introduced under the `else:` branch.
+        flat = re.sub(r"\s+", "", source)
+        legacy_shape = (
+            'filter={"must":[{"key":"user_id","match":{"value":user_id}}]}'
+        )
+        assert legacy_shape not in flat, (
+            "services/tools.py:_query_entity Qdrant fallback re-introduced "
+            "the legacy user_id-only payload filter — this breaks the "
+            "Postgres↔Qdrant visibility symmetry. Use visible_qdrant_filter."
+        )
+
+
+def test_restore_path_remains_generic_on_conflict_do_nothing():
+    """routes/admin.py restore must use generic ON CONFLICT DO NOTHING (no
+    inference target column list).
+
+    This is a forward-compatibility contract: a generic clause is satisfied
+    by ANY unique constraint on the target table, including the new
+    migration-012 unique index on entity_relations. If a future edit
+    inserts an explicit (col1, col2, ...) target list here, the restore
+    would break for any table whose unique constraint differs from that
+    list. This test pins the generic shape.
+    """
+    from routes import admin as admin_module
+
+    source = inspect.getsource(admin_module)
+
+    # Pattern: ON CONFLICT immediately followed by DO NOTHING (no parens).
+    pattern = re.compile(r"ON\s+CONFLICT\s+DO\s+NOTHING", re.IGNORECASE)
+    matches = pattern.findall(source)
+    assert matches, (
+        "routes/admin.py restore must emit a generic 'ON CONFLICT DO NOTHING' "
+        "(no inference target) so it stays forward-compatible with any unique "
+        "constraint on the target table — including the post-012 unique index "
+        "on entity_relations(source_id, evidence_id, relation_type, user_id)."
+    )
+
+    # Also assert that no ON CONFLICT in admin.py carries an explicit target
+    # column list — a stricter pin to catch partial reverts.
+    explicit_target = re.compile(r"ON\s+CONFLICT\s*\([^)]+\)\s*DO\s+NOTHING", re.IGNORECASE)
+    assert not explicit_target.search(source), (
+        "routes/admin.py restore must NOT use ON CONFLICT (target_cols) DO NOTHING — "
+        "the generic form is required for cross-table forward-compatibility."
+    )
+
 
 # ---------------------------------------------------------------------------
 # Route: POST /entities/extract
@@ -323,15 +524,11 @@ class TestStoreEntities:
 
 
 class TestEntitiesExtractRoute:
-    def test_entities_extract_returns_202_accepted(self):
+    def test_entities_extract_returns_queued(self):
         import main
         from fastapi.testclient import TestClient
 
-        with (
-            patch("services.entities.extract_entities", return_value=[]) as _mock_extract,
-            patch("services.entities.store_entities") as _mock_store,
-            TestClient(main.app) as client,
-        ):
+        with patch("routes.data.enqueue", return_value=1) as mock_enq, TestClient(main.app) as client:
             resp = client.post(
                 "/entities/extract",
                 json={
@@ -343,8 +540,10 @@ class TestEntitiesExtractRoute:
 
         assert resp.status_code == 200
         data = resp.json()
-        assert data["status"] == "extraction started"
+        assert data["status"] == "extraction queued"
         assert data["evidence_id"] == "sess-route-test"
+        mock_enq.assert_called_once()
+        assert mock_enq.call_args.kwargs["kind"] == "entities_extract"
 
     def test_entities_extract_missing_text_returns_422(self):
         import main
@@ -377,22 +576,8 @@ class TestEntitiesExtractRoute:
 
 
 class TestSessionEndTriggersExtraction:
-    @patch("services.entities.store_entities")
-    @patch("services.entities.extract_entities", return_value=[])
-    @patch("services.memory.store_session")
-    @patch("services.memory.summarize_session")
-    def test_session_end_calls_extract_entities(
-        self, mock_summarize, mock_store_session, mock_extract, mock_store_entities
-    ):
-        from models.memory import SessionSummary
-
-        mock_summarize.return_value = SessionSummary(
-            session_id="sess-123",
-            summary="Test summary",
-            topics=["testing"],
-            entities=["Alice"],
-        )
-
+    @patch("routes.data.enqueue", return_value=1)
+    def test_session_end_enqueues_with_messages_in_payload(self, mock_enqueue):
         import main
         from fastapi.testclient import TestClient
 
@@ -409,25 +594,18 @@ class TestSessionEndTriggersExtraction:
             )
 
         assert resp.status_code == 200
-        mock_extract.assert_called_once()
-        call_text = mock_extract.call_args.args[0]
-        assert "Alice wrote the report." in call_text
-        assert "Got it." in call_text
+        assert resp.json()["status"] == "session end queued"
+        mock_enqueue.assert_called_once()
+        payload = mock_enqueue.call_args.kwargs["payload"]
+        assert payload["session_id"] == "sess-123"
+        msgs = payload["messages"]
+        assert any(m["content"] == "Alice wrote the report." for m in msgs)
+        assert any(m["content"] == "Got it." for m in msgs)
 
-    @patch("services.entities.store_entities")
-    @patch("services.entities.extract_entities", return_value=[])
-    @patch("services.memory.store_session")
-    @patch("services.memory.summarize_session")
-    def test_session_end_calls_store_entities_with_session_id(
-        self, mock_summarize, mock_store_session, mock_extract, mock_store_entities
+    @patch("routes.data.enqueue", return_value=1)
+    def test_session_end_enqueues_session_id_for_downstream_evidence(
+        self, mock_enqueue
     ):
-        from models.memory import SessionSummary
-
-        mock_summarize.return_value = SessionSummary(
-            session_id="sess-456",
-            summary="Another summary",
-        )
-
         import main
         from fastapi.testclient import TestClient
 
@@ -440,10 +618,9 @@ class TestSessionEndTriggersExtraction:
                 },
             )
 
-        mock_store_entities.assert_called_once()
-        _, kwargs = mock_store_entities.call_args
-        assert kwargs["evidence_id"] == "sess-456"
-        assert kwargs["evidence_type"] == "SESSION"
+        payload = mock_enqueue.call_args.kwargs["payload"]
+        assert payload["session_id"] == "sess-456"
+        assert mock_enqueue.call_args.kwargs["kind"] == "session_end"
 
 
 # ---------------------------------------------------------------------------
@@ -520,7 +697,7 @@ class TestAmbiguousResolution:
     def teardown_method(self):
         _config._instances.clear()
 
-    @patch("services.entities.hooks.fire")
+    @patch("services.entities.hooks.fire_background")
     def test_ambiguous_match_logs_to_review_queue(self, mock_fire):
         # 1 overlapping tag → ambiguous
         existing = {
@@ -546,7 +723,7 @@ class TestAmbiguousResolution:
         insert_calls = [q for q, _ in ms.executed if "INSERT INTO entities" in q]
         assert len(insert_calls) == 1
 
-    @patch("services.entities.hooks.fire")
+    @patch("services.entities.hooks.fire_background")
     def test_zero_tag_overlap_creates_separate_entity_no_review_queue(self, mock_fire):
         existing = {
             "entity_id": str(uuid.uuid4()),
@@ -607,7 +784,7 @@ class TestIngestEntityExtraction:
                 mock_vs.return_value.upsert.return_value = None
                 mock_ext.return_value = {".txt": lambda p: open(p).read()}
 
-                ingest_file(tmp_path)
+                ingest_file(tmp_path, user_id="test-user")
 
             mock_extract.assert_called_once()
             call_text = mock_extract.call_args.args[0]
@@ -649,7 +826,7 @@ class TestIngestEntityExtraction:
                 mock_vs.return_value.upsert.return_value = None
                 mock_ext.return_value = {".txt": lambda p: open(p).read()}
 
-                ingest_file(tmp_path)
+                ingest_file(tmp_path, user_id="test-user")
 
             mock_store.assert_called_once()
             _, kwargs = mock_store.call_args

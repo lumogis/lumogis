@@ -14,6 +14,10 @@ class Event:
     TOOL_REGISTERED = "on_tool_registered"
     CONTEXT_BUILDING = "on_context_building"
 
+    NOTE_CAPTURED = "on_note_captured"
+    AUDIO_TRANSCRIBED = "on_audio_transcribed"
+    ENTITY_MERGED = "on_entity_merged"
+
     SIGNAL_RECEIVED = "on_signal_received"
     FEEDBACK_RECEIVED = "on_feedback_received"
 

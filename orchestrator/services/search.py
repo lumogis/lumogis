@@ -5,19 +5,40 @@
 import logging
 import os
 from pathlib import Path
+from typing import Optional
 
+from auth import UserContext
 from models.search import SearchResult
+from visibility import visible_qdrant_filter
 
 import config
 
 _log = logging.getLogger(__name__)
 
 
-def _user_filter(user_id: str) -> dict:
-    return {"must": [{"key": "user_id", "match": {"value": user_id}}]}
+def _user_filter(user_id: str, scope_filter: Optional[str] = None) -> dict:
+    """Build the Qdrant filter for a personal-or-household read.
+
+    Thin wrapper around :func:`visibility.visible_qdrant_filter` so the
+    `_user_filter` callsites already in the codebase keep working without
+    a signature break — the helper now returns the household union
+    `(scope='personal' AND user_id=$me) OR scope IN ('shared','system')`.
+    """
+    return visible_qdrant_filter(UserContext(user_id=user_id), scope_filter)
 
 
-def semantic_search(query: str, limit: int = 5, user_id: str = "default") -> list[SearchResult]:
+def semantic_search(
+    query: str,
+    limit: int = 5,
+    user_id: str = "default",
+    *,
+    scope_filter: Optional[str] = None,
+) -> list[SearchResult]:
+    """Semantic search across the household-visible document corpus.
+
+    Visibility resolved via :func:`visibility.visible_qdrant_filter` —
+    the household union is the default; ``scope_filter`` narrows.
+    """
     embedder = config.get_embedder()
     vs = config.get_vector_store()
     reranker = config.get_reranker()
@@ -28,7 +49,7 @@ def semantic_search(query: str, limit: int = 5, user_id: str = "default") -> lis
         vector=query_vec,
         limit=20,
         threshold=0.40,
-        filter=_user_filter(user_id),
+        filter=_user_filter(user_id, scope_filter),
         sparse_query=query,
     )
 

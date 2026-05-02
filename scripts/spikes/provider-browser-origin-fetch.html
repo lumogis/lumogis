@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Lumogis — browser-origin provider spike (non-product)</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        max-width: 52rem;
+        margin: 1rem auto;
+        padding: 0 1rem;
+      }
+      pre {
+        background: #f4f4f5;
+        padding: 0.75rem;
+        overflow: auto;
+        white-space: pre-wrap;
+      }
+      .warn {
+        color: #b45309;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Browser-origin provider spike</h1>
+    <p class="warn">
+      Non-product harness. Do not commit API keys. Paste key only in this session; it is not persisted.
+    </p>
+    <p>
+      <label>Anthropic / OpenAI API key (session only): <input id="key" type="password" size="48" autocomplete="off" /></label>
+    </p>
+    <p>
+      <label title="Required for CORS-eligible traffic to api.anthropic.com from a browser per vendor">
+        <input type="checkbox" id="anthropicDangerous" checked />
+        Anthropic: send <code>anthropic-dangerous-direct-browser-access: true</code>
+      </label>
+    </p>
+    <p>
+      <button type="button" id="runAnthropic">Run minimal Anthropic Messages (non-streaming)</button>
+      <button type="button" id="runOpenAI">Run minimal OpenAI chat (non-streaming)</button>
+    </p>
+    <h2>Output (headers redacted in copy)</h2>
+    <pre id="out"></pre>
+    <script type="module">
+      const out = document.getElementById("out");
+      function log(msg) {
+        out.textContent += msg + "\n";
+      }
+
+      async function runAnthropic() {
+        out.textContent = "";
+        const key = document.getElementById("key").value.trim();
+        const dangerous = document.getElementById("anthropicDangerous").checked;
+        if (!key) {
+          log("No key in field: observe CORS/error with deliberately invalid stub (no network secret).");
+        }
+        const url = "https://api.anthropic.com/v1/messages";
+        const body = JSON.stringify({
+          model: "claude-3-5-haiku-20241022",
+          max_tokens: 8,
+          messages: [{ role: "user", content: "Say the word ok." }],
+        });
+        try {
+          /** @type Record<string,string> */
+          const headers = {
+            "content-type": "application/json",
+            "anthropic-version": "2023-06-01",
+          };
+          if (key) {
+            headers["x-api-key"] = key;
+          } else {
+            headers["x-api-key"] = "invalid_placeholder";
+          }
+          if (dangerous) {
+            headers["anthropic-dangerous-direct-browser-access"] = "true";
+          }
+          log("Request headers (values redacted): content-type, anthropic-version, x-api-key: <redacted>, anthropic-dangerous-direct-browser-access: " + dangerous);
+          const res = await fetch(url, {
+            method: "POST",
+            headers,
+            body,
+          });
+          const text = await res.text();
+          log(`status: ${res.status}`);
+          log(`response (truncated): ${text.slice(0, 2000)}`);
+        } catch (e) {
+          log(`fetch threw: ${e && e.message ? e.message : String(e)}`);
+        }
+      }
+
+      async function runOpenAI() {
+        out.textContent = "";
+        const key = document.getElementById("key").value.trim();
+        const url = "https://api.openai.com/v1/chat/completions";
+        const body = JSON.stringify({
+          model: "gpt-4o-mini",
+          max_tokens: 8,
+          messages: [{ role: "user", content: "Say ok." }],
+        });
+        try {
+          const res = await fetch(url, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              ...(key ? { authorization: `Bearer ${key}` } : { authorization: "Bearer <redacted-placeholder>" }),
+            },
+            body,
+          });
+          const text = await res.text();
+          log(`status: ${res.status}`);
+          log(`response (truncated): ${text.slice(0, 2000)}`);
+        } catch (e) {
+          log(`fetch threw: ${e && e.message ? e.message : String(e)}`);
+        }
+      }
+
+      document.getElementById("runAnthropic").onclick = runAnthropic;
+      document.getElementById("runOpenAI").onclick = runOpenAI;
+    </script>
+  </body>
+</html>

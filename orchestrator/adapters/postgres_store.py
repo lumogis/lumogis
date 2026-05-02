@@ -3,6 +3,7 @@
 """MetadataStore adapter for PostgreSQL."""
 
 import logging
+from contextlib import contextmanager
 
 import psycopg2
 import psycopg2.extras
@@ -60,3 +61,33 @@ class PostgresStore:
 
     def close(self) -> None:
         self._conn.close()
+
+    @contextmanager
+    def transaction(self):
+        """Open a single explicit transaction.
+
+        Toggles ``autocommit`` off for the duration of the ``with`` block.
+        Commits on clean exit, rolls back on any exception. Restores
+        ``autocommit=True`` either way so subsequent ``execute`` calls
+        keep their per-call commit semantics. Re-entry is not supported —
+        nesting will raise.
+
+        Used by the per-user import path so refuse-mid-flight
+        (parent UUID collision) leaves Postgres untouched. See
+        ``per_user_backup_export`` plan Pass 0 step 6.
+        """
+        self._ensure_conn()
+        if not self._conn.autocommit:
+            raise RuntimeError("PostgresStore.transaction(): nested transactions not supported")
+        self._conn.autocommit = False
+        try:
+            yield
+            self._conn.commit()
+        except Exception:
+            try:
+                self._conn.rollback()
+            except Exception:
+                _log.exception("rollback failed during transaction()")
+            raise
+        finally:
+            self._conn.autocommit = True

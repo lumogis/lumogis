@@ -1,0 +1,30 @@
+# Caches
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+
+# Tests are NOT copied into the runtime image. They are mounted by
+# `make compose-test-kg` so unit tests stay byte-identical to source.
+tests/
+conftest.py
+
+# Markdown docs except README.
+*.md
+!README.md
+
+# Local dev cruft
+.env
+.env.local
+*.log
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Git internals never need to enter the build context
+.git
+.gitignore

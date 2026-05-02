@@ -11,15 +11,17 @@ import logging
 import os
 import re
 import time
-import uuid
 from pathlib import Path
 
 import hooks
 import psutil
 import tiktoken
+from auth import UserContext
 from events import Event
 from models.ingest import IngestResult
 from models.ingest import IngestStats
+from services.point_ids import document_chunk_point_id
+from visibility import visible_filter
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
@@ -136,7 +138,15 @@ def chunk_text(text: str) -> list[str]:
     return chunks
 
 
-def ingest_file(file_path: str, user_id: str = "default") -> IngestResult:
+def ingest_file(file_path: str, *, user_id: str) -> IngestResult:
+    """Ingest one file and attribute every artifact to ``user_id``.
+
+    Phase 3: ``user_id`` is keyword-only and required. The watcher and
+    the ``POST /ingest`` route both resolve a real owner before calling
+    this; we no longer accept a "default" fallback.
+    """
+    if not isinstance(user_id, str) or not user_id:
+        raise TypeError("ingest_file: user_id (keyword-only) is required")
     path = Path(file_path)
     ext = path.suffix.lower()
 
@@ -148,9 +158,17 @@ def ingest_file(file_path: str, user_id: str = "default") -> IngestResult:
     new_hash = _file_hash(file_path)
 
     meta = config.get_metadata_store()
+    # Personal duplicate detection: a file already ingested under THIS user's
+    # personal scope short-circuits re-extraction. Shared/system projection
+    # rows must not collapse the precheck (a publisher can re-ingest the
+    # original personal version even after publishing a shared projection).
+    where_clause, where_params = visible_filter(
+        UserContext(user_id=user_id), scope_filter="personal"
+    )
     existing = meta.fetch_one(
-        "SELECT file_hash FROM file_index WHERE file_path = %s AND user_id = %s",
-        (file_path, user_id),
+        "SELECT file_hash FROM file_index "
+        f"WHERE file_path = %s AND {where_clause}",
+        (file_path, *where_params),
     )
     if existing and existing["file_hash"] == new_hash:
         _log.info("Skipping unchanged: %s", file_path)
@@ -169,13 +187,14 @@ def ingest_file(file_path: str, user_id: str = "default") -> IngestResult:
     section_headers = _extract_section_headers(text, chunks)
 
     for i, (chunk, vec, section) in enumerate(zip(chunks, vectors, section_headers)):
-        doc_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{file_path}::chunk-{i}"))
+        doc_id = document_chunk_point_id(user_id, file_path, i)
         payload: dict = {
             "file_path": file_path,
             "chunk_index": i,
             "text": chunk,
             "file_type": ext,
             "user_id": user_id,
+            "scope": "personal",
         }
         if section:
             payload["section_header"] = section
@@ -186,21 +205,41 @@ def ingest_file(file_path: str, user_id: str = "default") -> IngestResult:
             payload=payload,
         )
 
-    if existing:
-        meta.execute(
-            "UPDATE file_index SET file_hash=%s, chunk_count=%s, updated_at=NOW() "
-            "WHERE file_path=%s AND user_id=%s",
-            (new_hash, len(chunks), file_path, user_id),
-        )
-    else:
-        meta.execute(
-            "INSERT INTO file_index (file_path, file_hash, file_type, chunk_count, user_id) "
-            "VALUES (%s, %s, %s, %s, %s)",
-            (file_path, new_hash, ext, len(chunks), user_id),
-        )
+    # Single upsert keyed on the (user_id, file_path) composite UNIQUE
+    # (postgres/migrations/011-per-user-file-index.sql). Closes the
+    # precheck-then-INSERT race when two workers ingest the same
+    # (user_id, file_path) concurrently.
+    #
+    # Intentionally frozen on conflict: file_type, ocr_used, ingested_at.
+    #   * file_type derives from the path suffix and cannot legitimately
+    #     change for the same (user_id, file_path).
+    #   * ocr_used is a one-time ingest-side fact; the original value is
+    #     the right semantic for "this row was first OCR'd".
+    #   * ingested_at records first-ingest time; updated_at covers
+    #     last-touched.
+    # Explicit scope='personal' write — the column default is also 'personal'
+    # but pinning it here is the contract every CI grep checks for and makes
+    # the projection-row publisher's INSERT (scope='shared'/'system' with a
+    # non-NULL `published_from`) the only writer that ever produces a non-personal
+    # row in this table. See plan §7 + the `_published_from_scope_uniq` partial
+    # index in postgres/migrations/013-memory-scopes.sql.
+    meta.execute(
+        "INSERT INTO file_index (file_path, file_hash, file_type, chunk_count, user_id, scope) "
+        "VALUES (%s, %s, %s, %s, %s, 'personal') "
+        "ON CONFLICT (user_id, file_path) DO UPDATE SET "
+        "file_hash = EXCLUDED.file_hash, "
+        "chunk_count = EXCLUDED.chunk_count, "
+        "updated_at = NOW()",
+        (file_path, new_hash, ext, len(chunks), user_id),
+    )
 
     _log.info("Ingested %s: %d chunks", file_path, len(chunks))
-    hooks.fire(Event.DOCUMENT_INGESTED, file_path=file_path, chunk_count=len(chunks))
+    hooks.fire_background(
+        Event.DOCUMENT_INGESTED,
+        file_path=file_path,
+        chunk_count=len(chunks),
+        user_id=user_id,
+    )
 
     # Extract entities from document text and store MENTIONED_IN_DOCUMENT relations.
     # Runs synchronously here because ingest_file is already called from a background
@@ -209,7 +248,7 @@ def ingest_file(file_path: str, user_id: str = "default") -> IngestResult:
         from services.entities import extract_entities
         from services.entities import store_entities
 
-        entities = extract_entities(text)
+        entities = extract_entities(text, user_id=user_id)
         if entities:
             store_entities(
                 entities,
@@ -273,7 +312,22 @@ class _PerformanceGuard:
 
 
 class _InboxHandler(FileSystemEventHandler):
-    """Watches ai-workspace/inbox/ and triggers ingest on new files."""
+    """Watches ai-workspace/inbox/ and triggers ingest on new files.
+
+    Phase 3: every watcher-ingested file is attributed to the
+    operator-configured ``INBOX_OWNER_USER_ID`` (resolved at watcher
+    start). Files dropped into the shared inbox have no inherent
+    "owner", so the operator must opt one in explicitly — there is no
+    safe default.
+    """
+
+    def __init__(self, owner_user_id: str) -> None:
+        super().__init__()
+        if not isinstance(owner_user_id, str) or not owner_user_id:
+            raise TypeError(
+                "_InboxHandler: owner_user_id is required (set INBOX_OWNER_USER_ID)"
+            )
+        self._owner_user_id = owner_user_id
 
     def on_created(self, event):
         if event.is_directory:
@@ -283,10 +337,12 @@ class _InboxHandler(FileSystemEventHandler):
         extractors = config.get_extractors()
         if ext not in extractors:
             return
-        time.sleep(2)  # let the file finish writing
-        _log.info("Watcher detected new file: %s", path)
+        time.sleep(2)
+        _log.info(
+            "Watcher detected new file: %s (owner=%s)", path, self._owner_user_id
+        )
         try:
-            ingest_file(path)
+            ingest_file(path, user_id=self._owner_user_id)
         except Exception:
             _log.exception("Watcher failed to ingest %s", path)
 
@@ -294,17 +350,34 @@ class _InboxHandler(FileSystemEventHandler):
 _observer: Observer | None = None
 
 
-def start_watcher(inbox_path: str = "/workspace/inbox"):
-    """Start watching inbox_path for new files. Call once at startup."""
+def start_watcher(inbox_path: str = "/workspace/inbox") -> None:
+    """Start watching inbox_path for new files. Call once at startup.
+
+    Reads ``INBOX_OWNER_USER_ID`` from the environment and refuses to
+    start if it is unset — better to drop ingest than to silently
+    pollute another user's index.
+    """
     global _observer
     if not os.path.isdir(inbox_path):
         _log.warning("Inbox path %s does not exist, watcher not started", inbox_path)
         return
+
+    owner = os.environ.get("INBOX_OWNER_USER_ID", "").strip()
+    if not owner:
+        _log.warning(
+            "INBOX_OWNER_USER_ID is not set — inbox watcher will NOT start. "
+            "Set it to the user_id that owns files dropped into %s.",
+            inbox_path,
+        )
+        return
+
     _observer = Observer()
-    _observer.schedule(_InboxHandler(), inbox_path, recursive=True)
+    _observer.schedule(_InboxHandler(owner_user_id=owner), inbox_path, recursive=True)
     _observer.daemon = True
     _observer.start()
-    _log.info("Filesystem watcher started on %s", inbox_path)
+    _log.info(
+        "Filesystem watcher started on %s (owner_user_id=%s)", inbox_path, owner
+    )
 
 
 def stop_watcher():
@@ -317,7 +390,15 @@ def stop_watcher():
         _log.info("Filesystem watcher stopped")
 
 
-def ingest_folder(folder_path: str) -> IngestStats:
+def ingest_folder(folder_path: str, *, user_id: str) -> IngestStats:
+    """Walk ``folder_path`` and ingest every supported file as ``user_id``.
+
+    Phase 3: ``user_id`` is keyword-only and required. Bulk ingest of a
+    folder must always declare an owner; "default" is no longer
+    accepted.
+    """
+    if not isinstance(user_id, str) or not user_id:
+        raise TypeError("ingest_folder: user_id (keyword-only) is required")
     root = Path(folder_path)
     total = 0
     ingested = 0
@@ -337,7 +418,7 @@ def ingest_folder(folder_path: str) -> IngestStats:
             total += 1
             guard.wait_if_needed()
             try:
-                result = ingest_file(fpath)
+                result = ingest_file(fpath, user_id=user_id)
                 if result.skipped:
                     skipped += 1
                 else:

@@ -12,7 +12,7 @@ All participants must follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 **All contributors must sign the CLA before a PR can be merged.**
 
-lumogis is AGPL-3.0. The CLA grants Lumogis the right to relicence your contribution for distribution outside AGPL terms while you retain full copyright.
+Contributions are submitted under the project licence, **AGPL-3.0-only** (GNU Affero General Public License v3.0 only). The CLA grants Lumogis maintainers a perpetual, worldwide, non-exclusive, royalty-free, irrevocable right to use, reproduce, modify, distribute, sublicense and relicense your contributions, including under commercial or alternative licence terms, while you retain full copyright.
 
 **Sign the CLA here:** [cla-assistant.io/lumogis/lumogis](https://cla-assistant.io/lumogis/lumogis)
 
@@ -47,32 +47,37 @@ cd lumogis
 python3 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 cp .env.example .env
-make setup      # detects hardware, pulls models
-make dev        # starts the stack with hot reload
+docker compose up -d               # first boot; Ollama pulls default models (see README)
+# Optional — hot-reload orchestrator while editing Python:
+make dev
 ```
 
-`make dev` uses `docker-compose.dev.yml` which mounts the orchestrator source and reloads on file changes. You do not need to rebuild the Docker image during development.
+`make dev` uses `docker-compose.dev.yml`, which mounts the orchestrator source and reloads on file changes. You do not need to rebuild the Docker image during development.
 
 ### Python dependencies for tests and lint
 
-Production images install only each service’s `requirements.txt`. For **local** pytest and ruff, install the dev extras (not used in Docker builds):
+Production images install only each service’s `requirements.txt`. For **local** pytest and ruff, install the dev extras (not baked into runtime images):
 
 | Component | Runtime | Dev/test (local + CI) |
 |-----------|---------|------------------------|
-| **Orchestrator** | `pip install -r orchestrator/requirements.txt` | `pip install -r orchestrator/requirements-dev.txt` |
-| **stack-control** | `pip install -r stack-control/requirements.txt` | `pip install -r stack-control/requirements-dev.txt` |
+| **Orchestrator** | `python -m pip install -r orchestrator/requirements.txt` | `python -m pip install -r orchestrator/requirements-dev.txt` |
+| **stack-control** | `python -m pip install -r stack-control/requirements.txt` | `python -m pip install -r stack-control/requirements-dev.txt` |
+
+**CI** (`.github/workflows/ci.yml`) installs full `orchestrator/requirements.txt` plus `orchestrator/requirements-dev.txt` — same as a full local dev venv, not the lighter file below.
+
+**Optional lighter install** for orchestrator unit tests only: `orchestrator/requirements-test.txt` trims heavy adapters; see comments in that file. It is **not** CI-equivalent.
 
 For a full local dev venv that runs `make test` and `make lint`:
 
 ```bash
-pip install -r orchestrator/requirements.txt
-pip install -r orchestrator/requirements-dev.txt
-pip install -r stack-control/requirements-dev.txt
+python -m pip install -r orchestrator/requirements.txt
+python -m pip install -r orchestrator/requirements-dev.txt
+python -m pip install -r stack-control/requirements-dev.txt
 ```
 
-Orchestrator unit tests alone only need `orchestrator/requirements.txt` + `orchestrator/requirements-dev.txt`. stack-control unit tests live in `stack-control/test_main.py` and need `stack-control/requirements-dev.txt`.
+The [Makefile](Makefile) sets `PYTHON ?= python3` for local test targets so `make test` works on hosts with no `python` shim. With an activated venv, `python` is usually available; you can run `make test PYTHON=python` if needed.
 
-### Running tests
+### Running tests (local venv)
 
 ```bash
 make test       # orchestrator + stack-control unit tests — no Docker needed
@@ -86,6 +91,24 @@ make test-integration   # full-stack tests — requires docker compose up -d
 ```
 
 Integration tests run against the live stack. See [Integration tests](#integration-tests) below.
+
+### Running tests (Docker only, no local venv)
+
+The orchestrator **runtime** image does not include pytest. Use **`make compose-test`**: it runs `pip install -q -r orchestrator/requirements-dev.txt` inside the container, then `python -m pytest` against the mounted repo (see `Makefile`). Do **not** use `docker compose run orchestrator pytest` — pytest may be missing.
+
+For ad hoc single files in the container, use the same pattern the Makefile uses:
+
+```bash
+docker compose run --rm -w /project/orchestrator orchestrator sh -c \
+  "pip install -q -r requirements-dev.txt && python -m pytest tests/path/to/test_foo.py -q"
+```
+
+Other compose targets: `make compose-lint`, `make compose-test-integration` (see `Makefile` and [docs/dev-cheatsheet.md](docs/dev-cheatsheet.md)).
+
+### Lumogis Web / OpenAPI
+
+- `npm run codegen` (or `make web-codegen`) regenerates client types from the **committed** `openapi.snapshot.json` in `clients/lumogis-web/`.
+- `npm run codegen:check` / `make web-codegen-check` fetches the **live** orchestrator OpenAPI from `LUMOGIS_OPENAPI_URL` (default `http://localhost:8000/openapi.json`) and fails on drift — the stack must be up. See `clients/lumogis-web/README.md`.
 
 ---
 

@@ -43,6 +43,19 @@ class VectorStore(Protocol):
         """
         ...
 
+    def ensure_payload_index(self, collection: str, field: str) -> None:
+        """Create a keyword payload index on `field` if it does not exist.
+
+        Required for the household-visibility filter (see
+        ``visibility.visible_qdrant_filter``): without payload indexes on
+        ``user_id`` and ``scope``, every Qdrant search degrades to a full
+        payload scan once the household corpus grows past a few thousand
+        points. Idempotent — calling on an already-indexed field must not
+        raise. Backends that do not support payload indexing must
+        implement this as a no-op.
+        """
+        ...
+
     def upsert(
         self,
         collection: str,

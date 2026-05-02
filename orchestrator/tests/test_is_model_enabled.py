@@ -96,3 +96,70 @@ class TestIsModelEnabled:
         with patch.object(config, "_models_config", models), \
              patch.object(config, "get_metadata_store", return_value=store):
             assert config.is_model_enabled("chatgpt") is False
+
+
+class TestIsModelEnabledAuthOn:
+    """Plan llm_provider_keys_per_user_migration Pass 2.5 — per-user gate."""
+
+    def test_auth_on_no_user_id_returns_false_for_cloud_model(self, monkeypatch):
+        monkeypatch.setenv("AUTH_ENABLED", "true")
+        models = {"claude": {"adapter": "anthropic", "api_key_env": "ANTHROPIC_API_KEY"}}
+        with patch.object(config, "_models_config", models):
+            assert config.is_model_enabled("claude") is False
+            assert config.is_model_enabled("claude", user_id=None) is False
+
+    def test_auth_on_no_row_returns_false(self, monkeypatch):
+        monkeypatch.setenv("AUTH_ENABLED", "true")
+        models = {"claude": {"adapter": "anthropic", "api_key_env": "ANTHROPIC_API_KEY"}}
+        with patch.object(config, "_models_config", models), \
+             patch("services.llm_connector_map.has_credential", return_value=False):
+            assert config.is_model_enabled("claude", user_id="alice") is False
+
+    def test_auth_on_with_row_returns_true(self, monkeypatch):
+        monkeypatch.setenv("AUTH_ENABLED", "true")
+        models = {"claude": {"adapter": "anthropic", "api_key_env": "ANTHROPIC_API_KEY"}}
+        with patch.object(config, "_models_config", models), \
+             patch("services.llm_connector_map.has_credential", return_value=True):
+            assert config.is_model_enabled("claude", user_id="alice") is True
+
+    def test_auth_on_optional_off_returns_false_even_with_row(self, monkeypatch):
+        """Household optional toggle wins — set to off, per-user key irrelevant."""
+        monkeypatch.setenv("AUTH_ENABLED", "true")
+        models = {"chatgpt": {"adapter": "openai", "optional": True, "api_key_env": "OPENAI_API_KEY"}}
+        store = _fake_store({"optional_chatgpt": "false"})
+        with patch.object(config, "_models_config", models), \
+             patch.object(config, "get_metadata_store", return_value=store), \
+             patch("services.llm_connector_map.has_credential", return_value=True):
+            assert config.is_model_enabled("chatgpt", user_id="alice") is False
+
+    def test_auth_on_optional_on_with_row_returns_true(self, monkeypatch):
+        monkeypatch.setenv("AUTH_ENABLED", "true")
+        models = {"chatgpt": {"adapter": "openai", "optional": True, "api_key_env": "OPENAI_API_KEY"}}
+        store = _fake_store({"optional_chatgpt": "true"})
+        with patch.object(config, "_models_config", models), \
+             patch.object(config, "get_metadata_store", return_value=store), \
+             patch("services.llm_connector_map.has_credential", return_value=True):
+            assert config.is_model_enabled("chatgpt", user_id="alice") is True
+
+    def test_auth_on_credentials_present_hint_short_circuits(self, monkeypatch):
+        """``_credentials_present`` set membership avoids the per-call DB read."""
+        monkeypatch.setenv("AUTH_ENABLED", "true")
+        models = {"claude": {"adapter": "anthropic", "api_key_env": "ANTHROPIC_API_KEY"}}
+        with patch.object(config, "_models_config", models), \
+             patch("services.llm_connector_map.has_credential",
+                   side_effect=AssertionError("must not call has_credential when hint provided")):
+            assert config.is_model_enabled(
+                "claude", user_id="alice",
+                _credentials_present={"llm_anthropic"},
+            ) is True
+            assert config.is_model_enabled(
+                "claude", user_id="alice",
+                _credentials_present=set(),
+            ) is False
+
+    def test_auth_on_local_model_always_enabled(self, monkeypatch):
+        monkeypatch.setenv("AUTH_ENABLED", "true")
+        models = {"qwen": {"adapter": "openai", "base_url": "http://ollama:11434/v1"}}
+        with patch.object(config, "_models_config", models):
+            assert config.is_model_enabled("qwen", user_id=None) is True
+            assert config.is_model_enabled("qwen", user_id="alice") is True

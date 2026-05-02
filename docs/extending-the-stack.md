@@ -11,7 +11,7 @@ Both work independently. You can add a stack add-on without touching code, and y
 
 ## How the overlay mechanism works
 
-The stack is assembled from Compose files using the `COMPOSE_FILE` environment variable. `make setup` sets this automatically based on your hardware, but you can extend it by appending overlays:
+The stack is assembled from Compose files using the `COMPOSE_FILE` environment variable. Set `COMPOSE_FILE` in `.env` (or export it) to choose overlays — for example the GPU or FalkorDB files shipped in this repo. You can extend it by appending further overlays:
 
 ```bash
 # In your .env
@@ -66,16 +66,33 @@ ntfy is the reference `Notifier` implementation for self-hosters: free, self-hos
 
 ```bash
 NOTIFIER_BACKEND=ntfy
-NTFY_URL=http://ntfy:80
-NTFY_TOPIC=lumogis
-# NTFY_TOKEN=   # set if you enable ntfy access control
+NTFY_URL=http://ntfy:80   # non-secret default; used when a credential row omits "url"
 ```
 
 ```bash
 docker compose up -d ntfy
 ```
 
-ntfy web UI: [http://localhost:8088](http://localhost:8088). Subscribe on mobile via the ntfy app using your server address and the `lumogis` topic.
+**Per-user credentials (ADR 018).** When `AUTH_ENABLED=true`, the topic and optional bearer token are stored per user in the encrypted `user_connector_credentials` table under connector id `ntfy`. Each user (or an admin acting on their behalf) sets them via the connector-credentials API:
+
+```http
+PUT /api/v1/me/connector-credentials/ntfy
+Content-Type: application/json
+
+{"payload": {"topic": "alice-laptop", "token": ""}}
+```
+
+A missing row under `AUTH_ENABLED=true` logs `connector_not_configured` and that user's notification is skipped — `NTFY_TOPIC` / `NTFY_TOKEN` env vars are not consulted for delivery in that mode. The signal digest fans out per user: each user with signals in the window gets their own notification on their own topic.
+
+**Single-user dev mode (`AUTH_ENABLED=false`).** Existing installs keep working unchanged: when no credential row exists, `NTFY_TOPIC` / `NTFY_TOKEN` env vars are used as a full fallback.
+
+```bash
+# AUTH_ENABLED=false fallback only:
+NTFY_TOPIC=lumogis
+# NTFY_TOKEN=   # set if you enable ntfy access control
+```
+
+ntfy web UI: [http://localhost:8088](http://localhost:8088). Subscribe on mobile via the ntfy app using your server address and the per-user topic.
 
 ---
 
@@ -127,6 +144,17 @@ models:
     api_key_env: ANTHROPIC_API_KEY
     proxy_url: http://litellm:4000   # ← enable this
 ```
+
+**Note on `api_key_env`:** Under `AUTH_ENABLED=true`, the literal env
+var named here is **not** consulted at chat time — the API key is
+resolved from each user's encrypted
+`user_connector_credentials.llm_<vendor>` row instead (see
+`docs/connect-and-verify.md` Step 9g). The `api_key_env` field stays
+in `models.yaml` because it identifies which `llm_<vendor>` connector
+the model maps to (mapping table:
+`orchestrator/services/llm_connector_map.py`). Under
+`AUTH_ENABLED=false` it falls back to the env var / `app_settings`
+value as before.
 
 ```bash
 docker compose up -d litellm

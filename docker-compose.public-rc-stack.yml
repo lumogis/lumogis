@@ -1,0 +1,120 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Lumogis
+#
+# Deterministic “full product slice” overlay for public RC gates:
+# FalkorDB + lumogis-graph (GRAPH_MODE=service) + lumogis-mock-capability,
+# wired into Core via CAPABILITY_SERVICE_URLS.
+#
+# Merge explicitly AFTER docker-compose.test.yml, e.g.:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.test.yml:docker-compose.public-rc-stack.yml
+#
+# Host ports (integration tests / debugging only):
+#   - 18001 → KG /health
+#   - 18080 → mock capability /health + /capabilities
+
+services:
+  falkordb:
+    image: falkordb/falkordb:v4.18.1
+    volumes:
+      - falkordb_data_rc:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6379", "PING"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  lumogis-graph:
+    build:
+      context: .
+      dockerfile: services/lumogis-graph/Dockerfile
+      target: runtime
+    image: lumogis-graph:dev
+    env_file: .env
+    ports:
+      - "18001:8001"
+    environment:
+      GRAPH_BACKEND: ${GRAPH_BACKEND:-falkordb}
+      FALKORDB_URL: ${FALKORDB_URL:-redis://falkordb:6379}
+      FALKORDB_GRAPH_NAME: ${FALKORDB_GRAPH_NAME:-lumogis}
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_USER: ${POSTGRES_USER:-lumogis}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lumogis-dev}
+      POSTGRES_DB: ${POSTGRES_DB:-lumogis}
+      KG_SERVICE_PORT: ${KG_SERVICE_PORT:-8001}
+      KG_SCHEDULER_ENABLED: ${KG_SCHEDULER_ENABLED:-false}
+      KG_ALLOW_INSECURE_WEBHOOKS: ${KG_ALLOW_INSECURE_WEBHOOKS:-true}
+      KG_MANAGEMENT_URL: ${KG_MANAGEMENT_URL:-http://lumogis-graph:8001/mgm}
+      LUMOGIS_CORE_BASE_URL: ${LUMOGIS_CORE_BASE_URL:-http://orchestrator:8000}
+      GRAPH_MODE: service
+    depends_on:
+      postgres:
+        condition: service_healthy
+      falkordb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8001/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 45s
+    mem_limit: ${KG_MEM_LIMIT:-2g}
+    mem_reservation: ${KG_MEM_RESERVATION:-512m}
+    restart: unless-stopped
+
+  lumogis-mock-capability:
+    build:
+      context: ./services/lumogis-mock-capability
+    ports:
+      - "18080:8080"
+    environment:
+      MOCK_CAPABILITY_SHARED_SECRET: ${MOCK_CAPABILITY_SHARED_SECRET:-rc-mock-cap-deterministic-secret-do-not-use-prod}
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health').read()",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  orchestrator:
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+      stack-control:
+        condition: service_started
+      falkordb:
+        condition: service_healthy
+      lumogis-graph:
+        condition: service_healthy
+      lumogis-mock-capability:
+        condition: service_healthy
+    environment:
+      GRAPH_MODE: service
+      KG_SERVICE_URL: ${KG_SERVICE_URL:-http://lumogis-graph:8001}
+      CAPABILITY_SERVICE_URLS: ${CAPABILITY_SERVICE_URLS:-http://lumogis-graph:8001,http://lumogis-mock-capability:8080}
+      LUMOGIS_CAPABILITY_BEARER_LUMOGIS_MOCK_ECHO: ${MOCK_CAPABILITY_SHARED_SECRET:-rc-mock-cap-deterministic-secret-do-not-use-prod}
+      LUMOGIS_TOOL_CATALOG_ENABLED: "true"
+      LUMOGIS_RC_CHAT_STUB: ${LUMOGIS_RC_CHAT_STUB:-true}
+      LUMOGIS_RC_APPROVAL_FIXTURE_ACTIONS: ${LUMOGIS_RC_APPROVAL_FIXTURE_ACTIONS:-true}
+      KG_ALLOW_INSECURE_WEBHOOKS: ${KG_ALLOW_INSECURE_WEBHOOKS:-true}
+      FALKORDB_URL: ${FALKORDB_URL:-redis://falkordb:6379}
+    # Bind-mount Core sources into /app so RC gates pick up new Python modules without
+    # rebuilding the orchestrator image (Dockerfile copies into /app at build time).
+    volumes:
+      - ./orchestrator:/app
+
+volumes:
+  falkordb_data_rc:

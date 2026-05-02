@@ -12,6 +12,16 @@ _log = logging.getLogger(__name__)
 
 
 class NullNotifier:
-    def notify(self, title: str, message: str, priority: float) -> bool:
-        _log.debug("NullNotifier: dropped notification %r (priority=%.2f)", title, priority)
+    def notify(
+        self,
+        title: str,
+        message: str,
+        priority: float,
+        *,
+        user_id: str,
+    ) -> bool:
+        _log.debug(
+            "NullNotifier: dropped notification %r (priority=%.2f, user_id=%s)",
+            title, priority, user_id,
+        )
         return True

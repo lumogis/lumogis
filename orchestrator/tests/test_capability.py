@@ -120,6 +120,38 @@ def test_manifest_accepts_empty_tools_list():
     assert restored.tools == []
 
 
+def test_management_url_optional_and_excluded_when_none():
+    """A manifest without `management_url` validates and serialises cleanly.
+
+    `exclude_none=True` MUST omit the key entirely so older clients that
+    don't know about the field never see a `null` they have to handle.
+    """
+    manifest = _sample_manifest()
+    assert manifest.management_url is None
+
+    dumped = manifest.model_dump(mode="json", exclude_none=True)
+    assert "management_url" not in dumped
+
+
+def test_management_url_set_roundtrips():
+    """When set, `management_url` survives a JSON round trip and lands on
+    the deserialised model with the exact string value."""
+    url = "https://lumogis.example.com/graph/mgm"
+    manifest = _sample_manifest(management_url=url)
+    restored = CapabilityManifest.model_validate_json(manifest.model_dump_json())
+
+    assert restored.management_url == url
+
+
+def test_management_url_present_in_default_dump():
+    """Without `exclude_none=True`, the field appears as null so explicit
+    consumers can distinguish 'unset' from 'absent'."""
+    manifest = _sample_manifest()
+    dumped = manifest.model_dump(mode="json")
+    assert "management_url" in dumped
+    assert dumped["management_url"] is None
+
+
 def test_core_version_constant_importable():
     """Locks orchestrator/__version__.py in place for Area 2's compatibility
     check against incoming manifests' `min_core_version`."""

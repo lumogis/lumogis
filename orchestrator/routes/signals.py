@@ -17,11 +17,17 @@ import logging
 import uuid
 from typing import Optional
 
+from auth import UserContext
+from authz import require_admin
+from authz import require_user
 from fastapi import APIRouter
+from fastapi import Depends
 from fastapi import HTTPException
 from fastapi import Query
 from models.signals import SourceConfig
 from pydantic import BaseModel
+from services.signal_source_detection import detect_signal_source
+from visibility import visible_filter
 
 import config
 
@@ -63,7 +69,10 @@ class FeedbackRequest(BaseModel):
 
 
 @router.post("/sources")
-def add_or_preview_source(body: SourceRequest):
+def add_or_preview_source(
+    body: SourceRequest,
+    user: UserContext = Depends(require_admin),
+):
     """Two-step stateless source flow.
 
     confirm=false → detect + preview (no DB write).
@@ -94,7 +103,7 @@ def add_or_preview_source(body: SourceRequest):
             "VALUES (%s, %s, %s, %s, %s, %s, TRUE, %s, %s, NULL)",
             (
                 source_id,
-                "default",
+                user.user_id,
                 source_name,
                 source_type,
                 feed_url,
@@ -119,6 +128,7 @@ def add_or_preview_source(body: SourceRequest):
         css_selector_override=None,
         last_polled_at=None,
         last_signal_at=None,
+        user_id=user.user_id,
     )
 
     try:
@@ -143,13 +153,18 @@ def add_or_preview_source(body: SourceRequest):
 
 
 @router.get("/sources")
-def list_sources():
-    """Return active sources with scheduler job status."""
+def list_sources(user: UserContext = Depends(require_user)):
+    """Return the calling user's active sources with scheduler job status."""
     try:
         ms = config.get_metadata_store()
+        # SCOPE-EXEMPT: `sources` is in plan §2.10's excluded-from-scope
+        # list — sources are per-user signal-polling config, not memory
+        # content; no `scope` column exists.
         rows = ms.fetch_all(
             "SELECT id, name, source_type, url, category, active, poll_interval, "
-            "last_polled_at, last_signal_at FROM sources ORDER BY name"
+            "last_polled_at, last_signal_at FROM sources "
+            "WHERE user_id = %s ORDER BY name",
+            (user.user_id,),
         )
     except Exception as exc:
         _log.warning("list_sources: DB query failed — %s", exc)
@@ -193,11 +208,35 @@ def list_signals(
     entity: Optional[str] = Query(None),
     source_id: Optional[str] = Query(None),
     min_relevance_score: Optional[float] = Query(None),
+    scope: Optional[str] = Query(
+        None,
+        regex="^(personal|shared|system)$",
+        description="Narrow to one scope; default is household union.",
+    ),
     limit: int = Query(20, ge=1, le=100),
+    user: UserContext = Depends(require_user),
 ):
-    """Return recent signals with optional filters."""
-    conditions = ["user_id = %s"]
-    params: list = ["default"]
+    """Return recent signals visible to the caller (household union by default).
+
+    The default visibility surface is the household union via
+    :func:`visibility.visible_filter`:
+    `(scope='personal' AND user_id=$me) OR scope IN ('shared','system')`.
+    System signals (`source_id='__system__'`, `scope='system'`) are
+    therefore visible to every user — that is the contract; the dashboard
+    System panel relies on this.
+
+    Selecting `?scope=personal` returns only the caller's own personal
+    signals (admins included — see the headline-test invariant in
+    plan §2.8). `source_url` and `source_label` are denormalized at
+    write time so shared/system signals render without joining
+    `sources`.
+    """
+    conditions: list[str] = []
+    params: list = []
+
+    where_clause, where_params = visible_filter(user, scope)
+    conditions.append(where_clause)
+    params.extend(where_params)
 
     if topic:
         conditions.append("topics::text ILIKE %s")
@@ -219,7 +258,8 @@ def list_signals(
         ms = config.get_metadata_store()
         rows = ms.fetch_all(
             f"SELECT signal_id, source_id, title, url, published_at, content_summary, "
-            f"entities, topics, importance_score, relevance_score, notified, created_at "
+            f"entities, topics, importance_score, relevance_score, notified, created_at, "
+            f"scope, source_url, source_label "
             f"FROM signals WHERE {where} ORDER BY created_at DESC LIMIT %s",
             tuple(params),
         )
@@ -243,6 +283,9 @@ def list_signals(
                 "relevance_score": float(row["relevance_score"]),
                 "notified": row["notified"],
                 "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+                "scope": row.get("scope", "personal"),
+                "source_url": row.get("source_url"),
+                "source_label": row.get("source_label"),
             }
         )
     return {"signals": result, "total": len(result)}
@@ -254,14 +297,21 @@ def list_signals(
 
 
 @router.put("/profile")
-def upsert_profile(body: ProfileRequest):
-    """Create or update the relevance profile for the default user."""
+def upsert_profile(
+    body: ProfileRequest,
+    user: UserContext = Depends(require_user),
+):
+    """Create or update the relevance profile for the calling user."""
     try:
         ms = config.get_metadata_store()
+        # SCOPE-EXEMPT: `relevance_profiles` is in plan §2.10's
+        # excluded-from-scope list — relevance is a per-user signal-routing
+        # config, not memory content; no `scope` column exists.
         existing = ms.fetch_one(
-            "SELECT id FROM relevance_profiles WHERE user_id = %s", ("default",)
+            "SELECT id FROM relevance_profiles WHERE user_id = %s", (user.user_id,)
         )
         if existing:
+            # SCOPE-EXEMPT: see above.
             ms.execute(
                 "UPDATE relevance_profiles SET "
                 "tracked_locations = %s::jsonb, tracked_topics = %s::jsonb, "
@@ -272,7 +322,7 @@ def upsert_profile(body: ProfileRequest):
                     json.dumps(body.tracked_topics),
                     json.dumps(body.tracked_entities),
                     json.dumps(body.tracked_keywords),
-                    "default",
+                    user.user_id,
                 ),
             )
             profile_id = str(existing["id"])
@@ -285,7 +335,7 @@ def upsert_profile(body: ProfileRequest):
                 "VALUES (%s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb)",
                 (
                     profile_id,
-                    "default",
+                    user.user_id,
                     json.dumps(body.tracked_locations),
                     json.dumps(body.tracked_topics),
                     json.dumps(body.tracked_entities),
@@ -311,15 +361,17 @@ def upsert_profile(body: ProfileRequest):
 
 
 @router.get("/profile")
-def get_profile():
-    """Return the current relevance profile."""
+def get_profile(user: UserContext = Depends(require_user)):
+    """Return the calling user's current relevance profile."""
     try:
         ms = config.get_metadata_store()
+        # SCOPE-EXEMPT: `relevance_profiles` is in plan §2.10's
+        # excluded-from-scope list — per-user routing config.
         row = ms.fetch_one(
             "SELECT id, tracked_locations, tracked_topics, tracked_entities, "
             "tracked_keywords, updated_at FROM relevance_profiles "
             "WHERE user_id = %s ORDER BY updated_at DESC LIMIT 1",
-            ("default",),
+            (user.user_id,),
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
@@ -350,7 +402,10 @@ def get_profile():
 
 
 @router.post("/feedback")
-def record_feedback(body: FeedbackRequest):
+def record_feedback(
+    body: FeedbackRequest,
+    user: UserContext = Depends(require_user),
+):
     """Record explicit (positive=true/false) or implicit (event_type=...) feedback."""
     from services.feedback import record_explicit
     from services.feedback import record_implicit
@@ -360,6 +415,7 @@ def record_feedback(body: FeedbackRequest):
             item_type=body.item_type,
             item_id=body.item_id,
             positive=body.positive,
+            user_id=user.user_id,
         )
         return {"status": "ok", "type": "explicit", "positive": body.positive}
 
@@ -368,6 +424,7 @@ def record_feedback(body: FeedbackRequest):
             item_type=body.item_type,
             item_id=body.item_id,
             event_type=body.event_type,
+            user_id=user.user_id,
         )
         return {"status": "ok", "type": "implicit", "event_type": body.event_type}
 
@@ -391,22 +448,11 @@ def _detect_source(url: str) -> dict:
     Detection order:
       1. Try RSS/Atom auto-detection (feedparser + link tag scanning).
       2. Fall back to page scraping via trafilatura.
+
+    Implementation lives in :mod:`services.signal_source_detection` so routes
+    do not import :mod:`adapters` (``architecture_import_boundary_tests``).
     """
-    from adapters.rss_source import RSSSource
-
-    feed_url, preview_items = RSSSource.detect(url)
-    if feed_url and preview_items:
-        return {"source_type": "rss", "feed_url": feed_url, "preview_items": preview_items}
-
-    # Fall back to page scraping.
-    from adapters.page_scraper import PageScraper
-
-    page_items = PageScraper.detect(url)
-    return {
-        "source_type": "page",
-        "feed_url": None,
-        "preview_items": page_items,
-    }
+    return detect_signal_source(url)
 
 
 def _infer_name(url: str) -> str:

@@ -3,8 +3,21 @@ name: CI
 on:
   pull_request:
     branches: [master, main]
+  push:
+    branches: [main]
 
 jobs:
+  release-hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tier 0 release/export checks
+        run: |
+          bash scripts/check-main-hygiene.sh
+          bash scripts/create-upstream-export-tree.sh /tmp/lumogis-upstream-export
+          bash scripts/check-public-export.sh /tmp/lumogis-upstream-export
+
   lint-and-test:
     runs-on: ubuntu-latest
     steps:
@@ -19,6 +32,9 @@ jobs:
           pip install -r orchestrator/requirements.txt
           pip install -r orchestrator/requirements-dev.txt
           pip install -r stack-control/requirements-dev.txt
+          pip install -r services/lumogis-mock-capability/requirements-dev.txt
+          pip install -r services/lumogis-graph/requirements.txt
+          pip install -r services/lumogis-graph/requirements-dev.txt
 
       - name: Lint
         run: |
@@ -27,8 +43,31 @@ jobs:
 
       - name: Test orchestrator
         run: |
-          cd orchestrator && python -m pytest tests/ -x -q
+          cd orchestrator && AUTH_ENABLED=false GRAPH_MODE=inprocess CAPABILITY_SERVICE_URLS= MCP_AUTH_TOKEN= python -m pytest tests/ -x -q
 
       - name: Test stack-control
         run: |
           cd stack-control && python -m pytest test_main.py -q
+
+      - name: Test lumogis-mock-capability
+        run: |
+          cd services/lumogis-mock-capability && python -m pytest tests -q
+
+      - name: Test lumogis-graph
+        run: |
+          cd services/lumogis-graph && python -m pytest -q
+
+  lumogis-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: clients/lumogis-web/package-lock.json
+
+      - name: Lint, unit tests, and build
+        run: |
+          cd clients/lumogis-web && npm ci && npm run codegen && npm run lint && npm test && npm run build

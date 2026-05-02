@@ -1,0 +1,24 @@
+# Tool vocabulary (Lumogis Core)
+
+Short reference for **catalog** vs **execution** and related terms. The
+self-hosted remediation plan (`docs/architecture/lumogis-self-hosted-platform-remediation-plan.md`) phases build on this vocabulary.
+
+| Term | Meaning |
+| --- | --- |
+| **Tool** | A `ToolSpec` the LLM tool loop can call via `run_tool` (`orchestrator/services/tools.py`). Carries `connector`, `action_type`, OpenAI-style `definition`, and a `handler`. |
+| **Tool catalog** | Read-only snapshot from `build_tool_catalog()` (`orchestrator/services/unified_tools.py`): what exists, from which *source*, and which *transport* would surface it. The catalog **observes** registries; it does not replace execution. |
+| **`GET /api/v1/me/tools`** | Authenticated, user-scoped **facade** over the same catalog (`services.me_tools_catalog`). Safe for Lumogis Web: summary + public fields only — **not** an execution endpoint, **not** a permission-grant endpoint, and **not** a credential or raw-schema surface. |
+| **Web: Tools & capabilities** | Lumogis Web **Settings** route ``/me/tools-capabilities`` renders that façade read-only (filters + table). Same observational contract as the API — not a control plane. |
+| **LLM tool view (flagged)** | When `LUMOGIS_TOOL_CATALOG_ENABLED` is true, `prepare_llm_tools_for_request` may **append** OpenAI tool defs for out-of-process capability tools (healthy + bearer) without mutating the global `TOOLS` list. The executable OOP route map is **request-scoped** (ContextVar); `finish_llm_tools_for_request` must run after each `ask` / `ask_stream` so routes do not leak across requests or threads. Default remains unextended. |
+| **Tool execution (chat / LLM path)** | `services.tools.run_tool` remains the **compatibility** dispatcher: in-process `ToolSpec` handlers are unchanged; unknown names may map to the capability HTTP bridge for that request. Gated by Ask/Do + executor checks. |
+| **ToolExecutor** | `services.execution.ToolExecutor` — `execute_inprocess` / `execute_capability_http` with `PermissionCheck` and `ToolAuditEnvelope` (injectable sink). The flag-gated OOP bridge (`try_run_oop_capability_tool`) composes structlog `oop_tool_audit` with durable **`audit_log`** rows (`tool.execute.capability` via `persist_tool_audit_envelope`); other callers may inject a list sink or no-op. In-process tools still use `ToolSpec` handlers first. |
+| **CapabilityHttpToolProxy** | `services.capability_http.CapabilityHttpToolProxy` or `post_capability_tool_invocation` — `POST` to `{base}/tools/{name}` with a **flat** JSON body (+ `user_id` from the executor path); `X-Lumogis-User` is attribution; service trust is the bearer. **Exception:** KG `query_graph` service mode uses `graph_query_tool_proxy_call`, which wraps the payload as `{"input": …}` for the KG `QueryGraphRequest` contract (bearer still optional for legacy on that bridge; generic / executor defaults require bearer, fail-closed). |
+| **Action** | Registered, audited, reversible operation under `orchestrator/actions/`. The action registry lists metadata; the catalog can show action-only names (`transport=catalog_only`) that are not LLM tools. |
+| **Connector** | Secret tier + id (`ntfy`, `lumogis-graph`, …) used in permission checks — not the same as “which tool,” but `ToolSpec.connector` links a tool to that permission key. |
+| **Capability** | Out-of-process service advertising a `CapabilityManifest` at `GET /capabilities`, discovered by `CapabilityRegistry`. Catalog rows use `source=capability` (and often `transport=catalog_only` for read-only views); the LLM can execute selected tools when the catalog flag, health, and auth gates pass. |
+| **Plugin** | In-process package under `orchestrator/plugins/`. Can register a `ToolSpec` via `Event.TOOL_REGISTERED`. The catalog classifies in-process tools that are *not* the three built-in LLM names and *not* the KG HTTP proxy as `source=plugin`. |
+| **MCP surface** | Streamable HTTP at `/mcp/`: a separate, hand-curated tool list (`mcp_server.MCP_TOOLS_FOR_MANIFEST`), not a mirror of `TOOL_SPECS` and **not** driven by the Phase 3B LLM catalog flag. Intentional divergence is tested (`test_tool_catalog_mcp_vs_llm.py`, `test_mcp_manifest_unchanged.py`). |
+| **Transport (catalog)** | `llm_loop` — in `services.tools.TOOL_SPECS` / `TOOLS`; `mcp_surface` — MCP clients; `catalog_only` — listed for diagnostics (capabilities, or actions without a tool). |
+| **Availability** | OOP tools use the registry’s health flag. **`permission_mode`** on catalog / `GET /api/v1/me/tools` is resolved per user when `connector` is known (`ask` / `do` / `blocked` / `unknown` from `get_connector_mode`); MCP surface rows stay `unknown`. Execution gates are unchanged. |
+
+**See also:** `docs/architecture/plugin-imports.md` (plugin import allow-list), `ARCHITECTURE.md` (MCP and capability sections).

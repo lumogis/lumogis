@@ -1,0 +1,61 @@
+# Optional: local speech-to-text sidecar (STT-2B).
+#
+# Compose overlay — merge with the base stack via COMPOSE_FILE (below). This is not a
+# profiles: ["stt"] service on docker-compose.yml; without this file in COMPOSE_FILE,
+# lumogis-stt does not run (opt-in, off-by-default).
+#
+# Enable by adding to COMPOSE_FILE in .env:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.stt.yml
+#
+# Then set in .env (see .env.example "Speech-to-text" section):
+#   STT_BACKEND=whisper_sidecar
+#   STT_SIDECAR_URL=http://lumogis-stt:8000
+#   STT_MODEL=Systran/faster-whisper-base.en
+#
+# The sidecar exposes an OpenAI-compatible transcription API at
+# POST /v1/audio/transcriptions and a liveness probe at GET /health.
+# The orchestrator whisper_sidecar adapter targets STT_SIDECAR_URL using
+# a SSRF-safe LAN-only URL policy by default.
+#
+# GPU acceleration: replace the image with a CUDA variant and add the
+# NVIDIA runtime block — see README.md "Speech-to-text (STT-2B)" appendix.
+#
+# See README.md "Speech-to-text (STT-2B)" for the full operator runbook.
+
+services:
+  lumogis-stt:
+    # speaches — OpenAI-compatible faster-whisper server
+    # (formerly fedirz/faster-whisper-server, renamed when project scope expanded)
+    # Licence: MIT   Source: https://github.com/speaches-ai/speaches
+    # CPU-only variant (linux/amd64 + linux/arm64).
+    # Pinned by digest to prevent silent upstream changes; update intentionally.
+    # To upgrade: docker pull ghcr.io/speaches-ai/speaches:latest-cpu, then
+    # verify the new digest with `docker inspect --format='{{index .RepoDigests 0}}'`.
+    image: ghcr.io/speaches-ai/speaches:0.8.3-cpu@sha256:21e3df06d842fb7802ab470dd77c25f0e8c0d22950e8d8c6ae886e851af53ef8
+    environment:
+      # Preloads the default model at startup (must match STT_MODEL in orchestrator .env).
+      # Speaches 0.8.x expects a HuggingFace faster-whisper model id here (e.g. Systran/faster-whisper-base.en);
+      # shorthand names like "base" are not transcribe-ready until installed via the sidecar API — see README.
+      # Tiers and approximate CPU RAM: tiny ~390 MB, base ~740 MB, small ~2.3 GB,
+      #   medium ~4.7 GB, large-v2/large-v3 ~9.8 GB.
+      # Language-specific (.en) models are slightly faster for English-only audio.
+      DEFAULT_MODEL: ${STT_MODEL:-Systran/faster-whisper-base.en}
+    volumes:
+      # Named volume — persists downloaded model weights across container rebuilds.
+      # Reclaim disk: docker volume rm lumogis_lumogis_stt_models
+      # (volume name is prefixed with COMPOSE_PROJECT_NAME, default: lumogis)
+      - lumogis_stt_models:/home/ubuntu/.cache/huggingface
+    healthcheck:
+      # Path must match STT_SIDECAR_HEALTH_PATH in orchestrator .env (default: /health).
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      # Model download on first boot can take several minutes depending on tier and bandwidth.
+      start_period: 120s
+    restart: unless-stopped
+    # lumogis-stt is intentionally not exposed on the host — it is reachable only
+    # from within the Docker network via http://lumogis-stt:8000 (STT_SIDECAR_URL).
+
+volumes:
+  lumogis_stt_models:

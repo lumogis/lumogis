@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Lumogis
+#
+# Full public RC verification (hygiene, unit, web, compose integration, Playwright smoke, export).
+# Requires Docker + Playwright system deps. Intended for manual runs before merging RC → main.
+
+name: Verify public RC
+
+on:
+  workflow_dispatch:
+
+jobs:
+  verify-public-rc:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: clients/lumogis-web/package-lock.json
+
+      - name: Install Python deps (orchestrator also used by compose-test patterns)
+        run: |
+          pip install -r orchestrator/requirements.txt
+          pip install -r orchestrator/requirements-dev.txt
+          pip install -r stack-control/requirements-dev.txt
+          pip install -r services/lumogis-mock-capability/requirements-dev.txt
+          pip install -r services/lumogis-graph/requirements.txt
+          pip install -r services/lumogis-graph/requirements-dev.txt
+
+      - name: Install Playwright Chromium
+        run: |
+          cd clients/lumogis-web && npm ci && npx playwright install chromium --with-deps
+
+      - name: make verify-public-rc
+        run: make verify-public-rc

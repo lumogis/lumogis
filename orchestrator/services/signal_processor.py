@@ -69,7 +69,7 @@ def process_signal(raw_signal: Signal, user_id: str = "default") -> Signal:
     budget = get_budget(signal_model) - 500
     content = truncate_text(raw_signal.raw_content, budget)
 
-    llm_data = _call_llm(raw_signal.title, content)
+    llm_data = _call_llm(raw_signal.title, content, user_id=user_id)
 
     importance = float(llm_data.get("importance_score", 0.0))
     importance = max(0.0, min(1.0, importance))
@@ -116,7 +116,7 @@ def score_importance(signal: Signal) -> float:
     signal_model = os.environ.get("SIGNAL_LLM_MODEL", "llama")
     budget = get_budget(signal_model) - 500
     content = truncate_text(signal.raw_content or signal.content_summary, budget)
-    data = _call_llm(signal.title, content)
+    data = _call_llm(signal.title, content, user_id=signal.user_id)
     score = max(0.0, min(1.0, float(data.get("importance_score", 0.0))))
     _score_cache[cache_key] = score
     return score
@@ -152,12 +152,40 @@ def match_relevance(signal: Signal, profile: RelevanceProfile) -> float:
 # ---------------------------------------------------------------------------
 
 
-def _call_llm(title: str, content: str) -> dict:
-    """Run the combined summarise+score LLM call. Returns parsed dict or {}."""
+def _call_llm(
+    title: str, content: str, *, user_id: str | None = None
+) -> dict:
+    """Run the combined summarise+score LLM call. Returns parsed dict or {}.
+
+    Plan llm_provider_keys_per_user_migration Pass 2.9: ``user_id`` is
+    keyword-only and required for cloud ``SIGNAL_LLM_MODEL`` values
+    (any model with an ``api_key_env``). Local models still resolve
+    without a user. The boot-time ``_check_background_model_defaults``
+    refuses to start with a cloud default + ``AUTH_ENABLED=true``, so
+    the only way to land here with a cloud model and no ``user_id`` is
+    a per-call signal source that forgot to thread it — we WARN and
+    skip enrichment so the signal still lands.
+    """
     prompt = _PROCESS_PROMPT_TEMPLATE.format(title=title, content=content)
+    model_name = os.environ.get("SIGNAL_LLM_MODEL", "llama")
     try:
-        model_name = os.environ.get("SIGNAL_LLM_MODEL", "llama")
-        llm = config.get_llm_provider(model_name)
+        needs_user_key = bool(
+            config.get_model_config(model_name).get("api_key_env")
+        )
+    except Exception:
+        needs_user_key = False
+    if needs_user_key and not user_id:
+        _log.warning(
+            "signal_llm: SIGNAL_LLM_MODEL=%s needs a per-user API key but no "
+            "user_id was supplied; skipping LLM enrichment for this signal.",
+            model_name,
+        )
+        return {}
+    try:
+        from services.connector_credentials import ConnectorNotConfigured
+        from services.connector_credentials import CredentialUnavailable
+
+        llm = config.get_llm_provider(model_name, user_id=user_id)
         response = llm.chat(
             messages=[{"role": "user", "content": prompt}],
             system="You are a concise content analyst. Always respond with valid JSON only.",
@@ -170,6 +198,16 @@ def _call_llm(title: str, content: str) -> dict:
         return json.loads(raw)
     except json.JSONDecodeError as exc:
         _log.warning("LLM returned non-JSON for signal %r: %s", title[:60], exc)
+    except ConnectorNotConfigured as exc:
+        _log.warning(
+            "signal_llm: missing per-user credential for model=%s user=%s: %s",
+            model_name, user_id, exc,
+        )
+    except CredentialUnavailable as exc:
+        _log.warning(
+            "signal_llm: stored credential unusable for model=%s user=%s: %s",
+            model_name, user_id, exc,
+        )
     except Exception as exc:
         _log.warning("LLM call failed for signal %r: %s", title[:60], exc)
     return {}
@@ -197,6 +235,9 @@ def _fraction_match(tracked: list[str], signal_data, exact: bool) -> float:
 def _load_profile(user_id: str) -> RelevanceProfile | None:
     try:
         ms = config.get_metadata_store()
+        # SCOPE-EXEMPT: `relevance_profiles` is in plan §2.10's
+        # excluded-from-scope list — relevance is a per-user signal-routing
+        # config, not memory content; no `scope` column exists.
         row = ms.fetch_one(
             "SELECT id, tracked_locations, tracked_topics, tracked_entities, "
             "tracked_keywords, updated_at FROM relevance_profiles "
@@ -222,21 +263,51 @@ def _load_profile(user_id: str) -> RelevanceProfile | None:
 def _notify(signal: Signal) -> bool:
     try:
         notifier = config.get_notifier()
-        return notifier.notify(signal.title, signal.content_summary, signal.importance_score)
+        return notifier.notify(
+            signal.title,
+            signal.content_summary,
+            signal.importance_score,
+            user_id=signal.user_id,
+        )
     except Exception as exc:
         _log.warning("Notifier error for signal %r: %s", signal.title[:60], exc)
         return False
 
 
+_SYSTEM_SOURCE_SENTINEL = "__system__"
+
+
 def _persist(signal: Signal) -> None:
-    """Insert signal into Postgres and embed summary into Qdrant."""
+    """Insert signal into Postgres and embed summary into Qdrant.
+
+    Scope semantics (per plan §2.12 + §5.6):
+
+    * ``source_id == '__system__'`` → ``scope='system'`` (the only writer
+      that produces non-personal rows in v1; backfilled by migration 013
+      for any pre-013 system signals).
+    * everything else → ``scope='personal'``.
+
+    The ``source_url`` and ``source_label`` columns are denormalized via
+    sub-SELECTs against the publisher's `sources` row so shared/system
+    projection rows remain renderable without a `sources` join (which is
+    intentionally NOT in the scope-bearing set per §2.12). For
+    `__system__` signals both sub-SELECTs harmlessly return NULL.
+    """
+    is_system = signal.source_id == _SYSTEM_SOURCE_SENTINEL
+    scope = "system" if is_system else "personal"
     try:
         ms = config.get_metadata_store()
         ms.execute(
             "INSERT INTO signals "
             "(signal_id, user_id, source_id, title, url, published_at, content_summary, "
-            "entities, topics, importance_score, relevance_score, notified, created_at) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s, %s) "
+            "entities, topics, importance_score, relevance_score, notified, created_at, "
+            "scope, source_url, source_label) "
+            "VALUES ("
+            "%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s, %s, "
+            "%s, "
+            "(SELECT url  FROM sources WHERE id::text = %s LIMIT 1), "
+            "(SELECT name FROM sources WHERE id::text = %s LIMIT 1)"
+            ") "
             "ON CONFLICT (signal_id) DO NOTHING",
             (
                 signal.signal_id,
@@ -252,6 +323,9 @@ def _persist(signal: Signal) -> None:
                 signal.relevance_score,
                 signal.notified,
                 signal.created_at,
+                scope,
+                signal.source_id,
+                signal.source_id,
             ),
         )
     except Exception as exc:
@@ -276,6 +350,7 @@ def _persist(signal: Signal) -> None:
                     "importance_score": signal.importance_score,
                     "relevance_score": signal.relevance_score,
                     "user_id": signal.user_id,
+                    "scope": scope,
                 },
             )
     except Exception as exc:

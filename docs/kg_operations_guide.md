@@ -4,6 +4,19 @@
 
 ---
 
+## Multi-user, authentication, and graph URLs
+
+- **`AUTH_ENABLED=false` (default on many dev stacks):** The app behaves like a single-user install. FastAPI auth dependencies synthesise a **synthetic `user_id` of `"default"`** with an admin role, so you can use browser pages and `curl` without a bearer token, matching older documentation.
+- **`AUTH_ENABLED=true` (family-LAN / multi-user):** **Bearer JWT** (from `/api/v1/auth/login` or the web UI session) is required for routes the auth middleware protects. The graph visualization APIs (`/graph/ego`, `/graph/search`, etc.) are **scoped to the JWT `sub`**. The Knowledge Graph **management** surface (`/graph/mgm` and the `/kg/*` operator APIs on Core) and **read/list review surfaces** (e.g. `GET /review-queue`) are **admin-only** when auth is on. `POST /review-queue/decide` is available to the **owning user or an admin** (see `orchestrator/routes/admin.py`).
+
+**`GET /graph/health` (Postgres quality metrics):** The implementation still aggregates metrics for **`user_id = 'default'`** only (operator dashboard / god-mode read). In a multi-user household, treat these numbers as **indicative for the legacy bucket**, not a full per-user report—unless your deployment still uses `"default"`.
+
+**`GRAPH_MODE=service`:** The in-process graph plugin does **not** register its HTTP router on Core. Graph read APIs and `/graph/viz` are served from the **`lumogis-graph` process** at `KG_SERVICE_URL` (default `http://lumogis-graph:8001` inside Docker). The HTML management page is still at **`/graph/mgm` on Core** (admin) and is mirrored on the KG service as `/mgm`. To open viz from the host, add a **host port** for 8001 in your compose overlay or `docker compose exec` to curl the KG container.
+
+**`[Graph]` lines in chat:** In `GRAPH_MODE=inprocess`, the `CONTEXT_BUILDING` path still uses the **`"default"`** user bucket for graph context (hook payload). **Service mode** currently calls KG `/context` with the real `user_id`, but the KG `on_context_building` copy still hard-codes `"default"` until a follow-up wires `user_id` through—so **households should not expect per-user graph injection in chat to match the JWT yet.**
+
+---
+
 ## Table of Contents
 
 1. [What the Knowledge Graph Does](#1-what-the-knowledge-graph-does)
@@ -15,6 +28,7 @@
 7. [The Weekly Automated Job](#7-the-weekly-automated-job)
 8. [Troubleshooting](#8-troubleshooting)
 9. [What Is Coming Next](#9-what-is-coming-next)
+10. [Where the Graph Runs (Deployment Modes)](#10-where-the-graph-runs-deployment-modes)
 
 ---
 
@@ -85,13 +99,20 @@ You can also manually promote or discard staged entities through the review queu
 
 ### How to access it
 
-Open your browser and go to:
+With **`GRAPH_MODE=inprocess`**, open:
 
 ```
 http://localhost:8000/graph/viz
 ```
 
-This opens a standalone page with an interactive graph visualization powered by Cytoscape.js. The page loads the graph data from the API and renders it as a network diagram.
+With **`GRAPH_MODE=service`**, Core does not mount the plugin’s `/graph/*` routes; use the **KG service** (same path), e.g. from another container:
+
+```
+http://lumogis-graph:8001/graph/viz
+```
+
+—or publish port **8001** to the host and use `http://localhost:8001/graph/viz`. The page is a standalone Cytoscape.js app that loads data from the graph JSON APIs.
+When **`AUTH_ENABLED=true`**, open the page **while logged in** (or pass `Authorization: Bearer <access_token>` to the JSON APIs) so results are **scoped to your user** and, where applicable, **visibility rules** (personal / shared / system) from ADR-015.
 
 ### What the search does
 
@@ -120,7 +141,7 @@ The search box at the top lets you find entities by name. Start typing at least 
 
 ### What the review queue is
 
-The review queue collects items that need your attention. It surfaces problems and ambiguities that Lumogis cannot resolve automatically, and presents them in priority order so you can work through them efficiently.
+The review queue collects items that need your attention. It surfaces problems and ambiguities that Lumogis cannot resolve automatically, and presents them in priority order so you can work through them efficiently. **`GET /review-queue` and `?source=all` are admin-only** when `AUTH_ENABLED=true`. **`POST /review-queue/decide`** requires an **authenticated** user: non-admins may act only on their own items; **admins** can act for the household. Items carry **`user_id` and `scope`** for attribution in the admin UI.
 
 ### The five item types
 
@@ -178,7 +199,7 @@ The Graph Health tab in the Lumogis dashboard shows six metrics. Access it at:
 http://localhost:8000/dashboard
 ```
 
-Then click the **Graph Health** tab.
+Then click the **Graph Health** tab. When **`AUTH_ENABLED=true`**, the dashboard request must be **authenticated**; **`GET /graph/health` itself** also returns **401** without a valid bearer. Remember the metrics are still computed for **`user_id = 'default'`** in the backend (see the introduction above)—they do not yet sum every household user.
 
 ### What each metric means
 
@@ -283,23 +304,27 @@ If you notice two entities that should be one (e.g. "Acme Corp" and "ACME Corpor
 
 **Option 1: Use the review queue**. If a deduplication candidate already exists, decide "merge" from the queue.
 
-**Option 2: Manual merge**. Call the merge API directly:
+**Option 2: Manual merge**. Call the merge API directly (**admin** when `AUTH_ENABLED=true`):
 
 ```bash
 curl -X POST http://localhost:8000/entities/merge \
   -H "Content-Type: application/json" \
-  -d '{"winner_id": "<UUID-of-entity-to-keep>", "loser_id": "<UUID-of-entity-to-remove>"}'
+  -H "Authorization: Bearer <access_token>" \
+  -d '{"winner_id": "<UUID-of-entity-to-keep>", "loser_id": "<UUID-of-entity-to-remove>", "user_id": "<owning-user-id>"}'
 ```
+
+Omit the `Authorization` header when `AUTH_ENABLED=false`. The body **`user_id`** is the **data owner** of the entities (not optional in real multi-user use—defaults to `"default"` in the Pydantic model for backward compatibility).
 
 The winner keeps its name and absorbs the loser's aliases, mentions, context tags, and mention count. The loser is permanently deleted.
 
-**Option 3: Trigger deduplication**. Run the full deduplication pipeline to find and handle all duplicates:
+**Option 3: Trigger deduplication**. Run the full deduplication pipeline to find and handle all duplicates (**admin** when `AUTH_ENABLED=true`):
 
 ```bash
-curl -X POST http://localhost:8000/entities/deduplicate
+curl -X POST http://localhost:8000/entities/deduplicate \
+  -H "Authorization: Bearer <access_token>"
 ```
 
-This returns a 202 with a `run_id`. The job runs in the background.
+This returns a 202 with a `run_id`. The job runs in the background. (The in-process job currently targets the **`"default"`** user bucket; broader per-user runs are a follow-up for multi-tenant quality jobs.)
 
 ### What to do when important entities are missing
 
@@ -335,10 +360,11 @@ Every Sunday at 02:00 UTC (configurable), Lumogis runs a maintenance job that:
 ### How to trigger it manually
 
 ```bash
-curl -X POST http://localhost:8000/entities/deduplicate
+curl -X POST http://localhost:8000/entities/deduplicate \
+  -H "Authorization: Bearer <access_token>"
 ```
 
-This triggers just the deduplication step. For the full weekly pipeline including edge scoring and constraint checks, there is no manual HTTP endpoint — it runs on schedule only. If you need to run it immediately, restart the container and it will run at the next scheduled time.
+(Omit `Authorization` when `AUTH_ENABLED=false`.) This triggers just the deduplication step (for the **`"default"`** user id in the current implementation). For the full weekly pipeline including edge scoring and constraint checks, use **`POST /kg/trigger-weekly`** (admin) or wait for the schedule. If you need to run it immediately, restart the container and it will run at the next scheduled time.
 
 ### How to check if it ran successfully
 
@@ -365,6 +391,16 @@ A successful run has `finished_at IS NOT NULL` and `error_message IS NULL`.
 
 ## 8. Troubleshooting
 
+### Where to look first
+
+Before changing anything, check which deployment mode you are in. The `GRAPH_MODE` setting in `.env` selects how the knowledge graph runs:
+
+- `inprocess` (default) — the graph plugin runs inside the orchestrator container. Webhooks, weekly jobs, and chat-context injection all happen in the same process.
+- `service` — the graph runs in a separate `lumogis-graph` container. The orchestrator sends events to it over HTTP.
+- `disabled` — no graph anywhere.
+
+Most of the troubleshooting below is mode-agnostic, but some symptoms only appear in `service` mode. See [§10 Where the Graph Runs](#10-where-the-graph-runs-deployment-modes) for the mode-specific failure paths.
+
 ### FalkorDB is unavailable: what still works, what does not
 
 **Still works:**
@@ -389,10 +425,11 @@ If the graph visualization is missing recent entities or connections:
 
 ```bash
 curl -X POST http://localhost:8000/graph/backfill \
+  -H "Authorization: Bearer <access_token>" \
   -H "X-Graph-Admin-Token: <your-token>"
 ```
 
-(Omit the token header if `GRAPH_ADMIN_TOKEN` is not set in `.env`.)
+`POST /graph/backfill` uses **`_check_admin`**, not `require_admin`: when `AUTH_ENABLED=true` you need a **valid JWT** (any authenticated user). When `GRAPH_ADMIN_TOKEN` is set, you must also send the matching **`X-Graph-Admin-Token`**. Omit `Authorization` when `AUTH_ENABLED=false`. Omit `X-Graph-Admin-Token` if `GRAPH_ADMIN_TOKEN` is unset.
 
 This replays all Postgres rows that are newer than their last graph projection into FalkorDB. It runs in the background and processes all stale rows.
 
@@ -429,23 +466,28 @@ If a specific entity keeps getting staged instead of being added to the graph:
 2. **Run deduplication manually**:
 
 ```bash
-curl -X POST http://localhost:8000/entities/deduplicate
+curl -X POST http://localhost:8000/entities/deduplicate \
+  -H "Authorization: Bearer <access_token>"
 ```
 
-3. **Merge specific pairs manually**:
+3. **Merge specific pairs manually** (admin; include `user_id` in the body for multi-user):
 
 ```bash
 curl -X POST http://localhost:8000/entities/merge \
   -H "Content-Type: application/json" \
-  -d '{"winner_id": "<keep-this-uuid>", "loser_id": "<delete-this-uuid>"}'
+  -H "Authorization: Bearer <access_token>" \
+  -d '{"winner_id": "<keep-this-uuid>", "loser_id": "<delete-this-uuid>", "user_id": "<owning-user-id>"}'
 ```
 
 4. **Search for the entities**: Use the visualization search or query Postgres directly to find entity UUIDs:
 
 ```sql
-SELECT entity_id, name, entity_type, mention_count
+-- Replace the user_id with the owning account (JWT `sub`) in multi-user installs.
+-- Use … IN (SELECT id FROM users) to explore, or the admin data export, if you
+-- are unsure of the id string.
+SELECT entity_id, name, entity_type, mention_count, user_id, scope
 FROM entities
-WHERE lower(name) LIKE '%acme%' AND user_id = 'default';
+WHERE lower(name) LIKE '%acme%' AND user_id = '<your-user-id>';
 ```
 
 ### Review queue growing faster than reviews: how to manage
@@ -488,3 +530,47 @@ Automated monitoring of graph quality metrics over time. Drift detection will tr
 - **M6**: Existing notes become part of the graph, dramatically increasing coverage without any new data entry. Internal links create high-quality, human-verified edges.
 - **M7**: Voice memos become searchable and connected. Entities mentioned in passing during voice notes are captured and linked.
 - **Drift detection**: Early warning when graph quality degrades, so problems are caught before they affect your day-to-day experience.
+
+---
+
+## 10. Where the Graph Runs (Deployment Modes)
+
+Lumogis ships two equivalent ways of running the knowledge graph. They produce the same data and expose the same operator experience — only the process boundary differs. The choice is made by the `GRAPH_MODE` environment variable in `.env`:
+
+| Mode | What runs where | When to choose it |
+|------|-----------------|-------------------|
+| `inprocess` (default) | The graph plugin lives inside the orchestrator container. One process, one set of logs, one image to update. | Single-machine self-hosted setups, dev work, anything you don't need to scale or isolate. |
+| `service` | The plugin runs in a separate `lumogis-graph` container. Orchestrator talks to it over HTTP. Both processes share the same Postgres, Qdrant, and FalkorDB. | You want to update / restart the graph without restarting chat, run it on a different host, give it its own resource budget, or treat the graph as a "premium" capability that can be enabled/disabled independently. |
+| `disabled` | No graph code runs anywhere. `query_graph` is not available, no `[Graph]` lines appear in chat, nothing is projected to FalkorDB. | You want to turn the feature off entirely without removing the database. |
+
+### Switching modes
+
+1. Edit `.env` and set `GRAPH_MODE=inprocess` or `GRAPH_MODE=service`.
+2. If switching to `service`, also set `GRAPH_WEBHOOK_SECRET` to a long random string and bring up the premium overlay:
+
+   ```bash
+   docker compose -f docker-compose.yml \
+     -f docker-compose.falkordb.yml \
+     -f docker-compose.premium.yml up -d
+   ```
+
+3. If switching back to `inprocess`, `docker compose down lumogis-graph` is enough — the orchestrator picks up the new mode at next restart.
+
+The graph data itself is not affected by the switch: both modes read and write the same Postgres rows and the same FalkorDB graph. You can swap modes without losing entities, edges, or settings.
+
+### Verifying both modes produce the same graph
+
+A regression test in the repository — `make test-graph-parity` — runs the same fixture set through both modes and diffs the resulting FalkorDB state. It is intended for developers and CI; operators do not need to run it routinely. The test wipes the named Docker volumes for Postgres, FalkorDB, and Qdrant between phases, so do NOT run it against a stack that holds real data without backing up first.
+
+### Service-mode-only failure modes
+
+These only apply when `GRAPH_MODE=service`. In `inprocess` mode none of these can happen because there is no network call.
+
+| Symptom | Likely cause | Fix |
+|---------|--------------|-----|
+| Chat responses suddenly stop including `[Graph]` lines (extraction still works, graph viz still works) | Core's 40 ms `/context` timeout is firing. Either the KG container is overloaded or FalkorDB is slow. | Check `docker compose logs lumogis-graph` for `/context: in-route work exceeded 35 ms budget` warnings. Restart the KG container; if persistent, increase its memory limit (`KG_MEM_LIMIT`). |
+| All webhooks return 503 in KG logs | `GRAPH_WEBHOOK_SECRET` is unset AND `KG_ALLOW_INSECURE_WEBHOOKS=false`. | Set a `GRAPH_WEBHOOK_SECRET` in `.env` for both Core and KG (one shared secret), or set `KG_ALLOW_INSECURE_WEBHOOKS=true` on the KG container for a trusted dev LAN only. |
+| All webhooks return 401 | The two processes have different `GRAPH_WEBHOOK_SECRET` values, or one is set and the other is not. | Make sure both Core and KG read the same `.env` (or set the variable identically in both compose files). |
+| Newly ingested entities are missing from the graph for a few hours | The KG container was unreachable when the events fired. Reconciliation will catch them up. | Wait until 03:00 UTC, or trigger an immediate catch-up: `curl -X POST http://localhost:8000/graph/backfill` (uses Core's reverse-proxy path) or `curl -X POST http://lumogis-graph:8001/graph/backfill` (direct, only available when the KG host port is exposed). |
+| Weekly job log line appears in BOTH the orchestrator and the KG container | Both schedulers are active. | In `service` mode, leave the KG scheduler enabled (`KG_SCHEDULER_ENABLED=true`) and make sure the Core process is in `service` mode too — Core skips the weekly job in that mode. If you want to silence the KG scheduler instead (e.g. running multiple KG replicas), set `KG_SCHEDULER_ENABLED=false` on all but one. |
+| `/graph/mgm` page is unreachable on the KG container's host port | The premium overlay does NOT expose port 8001 to the host by default — that is intentional. | Reach `/mgm` via Core's `/graph/mgm` (which is the same page), or `docker compose exec lumogis-graph curl http://localhost:8001/mgm`, or add a port mapping in your own overlay file. |

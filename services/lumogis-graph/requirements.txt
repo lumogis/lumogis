@@ -1,0 +1,57 @@
+# Runtime dependencies for the lumogis-graph service.
+# Dev/test tools live in requirements-dev.txt and are NOT installed in Docker.
+#
+# Deliberately MUCH smaller than orchestrator/requirements.txt: the KG service
+# does not run an LLM, does not OCR, does not crawl, does not transcribe audio.
+# Each item below has a directly-justified reason for being here.
+
+# HTTP server framework + ASGI runner.
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+
+# Wire-contract validation for /webhook + /context envelopes.
+pydantic>=2.0.0
+
+# .env loading on startup (mirrors Core).
+python-dotenv>=1.0.0
+
+# Used by routes/capabilities.py manifest validation against
+# CapabilityRegistry's `min_core_version` semver compare.
+packaging>=21.0
+
+# Outbound HTTP — currently only used by tests; kept here so add-ons that
+# call back into Core can reuse the same client without an extra install step.
+httpx>=0.27.0
+
+# Daily reconciliation + weekly quality scheduling. Same major as Core for
+# job-defaults compatibility when the operator shares a single .env.
+apscheduler>=3.10.0
+
+# Postgres driver for kg_settings reads + entity table reconciliation.
+psycopg2-binary>=2.9.0
+
+# FalkorDB client — the canonical graph store this service exists to drive.
+falkordb>=1.0.0
+
+# Splink + DuckDB power the weekly dedup pass that lives in this service.
+# Pinned to the same majors as Core (orchestrator/requirements.txt) so a
+# shared kg_settings parameter table is interpreted identically by both.
+splink>=4.0,<5
+duckdb>=1.0,<2
+
+# FastMCP server exposing the six graph.* tools at /mcp.
+# Same minimum as Core (orchestrator/requirements.txt) for streamable-HTTP support.
+mcp>=1.10.0
+
+# NOTE: NOT included in this image (any of these MUST stay Core-only):
+#   - qdrant-client, sentence-transformers       (vector + embeddings — Core)
+#   - anthropic, openai                          (LLM providers — Core)
+#   - pdfminer.six, python-docx, pdf2image,
+#     pytesseract                                (ingest — Core)
+#   - tiktoken                                   (LLM token counting — Core)
+#   - feedparser, trafilatura                    (web ingest — Core)
+#   - watchdog, psutil                           (file/system watch — Core)
+#   - caldav                                     (calendar — Core)
+#   - pyjwt                                      (only needed if AUTH_ENABLED=true
+#                                                 on the KG container; lazy-imported
+#                                                 in services/lumogis-graph/auth.py)

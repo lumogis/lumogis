@@ -11,7 +11,6 @@ import logging
 
 import httpx
 import pytest
-
 from models.capability import CapabilityLicenseMode
 from models.capability import CapabilityManifest
 from models.capability import CapabilityMaturity
@@ -20,7 +19,6 @@ from models.capability import CapabilityTransport
 from services.capability_registry import CapabilityRegistry
 
 import config as _config
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -100,6 +98,28 @@ async def test_discover_populates_registry_from_valid_manifest():
 
     tools = registry.get_tools()
     assert {t.name for t in tools} == {"memory.search", "memory.recent"}
+
+
+async def test_discover_always_uses_capabilities_path_manifest_field_is_documentary(caplog):
+    """Registry GETs /capabilities only; a misleading capabilities_endpoint logs a warning."""
+    manifest = _manifest()
+    wrong = "/v99/not-used-for-discovery"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/capabilities":
+            m = manifest.model_copy(update={"capabilities_endpoint": wrong})
+            return httpx.Response(200, content=m.model_dump_json())
+        return httpx.Response(404)
+
+    transport = httpx.MockTransport(handler)
+    registry = CapabilityRegistry(transport=transport)
+
+    with caplog.at_level(logging.WARNING, logger="services.capability_registry"):
+        await registry.discover(["http://doc-only:8002"])
+
+    assert len(registry.all_services()) == 1
+    assert registry.all_services()[0].manifest.capabilities_endpoint == wrong
+    assert any("capabilities_endpoint" in rec.message for rec in caplog.records)
 
 
 async def test_discover_with_empty_url_list_is_noop():

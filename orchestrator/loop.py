@@ -18,6 +18,8 @@ from models.llm import LLMResponse
 from models.stream import StreamEvent
 from services.tools import TOOLS
 from services.tools import run_tool
+from services.unified_tools import finish_llm_tools_request
+from services.unified_tools import prepare_llm_tools_for_request
 
 import config
 
@@ -54,46 +56,70 @@ def ask(
     history: list | None = None,
     model: str = "claude",
     use_tools: bool = True,
+    *,
+    user_id: str,
 ) -> str:
-    provider = config.get_llm_provider(model)
+    """Synchronous tool-loop. ``user_id`` is keyword-only and required.
+
+    Phase 3: every chat path threads the caller's ``user_id`` down to
+    :func:`services.tools.run_tool` so per-user data stores never leak
+    across users. Callers that forget the kwarg fail loud at import-call
+    time with :class:`TypeError`.
+    """
+    if not isinstance(user_id, str) or not user_id:
+        raise TypeError("loop.ask: user_id (keyword-only) is required")
+
+    provider = config.get_llm_provider(model, user_id=user_id)
     messages = list(history) if history else []
     messages.append({"role": "user", "content": question})
 
-    tools = TOOLS if use_tools else None
+    oop_tok = None
+    if use_tools:
+        try:
+            tools, oop_tok = prepare_llm_tools_for_request(user_id)
+        except Exception:  # noqa: BLE001 — fail closed to unextended TOOLS
+            _log.warning("prepare_llm_tools_for_request failed; using default TOOLS", exc_info=True)
+            tools, oop_tok = TOOLS, None
+    else:
+        tools = None
     system = _system_prompt(use_tools)
 
-    for _round in range(MAX_TOOL_ROUNDS + 1):
-        response: LLMResponse = provider.chat(
-            messages,
-            tools=tools,
-            system=system,
-            max_tokens=4096,
-        )
-
-        assistant_msg: dict = {"role": "assistant", "content": response.text}
-        if response.tool_calls:
-            assistant_msg["tool_calls"] = [
-                {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
-                for tc in response.tool_calls
-            ]
-        messages.append(assistant_msg)
-
-        if response.stop_reason != "tool_calls" or not response.tool_calls:
-            return response.text
-
-        for tc in response.tool_calls:
-            result = run_tool(tc.name, tc.arguments)
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": result,
-                }
+    try:
+        for _round in range(MAX_TOOL_ROUNDS + 1):
+            response: LLMResponse = provider.chat(
+                messages,
+                tools=tools,
+                system=system,
+                max_tokens=4096,
             )
 
-    _log.warning("Tool loop hit MAX_TOOL_ROUNDS=%d, forcing final answer", MAX_TOOL_ROUNDS)
-    final = provider.chat(messages, system=system, max_tokens=4096)
-    return final.text
+            assistant_msg: dict = {"role": "assistant", "content": response.text}
+            if response.tool_calls:
+                assistant_msg["tool_calls"] = [
+                    {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
+                    for tc in response.tool_calls
+                ]
+            messages.append(assistant_msg)
+
+            if response.stop_reason != "tool_calls" or not response.tool_calls:
+                return response.text
+
+            for tc in response.tool_calls:
+                result = run_tool(tc.name, tc.arguments, user_id=user_id)
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": result,
+                    }
+                )
+
+        _log.warning("Tool loop hit MAX_TOOL_ROUNDS=%d, forcing final answer", MAX_TOOL_ROUNDS)
+        final = provider.chat(messages, system=system, max_tokens=4096)
+        return final.text
+    finally:
+        if oop_tok is not None:
+            finish_llm_tools_request(oop_tok)
 
 
 def ask_stream(
@@ -101,20 +127,40 @@ def ask_stream(
     history: list | None = None,
     model: str = "claude",
     use_tools: bool = True,
+    *,
+    user_id: str,
 ) -> Generator[StreamEvent, None, None]:
-    """Stream responses token-by-token from any provider."""
+    """Stream responses token-by-token. ``user_id`` is keyword-only and required."""
+    if not isinstance(user_id, str) or not user_id:
+        raise TypeError("loop.ask_stream: user_id (keyword-only) is required")
+
+    oop_tok = None
+    if use_tools:
+        try:
+            tools, oop_tok = prepare_llm_tools_for_request(user_id)
+        except Exception:  # noqa: BLE001 — fail closed to unextended TOOLS
+            _log.warning(
+                "prepare_llm_tools_for_request failed; using default TOOLS (stream)",
+                exc_info=True,
+            )
+            tools, oop_tok = TOOLS, None
+    else:
+        tools = None
+    system = _system_prompt(use_tools)
+
     try:
-        provider = config.get_llm_provider(model)
-        messages = list(history) if history else []
-        messages.append({"role": "user", "content": question})
+        try:
+            provider = config.get_llm_provider(model, user_id=user_id)
+            messages = list(history) if history else []
+            messages.append({"role": "user", "content": question})
 
-        tools = TOOLS if use_tools else None
-        system = _system_prompt(use_tools)
-
-        yield from _stream_loop(provider, messages, tools, system)
-    except Exception as exc:
-        _log.exception("ask_stream failed for model=%s", model)
-        yield StreamEvent(type="error", content=_friendly_error(exc))
+            yield from _stream_loop(provider, messages, tools, system, user_id=user_id)
+        except Exception as exc:
+            _log.exception("ask_stream failed for model=%s", model)
+            yield StreamEvent(type="error", content=_friendly_error(exc))
+    finally:
+        if oop_tok is not None:
+            finish_llm_tools_request(oop_tok)
 
 
 def _friendly_error(exc: Exception) -> str:
@@ -134,8 +180,10 @@ def _stream_loop(
     messages: list,
     tools: list[dict] | None,
     system: str,
+    *,
+    user_id: str,
 ) -> Generator[StreamEvent, None, None]:
-    """Inner streaming loop with tool-call handling."""
+    """Inner streaming loop with tool-call handling. ``user_id`` is required."""
     for _round in range(MAX_TOOL_ROUNDS + 1):
         text_parts: list[str] = []
         tool_calls: list[dict] = []
@@ -169,7 +217,7 @@ def _stream_loop(
             return
 
         for tc in tool_calls:
-            result = run_tool(tc["name"], tc["arguments"])
+            result = run_tool(tc["name"], tc["arguments"], user_id=user_id)
             messages.append(
                 {
                     "role": "tool",

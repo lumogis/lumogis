@@ -172,7 +172,7 @@ class TestScoreImportance:
 
     def test_clamps_llm_output_above_one(self, monkeypatch):
         llm = _mock_llm_response({"importance_score": 1.5})
-        monkeypatch.setattr(_config, "get_llm_provider", lambda name: llm)
+        monkeypatch.setattr(_config, "get_llm_provider", lambda name, *, user_id=None: llm)
         monkeypatch.setattr("services.signal_processor.get_budget", lambda name: 4096)
 
         signal = _make_signal(url="https://example.com/clamp-high")
@@ -181,7 +181,7 @@ class TestScoreImportance:
 
     def test_clamps_llm_output_below_zero(self, monkeypatch):
         llm = _mock_llm_response({"importance_score": -0.3})
-        monkeypatch.setattr(_config, "get_llm_provider", lambda name: llm)
+        monkeypatch.setattr(_config, "get_llm_provider", lambda name, *, user_id=None: llm)
         monkeypatch.setattr("services.signal_processor.get_budget", lambda name: 4096)
 
         signal = _make_signal(url="https://example.com/clamp-low")
@@ -200,7 +200,7 @@ class TestProcessSignal:
         monkeypatch.setattr("services.signal_processor.get_budget", lambda name: 4096)
 
         llm = _mock_llm_response(llm_data)
-        monkeypatch.setattr(_config, "get_llm_provider", lambda name: llm)
+        monkeypatch.setattr(_config, "get_llm_provider", lambda name, *, user_id=None: llm)
 
         mock_notifier = MagicMock()
         mock_notifier.notify.return_value = True
@@ -235,8 +235,12 @@ class TestProcessSignal:
         }
         notifier = self._setup(monkeypatch, llm_data, relevance_threshold="0.0")
         raw = _make_signal()
-        result = process_signal(raw)
+        result = process_signal(raw, user_id="alice")
         assert notifier.notify.called
+        # ADR 018 / ntfy migration: notify() must be called with the
+        # signal's user_id so per-user credential resolution works.
+        _, kwargs = notifier.notify.call_args
+        assert kwargs.get("user_id") == "alice"
         assert result.notified is True
 
     def test_notifier_not_called_below_threshold(self, monkeypatch):
