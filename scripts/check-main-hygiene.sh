@@ -102,8 +102,13 @@ while IFS= read -r f; do
       bad_paths=1
       ;;
     docs/private/*)
-      echo "check-main-hygiene: tracked forbidden path: $f" >&2
-      bad_paths=1
+      case "$f" in
+        docs/private/roadmap/*) ;; # tracked maintainer roadmap notes; omitted from public export
+        *)
+          echo "check-main-hygiene: tracked forbidden path: $f" >&2
+          bad_paths=1
+          ;;
+      esac
       ;;
     *__pycache__/*|__pycache__/*|.pytest_cache/*|node_modules/*|*.pyc)
       echo "check-main-hygiene: tracked generated or dependency path: $f" >&2

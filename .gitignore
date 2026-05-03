@@ -37,8 +37,11 @@ config/librechat.yaml
 # Internal maintainer-only notes — not part of the distributed source tree
 AUDIT-REPORT.md
 REMEDIATION-PLAN.md
-# Untracked local notes (optional per clone)
-docs/private/
+# Private local scratch (ignored by default). Exception: `docs/private/roadmap/` may be
+# tracked for maintainer roadmap notes; that tree is omitted from the public export.
+docs/private/**
+!docs/private/roadmap/
+!docs/private/roadmap/**
 
 # IDE / OS
 .idea/
