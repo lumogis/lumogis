@@ -13,6 +13,7 @@ Verified against commit: 98f02b1
 - [`gpu-setup.md`](gpu-setup.md)
 - [`connector-credentials.md`](connector-credentials.md)
 - [`per-user-export-format.md`](per-user-export-format.md)
+- [`architecture/lumogis-speech-to-text-foundation-plan.md`](architecture/lumogis-speech-to-text-foundation-plan.md) — optional Speaches/STT Compose overlay (`docker-compose.stt.yml`), operator verification notes
 
 ## Architecture
 

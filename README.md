@@ -1,637 +1,233 @@
 ![Lumogis](branding/readme-banner.svg)
 
-**[Quickstart](#getting-started) · [Architecture](#architecture) · [Reference manual](docs/LUMOGIS_REFERENCE_MANUAL.md) · [Extending Lumogis](#contributing) · [Community Plugins](COMMUNITY-PLUGINS.md) · [Security](SECURITY.md)**
+**[Quickstart](#getting-started)** · **[Architecture](#architecture)** · **[Reference manual](docs/LUMOGIS_REFERENCE_MANUAL.md)** · **[Operator runbook](docs/connect-and-verify.md)** · **[Extending Lumogis](docs/extending-the-stack.md)** · **[Community Plugins](COMMUNITY-PLUGINS.md)** · **[Security](SECURITY.md)**
 
 # lumogis
 
 **The AI comes to your data. Not the other way around.**
 
-Lumogis is a **self-hosted, local-first** household and personal AI platform: you run it on your own machine with Docker Compose under **AGPL-3.0-only**. The primary browser experience is **Lumogis Web** (same-origin behind **Caddy**); **Core** is the orchestrator (FastAPI). Optional **LibreChat** remains available as a compose profile for legacy OpenAI-style chat, not as the main product UI.
+Lumogis is a **self-hosted, local-first, privacy-first** household and personal AI platform that you run yourself with Docker Compose under **AGPL-3.0-only**. Your primary UI is **[Lumogis Web](#lumogis-web)** (same origin behind **[Caddy](docker/caddy/Caddyfile)**). **Core** is the **[FastAPI](orchestrator/main.py)** orchestrator. **[LibreChat](config/librechat.coldstart.yaml)** stays available behind an optional Compose profile (`librechat`) for OpenAI-compatible chat—not the main product surface.
 
 ---
 
 ![Lumogis demo](branding/demo2.gif)
 
-*Ask about a decision from your meeting notes. Ask what you settled on in a previous conversation. Lumogis finds it — locally, privately, without being told where to look.*
+*Ask about a decision captured in notes or an earlier conversation. Retrieval and storage run locally—you are not handing the archive to a SaaS indexer.*
 
 ---
 
-You know the moment. You are about to paste something private into ChatGPT — a draft contract, a medical question, a business plan you have been building for months — and you feel it. A half-second of hesitation. A small voice that says: *should I be doing this?*
+## Why Lumogis
 
-And then you do it anyway. Because the alternative is worse.
+You want to ask an LLM questions **grounded in your documents and sessions**, without exporting your corpus to someone else’s cloud.
 
-Lumogis fixes the thing that causes the hesitation. Your files, documents, and conversations are indexed and stored entirely on your own machine. When you ask a question, Lumogis assembles the relevant context from your local index and sends a composed prompt — your question plus the pieces of your thinking that bear on it — to whichever model is best suited. Claude for deep reasoning. GPT-4 for breadth. A local model for anything you want to keep completely offline. Your archive never travels. What travels is a question.
+- **Indexing and retrieval stay on your machine.** Default Compose brings up **Qdrant** for vectors, **Postgres** for metadata (fresh volumes bootstrap from `postgres/init.sql`), and **Ollama** for local embeddings/models—see **`docker-compose.yml`**.
 
-This is not a privacy policy. It is not a setting. It is physically impossible for your files to reach a Lumogis server, because there is no Lumogis server. The source is public under the GNU Affero General Public License v3.0 only (AGPL-3.0-only) — anyone can verify it.
+- **When you choose a cloud model**, the provider receives a **composed prompt**: your query plus excerpts Core selected from local retrieval—not your full corpus or embeddings. With **purely local inference**, the **LLM call stays on your host** (your usual outbound traffic, logging, and supply-chain realities still apply).
 
-When using a local model, nothing leaves your machine at all. When using a cloud model, only the composed prompt — your question plus the retrieved excerpts — travels to the model provider. Your raw files, full document corpus, embeddings, and conversation history never move.
-
-*Privacy is not a setting here. It is the architecture.*
+The source code is **[AGPL-3.0-only](LICENSE)**. There is no Lumogis-operated SaaS substrate in this story—verification is cloning and reading code.
 
 ---
 
 ## What it does (summary)
 
-**lumogis processes, stores, and serves all data locally.** Every document you ingest, every entity extracted, every signal scored — it happens on your machine, in your containers, under your control.
+**All processing defaults to containers on your machine.** Ingest → chunk → embed → search → sessions → signals → audited actions—all under your Compose project.
 
-- Ingests and indexes your documents (PDF, DOCX, text, images via OCR)
-- Runs semantic search with two-stage retrieval (vector + reranker)
-- Maintains session memory across conversations
-- Extracts and stores entities (people, organisations, projects, concepts)
-- Monitors signal sources (RSS feeds, web pages, calendars)
-- Scores signals by relevance and sends a daily digest via ntfy
-- Executes actions with full audit logging and Ask/Do safety enforcement
-- Routes queries to any LLM — local via Ollama, or cloud via API key
-- Loads plugins automatically from `plugins/` — drop one in and it activates
-
----
-
-## How it works
-
-**Private semantic search.** Documents are chunked, embedded, and stored in a local Qdrant vector database using Nomic Embed via Ollama. Search runs entirely on your machine. No outbound calls, no external embedding APIs.
-
-**Two-stage retrieval.** Vector search narrows the candidate set. When enabled, a local BGE reranker re-scores candidates by relevance before context is assembled. Enable with `RERANKER_BACKEND=bge` in `.env`.
-
-**Session memory.** Conversation summaries are embedded and stored locally. Context from past sessions is retrieved and injected into future ones. A question you asked three months ago, and the conclusion you reached, can inform the answer you get today.
-
-**Entity extraction.** People, organisations, projects, and concepts mentioned across conversations and documents are extracted and stored in a local knowledge base.
-
-**Signal monitoring and digest.** RSS feeds, web pages, and calendar events are polled on a schedule. Each signal is scored for importance and relevance. A configurable daily digest sends the top signals via ntfy. Plugins extend what happens with signals beyond the built-in digest.
-
-**Action execution.** Actions are defined, registered, and executed with a full audit trail. The Ask/Do safety model controls what runs automatically and what requires your approval.
-
-**Model routing.** Route queries to Claude, GPT-4, a local Llama or Qwen model, or any OpenAI-compatible endpoint. Adding a provider is a config entry in `config/models.yaml` — zero code changes.
-
-**File ingestion.** Plain text, Markdown, PDF, DOCX, and scanned images (via OCR) are supported out of the box. Drop a file in your indexed folder and it is searchable in seconds.
+| Area | Capability |
+|---|---|
+| Documents | PDF, DOCX, text, images (OCR when enabled)—see ingestion in [`orchestrator/services/ingest.py`](orchestrator/services/ingest.py) |
+| Search | Dense vectors + optional hybrid / reranking—[`services/search.py`](orchestrator/services/search.py), [`ARCHITECTURE.md`](ARCHITECTURE.md) |
+| Memory | Sessions and summaries embedded locally |
+| Signals | RSS, pages, calendars, digest—[`signals/`](orchestrator/signals/) |
+| Actions | **[Ask / Do](#security-model-ask-and-do)** with audit logging—[`actions/`](orchestrator/actions/) |
+| Models | Local via Ollama; cloud via adapters and `config/models.yaml` |
+| Plugins | **[Optional packages](docs/examples/example_plugin/)** under [`orchestrator/plugins/`](orchestrator/plugins/)—loaded at startup |
 
 ---
 
 ## Security model: Ask and Do
 
-Every action in lumogis belongs to one of two modes:
+Every action lands in **Ask** or **Do**:
 
 | Mode | Behaviour |
 |---|---|
-| **Ask** | Proposed to you for approval before execution. Used for anything that writes, deletes, or sends. |
-| **Do** | Executed immediately without confirmation. Used for reads and reversible, low-risk operations. |
+| **Ask** | Proposed for approval before anything writes, deletes, or sends externally. |
+| **Do** | Executes immediately within a scoped, reversible, low-risk contract. |
 
-**Examples:**
-
-| Action | Mode | Reason |
-|---|---|---|
-| Read file contents | Do | Non-destructive, no side effects |
-| Search documents | Do | Read-only, no side effects |
-| Refresh RSS feed cache | Do | Scoped, reversible |
-| Draft an email reply | Ask | Proposes output — nothing sent until you confirm |
-| Create a calendar event | Ask | Writes to external system — requires confirmation |
-| Send a message | Ask | External consequence — always requires explicit approval |
-| Move a file | Ask | Filesystem write — proposed before execution |
-| Delete a file | Ask | Irreversible — always Ask, cannot be elevated to Do |
-| Tag a photo (Immich) | Do | Trusted scope, explicitly configured, reversible |
-
-Actions that accumulate a clean approval record are eligible for routine elevation — they move from Ask to Do automatically after a configurable threshold. You can always demote an action back to Ask. This is not a capability system. Trust is earned, recorded, and revocable.
+Details and examples: **[`docs/LUMOGIS_REFERENCE_MANUAL.md`](docs/LUMOGIS_REFERENCE_MANUAL.md)** (operator narrative) and audit discussion in **[`docs/SECURITY-AUDIT-001.md`](docs/SECURITY-AUDIT-001.md)**.
 
 ---
 
 ## Architecture
 
-Five concepts. Everything in the codebase maps to one of them.
+**Five concepts**—every module maps to one: **services**, **adapters**, **plugins**, **signals**, **actions**. Full layering (routes → services → ports ← adapters; plugins via hooks): **[`ARCHITECTURE.md`](ARCHITECTURE.md)**.
 
 ```mermaid
 flowchart TB
     BR["Browser"]
-    CADDY["Caddy · :80 / :443\nsame-origin front door"]
+    CADDY["Caddy · same-origin :80/:443"]
     WEB["Lumogis Web · SPA"]
 
     BR --> CADDY
     CADDY --> WEB
     CADDY --> ORC
 
-    LC["LibreChat · :3080\n(optional compose profile)"] -. "OpenAI-style chat only" .-> ORC
+    LC["LibreChat · optional profile"] -. "/v1 (OpenAI compat)" .-> ORC
 
     subgraph machine["your machine"]
-        ORC["Core / Orchestrator · FastAPI · :8000"]
+        ORC["Core · FastAPI · :8000"]
 
-        subgraph core["core"]
-            SVC["services/\ningest · search · memory\nentities · tools · routines"]
-            SIG["signals/\nfeed · page · calendar\nsystem · digest"]
-            ACT["actions/\nexecutor · registry\naudit log"]
+        subgraph core["domain core"]
+            SVC["services/"]
+            SIG["signals/"]
+            ACT["actions/"]
         end
 
-        ADP["adapters/\nqdrant · postgres · ollama · bge\npdf · docx · ocr · rss · ntfy · calendar"]
-        PLG["plugins/\noptional extensions"]
+        PLG["plugins/ · optional"]
+        FACT["ports + adapters<br/>(via config.get_* ...)"]
 
-        subgraph stores["infrastructure"]
-            QDR[("Qdrant\nvector store")]
-            PG[("Postgres\nmetadata · audit")]
-            OLL[("Ollama\nembedder · LLM")]
-            FLK[("FalkorDB + Redis\ngraph store †")]
+        subgraph stores["backing services"]
+            QDR[("Qdrant")]
+            PG[("Postgres")]
+            OLL["Ollama"]
+            FLK["FalkorDB · optional †"]
         end
 
         ORC --> SVC & SIG & ACT
-        SVC & SIG & ACT --> ADP
-        ADP --> PLG
-        ADP --> QDR & PG & OLL & FLK
+        ORC -. load routers / hooks .-> PLG
+        PLG -. "hooks · events · documented config bridges" .-> ORC
+
+        SVC & SIG & ACT --> FACT
+        FACT --> QDR & PG & OLL & FLK
     end
 
-    ORC -. "optional: lumogis-graph\nHTTP capability" .-> KGSVC["lumogis-graph · KG service"]
-    ORC -. "composed prompt only" .-> EXT["Claude · GPT-4 · local"]
+    ORC -. "GRAPH_MODE=service · HTTP" .-> KGSVC["lumogis-graph"]
+    ORC -. "composed prompt · local or API" .-> EXT["LLM providers"]
 
     style machine fill:#f8f9fa,stroke:#dee2e6
     style stores fill:#e9ecef,stroke:#ced4da
     style core fill:#e9ecef,stroke:#ced4da
     style EXT fill:#fff3cd,stroke:#ffc107
     style KGSVC fill:#e7f3ff,stroke:#b6d4fe
-
-    classDef concept font-weight:bold,font-size:15px
-    class SVC,SIG,ACT,ADP,PLG concept
 ```
 
-_† FalkorDB and Redis start when you merge `docker-compose.falkordb.yml` (graph plugin and/or `lumogis-graph` in `GRAPH_MODE=service`)._
+† **Graph store:** FalkorDB is optional. Merge **`docker-compose.falkordb.yml`** for the in-process graph plugin and Falkor-backed paths; Falkor speaks the **Redis wire protocol** (no separate Redis container in that overlay)—see **`docker-compose.falkordb.yml`**. **`lumogis-graph`** (out-of-process KG capability) merges **`docker-compose.premium.yml`**—the **`premium` filename is historical**, not proprietary scope; see **`services/lumogis-graph/README.md`** and **`docs/kg_reference.md`** (`GRAPH_MODE=inprocess|service`).
 
-| Concept | Lives in | Purpose |
+| Concept | Path | Purpose |
 |---|---|---|
-| **Services** | `services/` | Business logic — ingest, search, memory, entity extraction, routines |
-| **Adapters** | `adapters/` | One file per external system. Swap a backend by writing one adapter. |
-| **Plugins** | `plugins/<name>/` | Optional, self-contained extensions. Core works without any. |
-| **Signals** | `signals/` | Source monitors that detect and score incoming signals |
-| **Actions** | `actions/` | Executable operations with audit logging and Ask/Do enforcement |
+| Services | [`orchestrator/services/`](orchestrator/services/) | ingest, search, memory, entities, tools, routines |
+| Adapters | [`orchestrator/adapters/`](orchestrator/adapters/) | Concrete backends implementing **ports** (one swap = one adapter + factory branch) |
+| Plugins | [`orchestrator/plugins/`](orchestrator/plugins/) | Optional extensions—Core runs without them |
+| Signals | [`orchestrator/signals/`](orchestrator/signals/) | Monitors and scoring |
+| Actions | [`orchestrator/actions/`](orchestrator/actions/) | Registry, executor, audit |
 
-**Reference manual:** For a single consolidated guide (operators + contributors, roadmap disambiguation, extension use cases), see [`docs/LUMOGIS_REFERENCE_MANUAL.md`](docs/LUMOGIS_REFERENCE_MANUAL.md).
-
-**Automated testing:** Layered pytest, integration, web, and optional browser checks are described in [`docs/testing/automated-test-strategy.md`](docs/testing/automated-test-strategy.md).
+**Reference:** [`docs/LUMOGIS_REFERENCE_MANUAL.md`](docs/LUMOGIS_REFERENCE_MANUAL.md) · Automated testing overview: [`docs/testing/automated-test-strategy.md`](docs/testing/automated-test-strategy.md).
 
 ---
 
 ## Lumogis Web
 
-**Lumogis Web** is the first-party browser client (React + Vite) in `clients/lumogis-web/`, shipped as static files behind **Caddy** in the default compose stack. One origin keeps refresh cookies on `Path=/api/v1/auth` workable with `SameSite=Strict` and lines up the orchestrator’s `Origin` check for cookie-authenticated calls.
+First-party SPA: **[`clients/lumogis-web/`](clients/lumogis-web/)**, served behind Caddy (**[`docker-compose.yml`](docker-compose.yml)** `lumogis-web` + `caddy`). Same-origin preserves strict cookie + CSRF assumptions.
 
-| Where | URL / port (default) |
+| Where | URL (defaults) |
 |---|---|
-| **Same-origin (recommended)** | **http://localhost/** — Caddy on **80** (and **443** when you set `CADDY_DOMAIN` to a real hostname) routes `/api/*`, `/events`, `/v1/*`, `/mcp/*`, `/health`, and **legacy root-mounted** orchestrator admin paths (e.g. `/dashboard`, `/settings`, `/graph/*`, `/kg/*`, `/review-queue`, `/backup`) to the orchestrator; the SPA is the fallback. |
-| **Orchestrator only** | **http://localhost:8000** — Swagger at `/docs`, same APIs without Caddy. |
-| **LibreChat (optional profile)** | **http://localhost:3080** when `COMPOSE_PROFILES` includes `librechat` |
+| **Recommended** | **http://localhost/** — SPA; `/api/*`, `/events`, `/v1/*`, `/mcp/*`, `/health`, and legacy orchestrator HTML routes proxied per **[`docker/caddy/Caddyfile`](docker/caddy/Caddyfile)** |
+| **Core directly** | **http://localhost:8000** — Swagger at `/docs` |
+| **LibreChat** (`COMPOSE_PROFILES` contains `librechat`) | **http://localhost:3080** — targets **`http://orchestrator:8000/v1`** (**[`config/librechat.coldstart.yaml`](config/librechat.coldstart.yaml)**)
 
-**Auth / refresh safety (family LAN, `AUTH_ENABLED=true`):** set `LUMOGIS_PUBLIC_ORIGIN` in `.env` to the exact browser URL (scheme and host) you use. When Caddy terminates TLS or sits on a Docker network, set `LUMOGIS_TRUSTED_PROXIES` so the login rate limiter can trust `X-Forwarded-For` from the proxy. `docker-compose.yml` passes through both from `.env` with local defaults; see `.env.example`.
-
-**Browser e2e (Playwright + axe):** with the stack up, `cd clients/lumogis-web && npx playwright install chromium` once, then set `LUMOGIS_WEB_SMOKE_EMAIL` and `LUMOGIS_WEB_SMOKE_PASSWORD` (≥ 12 characters). Run **`make web-e2e`** to allow skipping when creds are absent, or **`make web-e2e-prove`** to require creds and fail the build if the test does not run. **Mobile Lighthouse (`/chat`):** after `npm run build` + `npm run preview` in `clients/lumogis-web`, run **`npm run lighthouse:chat`** (needs Chrome/Chromium — see **`clients/lumogis-web/README.md`**). **Caddy security headers:** with the full stack up (`caddy` + `lumogis-web` + `orchestrator`), `make web-caddy-headers` runs pytest in the orchestrator image and fetches the default Caddy service at `http://caddy` (override with `LUMOGIS_WEB_BASE_URL`). Use `make web-caddy-headers-prove` in automation (fails if Caddy is down). For pytest on the **host** against `http://127.0.0.1:80`, set `LUMOGIS_WEB_BASE_URL` accordingly. See `tests/integration/test_caddy_security_headers.py`.
-
----
-
-## Why not X?
-
-The self-hosted AI space is crowded. Here is how Lumogis differs from the projects you have probably heard of.
-
-| | Jan.ai | AnythingLLM | OpenClaw | Lumogis |
-|---|---|---|---|---|
-| **Privacy model** | Policy — cloud MCP connectors send data out | Policy | No safety model by design | Architecture — files never leave. Local model: nothing leaves. Cloud model: composed prompt only. |
-| **Personal data** | Gmail, Drive, Notion via cloud MCP | Documents only | Files, messaging, email | Files, documents, sessions, entities — all local |
-| **Session memory** | None | None | Partial | Full — past sessions retrieved and injected automatically |
-| **Agent safety** | No approval loop | No approval loop | None | Ask/Do — every action proposed before execution, full audit log |
-| **Automation** | Reactive only | Reactive only | Background agents | Proactive signals + scheduled digests + reactive chat |
-| **Architecture** | Chat app with connectors bolted on | RAG tool | Monolithic | Ports and adapters — swap any backend with one `.env` change |
-
-**Jan.ai** is a polished local chat app with 5.3M downloads. If you want a better private ChatGPT with connectors to your cloud accounts, Jan is excellent. Lumogis is a different product — it indexes your data locally and builds memory over time. Jan's MCP connectors send data to cloud services. Lumogis's architecture makes that structurally impossible.
-
-**AnythingLLM** is the best document RAG tool in the self-hosted space. It answers questions about your files well. It has no session memory, no proactive signals, and no human-in-the-loop safety model. If chat-with-documents is all you need, AnythingLLM is the right choice. Lumogis adds the layers that turn a RAG tool into a persistent personal AI.
-
-**OpenClaw** showed how much appetite there is for self-hosted personal AI agents — and public disclosures showed how badly things can go wrong without a tight safety and supply-chain story. In February 2026 a critical remote-code-execution issue was published for affected deployments ([CVE-2026-25253](https://nvd.nist.gov/vuln/detail/CVE-2026-25253), CVSS 8.8, with a [GitHub advisory](https://github.com/openclaw/openclaw/security/advisories/GHSA-g8p2-7wf7-98mq)); independent reporting also described large numbers of internet-exposed installs and malicious third-party “skill” content in marketplaces. Lumogis is designed around local-first data, human-in-the-loop approvals (Ask/Do), and auditable actions — choices aimed at reducing that class of risk. The collapsible section below links primary sources if you want to read the original write-ups.
-
-<details>
-<summary>Sources for OpenClaw security claims</summary>
-
-- CVE-2026-25253 (CVSS 8.8): [NVD — National Vulnerability Database](https://nvd.nist.gov/vuln/detail/CVE-2026-25253)
-- GitHub Security Advisory GHSA-g8p2-7wf7-98mq: [openclaw/openclaw](https://github.com/openclaw/openclaw/security/advisories/GHSA-g8p2-7wf7-98mq)
-- 40,000+ exposed instances: [Infosecurity Magazine](https://www.infosecurity-magazine.com/news/researchers-40000-exposed-openclaw/) · [runZero exposure analysis](https://www.runzero.com/blog/openclaw/)
-- ClawHavoc campaign — 341 malicious skills: [Snyk ToxicSkills research](https://snyk.io/blog/toxicskills-malicious-ai-agent-skills-clawhub/)
-- Full technical breakdown: [The Hacker News](https://thehackernews.com/2026/02/openclaw-bug-enables-one-click-remote.html)
-
-</details>
-
----
-
-## Hardware requirements
-
-| Tier | GPU VRAM | RAM | Recommended for |
-|---|---|---|---|
-| **minimal** | No GPU / < 4 GB | 8 GB | Testing and evaluation. CPU inference only. Slow but functional. |
-| **standard** | 4–8 GB | 16 GB | Daily use on mid-range hardware (GTX 1070, RTX 3060, etc.) |
-| **recommended** | 8–16 GB | 32 GB | Comfortable everyday use (RTX 3080, RTX 4070, etc.) |
-| **power** | 16 GB+ | 64 GB | Large context, parallel inference (RTX 4090, A100, etc.) |
-
-Minimum to run: 8 GB RAM, 20 GB free disk. No API keys required — all models run locally via Ollama. Add `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` to `.env` to enable cloud model routing in single-user mode; in multi-user mode (`AUTH_ENABLED=true`) each household member manages their own LLM provider keys via the dashboard's **My LLM keys** tile (see [Step 9g](docs/connect-and-verify.md#step-9g--per-user-llm-provider-keys-auth_enabledtrue)).
-
----
-
-## Prerequisites
-
-| Requirement | Linux | macOS | Windows |
-|---|---|---|---|
-| **Git** | usually pre-installed | usually pre-installed | [git-scm.com](https://git-scm.com) |
-| **Docker Desktop** | [docs.docker.com](https://docs.docker.com/desktop/install/linux/) | [docs.docker.com](https://docs.docker.com/desktop/install/mac/) | [docs.docker.com](https://docs.docker.com/desktop/setup/install/windows-install/) |
-
-That is the complete list. No `make`, no WSL2, no Python required.
+**Operators:** pin **`LUMOGIS_PUBLIC_ORIGIN`** (see **`.env.example`**) when `AUTH_ENABLED=true`; set **`LUMOGIS_TRUSTED_PROXIES`** whenever a trusted reverse proxy terminates TLS (**[`docker-compose.yml`](docker-compose.yml)** passes them through). Playwright/Lighthouse/header checks live in **`clients/lumogis-web/README.md`** and **`Makefile`** targets `web-e2e*`, `web-caddy-headers*`.
 
 ---
 
 ## Getting started
 
-**Linux / macOS:**
+**Linux / macOS**
+
 ```bash
 git clone https://github.com/lumogis/lumogis.git ~/lumogis
 cd ~/lumogis && cp .env.example .env && docker compose up -d
 ```
 
-**Windows (PowerShell):**
+**Windows (PowerShell)**
+
 ```powershell
 git clone https://github.com/lumogis/lumogis.git $HOME\lumogis
 cd "$HOME\lumogis"; Copy-Item .env.example .env; docker compose up -d
 ```
 
-Open the **Lumogis Web** UI at **[http://localhost/](http://localhost/)** (same-origin Caddy) or the orchestrator **dashboard** at **[http://localhost:8000/dashboard](http://localhost:8000/dashboard)** / **[http://localhost/dashboard](http://localhost/dashboard)** through Caddy. The setup wizard guides you through adding an API key or pulling a local model.
-
-**LibreChat (optional):** when the `librechat` profile is enabled, OpenAI-compatible chat is at **[http://localhost:3080](http://localhost:3080)**. `config/librechat.yaml` is runtime-generated (gitignored). Commit only `config/librechat.coldstart.yaml` — the orchestrator entrypoint seeds `librechat.yaml` on first boot, then replaces it from `models.yaml` and Ollama. The path must be a **file**; if you ever see a **directory** at `config/librechat.yaml` (or `EISDIR` in LibreChat logs), remove it and let the entrypoint re-seed, or copy from `librechat.coldstart.yaml` and `docker compose up -d --force-recreate librechat`.
-
-**Postgres schema:** `postgres/init.sql` runs once on a fresh data volume; subsequent schema changes live in `postgres/migrations/*.sql`. The orchestrator entrypoint applies any pending migrations on every boot via `orchestrator/db_migrations.py` and tracks them in a `schema_migrations` table — fresh installs and existing installs converge automatically. Inspect with `docker compose logs orchestrator | grep '[migrations]'` and `docker compose exec -T postgres psql -U lumogis -d lumogis -c "SELECT filename, applied_at FROM schema_migrations ORDER BY filename"`.
-
-- **Lumogis Web (primary):** [http://localhost/](http://localhost/)
-- **Orchestrator / dashboard (direct or via Caddy):** [http://localhost:8000/dashboard](http://localhost:8000/dashboard) or [http://localhost/dashboard](http://localhost/dashboard)
-- **LibreChat (profile `librechat`):** [http://localhost:3080](http://localhost:3080)
-
-The stack pins a **current** [Ollama](https://ollama.com/) release in `docker-compose.yml` (bumped over time so new library models like **Gemma 4** pull successfully — Docker’s `:latest` tag can lag). The embedding model (~300 MB) and a **small default chat model** (**Llama 3.2 3B**, ~2 GB) pull automatically on first start. The dashboard lists the full Ollama catalog; pull larger models only when you want them. Secrets are generated automatically. Expect a few minutes until services are healthy on first boot. Tune pulls with `OLLAMA_EXTRA_MODELS` in `.env` (see `.env.example`).
-
-**Disk and downloads:** A full **cold** setup (images pulled or built, default Ollama models, empty app volumes) commonly lands around **10–15 GB** on disk — mostly the Ollama image and model blobs, the **orchestrator** image (Python stack including PyTorch-related deps used for optional reranking), plus LibreChat, databases, and Qdrant. Exact numbers depend on architecture and tags. Enabling **`RERANKER_BACKEND=bge`** adds a separate Hugging Face download for reranker weights (on the order of **hundreds of MB**; see `RERANKER_MODEL` in `.env.example`). Every extra Ollama model you pull adds more. **Reclaiming space:** unused images, build cache, and Compose volumes can be removed via Docker Desktop cleanup or `docker system prune` (use `--volumes` only if you accept losing local DB/index data).
-
-<details>
-<summary>Optional: folder browser, GPU, advanced</summary>
-
-**Folder browser** — browse your host filesystem from the dashboard. Copy the override for your OS before starting:
-
-```bash
-# Linux
-cp docker-compose.override.yml.linux docker-compose.override.yml
-
-# macOS
-cp docker-compose.override.yml.macos docker-compose.override.yml
-```
-
-```powershell
-# Windows
-Copy-Item docker-compose.override.yml.windows docker-compose.override.yml
-```
-
-Skip this if you only need the default indexed folder (`./lumogis-data` inside the project).
-
-**GPU acceleration** — add to `.env`:
-
-```bash
-COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml
-```
-
-Then restart: `docker compose up -d`. Requires NVIDIA Container Toolkit on Linux. See [docs/gpu-setup.md](docs/gpu-setup.md).
-
-**API explorer** — [http://localhost:8000/docs](http://localhost:8000/docs) (Swagger UI).
-
-</details>
+Open **http://localhost/** after health checks settle. Inspect **`.env.example`** for `COMPOSE_PROFILES`, model pulls (`OLLAMA_EXTRA_MODELS`), and auth knobs.
 
 ---
 
-### Contributing
+## Prerequisites · hardware hints
 
-Clone the repo, run `docker compose up -d`, and use `make compose-test` / `make compose-lint` for CI-parity checks inside the container. See `Makefile` and [`docs/testing/automated-test-strategy.md`](docs/testing/automated-test-strategy.md) for the full testing story.
+**Prerequisites:** Git + Docker Desktop (see **`.env.example`** for platform notes). End users do **not** need Python or Make.
 
----
-
-## Configuration
-
-All backend selection is driven by `.env`. The defaults work out of the box.
-
-```bash
-# Backend selection — swap by changing one value
-VECTOR_STORE_BACKEND=qdrant       # qdrant (default), chroma, milvus
-METADATA_STORE_BACKEND=postgres   # postgres (default), sqlite
-EMBEDDER_BACKEND=ollama           # ollama (default), sentence-transformers
-RERANKER_BACKEND=none             # none (default), bge (downloads ~400 MB from HuggingFace)
-EXTRACTOR_OCR_ENABLED=true        # true (default), false
-
-# Connection details — defaults match docker-compose service names
-QDRANT_URL=http://qdrant:6333
-POSTGRES_HOST=postgres
-POSTGRES_PORT=5432
-POSTGRES_USER=lumogis
-POSTGRES_PASSWORD=lumogis-dev
-POSTGRES_DB=lumogis
-OLLAMA_URL=http://ollama:11434
-EMBEDDING_MODEL=nomic-embed-text
-RERANKER_MODEL=BAAI/bge-reranker-base
-
-# Graph plugin — only used if plugins/graph/ is present
-FALKORDB_URL=redis://falkordb:6379
-
-# Safety model
-DEFAULT_ACTION_MODE=ask           # ask (default) or do
-ROUTINE_ELEVATION_THRESHOLD=10    # clean approvals before auto-elevation
-```
+**Rough sizing** — RAM/VRAM rises quickly with bigger local models or optional **`RERANKER_BACKEND=bge`**; see **`docs/gpu-setup.md`** and the capacity discussion in **`docs/LUMOGIS_REFERENCE_MANUAL.md`**.
 
 ---
 
-## What is required vs optional
+## Composition: required vs optional
 
-`docker compose up -d` starts the minimal required stack. Everything else is opt-in.
+**Base `docker compose up -d`** (from **`docker-compose.yml`**) pulls up **Orchestrator + Qdrant + Postgres + Ollama + Lumogis Web + Caddy + stack-control** (internal restart helper)—see service list in **`docker-compose.yml`**.
 
-| Component | Status | Purpose |
+| Add-on | How | Notes |
 |---|---|---|
-| Orchestrator (FastAPI) | Required | Core runtime — ingest, search, memory, actions |
-| Caddy + Lumogis Web | Required | Same-origin browser UI at `http://localhost/` (Caddy proxies `/api/*`, `/v1/*`, `/mcp/*`, etc. to Core) |
-| Qdrant | Required | Vector store for documents, sessions, entities |
-| Postgres | Required | Metadata, file index, audit log, entity relations |
-| Ollama | Required | Local embeddings (Nomic Embed) and local LLM inference |
-| BGE Reranker | Optional | Two-stage retrieval — re-scores candidates by relevance. Enable with `RERANKER_BACKEND=bge` in `.env`. |
-| LibreChat + MongoDB | Optional | Legacy chat UI at localhost:3080 — enable with compose profile `librechat` (still default in `.env.example` for existing installs) |
-| lumogis-graph | Optional | Out-of-process KG capability when `GRAPH_MODE=service` — see `docker-compose.premium.yml` + FalkorDB overlay |
-| FalkorDB + Redis | Optional | Graph store — used by the graph plugin and/or `lumogis-graph` |
-| LiteLLM | Optional | Unified model proxy — enables multi-provider routing in one endpoint |
-| Activepieces | Optional | Automation UI — nightly ingest, session triggers, scheduled digests |
-| Playwright | Optional | JS rendering for web page signal sources |
+| FalkorDB (graph backends) | `docker-compose.yml` + [`docker-compose.falkordb.yml`](docker-compose.falkordb.yml) | In-process **`plugins/graph`** and adapters use Redis-protocol Falkor—no separate Redis service in this overlay |
+| `lumogis-graph` service | … + **`docker-compose.premium.yml`** + `GRAPH_MODE=service` | Historical filename—**[`services/lumogis-graph/README.md`](services/lumogis-graph/README.md)** |
+| LiteLLM | **`docker-compose.litellm.yml`** | Unified proxy overlay |
+| Activepieces | **`docker-compose.activepieces.yml`** | Automation UI |
+| GPU | **`docker-compose.gpu.yml`** | NVIDIA Container Toolkit (**[`docs/gpu-setup.md`](docs/gpu-setup.md)**) |
+| Speech-to-text sidecar | **`docker-compose.stt.yml`** | Speaches-backed **`POST /api/v1/voice/transcribe`**—**[`docs/architecture/lumogis-speech-to-text-foundation-plan.md`](docs/architecture/lumogis-speech-to-text-foundation-plan.md)** |
+| LibreChat | `COMPOSE_PROFILES=librechat` (often default in **`.env.example`** for continuity) | **[`docker-compose.yml`](docker-compose.yml)** profile comments |
 
-To start optional components, use the corresponding compose override:
-```bash
-# Graph layer
-docker compose -f docker-compose.yml -f docker-compose.falkordb.yml up -d
-
-# LiteLLM proxy
-docker compose -f docker-compose.yml -f docker-compose.litellm.yml up -d
-
-# Automation UI (Activepieces)
-docker compose -f docker-compose.yml -f docker-compose.activepieces.yml up -d
-
-# GPU acceleration
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
-
-# JS-rendered web sources
-docker compose -f docker-compose.yml -f docker-compose.playwright.yml up -d
-```
+Merge overlays with **`COMPOSE_FILE`** in `.env` (patterns in **`.env.example`**).
 
 ---
 
-## Extending the stack
+## Configuration pointers
 
-Add optional infrastructure (push notifications, automation UI, LiteLLM proxy, JS rendering) or extend the orchestrator with new adapters, signal sources, action handlers, and plugins.
-
-See [docs/extending-the-stack.md](docs/extending-the-stack.md) for the full guide.
-
-### Out-of-process capability services
-
-For extensions that cannot live in the Core process — different runtime, heavy dependencies, GPU isolation, separate licence — Core can also discover **capability services**: separate containers that expose tools over HTTP and register themselves at startup.
-
-A capability service publishes a `CapabilityManifest` (schema in `orchestrator/models/capability.py`) at `GET /capabilities` and a 200 at `GET /health`. The manifest declares the service's id, version, transport, tools (with JSON schemas), permissions, and the minimum Core version it requires. Register the service with Core by adding its base URL to `.env`:
-
-```bash
-# Comma-separated, one entry per service
-CAPABILITY_SERVICE_URLS=http://my-capability:8000
-```
-
-Restart the orchestrator. Core fetches the manifest, refuses to register the service if its `min_core_version` exceeds Core's, probes `/health` immediately and every 60 s thereafter, and re-fetches the manifest every 5 minutes. Registered services appear in `GET /` and on the dashboard. A service being down is logged as a warning, never escalated to Core's overall health — Core boots cleanly even when every declared service is unreachable.
-
-To call Core back from a capability service, point an MCP client at `http://orchestrator:8000/mcp/` (note the trailing slash — the canonical, redirect-free path). Five read-only community tools are exposed: `memory.search`, `memory.get_recent`, `entity.lookup`, `entity.search`, `context.build`. Auth is **per-user** in family-LAN mode (`AUTH_ENABLED=true`): mint an opaque `lmcp_…` bearer for each MCP client via the dashboard's "MCP tokens" tile or `POST /api/v1/me/mcp-tokens`, then send it as `Authorization: Bearer lmcp_…` (see [Step 9d](docs/connect-and-verify.md#step-9d--per-user-mcp-tokens-lmcp_)). The legacy single-secret `MCP_AUTH_TOKEN` is the single-user fallback only — it is fail-closed in multi-user mode and a one-shot CRITICAL log line points at the per-user mint flow.
-
-Per-user **connector credentials** (e.g. ntfy push tokens, future calendar/IMAP secrets) are managed in the dashboard's **Connector credentials** tile — collapsed by default, with admin "manage on behalf of" support inline. Plaintext is encrypted with `LUMOGIS_CREDENTIAL_KEY[S]` and never re-shown after save; rotation stays operator-driven via `python -m scripts.rotate_credential_key`. See [docs/connector-credentials.md](docs/connector-credentials.md) for the user/admin flows, security posture, error codes, and the matching HTTP API.
-
-See [docs/extending-the-stack.md](docs/extending-the-stack.md#out-of-process-capability-services) and [ADR-010 — Ecosystem plumbing](docs/decisions/010-ecosystem-plumbing.md) for the full design.
-
-**Speech-to-text (STT-2B):** transcription is opt-in via `.env`. Default **`STT_BACKEND=none`** — `POST /api/v1/voice/transcribe` returns **503** `stt_disabled`. **`STT_BACKEND=fake_stt`** is dev/CI deterministic stub. **`STT_BACKEND=whisper_sidecar`** calls the local sidecar defined in the optional Compose overlay **`docker-compose.stt.yml`**, merged with **`COMPOSE_FILE=docker-compose.yml:docker-compose.stt.yml`**. STT-2B uses this **overlay pattern**, not a **`profiles: ["stt"]`** service on the base file — the **`lumogis-stt`** container does not start unless the operator includes **`docker-compose.stt.yml`** (so **`docker compose --profile stt`** against **`docker-compose.yml` alone does not enable STT).
-
-The **Speaches** image is the selected **batch / local STT** sidecar for this HTTP contract; it satisfies **`POST /api/v1/voice/transcribe`** via the **`whisper_sidecar`** adapter but is **not** a Jarvis-style conversational voice runtime. **Wake word, VAD, TTS, barge-in, and full conversational voice remain outside STT-2B** (separate companion or app programme). Speaches may be reused later for broader local speech capabilities; **STT-2B** only wires this STT path.
-
-```
-# 1. Add sidecar compose file and set env vars in .env:
-COMPOSE_FILE=docker-compose.yml:docker-compose.stt.yml
-STT_BACKEND=whisper_sidecar
-STT_SIDECAR_URL=http://lumogis-stt:8000
-# Speaches 0.8.x: use a HuggingFace faster-whisper id (or install via sidecar API — see README)
-STT_MODEL=Systran/faster-whisper-base.en
-
-# 2. Build orchestrator after git pull if /api/v1/voice/transcribe returns 404 (image code lives in /app):
-# docker compose build orchestrator && docker compose up -d orchestrator
-
-# 3. Start sidecar (pulls image; model priming may be required — see prose below):
-docker compose up -d lumogis-stt
-
-# 4. Verify sidecar is healthy (service is not on the host — probe inside the container):
-docker compose exec lumogis-stt curl -fsS http://127.0.0.1:8000/health
-
-# 5. Probe transcription end-to-end (AUTH_ENABLED=true requires a real bearer):
-curl -s -X POST http://localhost:8000/api/v1/voice/transcribe \
-  -H "Authorization: Bearer <token>" \
-  -F "file=@sample.webm;type=audio/webm"
-```
-
-**Speaches + `STT_MODEL`:** With **Speaches `0.8.3-cpu`**, set **`STT_MODEL`** to a **HuggingFace faster‑whisper model id** understood by the sidecar (e.g. **`Systran/faster-whisper-base.en`**). The shorthand **`base`** is **not** sufficient until that name is installed inside Speaches; you can **`POST /v1/models/Systran%2Ffaster-whisper-base.en`** then **`POST /api/ps/Systran%2Ffaster-whisper-base.en`** inside the container, or rely on **`DEFAULT_MODEL`** in **`docker-compose.stt.yml`** mirroring **`STT_MODEL`** after you set it in `.env`.
-
-**Orchestrator image:** Transcription code is shipped in the image under **`/app`**. If **`POST /api/v1/voice/transcribe`** returns **404** after upgrading the repo, rebuild: **`docker compose build orchestrator`** then **`docker compose up -d orchestrator`**.
-
-**Hardware — model RAM guide (CPU, approximate):**
-
-| Tier | RAM | Notes |
-|------|-----|-------|
-| `tiny` | ~390 MB | Fast, lower accuracy |
-| `base` | ~740 MB | **Default** — good balance |
-| `small` | ~2.3 GB | Better accuracy |
-| `medium` | ~4.7 GB | High accuracy |
-| `large-v2` / `large-v3` | ~9.8 GB | Best accuracy, slow on CPU |
-
-**Troubleshooting:**
-
-- **Transcription 404 / “Model … is not installed” from Speaches:** install the model (`POST /v1/models/...`) and load it (`POST /api/ps/...`), or set **`STT_MODEL`** to the full HF id.
-- Sidecar slow to start: model downloads on first boot; check `docker compose logs lumogis-stt`. `start_period: 120s` gives it time before healthcheck marks it unhealthy.
-- Orchestrator reports `transcribe_available: false` in `/api/v1/admin/diagnostics`: sidecar is not reachable — confirm `STT_SIDECAR_URL=http://lumogis-stt:8000` and both containers are on the same Compose network.
-- `stt_processing_error` (503): sidecar returned an error or timed out; raise `STT_TIMEOUT_SEC` for large files or a slow host.
-- Reclaim model disk: `docker volume rm lumogis_lumogis_stt_models` (prefix = `COMPOSE_PROJECT_NAME`).
-
-**CUDA (optional):** replace the `image:` line in `docker-compose.stt.yml` with a CUDA variant (e.g. `ghcr.io/speaches-ai/speaches:0.8.3-cuda-12.6.3`) and add the NVIDIA runtime block from `docker-compose.gpu.yml` to the `lumogis-stt` service. Pin the CUDA image by digest the same way.
-
-In-process **`faster_whisper`** (single-container, heavier image) remains deferred. No cloud STT, wake word, Capture UI, or transcript persistence on this route. Details: **`docs/architecture/lumogis-speech-to-text-foundation-plan.md`**, ADR **`docs/decisions/031-local-speech-to-text-voice-input.md`**.
+Operational truth lives in **`.env.example`** (committed) and **`orchestrator/config.py`** factories. Typical defaults bind **Postgres**, **Qdrant**, **Ollama**, optional **BGE reranker**, and optional **graph** backends. **Do not assume every configuration snippet reflects code that exists in-tree** — today **`get_vector_store`**, **`get_metadata_store`**, and **`get_embedder`** only instantiate the backends implemented in **`orchestrator/config.py`** (`qdrant` / `postgres` / `ollama` unless you extend the factories).
 
 ---
 
-## Project structure
+## Extending Lumogis
 
-```
-orchestrator/
-  main.py              # FastAPI app, startup health checks, plugin loading
-  loop.py              # Tool-calling loop (LLM ↔ tools)
-  config.py            # Reads .env, returns cached adapter singletons
-  hooks.py             # Event dispatch: fire() sync, fire_background() threaded
-  events.py            # Event name constants (Event class)
-  auth.py              # Authentication
-  permissions.py       # Permission enforcement
-
-  services/            # Business logic (five concepts: services)
-    ingest.py          # Document ingest pipeline
-    search.py          # Semantic search + reranking
-    memory.py          # Session memory
-    entities.py        # Entity extraction and resolution
-    tools.py           # Tool definitions and dispatcher
-    signal_processor.py
-    routines.py
-    feedback.py
-
-  adapters/            # One file per external system (five concepts: adapters)
-    anthropic_llm.py   # Claude (Anthropic SDK)
-    openai_llm.py      # OpenAI-compatible (Ollama, ChatGPT, Perplexity, …)
-    qdrant_store.py
-    postgres_store.py
-    ollama_embedder.py
-    bge_reranker.py
-    text_extractor.py  # Auto-discovered by file extension
-    pdf_extractor.py
-    docx_extractor.py
-    ocr_extractor.py
-    rss_source.py
-    ntfy_notifier.py
-
-  signals/             # Source monitors (five concepts: signals)
-    feed_monitor.py    # RSS and Atom feeds
-    page_monitor.py    # Web page change detection
-    calendar_monitor.py
-    system_monitor.py
-    digest.py          # Periodic top-signals digest via notifier
-
-  actions/             # Executable operations (five concepts: actions)
-    registry.py        # Action registration
-    executor.py        # Ask/Do enforcement + execution
-    audit.py           # Immutable audit log
-    reversibility.py   # Reversibility metadata
-    handlers/          # One file per action domain
-
-  plugins/             # Optional extensions — drop a package here and it loads automatically
-    # Start from the template in docs/examples/example_plugin/
-
-  models/              # Pydantic request/response models
-  routes/              # FastAPI routers (chat, data, signals, actions, admin)
-  ports/               # Protocol interfaces (internal — rarely touched)
-  tests/               # Unit tests (no Docker needed)
-
-config/
-  models.yaml                 # Model registry — adapters, capabilities, endpoints
-  librechat.coldstart.yaml    # Tracked LibreChat bootstrap template (seed for librechat.yaml)
-  librechat.yaml              # Generated at runtime — gitignored; do not commit
-
-postgres/
-  init.sql             # Schema: file_index, entities, entity_relations, review_queue
-
-docker/
-  qdrant/Dockerfile    # Qdrant + curl (official image has no HTTP client for healthchecks)
-
-scripts/
-  init-env.sh          # Re-generate secrets manually (optional — entrypoint does this automatically)
-
-docs/
-  decisions/           # Architecture Decision Records (ADRs)
-  examples/            # Example plugin template
-
-tests/
-  integration/         # Full-stack integration tests (requires Docker stack)
-```
-
----
-
-## FAQ
-
-**Does Lumogis require cloud models?**
-No. The default setup runs entirely locally via Ollama. Cloud models (Claude, GPT-4, etc.) are optional — add an API key to `.env` to enable them. Without an API key, everything runs on your hardware.
-
-**What actually leaves my machine?**
-It depends on which model you use.
-
-**Local model only (Ollama):** Nothing leaves your machine. Ever. The embedding, retrieval, and answer generation all happen locally. This is the strongest privacy guarantee — architecturally impossible for any content to reach an external server. Response quality is lower than cloud models but fully capable for retrieval-grounded queries like recalling decisions, summarising notes, and finding context.
-
-**Cloud model (Claude, GPT-4, etc.):** The retrieval still happens locally. What leaves is a composed prompt — your question plus the specific excerpts Lumogis retrieved as relevant. Your raw files, full document corpus, embeddings, and conversation history never leave. Only the assembled context for that query travels. This is meaningfully different from pasting a document into ChatGPT, but it is not zero-disclosure. For genuinely sensitive material — contracts, medical records, legal documents — use a local model.
-
-Cloud model usage is always opt-in. No API key means no data leaves. The default setup with no API keys configured runs entirely locally.
-
-**Where is my data stored?**
-Everything stays on your machine in Docker volumes: documents and embeddings in Qdrant, metadata and entities in Postgres, raw files in your indexed folder. There is no Lumogis server.
-
-**What is the difference between Ask and Do?**
-Ask means Lumogis proposes an action and waits for your approval before executing. Do means it executes immediately within a declared, low-risk scope. Everything starts in Ask mode. Do must be explicitly enabled per connector. See the security model section above.
-
-**Is this production-ready?**
-It is a solid developer preview. Ingest, search, memory, entity extraction, signals, and actions are built and tested. It is not yet a polished consumer product. Run it, extend it, break it, contribute back.
+- **Compose / capability manifests / MCP bridging:** **`docs/extending-the-stack.md`**
+- **ADR for ecosystem plumbing:** **`docs/decisions/010-ecosystem-plumbing.md`**
+- **Operator verification steps:** **`docs/connect-and-verify.md`**
+- **Optional local STT (Speaches overlay, troubleshooting, CUDA notes):** **`docs/architecture/lumogis-speech-to-text-foundation-plan.md`**
 
 ---
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
-
-The short version: find the right layer, follow the existing pattern.
-
-- **New file type extractor:** one new file in `adapters/`, auto-discovered
-- **New signal source:** implement `SignalSource` from `ports/signal_source.py`
-- **New action handler:** one new file in `actions/handlers/`
-- **New vector store:** implement `VectorStore` from `ports/vector_store.py`
-- **New plugin:** one directory in `plugins/`, any hooks and routes you need
-
-All PRs must pass `make lint` and `make test`. Include tests for new functionality.
-
-**The one rule:** services never import concrete adapters. Always go through `config.get_*()`.
+See **[CONTRIBUTING.md](CONTRIBUTING.md)** — code boundaries (“services never import concrete adapters”), `make lint` / `make test`, and Docker-based wrappers in **`Makefile`**.
 
 ---
 
-## Community plugins
+## FAQ
 
-See [COMMUNITY-PLUGINS.md](COMMUNITY-PLUGINS.md) for community-contributed adapters and plugins.
+**Cloud models mandatory?** No—omit API keys and run locally via **Ollama**.
 
----
+**Where is data?** Host volumes mapped in Compose (**`docker-compose.yml`**) plus your indexed folder (`FILESYSTEM_ROOT`).
 
-## Security
+**Production-ready?** Solid self-hosted/developer preview—not a turnkey consumer appliance; run it, tighten auth, observe logs.
 
-To report a vulnerability, see [SECURITY.md](SECURITY.md). Do not open a public issue.
-
-The initial security audit (SQL injection, path traversal, MCP boundary, Ask/Do enforcement) is documented in [`docs/SECURITY-AUDIT-001.md`](docs/SECURITY-AUDIT-001.md).
-
-### Per-user backups
-
-Each user can export their own data as a portable ZIP archive via
-`POST /api/v1/me/export` (admins can target another user via the body
-field `target_user_id` — unknown ids return `404`, never a silent empty
-archive). Archives carry a `manifest.json`, redact every
-credential-shaped column (passwords are never carried — operators
-choose a fresh password at import time), and re-import on a fresh
-instance through `POST /api/v1/admin/user-imports`. Successful imports
-return `201 Created` with `Location: /api/v1/admin/users/{new_user_id}`;
-`dry_run: true` returns `200 OK` with a structured plan and writes
-nothing. Refused imports (email collision, parent UUID collision, unsafe
-archive entries, etc.) emit a dedicated `__user_import__.refused` audit
-row distinct from `__user_import__.failed`. The legacy whole-instance
-NDJSON dump at `GET /api/v1/admin/export` returns `410 Gone` and points
-to the new per-user endpoint as its successor. See
-[`docs/per-user-export-format.md`](docs/per-user-export-format.md) for
-the manifest schema, the refusal-reason → HTTP-status table, the audit
-lifecycle, and the v1 CSRF/Bearer posture, and
-[`docs/connect-and-verify.md`](docs/connect-and-verify.md) Step 9c for
-end-to-end `curl` verification.
+More depth: **`docs/troubleshooting.md`**, **`docs/LUMOGIS_REFERENCE_MANUAL.md`**.
 
 ---
 
-## Code of conduct
+## Community plugins · Security · Licence
 
-This project follows the [Contributor Covenant v2.1](CODE_OF_CONDUCT.md).
+- **Community adapters/plugins:** **`COMMUNITY-PLUGINS.md`**
+- **Report vulnerabilities:** **`SECURITY.md`** (no public tickets for undisclosed bugs)
+- **Backups / portability:** households use **`POST /api/v1/me/export`** and related admin import flows — manifest and refusal semantics in **`docs/per-user-export-format.md`**, curl walkthrough steps in **`docs/connect-and-verify.md`** (**`GET /api/v1/admin/export`** is **`410 Gone`** by design).
+- **Public AGPL export / hygiene tooling** (`scripts/create-upstream-export-tree.sh`, `scripts/check-public-export.sh`): **`docs/maintainers.md`**.
 
----
-
-## License
-
-Lumogis is licensed under the GNU Affero General Public License v3.0 only.
-
-Unless otherwise stated, all source files in this repository are licensed under:
-
-`SPDX-License-Identifier: AGPL-3.0-only`
-
-A copy of the GNU Affero General Public License v3.0 is provided in the [LICENSE](LICENSE) file.
+Lumogis is **`AGPL-3.0-only`** — **`LICENSE`** and SPDX headers (`AGPL-3.0-only`).
 
 ---
+
+This project follows the **[Contributor Covenant v2.1](CODE_OF_CONDUCT.md)**.
 
 *Private, local, yours. The AI comes to your data. Not the other way around.*

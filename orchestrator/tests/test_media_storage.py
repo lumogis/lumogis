@@ -43,9 +43,7 @@ class TestSafeAttachmentPath:
 
     def test_traversal_in_user_id_is_caught(self, tmp_path: Path):
         with pytest.raises(ValueError, match="unsafe user_id"):
-            ms.safe_attachment_path(
-                "../" * 20, "cap-uuid", "att-uuid", "file.jpg", root=tmp_path
-            )
+            ms.safe_attachment_path("../" * 20, "cap-uuid", "att-uuid", "file.jpg", root=tmp_path)
 
     def test_normal_nested_path_does_not_raise(self, tmp_path: Path):
         # Nested sub-path still inside root — should not raise.
