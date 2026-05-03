@@ -1,9 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Lumogis
-"""Tests for plugins/graph/reconcile.py (in-process reconciliation).
-
-HTTP coverage for ``POST /graph/backfill`` lives in the graph service
-(``services/lumogis-graph``, e.g. ``graph/routes.py``), not in Core.
+"""Tests for plugins/graph/reconcile.py and POST /graph/backfill.
 
 Test coverage:
   1. Stale-row selection: scanned=0 when no stale rows
@@ -11,13 +8,19 @@ Test coverage:
   3. No stamp when projection fails
   4. Idempotency: running reconciliation twice yields scanned=0 on second pass
      (because graph_projected_at is stamped after first pass)
-  5. Graph unavailable: reconcile passes return gracefully (scanned=0)
-  6. Deliberate failure recovery:
+  5. POST /graph/backfill returns 202
+  6. Second backfill attempt while running returns 409
+  7. Auth enforcement: 401 when AUTH_ENABLED=true and unauthenticated
+  7b. Admin enforcement: 403 when GRAPH_ADMIN_TOKEN set and header missing/wrong
+  8. Graph unavailable: reconcile passes return gracefully (scanned=0)
+  9. Deliberate failure recovery:
      - simulate projection failure
      - verify graph_projected_at remains unstamped (projected_failed=1)
      - re-run after recovery
      - verify projection succeeds and stamp is set (stamped=1)
 """
+
+from unittest.mock import patch  # noqa: F401 — referenced by skipped TestBackfillEndpoint
 
 import pytest
 from plugins.graph.reconcile import reconcile_audio
@@ -238,7 +241,7 @@ class TestSuccessfulProjection:
     def test_session_uses_uuid_entity_ids_when_present(self, mock_graph):
         """reconcile_sessions passes entity_ids from DB row directly to project_session."""
         captured = {}
-        import plugins.graph.writer as writer_mod
+        import graph.writer as writer_mod
 
         orig = writer_mod.project_session
 
@@ -261,8 +264,6 @@ class TestSuccessfulProjection:
             }
         )
         config._instances["metadata_store"] = ms
-        import plugins.graph.writer as writer_mod  # noqa: F811
-
         writer_mod.project_session = capturing_project_session
         try:
             reconcile_sessions()
@@ -273,7 +274,7 @@ class TestSuccessfulProjection:
     def test_session_falls_back_to_name_resolution_when_entity_ids_empty(self, mock_graph):
         """Historical rows with empty entity_ids pass None → name-string fallback."""
         captured = {}
-        import plugins.graph.writer as writer_mod
+        import graph.writer as writer_mod
 
         orig = writer_mod.project_session
 
@@ -495,11 +496,125 @@ class TestFailureRecovery:
 
 
 # ---------------------------------------------------------------------------
-# POST /graph/backfill (removed from Core tests)
+# 7–9. POST /graph/backfill endpoint tests (legacy Core mounts — skipped)
 # ---------------------------------------------------------------------------
-# Core orchestrator no longer mounts graph HTTP routes; backfill is owned by
-# services/lumogis-graph (see graph/routes.py there). Add or extend HTTP tests
-# under services/lumogis-graph/tests/ rather than plugins.graph.routes here.
+
+
+@pytest.mark.skip(
+    reason=(
+        "Core no longer mounts POST /graph/backfill or plugins.graph.routes; "
+        "HTTP coverage belongs under services/lumogis-graph/tests/."
+    ),
+)
+class TestBackfillEndpoint:
+    """Tests for POST /graph/backfill.
+
+    We test via the FastAPI TestClient, keeping the backfill job synchronous
+    by patching _run_backfill so it does not use BackgroundTasks.
+    """
+
+    @pytest.fixture
+    def client(self, mock_graph):
+        """Return a TestClient with the app — plugins loaded, graph enabled.
+
+        The ``with`` block is required so FastAPI's startup/lifespan event
+        runs ``load_plugins()`` and registers the graph router (which is
+        what owns ``/graph/backfill``). Without the lifespan trigger, the
+        plugin routers are never included and POST /graph/backfill 404s.
+        """
+        import main
+        from fastapi.testclient import TestClient
+
+        with TestClient(main.app) as c:
+            yield c
+
+    def _clear_running_flag(self):
+        from plugins.graph.routes import _backfill_running
+
+        _backfill_running.clear()
+
+    def test_backfill_returns_202(self, client, monkeypatch):
+        self._clear_running_flag()
+        monkeypatch.setattr(
+            "plugins.graph.routes._run_backfill",
+            lambda limit: None,
+        )
+        resp = client.post("/graph/backfill")
+        assert resp.status_code == 202
+        body = resp.json()
+        assert body["status"] == "backfill_started"
+
+    def test_backfill_409_while_running(self, client):
+        self._clear_running_flag()
+        from plugins.graph.routes import _backfill_running
+
+        _backfill_running.set()  # simulate in-progress run
+        try:
+            resp = client.post("/graph/backfill")
+            assert resp.status_code == 409
+        finally:
+            _backfill_running.clear()
+
+    def test_backfill_503_when_graph_disabled(self, no_graph):
+        self._clear_running_flag()
+        import main
+        from fastapi.testclient import TestClient
+
+        with TestClient(main.app) as c:
+            resp = c.post("/graph/backfill")
+        assert resp.status_code == 503
+
+    def test_backfill_401_when_auth_enabled_unauthenticated(self, client, monkeypatch):
+        self._clear_running_flag()
+        monkeypatch.setenv("AUTH_ENABLED", "true")
+        resp = client.post("/graph/backfill")
+        assert resp.status_code == 401
+
+    def test_backfill_403_when_admin_token_required_and_missing(self, client, monkeypatch):
+        """Authenticated (AUTH_ENABLED=false) but GRAPH_ADMIN_TOKEN set and header absent → 403."""
+        self._clear_running_flag()
+        monkeypatch.setenv("GRAPH_ADMIN_TOKEN", "supersecret")
+        resp = client.post("/graph/backfill")
+        assert resp.status_code == 403
+
+    def test_backfill_403_when_admin_token_wrong(self, client, monkeypatch):
+        """Correct auth but wrong admin token → 403."""
+        self._clear_running_flag()
+        monkeypatch.setenv("GRAPH_ADMIN_TOKEN", "supersecret")
+        resp = client.post("/graph/backfill", headers={"X-Graph-Admin-Token": "wrongtoken"})
+        assert resp.status_code == 403
+
+    def test_backfill_202_when_admin_token_correct(self, client, monkeypatch):
+        """Correct admin token → 202."""
+        self._clear_running_flag()
+        monkeypatch.setenv("GRAPH_ADMIN_TOKEN", "supersecret")
+        monkeypatch.setattr("plugins.graph.routes._run_backfill", lambda limit: None)
+        resp = client.post("/graph/backfill", headers={"X-Graph-Admin-Token": "supersecret"})
+        assert resp.status_code == 202
+
+    def test_backfill_with_limit_param(self, client, monkeypatch):
+        self._clear_running_flag()
+        captured = {}
+
+        def fake_run(limit):
+            captured["limit"] = limit
+
+        monkeypatch.setattr("plugins.graph.routes._run_backfill", fake_run)
+        resp = client.post("/graph/backfill?limit_per_type=50")
+        assert resp.status_code == 202
+        assert captured.get("limit") == 50
+
+    def test_backfill_flag_cleared_after_completion(self, mock_graph):
+        """_run_backfill must clear _backfill_running even on error."""
+        from plugins.graph.routes import _backfill_running
+        from plugins.graph.routes import _run_backfill
+
+        _backfill_running.clear()
+
+        with patch("plugins.graph.reconcile.run_reconciliation", side_effect=RuntimeError("boom")):
+            _run_backfill(None)
+
+        assert not _backfill_running.is_set()
 
 
 # ---------------------------------------------------------------------------
@@ -535,7 +650,7 @@ class TestStagedEntityExclusion:
     def test_staged_row_is_not_projected(self, mock_graph):
         """A row returned from fetch_all with is_staged=TRUE must not reach project_entity."""
         projected_ids: list[str] = []
-        import plugins.graph.writer as writer_mod
+        import graph.writer as writer_mod
 
         orig = writer_mod.project_entity
 

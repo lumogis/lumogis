@@ -17,6 +17,9 @@ venv/
 # Any directory under orchestrator/plugins/ that is not part of core
 # should be added here or kept outside this repository entirely.
 orchestrator/plugins/*/
+# Core-owned KG compatibility shims (see orchestrator/plugins/graph/).
+!orchestrator/plugins/graph/
+!orchestrator/plugins/graph/**
 !orchestrator/plugins/__init__.py
 
 # ai-workspace runtime content — keep directory structure, not runtime data
