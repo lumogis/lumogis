@@ -18,6 +18,7 @@ Verified against commit: 98f02b1
 
 - [`../ARCHITECTURE.md`](../ARCHITECTURE.md) — Core structure, Caddy routing, MCP/capability registry
 - [`architecture/`](architecture/) — plans, closeout reviews, plugin imports, tool vocabulary
+- [`architecture/product-roadmap-reconciliation-audit-2026-05-02.md`](architecture/product-roadmap-reconciliation-audit-2026-05-02.md) — read-only reconciliation of roadmap docs, backlog/portfolio gaps, and recommended next chunks (2026-05-02)
 - [`decisions/`](decisions/) — ADRs (`001`–`032`, `DEBT.md`)
 
 ## Testing

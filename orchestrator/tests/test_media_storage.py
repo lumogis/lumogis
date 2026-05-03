@@ -28,12 +28,24 @@ class TestSafeAttachmentPath:
     def test_traversal_in_filename_is_caught(self, tmp_path: Path):
         # Enough leading ".." to escape tmp_path regardless of its depth.
         evil = "../" * 20 + "etc/passwd"
-        with pytest.raises(ValueError, match="path traversal"):
+        with pytest.raises(ValueError, match="unsafe filename"):
             ms.safe_attachment_path("user1", "cap-uuid", "att-uuid", evil, root=tmp_path)
 
+    def test_absolute_filename_segment_rejected(self, tmp_path: Path):
+        # POSIX: root / "u" / "/etc/passwd" resolves to /etc/passwd — must not rely
+        # on is_relative_to alone.
+        with pytest.raises(ValueError, match="unsafe filename"):
+            ms.safe_attachment_path("user1", "cap-uuid", "att-uuid", "/etc/passwd", root=tmp_path)
+
+    def test_multi_segment_filename_rejected(self, tmp_path: Path):
+        with pytest.raises(ValueError, match="single path segment"):
+            ms.safe_attachment_path("user1", "cap-uuid", "att-uuid", "a/b.jpg", root=tmp_path)
+
     def test_traversal_in_user_id_is_caught(self, tmp_path: Path):
-        with pytest.raises(ValueError, match="path traversal"):
-            ms.safe_attachment_path("../" * 20, "cap-uuid", "att-uuid", "file.jpg", root=tmp_path)
+        with pytest.raises(ValueError, match="unsafe user_id"):
+            ms.safe_attachment_path(
+                "../" * 20, "cap-uuid", "att-uuid", "file.jpg", root=tmp_path
+            )
 
     def test_normal_nested_path_does_not_raise(self, tmp_path: Path):
         # Nested sub-path still inside root — should not raise.

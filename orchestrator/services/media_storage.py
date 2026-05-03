@@ -72,6 +72,22 @@ class FileTooLargeError(ValueError):
 
 
 # ---------------------------------------------------------------------------
+# Path component guards (POSIX: ``root / "u" / "/etc/passwd"`` → ``/etc/passwd``)
+# ---------------------------------------------------------------------------
+
+
+def _reject_unsafe_path_component(component: str, *, field: str) -> None:
+    """Raise ``ValueError`` if *component* is empty, absolute, or contains ``..``."""
+    if not isinstance(component, str) or not component.strip():
+        raise ValueError(f"invalid {field}: empty")
+    p = Path(component)
+    if p.is_absolute() or any(part == ".." for part in p.parts):
+        raise ValueError(f"unsafe {field}: {component!r}")
+    if len(p.parts) != 1:
+        raise ValueError(f"invalid {field}: must be a single path segment")
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -159,6 +175,10 @@ def safe_attachment_path(
     ValueError
         If the resolved candidate path escapes the root (path traversal).
     """
+    _reject_unsafe_path_component(user_id, field="user_id")
+    _reject_unsafe_path_component(capture_id, field="capture_id")
+    _reject_unsafe_path_component(attachment_id, field="attachment_id")
+    _reject_unsafe_path_component(filename, field="filename")
     _root = (root if root is not None else _CAPTURE_MEDIA_ROOT).resolve()
     candidate = (_root / user_id / capture_id / attachment_id / filename).resolve()
     if not candidate.is_relative_to(_root):
