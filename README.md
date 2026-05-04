@@ -59,56 +59,9 @@ Details and examples: **[`docs/LUMOGIS_REFERENCE_MANUAL.md`](docs/LUMOGIS_REFERE
 
 ## Architecture
 
-**Five concepts**—every module maps to one: **services**, **adapters**, **plugins**, **signals**, **actions**. Full layering (routes → services → ports ← adapters; plugins via hooks): **[`ARCHITECTURE.md`](ARCHITECTURE.md)**.
+**Five concepts**—every module maps to one: **actions**, **signals**, **services**, **plugins**, and **adapters**. Full layering (routes → services → ports ← adapters; plugins via hooks): **[`ARCHITECTURE.md`](ARCHITECTURE.md)**.
 
-```mermaid
-flowchart TB
-    BR["Browser"]
-    CADDY["Caddy · same-origin :80/:443"]
-    WEB["Lumogis Web · SPA"]
-
-    BR --> CADDY
-    CADDY --> WEB
-    CADDY --> ORC
-
-    LC["LibreChat · optional profile"] -. "/v1 (OpenAI compat)" .-> ORC
-
-    subgraph machine["your machine"]
-        ORC["Core · FastAPI · :8000"]
-
-        subgraph core["domain core"]
-            SVC["services/"]
-            SIG["signals/"]
-            ACT["actions/"]
-        end
-
-        PLG["plugins/ · optional"]
-        FACT["ports + adapters<br/>(via config.get_* ...)"]
-
-        subgraph stores["backing services"]
-            QDR[("Qdrant")]
-            PG[("Postgres")]
-            OLL["Ollama"]
-            FLK["FalkorDB · optional †"]
-        end
-
-        ORC --> SVC & SIG & ACT
-        ORC -. load routers / hooks .-> PLG
-        PLG -. "hooks · events · documented config bridges" .-> ORC
-
-        SVC & SIG & ACT --> FACT
-        FACT --> QDR & PG & OLL & FLK
-    end
-
-    ORC -. "GRAPH_MODE=service · HTTP" .-> KGSVC["lumogis-graph"]
-    ORC -. "composed prompt · local or API" .-> EXT["LLM providers"]
-
-    style machine fill:#f8f9fa,stroke:#dee2e6
-    style stores fill:#e9ecef,stroke:#ced4da
-    style core fill:#e9ecef,stroke:#ced4da
-    style EXT fill:#fff3cd,stroke:#ffc107
-    style KGSVC fill:#e7f3ff,stroke:#b6d4fe
-```
+![Lumogis system architecture: browser and optional LibreChat through Caddy to Core and Lumogis Web; domain core, plugins, ports plus adapters, and backing services on the host; optional lumogis-graph and LLM providers.](branding/lumogis_architecture.svg)
 
 † **Graph store:** FalkorDB is optional. Merge **`docker-compose.falkordb.yml`** for the in-process graph plugin and Falkor-backed paths; Falkor speaks the **Redis wire protocol** (no separate Redis container in that overlay)—see **`docker-compose.falkordb.yml`**. **`lumogis-graph`** (out-of-process KG capability) merges **`docker-compose.premium.yml`**—the **`premium` filename is historical**, not proprietary scope; see **`services/lumogis-graph/README.md`** and **`docs/kg_reference.md`** (`GRAPH_MODE=inprocess|service`).
 

@@ -21,6 +21,7 @@ compose() {
 
 cmd_up() {
   (cd "$ROOT" && test -f .env || cp config/test.env.example .env)
+  eval "$(python3 "$ROOT/scripts/rc_test_env_defaults.py" "$ROOT/$ENV_FILE")"
   compose up -d --wait
   if [[ "${COMPOSE_PROJECT_NAME:-}" == "lumogis-test" ]]; then
     bash "$ROOT/scripts/seed-public-rc-approvals-fixture.sh"
