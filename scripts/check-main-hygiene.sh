@@ -102,13 +102,16 @@ while IFS= read -r f; do
       bad_paths=1
       ;;
     docs/private/*)
-      case "$f" in
-        docs/private/roadmap/*) ;; # tracked maintainer roadmap notes; omitted from public export
-        *)
-          echo "check-main-hygiene: tracked forbidden path: $f" >&2
-          bad_paths=1
-          ;;
-      esac
+      echo "check-main-hygiene: tracked forbidden path: $f" >&2
+      bad_paths=1
+      ;;
+    docs/backlog/*|docs/backlog)
+      # Human markdown backlog seeds — allowed on **dev** only; private `main` must not
+      # carry them (Linear is backlog of record on the release line).
+      if [[ "$current_branch" == "main" ]]; then
+        echo "check-main-hygiene: tracked dev-only path on main: $f — move to dev or remove" >&2
+        bad_paths=1
+      fi
       ;;
     *__pycache__/*|__pycache__/*|.pytest_cache/*|node_modules/*|*.pyc)
       echo "check-main-hygiene: tracked generated or dependency path: $f" >&2

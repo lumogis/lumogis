@@ -65,6 +65,9 @@ fi
 if [[ -d "$TARGET/docs/_librarian" ]]; then
   die "docs/_librarian/ must not appear in a public export (internal librarian reports — Option B)"
 fi
+if [[ -d "$TARGET/docs/backlog" ]]; then
+  die "docs/backlog/ must not appear in a public export (dev-only integration seeds — Linear is backlog of record)"
+fi
 if [[ -f "$TARGET/docs/development/local-ai-devtools.md" ]]; then
   die "docs/development/local-ai-devtools.md must not appear in a public export (maintainer-only local devtools convention — Option B)"
 fi

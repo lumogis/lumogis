@@ -37,7 +37,7 @@ GIT_INDEX_FILE="$TMP_INDEX" git checkout-index -a -f --prefix="${OUT}/"
 
 # Upstream/for public-shaped export — same omit list as check-public-export.sh (Option B + hygiene)
 rm -rf "${OUT}/.cursor" "${OUT}/.claude" "${OUT}/docs/private" \
-  "${OUT}/docs/release" "${OUT}/docs/_librarian"
+  "${OUT}/docs/release" "${OUT}/docs/_librarian" "${OUT}/docs/backlog"
 rm -f "${OUT}/docs/development/local-ai-devtools.md"
 
 echo "create-upstream-export-tree: $OUT"
