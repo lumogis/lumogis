@@ -5,19 +5,19 @@
 **Slug:** `lumogis_reference_manual`  
 **Audience:** Household operators, curious readers, and contributors.  
 **Scope:** Describes Lumogis **as of** consolidation after cross-device Lumogis Web Phase 0/1, Admin & Me shell closure, self-hosted architecture remediation Phases 0–5 (household surfaces + capability scaffolding), password-management foundation, admin user import/export UI, and extraction of the **parent** Web Phase 2 (mobile UX) plan.  
-**Authority:** Prefer **closeout reviews** and **[Web roadmap reconciliation](architecture/lumogis-web-roadmap-reconciliation-after-remediation.md)** over older plan prose when they disagree.
+**Authority:** Prefer **closeout reviews**, **this manual §17**, and **ADRs** over stale plan prose when sources disagree.
 
-Last reviewed: 2026-05-03  
-Verified against commit: 37cf965
+Last reviewed: 2026-05-08  
+Verified against commit: e23f9d0
 
-**Code cross-check (spot audit):** Key claims were traced to `orchestrator/config.py` (`get_tool_catalog_enabled`), `orchestrator/loop.py` + `services/unified_tools.py` (tool-list merge + teardown), `services/capability_http.py` (`graph_query_tool_proxy_call` / `{"input": …}`), `services/execution.py` (`tool.execute.capability`), `routes/auth.py` (`REFRESH_COOKIE_PATH = "/api/v1/auth"`), `docker/caddy/Caddyfile` path table, `postgres/migrations/016-per-user-connector-permissions.sql` (per-user `connector_permissions`), `rg` for `from adapters` under `orchestrator/services/` and `orchestrator/routes/` (no matches), `docker-compose.yml` (no mock-capability service), and `clients/lumogis-web` routes under `/me/*` and `/admin/*`. **§19** frames extension work as **five practical families** (plus how lower-level pieces compose); it aligns with `ARCHITECTURE.md` / `CONTRIBUTING.md`, not a parallel architecture.
+**Code cross-check (spot audit):** Key claims were traced to `orchestrator/config.py` (`get_tool_catalog_enabled`), `orchestrator/loop.py` + `orchestrator/services/unified_tools.py` (tool-list merge + teardown), `orchestrator/services/capability_http.py` (`graph_query_tool_proxy_call` / `{"input": …}`), `orchestrator/services/execution.py` (`tool.execute.capability`), `orchestrator/routes/auth.py` (`REFRESH_COOKIE_PATH = "/api/v1/auth"`), `docker/caddy/Caddyfile` path table, `postgres/migrations/016-per-user-connector-permissions.sql` (per-user `connector_permissions`), `rg` for `from adapters` under `orchestrator/services/` and `orchestrator/routes/` (no matches), `docker-compose.yml` (no mock-capability service), and `clients/lumogis-web` routes under `/me/*` and `/admin/*`. **§19** frames extension work as **five practical families** (plus how lower-level pieces compose); it aligns with `ARCHITECTURE.md` / `CONTRIBUTING.md`, not a parallel architecture.
 
 **Important — two different “Phase 4 / Phase 5” programmes:**
 
 | Programme | “Phase 4” means | “Phase 5” means |
 | --- | --- | --- |
-| **Self-hosted architecture remediation** ([remediation plan](architecture/lumogis-self-hosted-platform-remediation-plan.md)) | Household-control JSON façades + Web read-only views (e.g. `/api/v1/me/tools`, diagnostics) | Optional **capability** scaffolding (discovery, OOP tool bridge, mock service, audit fan-in) |
-| **Cross-device Lumogis Web** (parent plan files may exist only on maintainer checkouts — *not in this repository*; see [Web roadmap reconciliation](architecture/lumogis-web-roadmap-reconciliation-after-remediation.md)) | **Web Push** + background approvals (not the same as remediation Phase 4) | **Capture-from-anywhere** (not the same as remediation Phase 5) |
+| **Self-hosted architecture remediation** (household + capability scaffolding programme) | Household-control JSON façades + Web read-only views (e.g. `/api/v1/me/tools`, diagnostics) | Optional **capability** scaffolding (discovery, OOP tool bridge, mock service, audit fan-in) |
+| **Cross-device Lumogis Web** (summarized in **§13–§17** and ADR 030) | **Web Push** + background approvals (not the same as remediation Phase 4) | **Capture-from-anywhere** (not the same as remediation Phase 5) |
 
 This manual uses **remediation** vs **cross-device Web** explicitly to avoid confusion.
 
@@ -27,7 +27,7 @@ This manual uses **remediation** vs **cross-device Web** explicitly to avoid con
 | --- | --- | --- |
 | **Household / operator** | You run Lumogis at home and want the big picture—what it is, what the parts do, how to deploy safely. | **§1–§3** (what / principles / components), **§13–§16** (Lumogis Web, APIs, deployment, security), **§17** (what is shipped vs planned). |
 | **Technical contributor** | You are changing Core, Web, or integrations and need boundaries and patterns. | **§4–§5** (mental model, pillars), **§18–§19** (rules + extension families), **`ARCHITECTURE.md`** and **`CONTRIBUTING.md`** linked in **§21**. |
-| **Roadmap / status** | You need to know what is done, what is next, and how “Phase 4/5” differs between programmes. | **Phase table** at the top of this page, **§17**, and **[Web roadmap reconciliation](architecture/lumogis-web-roadmap-reconciliation-after-remediation.md)**. |
+| **Roadmap / status** | You need to know what is done, what is next, and how “Phase 4/5” differs between programmes. | **Phase table** at the top of this page and **§17**. |
 
 ---
 
@@ -58,7 +58,7 @@ This manual uses **remediation** vs **cross-device Web** explicitly to avoid con
 | **Auditability** | Important actions leave a trail. | Append-only `audit_log`; structured logging—[ADR 019](decisions/019-structured-audit-logging.md). |
 | **Modularity** | Swap vector store, LLM, etc., via adapters and ports. | `ports/` + `config.py` factories—`ARCHITECTURE.md`. |
 | **Optional capabilities** | Heavy or isolated features can run **beside** Core, not inside its DB. | HTTP manifest at `GET /capabilities`, bearer trust—[ADR 010](decisions/010-ecosystem-plumbing.md), [011](decisions/011-lumogis-graph-service-extraction.md). |
-| **Agentic Core direction** | Future agents remain bounded roles under Core policy, not autonomous authority. | Planning baseline: [Agentic Core](architecture/agentic_core.md); any draft ADR text may exist only on maintainer checkouts. |
+| **Agentic Core direction** | Future agents remain bounded roles under Core policy, not autonomous authority. | Bounded agents and tools stay subject to Ask/Do, audit, and catalog policy—follow shipped ADRs and backlog execution order. |
 | **No full-corpus cloud upload by default** | Your entire indexed library is not bulk-uploaded to an LLM vendor. | If a **cloud LLM** is configured, **composed prompts + retrieved excerpts** may leave the machine; **Qdrant/Postgres and raw files stay local** unless another feature sends them out. **Connectors** intentionally reach **their** configured services. |
 
 ---
@@ -227,7 +227,7 @@ Lumogis maps code to **five** pillars ([`ARCHITECTURE.md`](../ARCHITECTURE.md)):
 
 **Notifications** — Daily digest patterns via ntfy and connector stack; **Web Push** product flows are **not** the same as the read-only **`/me/notifications`** settings façade (see §13 and reconciliation doc).
 
-**Implemented vs planned:** Core signals + digest + routines are **implemented** in the household self-hosted sense. **Cross-device Web Phase 4** (push client + service worker + background approvals) remains **open** per [reconciliation](architecture/lumogis-web-roadmap-reconciliation-after-remediation.md).
+**Implemented vs planned:** Core signals + digest + routines are **implemented** in the household self-hosted sense. **Cross-device Web Phase 4** (push client + service worker + background approvals) remains **open** per **§13**.
 
 ---
 
@@ -239,7 +239,7 @@ Lumogis maps code to **five** pillars ([`ARCHITECTURE.md`](../ARCHITECTURE.md)):
 
 - **In-process vs service:** Graph plugin can run **in-process** or **`GRAPH_MODE=service`** with **lumogis-graph** as the writer—[ADR 011](decisions/011-lumogis-graph-service-extraction.md), [002](decisions/002-graph-store-falkordb.md), graph plugin [007](decisions/007-graph-plugin-architecture.md).
 - **FalkorDB** — backing store for KG in service mode; see `docker-compose.premium.yml` / FalkorDB overlays.
-- **`query_graph` tool** — When bridged to the service, HTTP body uses **`{"input": <payload>}`** for the KG `QueryGraphRequest` contract; generic capabilities use **flat** JSON bodies—`tool-vocabulary.md`, Phase 5 closeout.
+- **`query_graph` tool** — When bridged to the service, HTTP body uses **`{"input": <payload>}`** for the KG `QueryGraphRequest` contract; generic capabilities use **flat** JSON bodies—[`tool-vocabulary.md`](architecture/tool-vocabulary.md) and [ADR 011](decisions/011-lumogis-graph-service-extraction.md).
 - **KG-specific vs generic:** KG proxy and manifest are the **reference capability**; generic discovery, health, `/tools/{name}`, and bearer env patterns apply to **any** capability.
 
 ---
@@ -257,7 +257,7 @@ Lumogis maps code to **five** pillars ([`ARCHITECTURE.md`](../ARCHITECTURE.md)):
 
 **Mock capability:** `services/lumogis-mock-capability/` + `make mock-capability-test`; compose overlay `docker-compose.mock-capability.yml` — **not** in default `docker-compose.yml`.
 
-**Status:** Phase 5 **scaffolding** is **sufficient for self-hosted** experiments; **Phase 6** marketplace / signed manifests / mTLS-by-default is **deferred**—[Phase 5 closeout](architecture/phase-5-final-capability-scaffolding-closeout-review.md).
+**Status:** Phase 5 **scaffolding** is **sufficient for self-hosted** experiments; **Phase 6** marketplace / signed manifests / mTLS-by-default is **deferred**—see **§17**.
 
 ---
 
@@ -282,10 +282,10 @@ Lumogis maps code to **five** pillars ([`ARCHITECTURE.md`](../ARCHITECTURE.md)):
 
 | Phase | Status |
 | --- | --- |
-| **Phase 2** mobile UX | **Shipped** (MVP)—[extraction closeout](architecture/cross-device-web-phase-2-mobile-ux-plan.md) (**2A–2D**) |
+| **Phase 2** mobile UX | **Shipped** (MVP) (**2A–2D**) |
 | **Phase 3** PWA / bounded caching | **Partial** — `clients/lumogis-web/src/pwa/` (**`sw.ts`**, manifest, precache + push boundary); **not** full offline product |
-| **Phase 4** Web Push + notifications | **Partial** — [Phase **4** extraction](architecture/cross-device-web-phase-4-web-push-plan.md) closed **4A–4E**; **`ACTION_EXECUTED`→push** deferred (**FP-053**) |
-| **Phase 5** capture | **Partial** — [Phase **5** extraction](architecture/cross-device-web-phase-5-capture-plan.md) closed MVP (**QuickCapture** **`/capture`**); **semantic_search** still **`documents`**-only vs indexed captures (**FP-TBD-5.1** class gap—see [audit **2026-05-02**](architecture/product-roadmap-reconciliation-audit-2026-05-02.md)) |
+| **Phase 4** Web Push + notifications | **Partial** — **4A–4E** shipped; **`ACTION_EXECUTED`→push** deferred (**FP-053**) |
+| **Phase 5** capture | **Partial** — MVP (**QuickCapture** **`/capture`**); **semantic_search** still **`documents`**-only vs indexed captures (**FP-TBD-5.1** class gap—see **§17**) |
 | **Phase 6** Tauri stub | **Deferred / stub** |
 
 ---
@@ -354,7 +354,7 @@ Lumogis maps code to **five** pillars ([`ARCHITECTURE.md`](../ARCHITECTURE.md)):
 
 ## 17. Current roadmap and status
 
-**Status as of 2026-05-03:** Cross-device **Phase 2–5 MVP** extractions are closed in-repo; **§13** phase table and [`product-roadmap-reconciliation-audit-2026-05-02.md`](architecture/product-roadmap-reconciliation-audit-2026-05-02.md) carry backlog nuance (**FP-053**, capture ↔ search parity, etc.).
+**Status as of 2026-05-03:** Cross-device **Phase 2–5 MVP** work is reflected in-repo; **§13** and **§17** carry backlog nuance (**FP-053**, capture ↔ search parity, etc.).
 
 | Area | Status | Notes |
 | --- | --- | --- |
@@ -364,7 +364,7 @@ Lumogis maps code to **five** pillars ([`ARCHITECTURE.md`](../ARCHITECTURE.md)):
 | Password management foundation | **Shipped** | [ADR 029](decisions/029-self-hosted-account-password-management.md) |
 | Admin user import/export UI | **Shipped** | Admin → Users |
 | Cross-device Web Phase 0–1 | **Shipped** | v1 façade + Caddy same-origin |
-| Cross-device Web **Phase 2** | **Shipped** (MVP) | [Extraction](architecture/cross-device-web-phase-2-mobile-ux-plan.md) |
+| Cross-device Web **Phase 2** | **Shipped** (MVP) | See **§13** |
 | Cross-device Web **Phases 3–5** (parent) | **Partial** — MVP shipped | PWA spine + Web Push MVP + Capture/QuickCapture—see **§13**; follow-ups remain |
 | Legacy admin replacement | **Deferred** | Link-out still |
 | Email forgot-password | **Deferred** | SMTP / abuse scope |
@@ -546,17 +546,11 @@ MCP is **transport**. It exposes a **curated subset** of Core functions to exter
 - [`CONTRIBUTING.md`](../CONTRIBUTING.md) — dev setup, `compose-test`, codegen  
 - [`testing/automated-test-strategy.md`](testing/automated-test-strategy.md) — CI vs integration / web / KG / browser suites  
 - **ADRs:** [005](decisions/005-plugin-boundary.md), [006](decisions/006-ask-do-safety-model.md), [010](decisions/010-ecosystem-plumbing.md), [011](decisions/011-lumogis-graph-service-extraction.md), [012](decisions/012-family-lan-multi-user.md), [015](decisions/015-personal-shared-system-memory-scopes.md), [017](decisions/017-mcp-token-user-map.md), [018](decisions/018-per-user-connector-credentials.md), [019](decisions/019-structured-audit-logging.md), [024](decisions/024-per-user-connector-permissions.md), [026](decisions/026-llm-provider-keys-per-user.md), [027](decisions/027-credential_scopes_shared_system.md), [028](decisions/028-self-hosted-extension-architecture-and-household-control-surfaces.md), [029](decisions/029-self-hosted-account-password-management.md)  
-- [Self-hosted remediation plan](architecture/lumogis-self-hosted-platform-remediation-plan.md)  
-- [Phase 4 household closeout](architecture/phase-4-household-control-surface-closeout-review.md)  
-- [Phase 5 capability closeout](architecture/phase-5-final-capability-scaffolding-closeout-review.md)  
-- [Web roadmap reconciliation](architecture/lumogis-web-roadmap-reconciliation-after-remediation.md)  
-- [Cross-device Web Phase 2 (mobile UX) plan](architecture/cross-device-web-phase-2-mobile-ux-plan.md)  
 - [Tool vocabulary](architecture/tool-vocabulary.md)  
 - [Plugin imports](architecture/plugin-imports.md)  
 - [`clients/lumogis-web/README.md`](../clients/lumogis-web/README.md)  
 - [`services/lumogis-graph/README.md`](../services/lumogis-graph/README.md)  
 - [`services/lumogis-mock-capability/README.md`](../services/lumogis-mock-capability/README.md)  
-- **Plans (historical context):** Long-form Web plans may exist only on maintainer checkouts *(not tracked in this repository)* — for shipped intent see [`architecture/lumogis-web-roadmap-reconciliation-after-remediation.md`](architecture/lumogis-web-roadmap-reconciliation-after-remediation.md), [`architecture/cross-device-web-phase-2-mobile-ux-plan.md`](architecture/cross-device-web-phase-2-mobile-ux-plan.md), and ADRs  
 
 ---
 

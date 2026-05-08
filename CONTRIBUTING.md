@@ -331,7 +331,7 @@ Tests cover the full pipeline: ingest → search → entity extraction → sessi
 
 **CI vs broader automation:** `.github/workflows/ci.yml` runs **orchestrator** and **stack-control unit tests** plus Ruff on every PR. Integration, web, Playwright, KG-image, and parity suites require Docker and/or Node; they are part of the permanent strategy documented in [`docs/testing/automated-test-strategy.md`](docs/testing/automated-test-strategy.md). Run the targets that match your change (e.g. `make compose-test-integration` after HTTP/API work, `make web-test` after web changes).
 
-**New behaviour:** add tests at the right layer (unit for pure logic, integration when the HTTP stack matters, web tests for client regressions). No new secret values or private-only paths in commits — see [`docs/maintainers.md`](docs/maintainers.md) and `scripts/check-public-export.sh` for **public export hygiene** (paths omitted from the upstream tree must never leak into patches meant for the public repo).
+**New behaviour:** add tests at the right layer (unit for pure logic, integration when the HTTP stack matters, web tests for client regressions). Do not commit secret values or paths that **`scripts/check-public-export.sh`** rejects — see **`docs/release/public-agpl-release-workflow.md`** and **`CONTRIBUTING.md`** for **export hygiene** (paths omitted from the upstream tree must never leak into patches meant for the published repo).
 
 ---
 
@@ -356,7 +356,7 @@ No code changes to lumogis are required. The PR modifies only `COMMUNITY-PLUGINS
 
 Maintainers review PRs. We aim for a first response within **48 hours**.
 
-**Pushing to the public GitHub repo:** see [docs/maintainers.md](docs/maintainers.md) so only paths meant for the public tree are published.
+**Pushing to the public GitHub repo:** follow **`docs/release/public-agpl-release-workflow.md`** so only the export-shaped tree is published.
 
 **PRs must:**
 - Pass `make lint` (ruff check + format)

@@ -35,7 +35,7 @@ The source code is **[AGPL-3.0-only](LICENSE)**. There is no Lumogis-operated Sa
 | Area | Capability |
 |---|---|
 | Documents | PDF, DOCX, text, images (OCR when enabled)—see ingestion in [`orchestrator/services/ingest.py`](orchestrator/services/ingest.py) |
-| Search | Dense vectors + optional hybrid / reranking—[`services/search.py`](orchestrator/services/search.py), [`ARCHITECTURE.md`](ARCHITECTURE.md) |
+| Search | Dense vectors + optional hybrid / reranking—[`orchestrator/services/search.py`](orchestrator/services/search.py), [`ARCHITECTURE.md`](ARCHITECTURE.md) |
 | Memory | Sessions and summaries embedded locally |
 | Signals | RSS, pages, calendars, digest—[`signals/`](orchestrator/signals/) |
 | Actions | **[Ask / Do](#security-model-ask-and-do)** with audit logging—[`actions/`](orchestrator/actions/) |
@@ -53,7 +53,7 @@ Every action lands in **Ask** or **Do**:
 | **Ask** | Proposed for approval before anything writes, deletes, or sends externally. |
 | **Do** | Executes immediately within a scoped, reversible, low-risk contract. |
 
-Details and examples: **[`docs/LUMOGIS_REFERENCE_MANUAL.md`](docs/LUMOGIS_REFERENCE_MANUAL.md)** (operator narrative) and audit discussion in **[`docs/SECURITY-AUDIT-001.md`](docs/SECURITY-AUDIT-001.md)**.
+Details and examples: **[`docs/LUMOGIS_REFERENCE_MANUAL.md`](docs/LUMOGIS_REFERENCE_MANUAL.md)** (operator narrative) and **[`SECURITY.md`](SECURITY.md)** (reporting and design boundaries).
 
 ---
 
@@ -63,7 +63,7 @@ Details and examples: **[`docs/LUMOGIS_REFERENCE_MANUAL.md`](docs/LUMOGIS_REFERE
 
 ![Lumogis system architecture: browser and optional LibreChat through Caddy to Core and Lumogis Web; domain core, plugins, ports plus adapters, and backing services on the host; optional lumogis-graph and LLM providers.](branding/lumogis_architecture.svg)
 
-† **Graph store:** FalkorDB is optional. Merge **`docker-compose.falkordb.yml`** for the in-process graph plugin and Falkor-backed paths; Falkor speaks the **Redis wire protocol** (no separate Redis container in that overlay)—see **`docker-compose.falkordb.yml`**. **`lumogis-graph`** (out-of-process KG capability) merges **`docker-compose.premium.yml`**—the **`premium` filename is historical**, not proprietary scope; see **`services/lumogis-graph/README.md`** and **`docs/kg_reference.md`** (`GRAPH_MODE=inprocess|service`).
+† **Graph store:** FalkorDB is optional. Merge **`docker-compose.falkordb.yml`** for the in-process graph plugin and Falkor-backed paths; Falkor speaks the **Redis wire protocol** (no separate Redis container in that overlay)—see **`docker-compose.falkordb.yml`**. **`lumogis-graph`** (out-of-process KG capability) merges **`docker-compose.premium.yml`**—the **`premium` filename is historical**, not proprietary scope; see **`services/lumogis-graph/README.md`** and **[`docs/decisions/011-lumogis-graph-service-extraction.md`](docs/decisions/011-lumogis-graph-service-extraction.md)** (`GRAPH_MODE=inprocess|service`).
 
 | Concept | Path | Purpose |
 |---|---|---|
@@ -130,7 +130,7 @@ Open **http://localhost/** after health checks settle. Inspect **`.env.example`*
 | LiteLLM | **`docker-compose.litellm.yml`** | Unified proxy overlay |
 | Activepieces | **`docker-compose.activepieces.yml`** | Automation UI |
 | GPU | **`docker-compose.gpu.yml`** | NVIDIA Container Toolkit (**[`docs/gpu-setup.md`](docs/gpu-setup.md)**) |
-| Speech-to-text sidecar | **`docker-compose.stt.yml`** | Speaches-backed **`POST /api/v1/voice/transcribe`**—**[`docs/architecture/lumogis-speech-to-text-foundation-plan.md`](docs/architecture/lumogis-speech-to-text-foundation-plan.md)** |
+| Speech-to-text sidecar | **`docker-compose.stt.yml`** | Speaches-backed **`POST /api/v1/voice/transcribe`**—see overlay comments and **`docs/troubleshooting.md`** |
 | LibreChat | `COMPOSE_PROFILES=librechat` (often default in **`.env.example`** for continuity) | **[`docker-compose.yml`](docker-compose.yml)** profile comments |
 
 Merge overlays with **`COMPOSE_FILE`** in `.env` (patterns in **`.env.example`**).
@@ -147,8 +147,8 @@ Operational truth lives in **`.env.example`** (committed) and **`orchestrator/co
 
 - **Compose / capability manifests / MCP bridging:** **`docs/extending-the-stack.md`**
 - **ADR for ecosystem plumbing:** **`docs/decisions/010-ecosystem-plumbing.md`**
-- **Operator verification steps:** *(removed from the repository — keep a local copy if you rely on a stack runbook)*
-- **Optional local STT (Speaches overlay, troubleshooting, CUDA notes):** **`docs/architecture/lumogis-speech-to-text-foundation-plan.md`**
+- **Operator verification:** integration tests and stack checks in **[`CONTRIBUTING.md`](CONTRIBUTING.md)** and **[`docs/testing/automated-test-strategy.md`](docs/testing/automated-test-strategy.md)**
+- **Optional local STT (Speaches overlay):** **`docker-compose.stt.yml`**, **`docs/gpu-setup.md`**, and **`docs/troubleshooting.md`**
 
 ---
 
@@ -174,8 +174,8 @@ More depth: **`docs/troubleshooting.md`**, **`docs/LUMOGIS_REFERENCE_MANUAL.md`*
 
 - **Community adapters/plugins:** **`COMMUNITY-PLUGINS.md`**
 - **Report vulnerabilities:** **`SECURITY.md`** (no public tickets for undisclosed bugs)
-- **Backups / portability:** households use **`POST /api/v1/me/export`** and related admin import flows — manifest and refusal semantics in **`docs/per-user-export-format.md`** (**`GET /api/v1/admin/export`** is **`410 Gone`** by design).
-- **Public AGPL export / hygiene tooling** (`scripts/create-upstream-export-tree.sh`, `scripts/check-public-export.sh`): **`docs/maintainers.md`**.
+- **Backups / portability:** households use **`POST /api/v1/me/export`** and related admin import flows — manifest and refusal semantics in **`docs/per-user-export-format.md`** (**`GET /api/v1/admin/export`** is **`410 Gone`** by design; see **`CHANGELOG.md`** and per-user export ADRs).
+- **Publishable tree hygiene** (`scripts/create-upstream-export-tree.sh`, `scripts/check-public-export.sh`): **[`docs/release/public-agpl-release-workflow.md`](docs/release/public-agpl-release-workflow.md)** and **`CONTRIBUTING.md`**.
 
 Lumogis is **`AGPL-3.0-only`** — **`LICENSE`** and SPDX headers (`AGPL-3.0-only`).
 

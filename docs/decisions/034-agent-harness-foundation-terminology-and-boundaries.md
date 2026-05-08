@@ -3,7 +3,7 @@
 **Status:** Accepted  
 **Created:** 2026-05-06  
 **Last updated:** 2026-05-06  
-**Decided by:** Architecture documentation (Phase A consolidation; roadmap linkage in `docs/architecture/lumogis-web-roadmap-reconciliation-after-remediation.md`).
+**Decided by:** Architecture documentation (Phase A consolidation; roadmap linkage via **Linear** backlog and **`docs/LUMOGIS_REFERENCE_MANUAL.md`** §17).
 
 ## Context
 
@@ -31,7 +31,7 @@ Lumogis adopts the following as the **canonical Agent Harness Foundation** — *
 | **SessionTimeline** | **Deferred** until product and privacy requirements for replay/logging are agreed; no commitment to server-side full chat replay in this ADR. |
 | **Skills** | **Devtools only** by default: Cursor instruction packs under `.cursor/skills/` and routing in `AGENTS.md`. A **future in-product** skill/runtime model requires a **separate ADR** — not implied here. |
 
-**Agentic Core** (`docs/architecture/agentic_core.md`) **must build on** these primitives and policies — **not** introduce a parallel permission, tool, or audit subsystem.
+**Agentic Core** (household-coordinated agents — backlog-gated product direction) **must build on** these primitives and policies — **not** introduce a parallel permission, tool, or audit subsystem.
 
 ## Canonical terminology
 
@@ -51,7 +51,7 @@ Lumogis adopts the following as the **canonical Agent Harness Foundation** — *
 | **MCP** | Streamable HTTP MCP surface for **external** clients — curated tool list, user resolution policy. | `orchestrator/mcp_server.py`; `docs/decisions/017-mcp-token-user-map.md` | **Not** a mirror of the full internal LLM tool list; not the internal message bus. |
 | **Hook** | Synchronous callback registration for `Event` constants. | `orchestrator/hooks.py`; `orchestrator/events.py` | Not arbitrary end-user shell scripts in Core; evolve toward documented payloads. |
 | **Skill** | **Maintainer/devtools:** instruction packs and workflows under `.cursor/skills/`; routing guidance in `AGENTS.md`. | Symlinked devtools cursor tree; `AGENTS.md` | **Not** Lumogis product runtime “skills” unless a future ADR defines them. |
-| **Agentic Core** | Planned product direction for household-coordinated agents — **documentation baseline**, implementation gated in `agentic_core.md`. | `docs/architecture/agentic_core.md` | Must not bypass Ask/Do, audit, or catalog authority; implementation order follows that doc. |
+| **Agentic Core** | Planned product direction for household-coordinated agents — **backlog-gated**; see **Linear** and release notes. | Linear / Product OS | Must not bypass Ask/Do, audit, or catalog authority; implementation order follows agreed chunks. |
 | **Diagnostics / Doctor** | Read-only operator diagnostics (core flags, stores, capabilities, tool summary). | `orchestrator/services/admin_diagnostics.py`; `orchestrator/routes/admin_diagnostics.py` | Not auto-remediation; extend with checks in follow-up work. |
 
 ## Explicit boundaries
@@ -90,9 +90,8 @@ Representative files (audit-derived):
 - `orchestrator/routes/admin_diagnostics.py` — admin diagnostics routes.
 - `orchestrator/routes/chat.py` — chat routes, `_inject_context`.
 - `orchestrator/services/context_budget.py` — context budget helpers.
-- `docs/architecture/agentic_core.md` — Agentic Core baseline.
 - `AGENTS.md` — agent workflow router for repo work.
-- `.cursor/skills/` — Cursor skills (devtools; symlink to `lumogis-devtools/cursor/skills` in maintainer layouts).
+- `.cursor/skills/` — Cursor skills (see **`AGENTS.md`** for repo layout notes).
 
 ## Consequences
 
@@ -132,9 +131,8 @@ Representative files (audit-derived):
 
 ## Cross-links
 
-- **`docs/architecture/lumogis-web-roadmap-reconciliation-after-remediation.md`** — web roadmap reconciliation note linking this ADR (non-backlog).
+- **`docs/LUMOGIS_REFERENCE_MANUAL.md`** — roadmap and shipped-vs-planned context.
 - **`docs/architecture/tool-vocabulary.md`** — catalog vs execution vocabulary.
-- **`docs/architecture/agentic_core.md`** — Agentic Core relationship to Core authority.
 - **`docs/decisions/006-ask-do-safety-model.md`**, **`docs/decisions/017-mcp-token-user-map.md`**, **`docs/decisions/019-structured-audit-logging.md`** — related safety and audit decisions.
 
 ## Status history

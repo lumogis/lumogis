@@ -630,7 +630,7 @@ A consolidated backlog of deferred, out-of-scope, open-question, and recommended
 **Original scope context:** `signals` **already** the SoR.  
 **Sources:**  
 - *(maintainer-local only; not part of the tracked repository)* — scope + `## Revisit conditions`  
-- `docs/lumogis_kg_quality_strategy.md` (Product roadmap line references **news** in broader roadmap context — cross-check only)  
+- `docs/archive/lumogis_kg_quality_strategy.md` (Product roadmap line references **news** in broader roadmap context — cross-check only)
 
 **Evidence snippets:**  
 > Defer **large**-**scale** **crawler**-**based** aggregation to **out**-**of**-**scope** / **separate** **products**  
@@ -709,9 +709,9 @@ A consolidated backlog of deferred, out-of-scope, open-question, and recommended
 **Priority:** Low until calibration data exists  
 **Why it exists:** The strategy **explicitly** defers **drift** to **not** use **synthetic** data.  
 **Recommended follow-up:** Re-read §8 when **Lumogis** has long-lived **families** in prod-like runs.  
-**Original scope context:** `docs/lumogis_kg_quality_strategy.md` is **not** a final ADR.  
-**Sources:**  
-- `docs/lumogis_kg_quality_strategy.md` — `## 8. Open Questions` and component 7  
+**Original scope context:** `docs/archive/lumogis_kg_quality_strategy.md` is **not** a final ADR.
+**Sources:**
+- `docs/archive/lumogis_kg_quality_strategy.md` — `## 8. Open Questions` and component 7
 
 **Evidence snippets:**  
 > Component 7 (drift detection) should be **deferred** until the user has **real** **operational** data
@@ -726,7 +726,7 @@ A consolidated backlog of deferred, out-of-scope, open-question, and recommended
 **Why it exists:** `Open Questions` + **8.2** in same doc.  
 **Recommended follow-up:** Re-weight composite score if **spancat** or new **NER** lands.  
 **Sources:**  
-- `docs/lumogis_kg_quality_strategy.md` — `### 8.1`, `8.2`  
+- `docs/archive/lumogis_kg_quality_strategy.md` — `### 8.1`, `8.2`
 
 **Evidence snippets:**  
 > **spaCy** **confidence** calibration is a **practical** **blocker**  
@@ -843,7 +843,7 @@ A consolidated backlog of deferred, out-of-scope, open-question, and recommended
 | `docs/decisions/026-*.md` | 2+ | 014, 015 |
 | `docs/decisions/DEBT.md` | 2+ | 042, 043 |
 | `docs/connect-and-verify.md` | 1+ | 028 |
-| `docs/lumogis_kg_quality_strategy.md` | 2+ | 040, 041 |
+| `docs/archive/lumogis_kg_quality_strategy.md` | 2+ | 040, 041 |
 | *(maintainer-local only; not part of the tracked repository)* | 2+ | 001, 002, 003 |
 | *(maintainer-local only; not part of the tracked repository)* | 3+ | 004, 005, 006, 008, 032, 033 |
 | *(maintainer-local only; not part of the tracked repository)* / ADR 025 | 2+ | 012, 013 |

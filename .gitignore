@@ -40,12 +40,9 @@ config/librechat.yaml
 # Internal maintainer-only notes — not part of the distributed source tree
 AUDIT-REPORT.md
 REMEDIATION-PLAN.md
-# Private local scratch (ignored by default). Exception: `docs/private/roadmap/` may be
-# tracked for maintainer roadmap notes; that tree is omitted from the public export.
-docs/private/**
-!docs/private/roadmap/
-!docs/private/roadmap/**
-# Local operator runbooks — optional per clone (not distributed)
+# docs/private/ — tracked on private main; stripped from the public AGPL tree by
+# scripts/check-public-export.sh (do not gitignore — ignored paths cannot be added reliably).
+# Operator runbooks: same content lives on branch `dev` (tracked). `main` omits them by policy.
 docs/dev-cheatsheet.md
 docs/connect-and-verify.md
 

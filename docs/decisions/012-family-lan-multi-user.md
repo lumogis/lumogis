@@ -7,7 +7,7 @@
 **Source:** *(maintainer-local only; not part of the tracked repository)*
 **Plan:** *(maintainer-local only; not part of the tracked repository)*
 **Exploration:** *(maintainer-local only; not part of the tracked repository)*
-**Audit:** `docs/private/MULTI-USER-AUDIT.md`
+**Audit:** Multi-user isolation audit programme (same thread as ADRs 013–024).
 
 ## Context
 

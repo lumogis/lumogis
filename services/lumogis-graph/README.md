@@ -28,7 +28,7 @@ The supported Compose merge is **`docker-compose.yml` + `docker-compose.falkordb
 ## HTTP authentication
 
 KG endpoint auth is **not** the same as Core’s FastAPI `require_admin` matrix.
-**Canonical table:** [§6.4 — lumogis-graph service endpoints](../../docs/kg_reference.md#64-lumogis-graph-service-endpoints) in `docs/kg_reference.md` (open paths, `AUTH_ENABLED` + JWT, `GRAPH_WEBHOOK_SECRET`, `X-Graph-Admin-Token`, `MCP_AUTH_TOKEN`).
+**Summary:** Public/health-style paths stay open by default; **`/webhook`** and **`/context`** require **`GRAPH_WEBHOOK_SECRET`** when not using the dev-only insecure flag; mutating **`/kg/*`** may require **`X-Graph-Admin-Token`** when **`GRAPH_ADMIN_TOKEN`** is set; the FastMCP mount can be gated with **`MCP_AUTH_TOKEN`**. See **`routes/`** (health, capabilities, webhook, context, kg, MCP) and **`auth.py`** for the exact matrix.
 
 ## Build & run
 
@@ -94,7 +94,7 @@ docs. Service-specific knobs:
 | `KG_SCHEDULER_ENABLED`      | `true`  | turn off the daily reconcile / weekly quality jobs (e.g. dual-cluster setups) |
 | `KG_ALLOW_INSECURE_WEBHOOKS`| `false` | dev-only opt-in to accept `/webhook` and `/context` without `GRAPH_WEBHOOK_SECRET` set |
 | `GRAPH_WEBHOOK_SECRET`      | unset   | bearer token Core presents on `/webhook` and `/context` |
-| `GRAPH_ADMIN_TOKEN`         | unset   | if set, `X-Graph-Admin-Token` on mutating `/kg/*`, `GET /graph/health` (this service), etc. — see [§6.4](../../docs/kg_reference.md#64-lumogis-graph-service-endpoints) |
+| `GRAPH_ADMIN_TOKEN`         | unset   | if set, `X-Graph-Admin-Token` on mutating `/kg/*`, `GET /graph/health` (this service), etc. — see **HTTP authentication** above and `routes/` |
 | `MCP_AUTH_TOKEN`            | unset   | gates `/mcp/*` calls from external MCP clients |
 
 ## License

@@ -48,4 +48,4 @@ Out of scope:
 
 ## Security Design Notes
 
-For a detailed record of the initial security audit (SQL injection, path traversal, MCP boundary, Ask/Do boundary), see [`docs/SECURITY-AUDIT-001.md`](docs/SECURITY-AUDIT-001.md).
+For themes covered in the initial security review (SQL injection, path traversal, MCP boundary, Ask/Do boundary), see **`SECURITY.md`** above, **`docs/LUMOGIS_REFERENCE_MANUAL.md`**, and the cited ADRs.

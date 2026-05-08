@@ -2,7 +2,7 @@
 
 **Status:** Finalised
 **Created:** 2026-04-21
-**Last updated:** 2026-04-21
+**Last updated:** 2026-05-07
 **Decided by:** as-shipped implementation (retrospective)
 **Finalised by:** /record-retro 2026-04-21 (Claude Opus 4.7)
 **Plan:** none — shipped before formal plan / verify cycle for this slice
@@ -17,7 +17,7 @@ ADR 018 (`per_user_connector_credentials`) shipped the substrate (encrypted `use
 
 This ADR is the **retrospective** record: it locks the as-built decision so future planners do not re-litigate it, supersedes the prior exploration's Option 2 design, and gives steps 3 (CalDAV — already shipped) and 4 (LLM provider keys — pending) a documented prior-art reference.
 
-Audit: `docs/private/MULTI-USER-AUDIT.md` row **B5** ("one ntfy topic per user"), priority #8 in `MULTI-USER-AUDIT-RESPONSE.md` §6.
+Audit: multi-user audit row **B5** (“one ntfy topic per user”).
 
 ## Decision
 
@@ -76,7 +76,7 @@ The ntfy notifier resolves its delivery config per call from the ADR 018 `user_c
 - **Harder:** Adding a household-broadcast notification path now needs an explicit sentinel `user_id` (e.g. `"__system__"` matching ADR 015 scope vocabulary) plus a household-default credential row or env var; the Protocol's keyword-only required `user_id` deliberately forbids "broadcast to anyone" defaults.
 - **Harder:** `signal_digest` no longer collapses into one notification per tick. A 10-user household with active signals receives 10 notifications. `SIGNAL_DIGEST_COUNT` semantics changed from "max signals per digest" to "max signals per user per digest". Operators upgrading must understand the change.
 - **Future chunks must know:** New ntfy payload fields (additional auth schemes, custom headers, topic-routing hints) are additive on the `payload` dict; the resolver tolerates unknown keys for forward-compat. The wire shape `{url?, topic, token?}` is the locked minimum. Do NOT introduce a parallel `user_notifier_prefs` table — extend the credential payload instead.
-- **Future chunks must know:** Closing audit row B5 in `docs/private/MULTI-USER-AUDIT-RESPONSE.md` requires a one-line ✅ flip pointing at this ADR. Not done in this retro to keep the audit-response sweep batched.
+- **Future chunks must know:** Closing audit row B5 in the multi-user audit thread requires a one-line ✅ flip pointing at this ADR. Not done in this retro to keep the audit-response sweep batched.
 
 ## Revisit conditions
 
@@ -88,4 +88,5 @@ The ntfy notifier resolves its delivery config per call from the ADR 018 `user_c
 
 ## Status history
 
-- 2026-04-21: Finalised by /record-retro (retrospective). Records as-shipped chunk D from the topic-area work that landed alongside ADRs 017–021. Supersedes the prior `per_user_notifier_targets` exploration's Option 2 design (sibling table) — the as-shipped chunk uses the ADR 018 substrate instead. Audit B5 closure in `docs/private/MULTI-USER-AUDIT-RESPONSE.md` flagged as a follow-up bookkeeping task; not done in this retro.
+- 2026-05-07: Amendment recorded by `/verify-plan` (**LUM-39** — plan `LUM-39-ntfy-upstream-410-digest-advisory-lock`). **Migration 021** adds **additive** `delivery_paused*` columns on `user_connector_credentials`; **HTTP 410** from the ntfy upstream persists delivery pause metadata on the per-user **`ntfy`** row (when present), **truncated** upstream detail (`TEXT`), **cleared** again on user **PUT**; **`signal_digest`** uses Postgres **`pg_try_advisory_lock` / `pg_advisory_unlock`** keyed **`(8420607, 39)`** so **one uvicorn worker per database** runs the digest body per tick; **`GET /api/v1/me/notifications`** and Lumogis Web expose **paused** channel state (**`delivery_paused_detail`** remains DB-only — not on public credential or notification façade). Wire payload `{url?, topic, token?}` unchanged; zero new env vars in this amendment.
+- 2026-04-21: Finalised by /record-retro (retrospective). Records as-shipped chunk D from the topic-area work that landed alongside ADRs 017–021. Supersedes the prior `per_user_notifier_targets` exploration's Option 2 design (sibling table) — the as-shipped chunk uses the ADR 018 substrate instead. Audit B5 closure bookkeeping in the multi-user audit thread was flagged as a follow-up; not done in this retro.

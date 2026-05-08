@@ -8,7 +8,7 @@
 
 ## Context
 
-The Family-LAN multi-user plan (*(maintainer-local only; not part of the tracked repository)*, ✅ implemented + hardened 2026-04-18) closed the *isolation* gap on chat / tool / search hot paths — the family-LAN floor proves Alice cannot read Bob's data. Two related defects survived that floor and were recorded as audit items **B11** and **B12** (`docs/private/MULTI-USER-AUDIT.md` §12 Phase B; restated in `docs/private/MULTI-USER-AUDIT-RESPONSE.md` lines 77–78 and §6 priority row #3):
+The Family-LAN multi-user plan (*(maintainer-local only; not part of the tracked repository)*, ✅ implemented + hardened 2026-04-18) closed the *isolation* gap on chat / tool / search hot paths — the family-LAN floor proves Alice cannot read Bob's data. Two related defects survived that floor and were recorded as audit items **B11** and **B12** in the multi-user audit thread:
 
 - **B11** — `services/memory.py:94` and `services/ingest.py:180` derive Qdrant `point_id` deterministically from a user-shared key (`session::{session_id}` and `{file_path}::chunk-{i}`) with no `user_id` component.
 - **B12** — `postgres/init.sql:10` declares `file_index.file_path` `UNIQUE NOT NULL`, so two users cannot both ingest the same absolute path; the second user's `INSERT` fails.
@@ -41,7 +41,7 @@ The migration claims the `011-…` slot. The in-flight `personal_shared_system_m
 
 - **No offline `backfill_qdrant_point_ids.py` script** — there is no live data to re-key.
 - **No restore-path warning in `routes/admin.py`** — there are no pre-namespace backups to warn about.
-- **No operator runbook in `docs/dev-cheatsheet.md` / `docs/connect-and-verify.md`** — fresh installs land directly on the end-state schema.
+- **No expanded operator checklist beyond** **`docs/troubleshooting.md`** and integration tests — fresh installs land directly on the end-state schema.
 - **No `entity_relations.evidence_id` cleanup** — adjacent issue, not required to close B11/B12. Folded in only if it turns out to be ≤ ~5 lines while the related code is open; otherwise tracked as the `entity_relations_evidence_dedup` follow-up.
 - **No `audio_memos` per-user namespace** — no live writer exists; deferred to whichever chunk lands the audio-capture route.
 

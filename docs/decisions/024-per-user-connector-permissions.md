@@ -8,7 +8,7 @@
 
 ## Context
 
-Audit item **A2** (`docs/private/MULTI-USER-AUDIT.md` §1, §3, §11) is the only deferred Phase A item from the family-LAN multi-user audit. The `connector_permissions` table is keyed `UNIQUE(connector)`, and the `routine_do_tracking` table is keyed `UNIQUE(connector, action_type)` with no `user_id` column at all. As a result:
+Audit item **A2** (multi-user audit — global `connector_permissions` / `routine_do_tracking` without per-user keying) is the only deferred Phase A item from the family-LAN multi-user programme. The `connector_permissions` table is keyed `UNIQUE(connector)`, and the `routine_do_tracking` table is keyed `UNIQUE(connector, action_type)` with no `user_id` column at all. As a result:
 
 - Any household member who flips `filesystem-mcp` from `ASK` to `DO` flips it for **every** other member from that moment forward.
 - Fifteen approvals of `send_email` by Alice silently auto-elevate `routine_do_tracking` such that Bob's next `send_email` is also auto-approved.
@@ -50,7 +50,7 @@ Full detail in *(maintainer-local only; not part of the tracked repository)*. On
 - **Option 2 — `(user_id, connector)` per-user rows + `'__default__'` sentinel for household policy overlay** — re-introduces the sentinel-user-id pattern that took dedicated cleanup tooling (`db_default_user_remap.py`) to remove from the schema; collides with the `__system__` vocabulary from migration 013; activates forward-compat scaffolding for a capability not requested by any shipped product feature. If household-wide defaults ever become a real product requirement, do them via `scope='system'` semantics consistent with migration 013, NOT a new sentinel (recorded as deferred follow-up #2 below).
 - **Option 3 — separate `connector_permission_overrides` table** — same conceptual costs as Option 2 plus an extra table to keep coherent across migrations, backups, exports, and tests.
 - **Option 4 — Postgres Row-Level Security (RLS)** — diverges from the application-side `visible_filter()` convention locked by ADR 015; pgbouncer GUC-leak footgun if Lumogis ever sits behind a pooler.
-- **Option 5 — drop Ask/Do entirely and route every write through `review_queue`** — removes a shipped capability documented in the `docs/connect-and-verify.md` user contract.
+- **Option 5 — drop Ask/Do entirely and route every write through `review_queue`** — removes a shipped capability documented in **ADR 006**, Lumogis Web flows, and integration tests.
 - **Option 6 — Cedar / Casbin / OPA policy engine** — ~30× the surface area for a 3-bits-per-row policy space; Cedar is currently beta. Reserved as a future migration target if RBAC ever expands beyond admin/user OR a second policy axis appears (e.g. per-resource grants).
 - **Option 7 — bitmask permissions in a single `BIGINT`** — 63-bit ceiling is below the (~10 connectors × ~30 action_types) ~300-bit ceiling; the bit-position-to-`(connector, action_type)` registry recreates the indirection it claims to avoid.
 - **Option 8 — per-user env vars (`PERMISSIONS_<USER>_<CONNECTOR>=DO`)** — UX-hostile (restart to change), no UI/audit/API.
@@ -71,7 +71,7 @@ Full detail in *(maintainer-local only; not part of the tracked repository)*. On
 
 **Becomes harder:**
 - New users see no per-connector rows by default — the dashboard tile must render `_DEFAULT_MODE = 'ASK'` clearly enough that "no row" doesn't read as "broken". Mitigated by the `web/index.html` user tile spec showing the resolved effective mode with a "(default)" badge when no row exists.
-- The legacy `PUT /permissions/{connector}` admin route disappears in N+1 (after the soft-deprecation window) — operators with custom scripts that hit this route will need to migrate to `PUT /api/v1/admin/users/{user_id}/permissions/{connector}`. Documented in `CHANGELOG.md` and `docs/connect-and-verify.md`.
+- The legacy `PUT /permissions/{connector}` admin route disappears in N+1 (after the soft-deprecation window) — operators with custom scripts that hit this route will need to migrate to `PUT /api/v1/admin/users/{user_id}/permissions/{connector}`. Documented in **`CHANGELOG.md`**.
 - Multi-worker uvicorn deployments would see in-process cache drift across workers when an admin writes a user's row. Acceptable trade-off for v1 — the orchestrator runs single-worker today (verified against `docker-compose.yml`); revisit if/when multi-worker becomes a deployment shape.
 - A future operator who wants household-wide policy defaults will need to either (a) script the admin-on-behalf route to write the same value for every user, or (b) wait for the deferred-follow-up #2 chunk that adds `scope='system'` semantics consistent with migration 013. Option 2 (`__default__` sentinel) was deliberately rejected to avoid sentinel-vocabulary debt; the future direction reuses migration 013's idiom.
 

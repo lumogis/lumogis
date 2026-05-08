@@ -87,11 +87,9 @@ The **unified tool catalog** and **capability execution overlay** (`ToolCatalog`
 
 ## References
 
-**Architecture guidance (remediation)**
+**Architecture guidance (remediation and Phase 4 household surfaces)**
 
-- [`docs/architecture/lumogis-self-hosted-platform-remediation-plan.md`](../architecture/lumogis-self-hosted-platform-remediation-plan.md)
-- [`docs/architecture/self-hosted-remediation-consolidation-review.md`](../architecture/self-hosted-remediation-consolidation-review.md)
-- [`docs/architecture/phase-4-household-control-surface-closeout-review.md`](../architecture/phase-4-household-control-surface-closeout-review.md)
+- [`docs/LUMOGIS_REFERENCE_MANUAL.md`](../LUMOGIS_REFERENCE_MANUAL.md) §8–§13 and **§17**
 - [`docs/architecture/tool-vocabulary.md`](../architecture/tool-vocabulary.md)
 - [`docs/architecture/plugin-imports.md`](../architecture/plugin-imports.md)
 

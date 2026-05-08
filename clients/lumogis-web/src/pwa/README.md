@@ -53,8 +53,8 @@ This is **install-time / revisit performance** for the shell bundle — **not** 
 
 ## Phase 4E — closeout (2026-04-29)
 
-Operator env, HTTPS/Safari caveats, **`pywebpush`** image rebuild note, manual smoke checklist, **`registerRoute`** caveat, **`ACTION_EXECUTED`** defer (**FP-053**), and automated validation recorded in **`../../../../docs/architecture/cross-device-web-phase-4-web-push-plan.md#phase-4e-closeout`** (§23).
+Operator env, HTTPS/Safari caveats, **`pywebpush`** image rebuild note, manual smoke checklist, **`registerRoute`** caveat, **`ACTION_EXECUTED`** defer (**FP-053**), and automated validation are summarized in **[`README.md`](../../README.md)** (Lumogis Web / PWA), this file, and **[`030-cross-device-client-architecture.md`](../../../../docs/decisions/030-cross-device-client-architecture.md)**.
 
 ## Deferred (later parent-plan phases)
 
-Phase **6** — Tauri desktop checklist (see [`../../../../docs/architecture/cross-device-web-phase-2-mobile-ux-plan.md`](../../../../docs/architecture/cross-device-web-phase-2-mobile-ux-plan.md) and Web roadmap reconciliation for status). **LibreChat** compose defaults remain separate from **`swPush`**. **File / media** Web Share Target (**POST** multipart) remains deferred (needs SW **`fetch`** or unsafe silent handling).
+Phase **6** — Tauri desktop checklist remains deferred; track status via **[`docs/LUMOGIS_REFERENCE_MANUAL.md`](../../../../docs/LUMOGIS_REFERENCE_MANUAL.md)** §13–§17. **LibreChat** compose defaults remain separate from **`swPush`**. **File / media** Web Share Target (**POST** multipart) remains deferred (needs SW **`fetch`** or unsafe silent handling).

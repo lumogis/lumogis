@@ -1,8 +1,7 @@
 # Lumogis Web
 
 Responsive PWA client for the Lumogis orchestrator. Ship paths and feature areas (chat, search,
-approvals, captures, notifications) are described in this README and in
-[`../../docs/architecture/cross-device-web-phase-2-mobile-ux-plan.md`](../../docs/architecture/cross-device-web-phase-2-mobile-ux-plan.md) / the [Web roadmap reconciliation](../../docs/architecture/lumogis-web-roadmap-reconciliation-after-remediation.md).
+approvals, captures, notifications) are described in this README, in **[`docs/LUMOGIS_REFERENCE_MANUAL.md`](../../docs/LUMOGIS_REFERENCE_MANUAL.md)** (§13–§17), and in cross-device Web **ADRs** (for example **[`030-cross-device-client-architecture.md`](../../docs/decisions/030-cross-device-client-architecture.md)**).
 
 Backend vocabulary for tools vs actions vs MCP vs capabilities:
 [`../../docs/architecture/tool-vocabulary.md`](../../docs/architecture/tool-vocabulary.md).
@@ -22,7 +21,7 @@ Backend vocabulary for tools vs actions vs MCP vs capabilities:
 **QuickCapture** (`/capture`): mobile-friendly capture with local IndexedDB draft and outbox for queued sync when back online; the PWA **GET** share target only **prefills** title/text/url — nothing is saved until the user taps **Save** (or uses local save / Add to memory). This is still **not** “full offline Lumogis”: chat, search, and most admin flows need the live orchestrator (`navigator.onLine` / **`OfflineBanner`** describe the same limitation as Phase 3E).
 
 **Admin → Diagnostics** (`/admin/diagnostics`, admin role only) shows a read-only snapshot from
-`GET /api/v1/admin/diagnostics` (stores, capabilities, tool catalog summary — no secrets or destructive actions). Credential key rotation counts still come from `GET /api/v1/admin/diagnostics/credential-key-fingerprint`.
+`GET /api/v1/admin/diagnostics` (stores, capabilities, tool catalog summary, **foundation signals** — ADR 034 catalog/Ask–Do sanity — no secrets or destructive actions). Credential key rotation counts still come from `GET /api/v1/admin/diagnostics/credential-key-fingerprint`.
 
 ## Quick start
 
@@ -134,7 +133,7 @@ CHROME_PATH=/path/to/chrome-or-chromium \
 
 Phase **4A–4E** (**2026-04-29**): backend VAPID send + **`pywebpush`**, subscription API + isolation tests, **`/me/notifications`** opt-in (**gesture-only** permission), **`sw.ts`** **`push`** / **`notificationclick`** via **`swPush.ts`** (**no** **`runtimeCaching`**, **no** API response caching — **`verify:pwa-dist`** guards). **`ACTION_EXECUTED`→browser push** stays **deferred** (**follow-up** **FP-053**). **ntfy** remains a **parallel** channel. **Production:** rebuild/redeploy the **orchestrator** image after **`requirements.txt`** changes so **`pywebpush`** is installed.
 
-Full checklist, env vars (`WEBPUSH_VAPID_*`, optional **`WEBPUSH_DEV_ECHO`**), troubleshooting, Workbox **`registerRoute`** string caveat, and validation log: **`../../docs/architecture/cross-device-web-phase-4-web-push-plan.md#phase-4e-closeout`**.
+Full checklist, env vars (`WEBPUSH_VAPID_*`, optional **`WEBPUSH_DEV_ECHO`**), troubleshooting, Workbox **`registerRoute`** string caveat, and validation expectations: **[`src/pwa/README.md`](src/pwa/README.md)** (Phase 4) and **`npm run verify:pwa-dist`** after **`npm run build`**.
 
 ## OpenAPI snapshot
 

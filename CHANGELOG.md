@@ -148,6 +148,15 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added — Connector permissions
 
+- **LUM-43 / FP-050 — Compose policy guard.** New `scripts/check_compose_policy.py`
+  (Pass A: raw YAML `env_file` + forbidden env keys; Pass B:
+  `docker compose config --format json`), `scripts/compose_core_allowlist.txt`,
+  Make targets `compose-policy-check`, `compose-policy-check-baseline`,
+  `compose-policy-check-adversarial`, `compose-policy-check-adversarial-envfile`,
+  and CI job `compose-policy` (bootstrap via `cp .env.example .env`).
+  Test-only overlays: `docker-compose.test-policy-adversarial.yml`,
+  `docker-compose.test-policy-adversarial-envfile.yml`.
+
 - **Per-user connector permissions (audit A2 closure).** Connector
   `ASK` / `DO` modes are now strictly per-user. New surfaces:
   `GET/PUT/DELETE /api/v1/me/permissions[/{connector}]` for the
@@ -163,7 +172,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
   untouched and the bootstrap admin inherits any non-`ASK` rows on
   first user creation. `POST /permissions/{connector}/elevate` now
   requires `require_user` (closes a pre-existing unauthenticated
-  elevation hole). Documented in `docs/connect-and-verify.md` Step 9f.
+  elevation hole). Documented in **`CHANGELOG.md`** for this release (`POST /permissions/{connector}/elevate` now requires `require_user`).
 
 ### Deprecated
 

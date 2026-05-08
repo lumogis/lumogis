@@ -30,4 +30,3 @@ New capabilities that need a mode switch or HTTP discovery should follow **out-o
 ## Related
 
 - [ADR-005: Plugin boundary](../decisions/005-plugin-boundary.md) — “Core services never import plugin code” (unchanged).
-- [Self-hosted remediation plan](lumogis-self-hosted-platform-remediation-plan.md) — Phase 0 / Chunk 1 vocabulary.

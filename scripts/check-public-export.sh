@@ -65,9 +65,6 @@ fi
 if [[ -d "$TARGET/docs/_librarian" ]]; then
   die "docs/_librarian/ must not appear in a public export (internal librarian reports — Option B)"
 fi
-if [[ -f "$TARGET/docs/archive/open-core-repository-workflow.md" ]]; then
-  die "docs/archive/open-core-repository-workflow.md must not appear on upstream/main (obsolete dual-repo doc — Option B)"
-fi
 if [[ -f "$TARGET/docs/development/local-ai-devtools.md" ]]; then
   die "docs/development/local-ai-devtools.md must not appear in a public export (maintainer-only local devtools convention — Option B)"
 fi
@@ -132,10 +129,6 @@ while IFS= read -r -d '' f; do
       bad=1
       ;;
     docs/_librarian/*|docs/_librarian|*/docs/_librarian/*|*/docs/_librarian)
-      echo "check-public-export: forbidden path: $rel" >&2
-      bad=1
-      ;;
-    docs/archive/open-core-repository-workflow.md|*/docs/archive/open-core-repository-workflow.md)
       echo "check-public-export: forbidden path: $rel" >&2
       bad=1
       ;;

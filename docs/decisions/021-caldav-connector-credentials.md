@@ -125,9 +125,7 @@ collapses the `process_signal` `_score_cache` (keyed on
 pipeline for every event in the lookahead window. The DB row is
 saved-once via `INSERT … ON CONFLICT (signal_id) DO NOTHING`
 (`signal_id = caldav_signal_id(user_id, uid)`), so DB cost is bounded
-but **LLM cost is not**. Mitigation in v1 is operator-facing
-documentation (`docs/connect-and-verify.md` recommends
-`sources.poll_interval >= 1800 s` for `caldav` rows). The structural
+but **LLM cost is not**. Mitigation in v1 is operator-facing: use a **long** `sources.poll_interval` (for example **≥ 1800 s**) for `caldav` signal sources to limit repeated LLM work per poll. The structural
 fix is gated on a follow-up signal-contract ADR and tracked as plan
 Open question #6.
 

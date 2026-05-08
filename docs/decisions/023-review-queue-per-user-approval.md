@@ -13,7 +13,7 @@
 
 The unified review queue (Pass 4a KG quality pipeline) exposes `POST /review-queue/decide` so operators can merge ambiguous entities, promote/discard staged entities, and resolve constraint violations. In multi-user (family-LAN) mode, allowing **any** authenticated user to act on **any** queue item would let one household member change another’s pending merge or violation resolution.
 
-This gap was tracked in the private multi-user audit response as **row B9** (`review_queue_per_user_approval_scope` in code; narrative reference `docs/private/MULTI-USER-AUDIT-RESPONSE.md` row B9). The work shipped without a prior `.plan.md` or `/verify-plan` for this specific slice. This ADR records the as-built contract.
+This gap was tracked in the multi-user audit response as **row B9** (`review_queue_per_user_approval_scope` in code). The work shipped without a prior `.plan.md` or `/verify-plan` for this specific slice. This ADR records the as-built contract.
 
 ## Decision
 

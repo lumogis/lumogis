@@ -10,7 +10,7 @@
 
 ## Context
 
-Audit B10 (`docs/private/MULTI-USER-AUDIT.md` §12 Phase B + §2 final paragraph; ranked #4 follow-up in `docs/private/MULTI-USER-AUDIT-RESPONSE.md` §6) identified the residual single-user collapse on the `/mcp/*` surface after the family-LAN floor shipped:
+Audit B10 (multi-user audit thread — `/mcp/*` single-user collapse after the family-LAN floor shipped) identified the residual gap:
 
 > *Before this ADR:* Phase 3.1 added per-request **JWT** Bearer wiring (`mcp_server._resolve_user_id` reads `Authorization: Bearer <jwt>` and the `sub` wins over `MCP_DEFAULT_USER_ID`). Static MCP clients used legacy shared `MCP_AUTH_TOKEN` → a single `MCP_DEFAULT_USER_ID`. **No per-user opaque token table.**
 

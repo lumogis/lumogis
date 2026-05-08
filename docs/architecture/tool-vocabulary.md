@@ -1,7 +1,7 @@
 # Tool vocabulary (Lumogis Core)
 
-Short reference for **catalog** vs **execution** and related terms. The
-self-hosted remediation plan (`docs/architecture/lumogis-self-hosted-platform-remediation-plan.md`) phases build on this vocabulary.
+Short reference for **catalog** vs **execution** and related terms. Phased
+self-hosted platform work (household façades, capability services) builds on this vocabulary.
 
 | Term | Meaning |
 | --- | --- |
