@@ -45,6 +45,9 @@ REMEDIATION-PLAN.md
 docs/private/**
 !docs/private/roadmap/
 !docs/private/roadmap/**
+# Local operator runbooks — optional per clone (not distributed)
+docs/dev-cheatsheet.md
+docs/connect-and-verify.md
 
 # IDE / OS
 .idea/

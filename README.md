@@ -1,6 +1,6 @@
 ![Lumogis](branding/readme-banner.svg)
 
-**[Quickstart](#getting-started)** · **[Architecture](#architecture)** · **[Reference manual](docs/LUMOGIS_REFERENCE_MANUAL.md)** · **[Operator runbook](docs/connect-and-verify.md)** · **[Extending Lumogis](docs/extending-the-stack.md)** · **[Community Plugins](COMMUNITY-PLUGINS.md)** · **[Security](SECURITY.md)**
+**[Quickstart](#getting-started)** · **[Architecture](#architecture)** · **[Reference manual](docs/LUMOGIS_REFERENCE_MANUAL.md)** · **[Extending Lumogis](docs/extending-the-stack.md)** · **[Community Plugins](COMMUNITY-PLUGINS.md)** · **[Security](SECURITY.md)**
 
 # lumogis
 
@@ -147,7 +147,7 @@ Operational truth lives in **`.env.example`** (committed) and **`orchestrator/co
 
 - **Compose / capability manifests / MCP bridging:** **`docs/extending-the-stack.md`**
 - **ADR for ecosystem plumbing:** **`docs/decisions/010-ecosystem-plumbing.md`**
-- **Operator verification steps:** **`docs/connect-and-verify.md`**
+- **Operator verification steps:** *(removed from the repository — keep a local copy if you rely on a stack runbook)*
 - **Optional local STT (Speaches overlay, troubleshooting, CUDA notes):** **`docs/architecture/lumogis-speech-to-text-foundation-plan.md`**
 
 ---
@@ -174,7 +174,7 @@ More depth: **`docs/troubleshooting.md`**, **`docs/LUMOGIS_REFERENCE_MANUAL.md`*
 
 - **Community adapters/plugins:** **`COMMUNITY-PLUGINS.md`**
 - **Report vulnerabilities:** **`SECURITY.md`** (no public tickets for undisclosed bugs)
-- **Backups / portability:** households use **`POST /api/v1/me/export`** and related admin import flows — manifest and refusal semantics in **`docs/per-user-export-format.md`**, curl walkthrough steps in **`docs/connect-and-verify.md`** (**`GET /api/v1/admin/export`** is **`410 Gone`** by design).
+- **Backups / portability:** households use **`POST /api/v1/me/export`** and related admin import flows — manifest and refusal semantics in **`docs/per-user-export-format.md`** (**`GET /api/v1/admin/export`** is **`410 Gone`** by design).
 - **Public AGPL export / hygiene tooling** (`scripts/create-upstream-export-tree.sh`, `scripts/check-public-export.sh`): **`docs/maintainers.md`**.
 
 Lumogis is **`AGPL-3.0-only`** — **`LICENSE`** and SPDX headers (`AGPL-3.0-only`).

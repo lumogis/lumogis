@@ -103,7 +103,7 @@ docker compose run --rm -w /project/orchestrator orchestrator sh -c \
   "pip install -q -r requirements-dev.txt && python -m pytest tests/path/to/test_foo.py -q"
 ```
 
-Other compose targets: `make compose-lint`, `make compose-test-integration` (see `Makefile` and [docs/dev-cheatsheet.md](docs/dev-cheatsheet.md)).
+Other compose targets: `make compose-lint`, `make compose-test-integration` (see `Makefile`).
 
 ### Lumogis Web / OpenAPI
 

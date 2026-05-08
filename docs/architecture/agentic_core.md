@@ -4,7 +4,7 @@
 **Status:** Planning baseline; no runtime implementation  
 **Scope:** whole-product AGPL-first, core + web + capabilities  
 **Detailed exploration:** *(maintainer-local only; not part of the tracked repository)*  
-**Draft ADR:** none in `docs/decisions/` yet; exploratory drafts may exist only on maintainer checkouts *(not part of the tracked repository)*.
+**Foundation ADR:** `docs/decisions/034-agent-harness-foundation-terminology-and-boundaries.md` (terminology and boundaries for Core tools, permissions, MCP, audit — Agentic Core must build on these primitives, not a parallel runtime). **Agentic Core–specific** final ADR: still *deferred*; exploratory drafts may exist only on maintainer checkouts *(not part of the tracked repository)*.
 
 ## Summary
 

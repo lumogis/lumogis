@@ -7,8 +7,8 @@
 **Scope:** Describes Lumogis **as of** consolidation after cross-device Lumogis Web Phase 0/1, Admin & Me shell closure, self-hosted architecture remediation Phases 0–5 (household surfaces + capability scaffolding), password-management foundation, admin user import/export UI, and extraction of the **parent** Web Phase 2 (mobile UX) plan.  
 **Authority:** Prefer **closeout reviews** and **[Web roadmap reconciliation](architecture/lumogis-web-roadmap-reconciliation-after-remediation.md)** over older plan prose when they disagree.
 
-Last reviewed: 2026-05-02  
-Verified against commit: 98f02b1
+Last reviewed: 2026-05-03  
+Verified against commit: 37cf965
 
 **Code cross-check (spot audit):** Key claims were traced to `orchestrator/config.py` (`get_tool_catalog_enabled`), `orchestrator/loop.py` + `services/unified_tools.py` (tool-list merge + teardown), `services/capability_http.py` (`graph_query_tool_proxy_call` / `{"input": …}`), `services/execution.py` (`tool.execute.capability`), `routes/auth.py` (`REFRESH_COOKIE_PATH = "/api/v1/auth"`), `docker/caddy/Caddyfile` path table, `postgres/migrations/016-per-user-connector-permissions.sql` (per-user `connector_permissions`), `rg` for `from adapters` under `orchestrator/services/` and `orchestrator/routes/` (no matches), `docker-compose.yml` (no mock-capability service), and `clients/lumogis-web` routes under `/me/*` and `/admin/*`. **§19** frames extension work as **five practical families** (plus how lower-level pieces compose); it aligns with `ARCHITECTURE.md` / `CONTRIBUTING.md`, not a parallel architecture.
 
@@ -282,10 +282,10 @@ Lumogis maps code to **five** pillars ([`ARCHITECTURE.md`](../ARCHITECTURE.md)):
 
 | Phase | Status |
 | --- | --- |
-| **Phase 2** mobile UX | **Next** recommended chunk—[extracted plan](architecture/cross-device-web-phase-2-mobile-ux-plan.md) (2A–2D) |
-| **Phase 3** PWA / bounded caching | **Open** (no `src/pwa/` tree as of reconciliation) |
-| **Phase 4** Web Push + background approvals | **Open** (server routes may exist; **client** SW/opt-in **not** done—do not conflate with `/me/notifications` façade) |
-| **Phase 5** capture | **Open** (stubs; different from remediation Phase 5) |
+| **Phase 2** mobile UX | **Shipped** (MVP)—[extraction closeout](architecture/cross-device-web-phase-2-mobile-ux-plan.md) (**2A–2D**) |
+| **Phase 3** PWA / bounded caching | **Partial** — `clients/lumogis-web/src/pwa/` (**`sw.ts`**, manifest, precache + push boundary); **not** full offline product |
+| **Phase 4** Web Push + notifications | **Partial** — [Phase **4** extraction](architecture/cross-device-web-phase-4-web-push-plan.md) closed **4A–4E**; **`ACTION_EXECUTED`→push** deferred (**FP-053**) |
+| **Phase 5** capture | **Partial** — [Phase **5** extraction](architecture/cross-device-web-phase-5-capture-plan.md) closed MVP (**QuickCapture** **`/capture`**); **semantic_search** still **`documents`**-only vs indexed captures (**FP-TBD-5.1** class gap—see [audit **2026-05-02**](architecture/product-roadmap-reconciliation-audit-2026-05-02.md)) |
 | **Phase 6** Tauri stub | **Deferred / stub** |
 
 ---
@@ -354,7 +354,7 @@ Lumogis maps code to **five** pillars ([`ARCHITECTURE.md`](../ARCHITECTURE.md)):
 
 ## 17. Current roadmap and status
 
-**Status as of 2026-04-26:** The table below reflects repository and closeout docs at that date; prefer **§21** links and live code for drift after that.
+**Status as of 2026-05-03:** Cross-device **Phase 2–5 MVP** extractions are closed in-repo; **§13** phase table and [`product-roadmap-reconciliation-audit-2026-05-02.md`](architecture/product-roadmap-reconciliation-audit-2026-05-02.md) carry backlog nuance (**FP-053**, capture ↔ search parity, etc.).
 
 | Area | Status | Notes |
 | --- | --- | --- |
@@ -364,8 +364,8 @@ Lumogis maps code to **five** pillars ([`ARCHITECTURE.md`](../ARCHITECTURE.md)):
 | Password management foundation | **Shipped** | [ADR 029](decisions/029-self-hosted-account-password-management.md) |
 | Admin user import/export UI | **Shipped** | Admin → Users |
 | Cross-device Web Phase 0–1 | **Shipped** | v1 façade + Caddy same-origin |
-| Cross-device Web **Phase 2** | **Next** | Mobile UX—[plan](architecture/cross-device-web-phase-2-mobile-ux-plan.md) |
-| PWA / Web Push / Capture (parent 3–5) | **Open** | Distinct from remediation 4/5 |
+| Cross-device Web **Phase 2** | **Shipped** (MVP) | [Extraction](architecture/cross-device-web-phase-2-mobile-ux-plan.md) |
+| Cross-device Web **Phases 3–5** (parent) | **Partial** — MVP shipped | PWA spine + Web Push MVP + Capture/QuickCapture—see **§13**; follow-ups remain |
 | Legacy admin replacement | **Deferred** | Link-out still |
 | Email forgot-password | **Deferred** | SMTP / abuse scope |
 

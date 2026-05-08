@@ -21,4 +21,4 @@ self-hosted remediation plan (`docs/architecture/lumogis-self-hosted-platform-re
 | **Transport (catalog)** | `llm_loop` — in `services.tools.TOOL_SPECS` / `TOOLS`; `mcp_surface` — MCP clients; `catalog_only` — listed for diagnostics (capabilities, or actions without a tool). |
 | **Availability** | OOP tools use the registry’s health flag. **`permission_mode`** on catalog / `GET /api/v1/me/tools` is resolved per user when `connector` is known (`ask` / `do` / `blocked` / `unknown` from `get_connector_mode`); MCP surface rows stay `unknown`. Execution gates are unchanged. |
 
-**See also:** `docs/architecture/plugin-imports.md` (plugin import allow-list), `ARCHITECTURE.md` (MCP and capability sections).
+**See also:** `docs/architecture/plugin-imports.md` (plugin import allow-list), `ARCHITECTURE.md` (MCP and capability sections), `docs/decisions/034-agent-harness-foundation-terminology-and-boundaries.md` (Agent Harness Foundation terminology and boundaries).
