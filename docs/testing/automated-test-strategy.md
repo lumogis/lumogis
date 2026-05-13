@@ -1,7 +1,7 @@
 # Automated testing strategy
 
-Last reviewed: 2026-05-02  
-Verified against commit: 98f02b1
+Last reviewed: 2026-05-13  
+Verified against commit: ca83054
 
 Lumogis ships a **permanent, layered** automated test setup. Contributors should run the layers that match their change before opening a PR; maintainers rely on the same targets for release confidence.
 
@@ -29,7 +29,22 @@ Lumogis ships a **permanent, layered** automated test setup. Contributors should
 ## CI vs local
 
 - **CI today:** `ruff check` / `ruff format --check` on `orchestrator/`, `pytest` on `orchestrator/tests/`, `pytest` on `stack-control/test_main.py`.
-- **Not in default CI:** Docker integration, Playwright, KG image tests, and parity — not because they are optional forever, but because they need heavier runners; contributors still run them when touching those surfaces, and the Makefile remains the single catalog of commands.
+- **Not in default CI:** Docker integration, Playwright, KG image tests, and parity — not because they are optional forever, but because they need heavier runners; contributors on **`dev`** still run the **relevant** subset when touching those surfaces. **Maintainers** run the **full** `make verify-public-rc-full` on the **release line** before treating `main` as publish-ready.
+
+## Release gates (LUM-225)
+
+These Makefile targets are for **maintainers on `main`** (or a `promote/clean-main` branch) before running `/publish-private-main-to-public`. They require Docker, `.env` bootstrapped from `.env.example`, and for the full gate: Playwright smoke credentials.
+
+| Layer | Command | Prerequisites |
+| --- | --- | --- |
+| **RC smoke gate** | `make verify-public-rc` | Docker; `.env` from `.env.example`; no running Core required for unit layers |
+| **RC full gate** | `make verify-public-rc-full` | As above + `LUMOGIS_WEB_SMOKE_EMAIL` / `LUMOGIS_WEB_SMOKE_PASSWORD` for Playwright |
+
+`verify-public-rc` chains (in order): `scripts/check-main-hygiene.sh` → `compose-policy-check` → `compose-test` → `web-codegen-check` (skippable via `VERIFY_PUBLIC_RC_SKIP_WEB_CODEGEN_CHECK=1`) → `web-lint` → `web-test` → `web-build` → `scripts/integration-public-rc.sh full-cycle` → `scripts/create-upstream-export-tree.sh` → `scripts/check-public-export.sh`.
+
+`verify-public-rc-full` runs the full smoke chain first, then adds `web-e2e-prove` (skippable via `VERIFY_PUBLIC_RC_SKIP_WEB_E2E=1`) and optional `test-graph-parity` (opt-in via `LUMOGIS_RC_GRAPH_PARITY=1`).
+
+Integration tests run via `scripts/integration-public-rc.sh full-cycle` against the triple-merged Compose stack (`docker-compose.yml` + `docker-compose.test.yml` + `docker-compose.public-rc-stack.yml`) using the `integration and public_rc` pytest marker predicate.
 
 ## References
 

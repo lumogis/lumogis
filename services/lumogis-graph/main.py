@@ -59,7 +59,7 @@ from __version__ import __version__
 # correlation + redaction in the orchestrator; replicating it here was
 # explicitly out of scope (plan D2 — separate sys.path + separate
 # requirements.txt makes byte-for-byte reuse impossible without a
-# shared-package refactor first). See docs/structured-logging.md.
+# shared-package refactor first). See docs/guides/structured-logging.md.
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO").upper(),
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",

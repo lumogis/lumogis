@@ -654,7 +654,7 @@ class TestItemNotFound:
 # ---------------------------------------------------------------------------
 # 13. B9 — review_queue_per_user_approval_scope
 #
-# Audit B9 (`docs/private/MULTI-USER-AUDIT-RESPONSE.md` row B9): only the
+# Audit B9 (`docs/private/archive/MULTI-USER-AUDIT-RESPONSE.md` row B9): only the
 # *originating user* OR an admin may approve a review-queue item.
 # Non-admin callers acting on someone else's item must be refused with 403.
 # Admins may act on behalf of any user; the admin identity is recorded in

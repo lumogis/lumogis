@@ -9,9 +9,13 @@ WORKDIR /app
 COPY package.json ./
 RUN npm install --no-audit --no-fund
 
+COPY openapi.snapshot.json ./
+COPY scripts/codegen.mjs scripts/codegen.mjs
+
 COPY tsconfig.json tsconfig.node.json vite.config.ts index.html ./
 COPY public ./public
 COPY src ./src
+RUN npm run codegen
 RUN npm run build
 
 FROM nginx:alpine

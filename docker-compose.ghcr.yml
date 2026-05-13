@@ -1,0 +1,22 @@
+# docker-compose.ghcr.yml — merge AFTER docker-compose.yml for pre-built
+# Core + Web images from ghcr.io/lumogis/.
+# Compose v2 merge: use `build: !reset null` to drop inherited `build:` from
+# docker-compose.yml so Compose pulls the published image instead of building.
+#
+# Quickstart:
+#   cp .env.example .env
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.ghcr.yml \
+#     docker compose up -d --pull always
+#
+# Pin to a specific release (no leading v — matches metadata-action
+# type=semver output e.g. 1.2.3 not v1.2.3):
+#   IMAGE_TAG=1.2.3 COMPOSE_FILE=docker-compose.yml:docker-compose.ghcr.yml \
+#     docker compose up -d --pull always
+
+services:
+  orchestrator:
+    image: ghcr.io/lumogis/lumogis-orchestrator:${IMAGE_TAG:-latest}
+    build: !reset null
+  lumogis-web:
+    image: ghcr.io/lumogis/lumogis-web:${IMAGE_TAG:-latest}
+    build: !reset null

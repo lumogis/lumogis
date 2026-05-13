@@ -1,6 +1,6 @@
 ![Lumogis](branding/readme-banner.svg)
 
-**[Quickstart](#getting-started)** · **[Architecture](#architecture)** · **[Reference manual](docs/LUMOGIS_REFERENCE_MANUAL.md)** · **[Extending Lumogis](docs/extending-the-stack.md)** · **[Community Plugins](COMMUNITY-PLUGINS.md)** · **[Security](SECURITY.md)**
+**[Quickstart](#getting-started)** · **[Architecture](#architecture)** · **[Reference manual](docs/LUMOGIS_REFERENCE_MANUAL.md)** · **[Extending Lumogis](docs/extending/extending-the-stack.md)** · **[Community Plugins](COMMUNITY-PLUGINS.md)** · **[Security](SECURITY.md)**
 
 # lumogis
 
@@ -40,7 +40,9 @@ The source code is **[AGPL-3.0-only](LICENSE)**. There is no Lumogis-operated Sa
 | Signals | RSS, pages, calendars, digest—[`signals/`](orchestrator/signals/) |
 | Actions | **[Ask / Do](#security-model-ask-and-do)** with audit logging—[`actions/`](orchestrator/actions/) |
 | Models | Local via Ollama; cloud via adapters and `config/models.yaml` |
-| Plugins | **[Optional packages](docs/examples/example_plugin/)** under [`orchestrator/plugins/`](orchestrator/plugins/)—loaded at startup |
+| Plugins | **[Optional packages](docs/extending/examples/example_plugin/)** under [`orchestrator/plugins/`](orchestrator/plugins/)—loaded at startup |
+
+See the full [capabilities overview](docs/capabilities.md).
 
 ---
 
@@ -93,6 +95,30 @@ First-party SPA: **[`clients/lumogis-web/`](clients/lumogis-web/)**, served behi
 
 ## Getting started
 
+### Quickstart from published images (recommended)
+
+Prerequisites: Docker Desktop 4.x+ or Docker Engine with Compose v2.x (required for docker-compose.ghcr.yml overlay support).
+
+```bash
+cp .env.example .env
+# Edit .env — set LUMOGIS_PUBLIC_ORIGIN and any required secrets
+COMPOSE_FILE=docker-compose.yml:docker-compose.ghcr.yml \
+  docker compose up -d --pull always
+```
+
+Images are pulled from ghcr.io/lumogis/ (public — no login required).
+
+To pin to a specific release (omit the leading v):
+
+```bash
+IMAGE_TAG=1.2.3 COMPOSE_FILE=docker-compose.yml:docker-compose.ghcr.yml \
+  docker compose up -d --pull always
+```
+
+> **First-time setup note:** GHCR packages must be set to Public after the first workflow push. Go to the repository Packages page, open each package (lumogis-orchestrator, lumogis-web), and set visibility to Public under Package settings.
+
+### For contributors (build from source)
+
 **Linux / macOS**
 
 ```bash
@@ -115,7 +141,7 @@ Open **http://localhost/** after health checks settle. Inspect **`.env.example`*
 
 **Prerequisites:** Git + Docker Desktop (see **`.env.example`** for platform notes). End users do **not** need Python or Make.
 
-**Rough sizing** — RAM/VRAM rises quickly with bigger local models or optional **`RERANKER_BACKEND=bge`**; see **`docs/gpu-setup.md`** and the capacity discussion in **`docs/LUMOGIS_REFERENCE_MANUAL.md`**.
+**Rough sizing** — RAM/VRAM rises quickly with bigger local models or optional **`RERANKER_BACKEND=bge`**; see **`docs/guides/gpu-setup.md`** and the capacity discussion in **`docs/LUMOGIS_REFERENCE_MANUAL.md`**.
 
 ---
 
@@ -129,8 +155,8 @@ Open **http://localhost/** after health checks settle. Inspect **`.env.example`*
 | `lumogis-graph` service | … + **`docker-compose.premium.yml`** + `GRAPH_MODE=service` | Historical filename—**[`services/lumogis-graph/README.md`](services/lumogis-graph/README.md)** |
 | LiteLLM | **`docker-compose.litellm.yml`** | Unified proxy overlay |
 | Activepieces | **`docker-compose.activepieces.yml`** | Automation UI |
-| GPU | **`docker-compose.gpu.yml`** | NVIDIA Container Toolkit (**[`docs/gpu-setup.md`](docs/gpu-setup.md)**) |
-| Speech-to-text sidecar | **`docker-compose.stt.yml`** | Speaches-backed **`POST /api/v1/voice/transcribe`**—see overlay comments and **`docs/troubleshooting.md`** |
+| GPU | **`docker-compose.gpu.yml`** | NVIDIA Container Toolkit (**[`docs/guides/gpu-setup.md`](docs/guides/gpu-setup.md)**) |
+| Speech-to-text sidecar | **`docker-compose.stt.yml`** | Speaches-backed **`POST /api/v1/voice/transcribe`**—see overlay comments and **`docs/guides/troubleshooting.md`** |
 | LibreChat | `COMPOSE_PROFILES=librechat` (often default in **`.env.example`** for continuity) | **[`docker-compose.yml`](docker-compose.yml)** profile comments |
 
 Merge overlays with **`COMPOSE_FILE`** in `.env` (patterns in **`.env.example`**).
@@ -145,10 +171,10 @@ Operational truth lives in **`.env.example`** (committed) and **`orchestrator/co
 
 ## Extending Lumogis
 
-- **Compose / capability manifests / MCP bridging:** **`docs/extending-the-stack.md`**
+- **Compose / capability manifests / MCP bridging:** **`docs/extending/extending-the-stack.md`**
 - **ADR for ecosystem plumbing:** **`docs/decisions/010-ecosystem-plumbing.md`**
 - **Operator verification:** integration tests and stack checks in **[`CONTRIBUTING.md`](CONTRIBUTING.md)** and **[`docs/testing/automated-test-strategy.md`](docs/testing/automated-test-strategy.md)**
-- **Optional local STT (Speaches overlay):** **`docker-compose.stt.yml`**, **`docs/gpu-setup.md`**, and **`docs/troubleshooting.md`**
+- **Optional local STT (Speaches overlay):** **`docker-compose.stt.yml`**, **`docs/guides/gpu-setup.md`**, and **`docs/guides/troubleshooting.md`**
 
 ---
 
@@ -166,7 +192,7 @@ See **[CONTRIBUTING.md](CONTRIBUTING.md)** — code boundaries (“services neve
 
 **Production-ready?** Solid self-hosted/developer preview—not a turnkey consumer appliance; run it, tighten auth, observe logs.
 
-More depth: **`docs/troubleshooting.md`**, **`docs/LUMOGIS_REFERENCE_MANUAL.md`**.
+More depth: **`docs/guides/troubleshooting.md`**, **`docs/LUMOGIS_REFERENCE_MANUAL.md`**.
 
 ---
 
@@ -174,7 +200,7 @@ More depth: **`docs/troubleshooting.md`**, **`docs/LUMOGIS_REFERENCE_MANUAL.md`*
 
 - **Community adapters/plugins:** **`COMMUNITY-PLUGINS.md`**
 - **Report vulnerabilities:** **`SECURITY.md`** (no public tickets for undisclosed bugs)
-- **Backups / portability:** households use **`POST /api/v1/me/export`** and related admin import flows — manifest and refusal semantics in **`docs/per-user-export-format.md`** (**`GET /api/v1/admin/export`** is **`410 Gone`** by design; see **`CHANGELOG.md`** and per-user export ADRs).
+- **Backups / portability:** households use **`POST /api/v1/me/export`** and related admin import flows — manifest and refusal semantics in **`docs/guides/per-user-export-format.md`** (**`GET /api/v1/admin/export`** is **`410 Gone`** by design; see **`CHANGELOG.md`** and per-user export ADRs).
 - **Publishable tree hygiene** (`scripts/create-upstream-export-tree.sh`, `scripts/check-public-export.sh`): **[`docs/release/public-agpl-release-workflow.md`](docs/release/public-agpl-release-workflow.md)** and **`CONTRIBUTING.md`**.
 
 Lumogis is **`AGPL-3.0-only`** — **`LICENSE`** and SPDX headers (`AGPL-3.0-only`).

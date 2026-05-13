@@ -114,7 +114,7 @@ services:
       CUSTOM_FOOTER: ${CUSTOM_FOOTER:-[Dashboard & Settings](http://localhost:8000/dashboard)}
       # LibreChat hides email sign-up unless this is true (see routes/config registrationEnabled).
       # Default `false` per family-LAN plan D6 + D15 — open LAN registration
-      # is the P0 audit finding A8 (docs/private/MULTI-USER-AUDIT.md). The
+      # is the P0 audit finding A8 (docs/private/archive/MULTI-USER-AUDIT.md). The
       # supported multi-user path is Core-owned auth via /web/ + /api/v1/auth/*
       # (plan §24), not LibreChat self-signup.
       ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-false}

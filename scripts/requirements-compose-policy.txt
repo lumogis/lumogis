@@ -1,0 +1,2 @@
+# LUM-43 compose policy — Pass A YAML scan (check_compose_policy.py)
+PyYAML>=6.0.1

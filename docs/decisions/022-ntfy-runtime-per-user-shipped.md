@@ -45,7 +45,7 @@ The ntfy notifier resolves its delivery config per call from the ADR 018 `user_c
   - `SIGNAL_DIGEST_ENABLED`, `SIGNAL_DIGEST_INTERVAL`, `SIGNAL_DIGEST_COUNT` — pre-existing; `_COUNT` semantics now per user.
 - **HTTP surface (no additions):** the substrate's `PUT/GET/DELETE /api/v1/me/connector-credentials/ntfy` and admin-on-behalf `/api/v1/admin/users/{user_id}/connector-credentials/ntfy` are the operator-facing CRUD; no per-connector specialisation.
 - **Tests:** `orchestrator/tests/test_ntfy_runtime.py` (auth-mode matrix, env fallback, decrypt-failure propagation), `orchestrator/tests/test_ntfy_notifier.py` (per-call resolution, domain-failure mapping, HTTP success/non-2xx/network-error, Authorization gating), `orchestrator/tests/test_signal_digest.py` (per-user fanout enumeration, empty-window skip), `orchestrator/tests/test_signal_processor.py` extended to pin `notify(..., user_id=signal.user_id)` wiring.
-- **Docs:** `docs/extending-the-stack.md` ntfy section rewritten lead-with-per-user; `.env.example` ntfy block reframed with explicit `# AUTH_ENABLED=false fallback only` annotations on `NTFY_TOPIC` / `NTFY_TOKEN`.
+- **Docs:** `docs/extending/extending-the-stack.md` ntfy section rewritten lead-with-per-user; `.env.example` ntfy block reframed with explicit `# AUTH_ENABLED=false fallback only` annotations on `NTFY_TOPIC` / `NTFY_TOKEN`.
 
 ### What was NOT changed (explicitly deferred)
 
@@ -84,7 +84,7 @@ The ntfy notifier resolves its delivery config per call from the ADR 018 `user_c
 - If a second notification channel ships (Web Push, Matrix, Apprise), revisit whether `NOTIFIER_BACKEND` should remain a deployment switch or become a per-user choice. The current contract assumes one channel per deployment.
 - If household-broadcast notifications become a product requirement, define the `user_id="__system__"` sentinel resolution path (most likely: a credential row keyed on the sentinel, falling back to a `NTFY_HOUSEHOLD_TOPIC` env var). Do NOT add `user_id: str | None` to the Protocol.
 - If `NTFY_URL` ever has to vary per user (e.g. household runs two ntfy servers for redundancy), drop the `payload.url or NTFY_URL` precedence chain and require `payload.url` explicitly under `AUTH_ENABLED=true`.
-- If operators want a friendlier ntfy-specific form (separate `topic` / `token` fields, "open in ntfy app" QR helper, mobile-friendly setup walk-through), build it as a connector-specialised view in `orchestrator/web/index.html` against the ADR 020 credential-management surface — not a new substrate.
+- If operators want a friendlier ntfy-specific form (separate `topic` / `token` fields, "open in ntfy app" QR helper, mobile-friendly setup walk-through), build it as a connector-specialised view in `orchestrator/dashboard/web_index.html` against the ADR 020 credential-management surface — not a new substrate.
 
 ## Status history
 

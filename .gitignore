@@ -13,6 +13,11 @@ venv/
 # release trees. See docs/release/public-agpl-release-workflow.md.
 .cursor/
 
+# Claude Code — local workspace (slash commands); corpus lives in
+# lumogis-devtools/claude/ (symlink). Same split as .cursor.
+.claude
+.claude/
+
 # Plugin packages mounted at deploy time — not tracked in core.
 # Any directory under orchestrator/plugins/ that is not part of core
 # should be added here or kept outside this repository entirely.
@@ -20,6 +25,8 @@ orchestrator/plugins/*/
 # Core-owned KG compatibility shims (see orchestrator/plugins/graph/).
 !orchestrator/plugins/graph/
 !orchestrator/plugins/graph/**
+# Negation above would track __pycache__; keep bytecode out of status.
+orchestrator/plugins/graph/**/__pycache__/
 !orchestrator/plugins/__init__.py
 
 # ai-workspace runtime content — keep directory structure, not runtime data
@@ -40,15 +47,20 @@ config/librechat.yaml
 # Internal maintainer-only notes — not part of the distributed source tree
 AUDIT-REPORT.md
 REMEDIATION-PLAN.md
-# docs/private/ — tracked on private main; stripped from the public AGPL tree by
+# docs/private/ — tracked on private main/dev; stripped from the public AGPL tree by
 # scripts/check-public-export.sh (do not gitignore — ignored paths cannot be added reliably).
-# Operator runbooks: same content lives on branch `dev` (tracked). `main` omits them by policy.
-docs/dev-cheatsheet.md
-docs/connect-and-verify.md
-
+#
+# Operator runbooks (`docs/dev-cheatsheet.md`, `docs/connect-and-verify.md`): committed on
+# branch `dev` only. Branch `main` keeps both paths in .gitignore and does not track them.
+# Merges from `main` into `dev` may re-add those ignore lines — remove them on `dev` so the
+# runbooks stay tracked.
 # IDE / OS
 .idea/
 *.swp
 .DS_Store
 docker-compose.override.yml
+
+# Compose policy test artefacts (local dev only)
+docker-compose.test-policy-adversarial*.yml
+
 lumogis-data/

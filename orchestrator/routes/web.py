@@ -35,7 +35,7 @@ from fastapi.responses import RedirectResponse
 
 _log = logging.getLogger(__name__)
 
-_WEB_HTML = Path(__file__).parent.parent / "web" / "index.html"
+_WEB_HTML = Path(__file__).parent.parent / "dashboard" / "web_index.html"
 
 router = APIRouter(tags=["web"])
 
@@ -57,6 +57,6 @@ def web_index() -> FileResponse:
     if not _WEB_HTML.exists():
         raise HTTPException(
             status_code=500,
-            detail="Web shell not found. Check that orchestrator/web/index.html exists.",
+            detail="Web shell not found. Check that orchestrator/dashboard/web_index.html exists.",
         )
     return FileResponse(_WEB_HTML, media_type="text/html")

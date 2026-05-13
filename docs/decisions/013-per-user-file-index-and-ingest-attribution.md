@@ -41,7 +41,7 @@ The migration claims the `011-…` slot. The in-flight `personal_shared_system_m
 
 - **No offline `backfill_qdrant_point_ids.py` script** — there is no live data to re-key.
 - **No restore-path warning in `routes/admin.py`** — there are no pre-namespace backups to warn about.
-- **No expanded operator checklist beyond** **`docs/troubleshooting.md`** and integration tests — fresh installs land directly on the end-state schema.
+- **No expanded operator checklist beyond** **`docs/guides/troubleshooting.md`** and integration tests — fresh installs land directly on the end-state schema.
 - **No `entity_relations.evidence_id` cleanup** — adjacent issue, not required to close B11/B12. Folded in only if it turns out to be ≤ ~5 lines while the related code is open; otherwise tracked as the `entity_relations_evidence_dedup` follow-up.
 - **No `audio_memos` per-user namespace** — no live writer exists; deferred to whichever chunk lands the audio-capture route.
 

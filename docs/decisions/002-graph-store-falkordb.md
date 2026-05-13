@@ -26,7 +26,7 @@ run nothing extra.
 This is the same pattern used throughout the stack: each optional capability
 (graph, workflow automation, LLM proxy) has a Protocol in `ports/`, a reference
 adapter in `adapters/`, and an optional Docker Compose overlay. See
-`docs/extending-the-stack.md` for the full list.
+`docs/extending/extending-the-stack.md` for the full list.
 
 ### Why FalkorDB as the reference backend
 

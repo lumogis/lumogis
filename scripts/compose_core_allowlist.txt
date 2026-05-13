@@ -1,0 +1,18 @@
+# LUM-43 — Services allowed to declare Core Postgres / Qdrant credentials (or env_file: .env
+# that may contain them). One name per line. Keep in sync with docker-compose.yml + overlays.
+#
+orchestrator
+postgres
+qdrant
+stack-control
+lumogis-web
+caddy
+ollama
+mongodb
+librechat
+lumogis-graph
+falkordb
+playwright
+litellm
+activepieces
+redis

@@ -8,5 +8,5 @@
 #
 # For distributable handlers, prefer packaging them as a plugin under
 # orchestrator/plugins/<name>/ so they can be mounted independently.
-# See docs/examples/example_plugin/ for a starting template and
+# See docs/extending/examples/example_plugin/ for a starting template and
 # CONTRIBUTING.md for the full guide.

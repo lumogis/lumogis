@@ -7,8 +7,8 @@
 **Scope:** Describes Lumogis **as of** consolidation after cross-device Lumogis Web Phase 0/1, Admin & Me shell closure, self-hosted architecture remediation Phases 0–5 (household surfaces + capability scaffolding), password-management foundation, admin user import/export UI, and extraction of the **parent** Web Phase 2 (mobile UX) plan.  
 **Authority:** Prefer **closeout reviews**, **this manual §17**, and **ADRs** over stale plan prose when sources disagree.
 
-Last reviewed: 2026-05-08  
-Verified against commit: e23f9d0
+Last reviewed: 2026-05-11  
+Verified against commit: 87cc703
 
 **Code cross-check (spot audit):** Key claims were traced to `orchestrator/config.py` (`get_tool_catalog_enabled`), `orchestrator/loop.py` + `orchestrator/services/unified_tools.py` (tool-list merge + teardown), `orchestrator/services/capability_http.py` (`graph_query_tool_proxy_call` / `{"input": …}`), `orchestrator/services/execution.py` (`tool.execute.capability`), `orchestrator/routes/auth.py` (`REFRESH_COOKIE_PATH = "/api/v1/auth"`), `docker/caddy/Caddyfile` path table, `postgres/migrations/016-per-user-connector-permissions.sql` (per-user `connector_permissions`), `rg` for `from adapters` under `orchestrator/services/` and `orchestrator/routes/` (no matches), `docker-compose.yml` (no mock-capability service), and `clients/lumogis-web` routes under `/me/*` and `/admin/*`. **§19** frames extension work as **five practical families** (plus how lower-level pieces compose); it aligns with `ARCHITECTURE.md` / `CONTRIBUTING.md`, not a parallel architecture.
 
@@ -58,7 +58,7 @@ This manual uses **remediation** vs **cross-device Web** explicitly to avoid con
 | **Auditability** | Important actions leave a trail. | Append-only `audit_log`; structured logging—[ADR 019](decisions/019-structured-audit-logging.md). |
 | **Modularity** | Swap vector store, LLM, etc., via adapters and ports. | `ports/` + `config.py` factories—`ARCHITECTURE.md`. |
 | **Optional capabilities** | Heavy or isolated features can run **beside** Core, not inside its DB. | HTTP manifest at `GET /capabilities`, bearer trust—[ADR 010](decisions/010-ecosystem-plumbing.md), [011](decisions/011-lumogis-graph-service-extraction.md). |
-| **Agentic Core direction** | Future agents remain bounded roles under Core policy, not autonomous authority. | Bounded agents and tools stay subject to Ask/Do, audit, and catalog policy—follow shipped ADRs and backlog execution order. |
+| **Bounded agents under Core policy** | Assistants stay permission-gated and audited—not unconstrained operators beside household controls. | Tool loops honour Ask/Do, audit, and catalog behaviour documented in shipped ADRs and extension guidance below. |
 | **No full-corpus cloud upload by default** | Your entire indexed library is not bulk-uploaded to an LLM vendor. | If a **cloud LLM** is configured, **composed prompts + retrieved excerpts** may leave the machine; **Qdrant/Postgres and raw files stay local** unless another feature sends them out. **Connectors** intentionally reach **their** configured services. |
 
 ---
@@ -227,7 +227,7 @@ Lumogis maps code to **five** pillars ([`ARCHITECTURE.md`](../ARCHITECTURE.md)):
 
 **Notifications** — Daily digest patterns via ntfy and connector stack; **Web Push** product flows are **not** the same as the read-only **`/me/notifications`** settings façade (see §13 and reconciliation doc).
 
-**Implemented vs planned:** Core signals + digest + routines are **implemented** in the household self-hosted sense. **Cross-device Web Phase 4** (push client + service worker + background approvals) remains **open** per **§13**.
+**Implemented vs planned:** Core signals + digest + routines are **implemented** in the household self-hosted sense. Browser **Web Push** plumbing (**subscriptions**, minimal payloads, service-worker **`push`**/**`notificationclick`** handling with explicit opt-in from notifications settings) is **shipped**—see **§13**; pushing notifications for **every** connector/action outcome category remains **incomplete** compared to daily digest and **ntfy** paths.
 
 ---
 
@@ -270,6 +270,7 @@ Lumogis maps code to **five** pillars ([`ARCHITECTURE.md`](../ARCHITECTURE.md)):
 | Area | Routes / behaviour |
 | --- | --- |
 | Chat / search / approvals | Core product pages (Phase 1 baseline) |
+| Capture | **`/capture`** (QuickCapture UX) and **`/api/v1/captures`** staging APIs (create/list/update/delete, attachments, transcription hooks, index submission) |
 | **Me** | `/me/profile` (password change), `/me/connectors`, `/me/permissions`, `/me/llm-providers`, `/me/mcp-tokens`, `/me/notifications`, `/me/export`, `/me/tools-capabilities` |
 | **Admin** | `/admin/users` (import/export, password reset), `/admin/connector-credentials`, `/admin/connector-permissions`, `/admin/mcp-tokens`, `/admin/audit`, `/admin/diagnostics` |
 
@@ -284,15 +285,15 @@ Lumogis maps code to **five** pillars ([`ARCHITECTURE.md`](../ARCHITECTURE.md)):
 | --- | --- |
 | **Phase 2** mobile UX | **Shipped** (MVP) (**2A–2D**) |
 | **Phase 3** PWA / bounded caching | **Partial** — `clients/lumogis-web/src/pwa/` (**`sw.ts`**, manifest, precache + push boundary); **not** full offline product |
-| **Phase 4** Web Push + notifications | **Partial** — **4A–4E** shipped; **`ACTION_EXECUTED`→push** deferred (**FP-053**) |
-| **Phase 5** capture | **Partial** — MVP (**QuickCapture** **`/capture`**); **semantic_search** still **`documents`**-only vs indexed captures (**FP-TBD-5.1** class gap—see **§17**) |
+| **Phase 4** Web Push + notifications | **Partial** — subscription APIs + sender/service-worker handling shipped; **automatic push mirroring every connector/action outcome** not wired |
+| **Phase 5** capture | **Partial** — MVP (**QuickCapture** **`/capture`** plus **`/api/v1/captures`** staging APIs); **semantic_search** still **`documents`**-biased versus indexed captures |
 | **Phase 6** Tauri stub | **Deferred / stub** |
 
 ---
 
 ## 14. APIs and surfaces
 
-- **`/api/v1/*`** — Stable **Lumogis Web** façade (auth, me, admin, notifications subscription API, captures stub, etc.). OpenAPI: orchestrator `/openapi.json`; committed snapshot `clients/lumogis-web/openapi.snapshot.json`; codegen `npm run codegen` / `make web-codegen`. **Regenerate snapshot** (from repo root): `cd orchestrator && python -m scripts.dump_openapi --pretty --sort-keys --out ../clients/lumogis-web/openapi.snapshot.json` (same as `test_api_v1_openapi_snapshot.py`).
+- **`/api/v1/*`** — Stable **Lumogis Web** façade (auth, me, admin, notifications subscription API, **captures** CRUD and attachments under **`/api/v1/captures`**, **`POST /api/v1/voice/transcribe`** when speech-to-text is enabled, etc.). OpenAPI: orchestrator `/openapi.json`; committed snapshot `clients/lumogis-web/openapi.snapshot.json`; codegen `npm run codegen` / `make web-codegen`. **Regenerate snapshot** (from repo root): `cd orchestrator && python -m scripts.dump_openapi --pretty --sort-keys --out ../clients/lumogis-web/openapi.snapshot.json` (same as `test_api_v1_openapi_snapshot.py`).
 - **Legacy routes** — `/ask`, `/ingest`, `/search`, OpenAI-compatible **`/v1/*`** paths (used by optional LibreChat and similar clients), root admin pages—still present for compatibility.
 - **`/mcp/`** — MCP streamable HTTP (trailing slash matters for some clients).
 - **`/events`** — SSE stream.
@@ -305,11 +306,12 @@ Lumogis maps code to **five** pillars ([`ARCHITECTURE.md`](../ARCHITECTURE.md)):
 | Group | Examples |
 | --- | --- |
 | Auth | `/api/v1/auth/login`, `refresh`, `logout`, `me` |
-| Me | `/api/v1/me/*` (profile, connectors, tools catalog, export, password, …) |
+| Me | `/api/v1/me/*` (profile, connectors, tools catalog, export, password, …); **`POST /api/v1/voice/transcribe`** when STT enabled |
 | Admin | `/api/v1/admin/*` (users, diagnostics, user-imports, …) |
 | Audit | Action audit via actions routes + `audit_log`-backed admin views |
 | Notifications | `/api/v1/me/notifications` (read façade); `/api/v1/notifications/*` (push subscription plumbing) |
 | Tools / capabilities | Tool execution via chat/`run_tool`; catalog via `GET /api/v1/me/tools` |
+| Capture | `/api/v1/captures`, `/api/v1/captures/text`, `/api/v1/captures/upload`, `/api/v1/captures/{id}`, attachments, transcribe, index |
 | Chat / search / KG | `/v1/chat/completions`, data routes, graph routes when enabled |
 
 ---
@@ -317,6 +319,8 @@ Lumogis maps code to **five** pillars ([`ARCHITECTURE.md`](../ARCHITECTURE.md)):
 ## 15. Deployment and local development
 
 **Stack:** `docker-compose.yml` — orchestrator, Postgres, Qdrant, Ollama, stack-control, **Caddy**, **lumogis-web**; optional **LibreChat** profile (legacy-compatible chat); optional FalkorDB / premium / GPU / dev overlays.
+
+**Pre-built Core + Web (GHCR):** CI publishes **`ghcr.io/lumogis/lumogis-orchestrator`** and **`ghcr.io/lumogis/lumogis-web`** (amd64/arm64). Use merge file **`docker-compose.ghcr.yml`** so those two services pull images instead of local **`build:`** — **`COMPOSE_FILE=docker-compose.yml:docker-compose.ghcr.yml`**. Overlay merge requires **Docker Compose v2 / buildx toolchain new enough for `build: !reset null`** so inherited **`build`** is dropped (see **`docker-compose.ghcr.yml`** header comments). After the first workflow push, set each new package visibility to **Public** on GitHub (**Packages → package settings**) so anonymous **`docker pull`** works. Pin tags with **`IMAGE_TAG`** (semver from **`docker/metadata-action`** has **no leading `v`**, e.g. **`IMAGE_TAG=1.2.3`**). Operational record: [ADR 036](decisions/036-docker-image-ci-ghcr.md).
 
 **Environment:** Copy `.env.example` → `.env`; set `LUMOGIS_PUBLIC_ORIGIN`, `AUTH_ENABLED`, secrets per docs.
 
@@ -329,6 +333,7 @@ Lumogis maps code to **five** pillars ([`ARCHITECTURE.md`](../ARCHITECTURE.md)):
 | `make compose-test` | **No host pytest needed** — installs dev deps in container, runs orchestrator tests against mounted tree |
 | `make web-test` | Lumogis Web unit tests (`npm test`) |
 | `make web-build` | Production bundle (`npm run build`) |
+| `make compose-policy-check` | Compose merge policy (**LUM-43**) — validates **`docker-compose.yml`** + **`docker-compose.ghcr.yml`** |
 | `make mock-capability-test` | Mock capability service pytest |
 | `make web-codegen-check` | Drift check vs live OpenAPI (orchestrator must be up) |
 
@@ -354,13 +359,13 @@ Lumogis maps code to **five** pillars ([`ARCHITECTURE.md`](../ARCHITECTURE.md)):
 
 ## 17. Current roadmap and status
 
-**Status as of 2026-05-03:** Cross-device **Phase 2–5 MVP** work is reflected in-repo; **§13** and **§17** carry backlog nuance (**FP-053**, capture ↔ search parity, etc.).
+**Status as of 2026-05-11:** Cross-device **Phase 2–5 MVP** work is reflected in-repo; **§13** and **§17** capture remaining gaps (generic Web Push from arbitrary actions, capture versus document search parity, optional CI coverage).
 
 | Area | Status | Notes |
 | --- | --- | --- |
 | Remediation Phases 0–5 (platform) | **Sufficiently complete** to pause | Phase 4 household façades; Phase 5 capability scaffolding—closeout reviews |
 | Remediation Phase 6 | **Deferred** | Marketplace / mTLS / sandbox—not started |
-| Admin / Me shell (child plan) | **Complete** (product) | Optional CI e2e (`FP-047`) still open |
+| Admin / Me shell (child plan) | **Complete** (product) | Optional automated browser regression coverage still thin |
 | Password management foundation | **Shipped** | [ADR 029](decisions/029-self-hosted-account-password-management.md) |
 | Admin user import/export UI | **Shipped** | Admin → Users |
 | Cross-device Web Phase 0–1 | **Shipped** | v1 façade + Caddy same-origin |
@@ -542,6 +547,7 @@ MCP is **transport**. It exposes a **curated subset** of Core functions to exter
 
 - **[§19](#19-extending-lumogis-without-getting-lost)** — extension work grouped into five families (not an exhaustive per-construct checklist).  
 - [`README.md`](../README.md) — install, stack, optional LibreChat profile notes  
+- **[Capabilities](../capabilities.md)** — concise shipped-capability overview for contributors and self-hosters  
 - [`ARCHITECTURE.md`](../ARCHITECTURE.md) — pillars, Caddy routing, MCP, plugins  
 - [`CONTRIBUTING.md`](../CONTRIBUTING.md) — dev setup, `compose-test`, codegen  
 - [`testing/automated-test-strategy.md`](testing/automated-test-strategy.md) — CI vs integration / web / KG / browser suites  

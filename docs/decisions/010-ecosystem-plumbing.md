@@ -150,5 +150,5 @@ A summary of this debt has been added to `docs/decisions/DEBT.md` so it remains 
 
 - Implementation: `orchestrator/__version__.py`, `orchestrator/models/capability.py`, `orchestrator/services/capability_registry.py`, `orchestrator/mcp_server.py`, `orchestrator/routes/capabilities.py`, `orchestrator/auth.py`, `orchestrator/main.py`, `orchestrator/routes/admin.py`
 - Tests: `orchestrator/tests/test_capability.py`, `test_capability_registry.py`, `test_capability_health.py`, `test_mcp_tools.py`, `test_mcp_server.py`
-- Operator docs: [`ARCHITECTURE.md` § Ecosystem plumbing](../../ARCHITECTURE.md), [`docs/extending-the-stack.md` § Out-of-process capability services](../extending-the-stack.md), `README.md` § Extending the stack
+- Operator docs: [`ARCHITECTURE.md` § Ecosystem plumbing](../../ARCHITECTURE.md), [`docs/extending/extending-the-stack.md` § Out-of-process capability services](../extending/extending-the-stack.md), `README.md` § Extending the stack
 - Env: `.env.example` (`CAPABILITY_SERVICE_URLS`, `MCP_AUTH_TOKEN`)

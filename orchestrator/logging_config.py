@@ -37,7 +37,7 @@ Design (per plan D1, D5, D8, D9, D10, D11)
   ``uvicorn`` / ``uvicorn.error`` / ``uvicorn.access`` loggers get the
   same handler with ``propagate=False``. Operators must NOT pass
   ``--log-config`` to uvicorn (documented in
-  ``docs/structured-logging.md``).
+  ``docs/guides/structured-logging.md``).
 
 * **Fail-fast.** ``configure_logging`` raises ``RuntimeError`` for any
   unknown ``LOG_FORMAT`` or invalid ``LOG_LEVEL`` so a misconfigured
@@ -80,7 +80,7 @@ _REDACTED = "<redacted>"
 # investigator-friendly cross-referencing. Resolves the explicit
 # tension between plan Q3 ("bind mcp_token_id for correlation") and
 # plan Q7 ("redact any key containing 'token'"). See
-# ``docs/structured-logging.md`` § Redaction.
+# ``docs/guides/structured-logging.md`` § Redaction.
 _REDACT_ALLOWLIST: frozenset[str] = frozenset(
     {
         "user_id",

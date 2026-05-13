@@ -13,7 +13,7 @@ Family-LAN plan §2 binds the decision in two places:
   during the transition."
 
 The MULTI-USER audit ranks open registration as **A8 (P0, high impact /
-trivial exploit)** in ``docs/private/MULTI-USER-AUDIT.md`` — anyone on
+trivial exploit)** in ``docs/private/archive/MULTI-USER-AUDIT.md`` — anyone on
 the LAN can sign up for a LibreChat account and inherit shared
 orchestrator state because LibreChat is not (and is no longer planned
 to be) bridged into Core's per-user auth surface (plan §23).

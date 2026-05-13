@@ -29,7 +29,7 @@ becomes the outermost layer. ``correlation_middleware`` therefore runs
 ``request.state.user`` is populated. The tradeoff is that log lines
 emitted by ``auth_middleware``'s own early-return 401 paths do NOT
 carry ``request_id``; this is documented in
-``docs/structured-logging.md`` as an accepted scope choice for this
+``docs/guides/structured-logging.md`` as an accepted scope choice for this
 chunk.
 """
 

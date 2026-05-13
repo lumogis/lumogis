@@ -25,4 +25,4 @@ You should see `documents_ingested` increment.
 
 ## More examples
 
-See [ARCHITECTURE.md](../../../ARCHITECTURE.md) and [CONTRIBUTING.md](../../../CONTRIBUTING.md).
+See [ARCHITECTURE.md](../../../../ARCHITECTURE.md) and [CONTRIBUTING.md](../../../../CONTRIBUTING.md).

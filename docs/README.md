@@ -1,5 +1,18 @@
 # Documentation Index
 
+## Documentation structure
+
+| Directory | Contents |
+|-----------|----------|
+| `guides/` | Operational guides for self-hosters |
+| `extending/` | Guides for contributors and plugin authors |
+| `architecture/` | Implementation architecture notes |
+| `decisions/` | Architecture Decision Records (ADRs) |
+| `development/` | Local development setup |
+| `testing/` | Test strategy |
+| `release/` | Release and export workflows (maintainers) |
+| `private/` | Private maintainer material (not in public export) |
+
 > Status: Active
 > Last reviewed: 2026-05-08
 > Verified against commit: **e23f9d0**
@@ -28,11 +41,11 @@
 
 ## Operations
 
-- [`troubleshooting.md`](troubleshooting.md)
-- [`gpu-setup.md`](gpu-setup.md)
-- [`connector-credentials.md`](connector-credentials.md)
-- [`per-user-export-format.md`](per-user-export-format.md)
-- [`structured-logging.md`](structured-logging.md)
+- [`guides/troubleshooting.md`](guides/troubleshooting.md)
+- [`guides/gpu-setup.md`](guides/gpu-setup.md)
+- [`guides/connector-credentials.md`](guides/connector-credentials.md)
+- [`guides/per-user-export-format.md`](guides/per-user-export-format.md)
+- [`guides/structured-logging.md`](guides/structured-logging.md)
 - [`release/public-agpl-release-workflow.md`](release/public-agpl-release-workflow.md) — building a publishable source tree
 - [`release/dev-to-main-clean-promotion-workflow.md`](release/dev-to-main-clean-promotion-workflow.md) — promoting integration work onto the release line
 
@@ -53,9 +66,9 @@
 
 ## Extending and contributing
 
-- [`extending-the-stack.md`](extending-the-stack.md) — compose overlays, capability services, adapters/plugins
+- [`extending/extending-the-stack.md`](extending/extending-the-stack.md) — compose overlays, capability services, adapters/plugins
 - [`../CONTRIBUTING.md`](../CONTRIBUTING.md) — contributor setup and expectations
-- [`examples/example_plugin/`](examples/example_plugin/) — minimal plugin template
+- [`extending/examples/example_plugin/`](extending/examples/example_plugin/) — minimal plugin template
 - [`../AGENTS.md`](../AGENTS.md) — coding-agent routing and guardrails (read with [`LUMOGIS_CONTEXT_PACK.md`](LUMOGIS_CONTEXT_PACK.md))
 
 ## Documentation inventory

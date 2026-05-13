@@ -7,9 +7,9 @@ operator/user reference for the dashboard UI and the matching HTTP
 APIs.
 
 For the underlying design rationale see
-[`docs/decisions/018-per-user-connector-credentials.md`](decisions/018-per-user-connector-credentials.md)
+[`018-per-user-connector-credentials.md`](../decisions/018-per-user-connector-credentials.md)
 and
-[`docs/decisions/019-structured-audit-logging.md`](decisions/019-structured-audit-logging.md).
+[`019-structured-audit-logging.md`](../decisions/019-structured-audit-logging.md).
 
 ## What you'll see in the dashboard
 

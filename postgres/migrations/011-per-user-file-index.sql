@@ -1,6 +1,6 @@
 -- Migration 011: per-user file_index uniqueness.
 --
--- Audit B12 (docs/private/MULTI-USER-AUDIT.md §12 Phase B) — the bare-path
+-- Audit B12 (docs/private/archive/MULTI-USER-AUDIT.md §12 Phase B) — the bare-path
 -- UNIQUE on file_index.file_path means the second user to ingest the same
 -- path collides with the first user's row. Replace with composite
 -- UNIQUE(user_id, file_path) so two users can independently ingest the

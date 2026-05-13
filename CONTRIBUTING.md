@@ -253,7 +253,7 @@ def status():
 
 The plugin loader checks for a `router` attribute. If present, it is registered with `app.include_router()`.
 
-**Reference plugin:** `docs/examples/example_plugin/` — a minimal working plugin with routes, hooks, and a README.
+**Reference plugin:** `docs/extending/examples/example_plugin/` — a minimal working plugin with routes, hooks, and a README.
 
 **Plugin rules:**
 - Import from `ports/`, `models/`, `events.py`, `hooks.py` only

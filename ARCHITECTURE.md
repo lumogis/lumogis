@@ -6,6 +6,35 @@ This document explains how the lumogis orchestrator (**Core**) is structured and
 
 ---
 
+## Finding your way around the code
+
+The architecture diagram (`branding/lumogis_architecture.svg`) maps to
+these directories:
+
+| If you want to work on... | Look in |
+|---------------------------|---------|
+| Ask/Do permissions, action registry, executor, audit | `orchestrator/actions/` |
+| Signal sources — feed, calendar, page change, system | `orchestrator/signals/` |
+| Ingest, search, memory, entities, tools, MCP | `orchestrator/services/` |
+| Plugin hooks and in-process extensions | `orchestrator/plugins/` |
+| Config singletons and protocol interfaces | `orchestrator/ports/` + `orchestrator/adapters/` |
+| LLM provider clients (Ollama, LiteLLM, cloud) | `orchestrator/providers/` |
+| API routes (v1) | `orchestrator/routes/` |
+| Domain models and DTOs | `orchestrator/models/` |
+| External connector wiring | `orchestrator/connectors/` |
+| Admin and operator dashboard | `orchestrator/dashboard/` (`index.html`) |
+| Unauthenticated `/web/` login shell (static HTML) | `orchestrator/dashboard/web_index.html` |
+| Web SPA (frontend) | `clients/lumogis-web/` |
+| Graph service (GRAPH_MODE=service) | `services/lumogis-graph/` |
+| Docker compose files | `docker/` + repo root `docker-compose.*.yml` |
+| Database migrations and schemas | `postgres/` |
+| Stack control scripts | `stack-control/` |
+
+> `orchestrator/providers/` holds LLM provider client code — not the web
+> frontend. The web SPA lives at `clients/lumogis-web/`.
+
+---
+
 ## Five concepts
 
 Everything in the codebase maps to exactly one of five concepts:
@@ -172,7 +201,7 @@ Using `fire_background` for slow work (like graph construction) prevents the ing
 - **Pydantic models** at route boundaries and stable service contracts (request/response shapes, serialisation)
 - **Plain dataclasses or dicts** for lightweight internal data passing within a single service
 - **`ToolSpec`** (frozen dataclass) — mandatory metadata for every tool registered via hooks, used by `run_tool()` for structural permission enforcement
-- **Read-only tool catalog** — `services/unified_tools.py::build_tool_catalog` assembles a deterministic snapshot of LLM, MCP, capability, and action-registry tool surfaces (not wired into the chat loop). Terminology: [`docs/architecture/tool-vocabulary.md`](docs/architecture/tool-vocabulary.md).
+- **Read-only tool catalog** — `orchestrator/services/unified_tools.py::build_tool_catalog` assembles a deterministic snapshot of LLM, MCP, capability, and action-registry tool surfaces (not wired into the chat loop). Terminology: [`docs/architecture/tool-vocabulary.md`](docs/architecture/tool-vocabulary.md).
 
 New routes must define Pydantic request and response models. Services pass plain dicts internally.
 

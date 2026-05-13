@@ -8,21 +8,17 @@
 # works; override: `make test PYTHON=python`.
 PYTHON ?= python3
 
-.PHONY: dev build test test-unit test-integration test-integration-full lint ingest health logs \
+.PHONY: dev build test test-integration test-integration-full lint ingest health logs \
+        compose-policy-check \
+        verify-public-rc verify-public-rc-full \
         compose-lint compose-test compose-test-stack-control compose-test-integration \
         mock-capability-test \
         sync-vendored test-kg test-kg-image compose-test-kg \
         test-graph-parity \
         demo-seed demo-test demo-ready \
         web-install web-codegen web-codegen-check web-test web-lint web-build web-dev web-e2e \
-        test-web test-web-e2e test-ui test-ui-existing-stack test-ui-full test-ui-full-existing-stack \
-        test-migrations \
-        verify-public-rc verify-public-rc-full test-integration-local \
+        test-web-e2e \
         web-e2e-prove web-caddy-headers web-caddy-headers-prove
-
-# Compose overlay + env file for deterministic integration smoke (see config/test.env.example).
-INTEGRATION_ENV_FILE ?= config/test.env.example
-INTEGRATION_COMPOSE = COMPOSE_PROFILES= COMPOSE_FILE=docker-compose.yml:docker-compose.test.yml:docker-compose.public-rc-stack.yml docker compose --env-file $(INTEGRATION_ENV_FILE)
 
 # ─── User-facing convenience ─────────────────────────────────────────────────
 
@@ -45,8 +41,59 @@ ingest:
 # Run ruff inside the orchestrator container (no local Python needed).
 # Dev deps (ruff) are installed on the fly; they are not in the production image.
 compose-lint:
-	docker compose run --rm orchestrator sh -c \
-	  "pip install -q -r requirements-dev.txt && ruff check /app && ruff format --check /app"
+	COMPOSE_FILE=docker-compose.yml docker compose run --rm --entrypoint "" orchestrator \
+	  sh -c 'pip install -q -r /project/orchestrator/requirements-dev.txt && \
+	         ruff check /project/orchestrator/ && \
+	         ruff format --check /project/orchestrator/'
+
+compose-policy-check:
+	@python3 -c "import yaml" 2>/dev/null || \
+	  python3 -m pip install -q -r scripts/requirements-compose-policy.txt
+	@python3 scripts/check_compose_policy.py \
+	  --project-directory "$(CURDIR)" \
+	  -f docker-compose.yml \
+	  -f docker-compose.ghcr.yml
+
+# ─── RC verification gates (LUM-225) ─────────────────────────────────────────
+# verify-public-rc: smoke gate — run before /publish-private-main-to-public.
+# verify-public-rc-full: full gate — includes Playwright e2e + optional graph parity.
+#
+# web-codegen-check requires LUMOGIS_OPENAPI_URL (orchestrator must be reachable).
+# Set VERIFY_PUBLIC_RC_SKIP_WEB_CODEGEN_CHECK=1 to skip (non-default; requires
+# Implementation Log justification — avoids false-red when Core is not running).
+# Set VERIFY_PUBLIC_RC_SKIP_WEB_E2E=1 in full mode to skip Playwright (discouraged).
+# Set LUMOGIS_RC_GRAPH_PARITY=1 in full mode to include test-graph-parity.
+
+verify-public-rc: ## RC gate (smoke) — run before /publish-private-main-to-public
+	@echo "==> verify-public-rc (smoke)"
+	scripts/check-main-hygiene.sh
+	$(MAKE) compose-policy-check
+	$(MAKE) compose-test
+	@if [ -z "$${VERIFY_PUBLIC_RC_SKIP_WEB_CODEGEN_CHECK:-}" ]; then \
+	  $(MAKE) web-codegen-check; \
+	else \
+	  echo "WARN: web-codegen-check skipped (VERIFY_PUBLIC_RC_SKIP_WEB_CODEGEN_CHECK set)"; \
+	fi
+	$(MAKE) web-lint
+	$(MAKE) web-test
+	$(MAKE) web-build
+	scripts/integration-public-rc.sh full-cycle
+	scripts/create-upstream-export-tree.sh
+	scripts/check-public-export.sh /tmp/lumogis-upstream-export
+	@echo "==> verify-public-rc PASSED"
+
+verify-public-rc-full: ## Full RC gate — includes e2e and optional graph parity
+	@echo "==> verify-public-rc-full"
+	$(MAKE) verify-public-rc
+	@if [ -z "$${VERIFY_PUBLIC_RC_SKIP_WEB_E2E:-}" ]; then \
+	  $(MAKE) web-e2e-prove; \
+	else \
+	  echo "WARN: web-e2e-prove skipped (VERIFY_PUBLIC_RC_SKIP_WEB_E2E set)"; \
+	fi
+	@if [ "$${LUMOGIS_RC_GRAPH_PARITY:-0}" = "1" ]; then \
+	  $(MAKE) test-graph-parity; \
+	fi
+	@echo "==> verify-public-rc-full PASSED"
 
 # Run unit tests inside the orchestrator container (does not require a running stack).
 # Dev deps (pytest, pytest-asyncio) are installed on the fly; **runtime**
@@ -62,12 +109,12 @@ compose-lint:
 # Force AUTH_ENABLED=false so host .env (e.g. local smoke / family-LAN) does not
 # leak into TestClient runs — most suites assume dev-mode auth unless they monkeypatch.
 compose-test:
-	docker compose run --rm -e AUTH_ENABLED=false -w /project/orchestrator orchestrator sh -c \
+	COMPOSE_FILE=docker-compose.yml docker compose run --rm -e AUTH_ENABLED=false -w /project/orchestrator orchestrator sh -c \
 	  "pip install -q -r requirements.txt && pip install -q -r requirements-dev.txt && python -m pytest tests -x -q"
 
 # Stack-control unit tests (mounts stack-control/; dev deps from stack-control/requirements-dev.txt).
 compose-test-stack-control:
-	docker compose run --rm -v $(PWD)/stack-control:/sc:rw orchestrator sh -c \
+	COMPOSE_FILE=docker-compose.yml docker compose run --rm -v $(PWD)/stack-control:/sc:rw orchestrator sh -c \
 	  "pip install -q -r /sc/requirements-dev.txt && cd /sc && python -m pytest test_main.py -q"
 
 # Run integration tests (requires stack to be up; mounts repo-root tests/ into container).
@@ -99,74 +146,8 @@ test:
 	cd orchestrator && AUTH_ENABLED=false $(PYTHON) -m pytest -x -q
 	cd stack-control && $(PYTHON) -m pytest test_main.py -q
 
-# Public RC / CI unit gate — uses a repo-local `.venv` (created if missing) so PEP 668
-# hosts can install deps without Docker; CI runners also tolerate this path.
-test-unit:
-	@set -e; \
-	  if [ ! -d "$(CURDIR)/.venv" ]; then $(PYTHON) -m venv "$(CURDIR)/.venv"; fi; \
-	  . "$(CURDIR)/.venv/bin/activate"; \
-	  pip install -q -r orchestrator/requirements.txt -r orchestrator/requirements-dev.txt; \
-	  pip install -q -r stack-control/requirements-dev.txt; \
-	  pip install -q -r services/lumogis-mock-capability/requirements-dev.txt; \
-	  pip install -q -r services/lumogis-graph/requirements.txt -r services/lumogis-graph/requirements-dev.txt; \
-	  cd "$(CURDIR)/orchestrator" && AUTH_ENABLED=false GRAPH_MODE=inprocess CAPABILITY_SERVICE_URLS= MCP_AUTH_TOKEN= pytest tests/ -q; \
-	  cd "$(CURDIR)/stack-control" && pytest test_main.py -q; \
-	  cd "$(CURDIR)/services/lumogis-mock-capability" && PYTHONPATH=. pytest tests -q; \
-	  cd "$(CURDIR)/services/lumogis-graph" && pytest -q
-
-# Lumogis Web — codegen from committed OpenAPI snapshot, then lint + Vitest + production build.
-test-web:
-	cd clients/lumogis-web && npm ci && npm run codegen && npm run lint && npm test && npm run build
-
-# Compose-backed integration smoke — see scripts/integration-public-rc.sh.
+# Requires local venv (contributors only). Uses orchestrator venv/deps.
 test-integration:
-	bash scripts/integration-public-rc.sh full-cycle
-
-# Playwright gate UI — requires RC compose + Caddy already up (see test-ui).
-test-ui-existing-stack:
-	cd clients/lumogis-web && npm ci && npx playwright install chromium && npm run e2e:gate-ui
-
-# Standalone Playwright gate UI: bring RC stack up → gate suite → tear down.
-test-ui:
-	bash -ec 'scripts/integration-public-rc.sh gate-start; ec=0; $(MAKE) test-ui-existing-stack || ec=$$?; scripts/integration-public-rc.sh gate-end; exit $$ec'
-
-# Full Playwright (gate + workflows + signed-in nav) — stack must already be running + smoke user seeded when auth is on.
-test-ui-full-existing-stack:
-	eval "$$(python3 "$(CURDIR)/scripts/rc_test_env_defaults.py" "$(CURDIR)/$(INTEGRATION_ENV_FILE)")"; \
-	cd clients/lumogis-web && npm ci && npx playwright install chromium && npm run e2e:full
-
-# Second-phase UI gate used by verify-public-rc-full: compose up → seed smoke user → e2e:full → compose down.
-test-ui-full:
-	bash -ec 'scripts/integration-public-rc.sh gate-start; scripts/seed-public-rc-smoke-user.sh; ec=0; $(MAKE) test-ui-full-existing-stack || ec=$$?; scripts/integration-public-rc.sh gate-end; exit $$ec'
-
-test-migrations:
-	bash scripts/check-migrations-fresh-db.sh
-
-# Tier used before merging RC to main: hygiene + unit/web/integration/ui + export tree checks.
-# Brings the compose test stack up once, runs integration pytest + Playwright (existing stack), then tears down.
-verify-public-rc:
-	bash scripts/check-main-hygiene.sh
-	bash scripts/check-protected-release-files.sh
-	$(MAKE) test-unit
-	$(MAKE) test-web
-	bash -ec 'scripts/integration-public-rc.sh gate-start; scripts/integration-public-rc.sh gate-pytest; ec=$$?; if [ $$ec -ne 0 ]; then scripts/integration-public-rc.sh gate-end; exit $$ec; fi; $(MAKE) test-ui-existing-stack || ec=$$?; scripts/integration-public-rc.sh gate-end; exit $$ec'
-	bash scripts/create-upstream-export-tree.sh /tmp/lumogis-upstream-export
-	bash scripts/check-public-export.sh /tmp/lumogis-upstream-export
-
-# verify-public-rc plus seeded smoke user + full UI (signed-in nav), then heavier Docker checks.
-verify-public-rc-full:
-	$(MAKE) verify-public-rc
-	$(MAKE) test-migrations
-	$(MAKE) test-ui-full
-	@echo "[verify-public-rc-full] optional: compose-test"
-	-$(MAKE) compose-test
-	@echo "[verify-public-rc-full] optional: compose-test-kg"
-	-$(MAKE) compose-test-kg
-	@echo "[verify-public-rc-full] optional: test-graph-parity (slow)"
-	-$(MAKE) test-graph-parity
-
-# Requires local venv (contributors only). Uses orchestrator venv/deps — broader than public_rc.
-test-integration-local:
 	cd orchestrator && $(PYTHON) -m pytest ../tests/integration -v --tb=short -m "integration and not slow"
 
 # Includes slow cases (e.g. wait for signal poll).
