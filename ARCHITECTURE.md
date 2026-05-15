@@ -1,4 +1,4 @@
-# Lumogis Architecture
+TEST# Lumogis Architecture
 
 This document explains how the lumogis orchestrator (**Core**) is structured and how the pieces fit together. Read this before contributing code. For a **single consolidated overview** aimed at operators and contributors (components, mental model, Web surfaces, deployment, roadmap disambiguation), see [`docs/LUMOGIS_REFERENCE_MANUAL.md`](docs/LUMOGIS_REFERENCE_MANUAL.md). For decisions on *why* specific technologies were chosen, see `docs/decisions/`. For the **post-remediation** framing (Core as policy kernel, tool catalog overlay, household-control `/api/v1` facades), see [ADR 028 — Self-hosted extension architecture and household control surfaces](docs/decisions/028-self-hosted-extension-architecture-and-household-control-surfaces.md).
 
