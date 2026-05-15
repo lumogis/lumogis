@@ -6,6 +6,12 @@ For architecture internals, read [ARCHITECTURE.md](ARCHITECTURE.md) first.
 
 All participants must follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
+## AI assistants and IDE agents
+
+For Lumogis work, read [AGENTS.md](AGENTS.md) and [docs/LUMOGIS_CONTEXT_PACK.md](docs/LUMOGIS_CONTEXT_PACK.md) first. The context pack is the canonical repo-evidence onboarding summary; do not duplicate it into other files. Refresh it with **`/update-context-pack`** when stale.
+
+For ChatGPT or Claude outside the repository, add **`docs/LUMOGIS_CONTEXT_PACK.md`** to the relevant Project Knowledge or project files and use it as the first context source for Lumogis work.
+
 ---
 
 ## Contributor Licence Agreement (CLA)

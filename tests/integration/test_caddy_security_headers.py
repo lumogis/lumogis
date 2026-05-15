@@ -29,7 +29,7 @@ import socket
 import httpx
 import pytest
 
-pytestmark = [pytest.mark.integration, pytest.mark.public_rc]
+pytestmark = pytest.mark.integration
 
 WEB_BASE = os.environ.get("LUMOGIS_WEB_BASE_URL", "http://127.0.0.1").rstrip("/")
 PROVE = os.environ.get("LUMOGIS_CADDY_HEADER_PROVE", "").lower() in (

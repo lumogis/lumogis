@@ -114,6 +114,32 @@ def _build_ntfy_channel(user_id: str) -> MeNotificationChannelItem:
         tier = "none"
         meta_rec = None
 
+    if tier == "user" and user_rec is not None and user_rec.delivery_paused:
+        return MeNotificationChannelItem(
+            connector=NTFY,
+            label="ntfy",
+            description=_safe_registry_description(NTFY),
+            configured=True,
+            active_tier="user",
+            user_credential_present=True,
+            household_credential_available=hh_rec is not None,
+            system_credential_available=sys_rec is not None,
+            env_fallback_available=env_fb,
+            url=None,
+            url_configured=None,
+            topic_configured=None,
+            token_configured=None,
+            updated_at=user_rec.updated_at,
+            key_version=user_rec.key_version,
+            subscription_count=None,
+            push_service_configured=None,
+            status="paused",
+            why_not_available=(
+                "ntfy delivery is paused after the upstream server returned Gone (410) "
+                "for your topic. Open Connectors to update or re-save credentials."
+            ),
+        )
+
     configured = tier != "none"
     updated_at = getattr(meta_rec, "updated_at", None) if meta_rec is not None else None
     key_version = getattr(meta_rec, "key_version", None) if meta_rec is not None else None
@@ -161,7 +187,7 @@ def _build_ntfy_channel(user_id: str) -> MeNotificationChannelItem:
         )
 
     if configured:
-        status: Literal["configured", "not_configured"] = "configured"
+        status = "configured"
         why_not = None
     else:
         status = "not_configured"
@@ -197,7 +223,7 @@ def _build_web_push_channel(user_id: str) -> MeNotificationChannelItem:
     tier: Literal["user", "household", "system", "env", "none"] = "user" if n_sub > 0 else "none"
 
     if configured:
-        status: Literal["configured", "not_configured"] = "configured"
+        status = "configured"
         why_not = None
     elif n_sub > 0 and not vapid:
         status = "not_configured"
@@ -236,7 +262,9 @@ def build_me_notifications_response(user_id: str) -> MeNotificationsResponse:
     """Build curated notification channel status for ``user_id``."""
     channels = [_build_ntfy_channel(user_id), _build_web_push_channel(user_id)]
     total = len(channels)
-    n_cfg = sum(1 for c in channels if c.configured)
+    n_cfg = sum(1 for c in channels if c.status == "configured")
+    n_pause = sum(1 for c in channels if c.status == "paused")
+    n_nc = total - n_cfg - n_pause
     by_tier: dict[str, int] = {}
     for c in channels:
         by_tier[c.active_tier] = by_tier.get(c.active_tier, 0) + 1
@@ -246,7 +274,8 @@ def build_me_notifications_response(user_id: str) -> MeNotificationsResponse:
         summary=MeNotificationsSummary(
             total=total,
             configured=n_cfg,
-            not_configured=total - n_cfg,
+            not_configured=n_nc,
+            paused=n_pause,
             by_active_tier=dict(sorted(by_tier.items())),
         ),
     )

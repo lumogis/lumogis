@@ -39,7 +39,6 @@ from datetime import timezone
 import jwt
 import pytest
 from fastapi.testclient import TestClient
-from tests.ephemeral_fernet_key import TEST_FERNET_KEY  # noqa: E402
 from tests.test_auth_phase1 import FakeUsersStore  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -82,6 +81,33 @@ class _RoutesFakeStore(FakeUsersStore):
 
         return _noop()
 
+    def execute(self, query: str, params: tuple | None = None) -> None:
+        q = self._norm(query)
+        p = params or ()
+        if q.startswith("update user_connector_credentials set delivery_paused = true,"):
+            reason, detail, actor, user_id, connector = p
+            row = self.creds.get((user_id, connector))
+            if row is not None:
+                row["delivery_paused"] = True
+                row["delivery_paused_reason"] = reason
+                row["delivery_paused_detail"] = detail
+                row["delivery_paused_at"] = datetime.now(timezone.utc)
+                row["updated_by"] = actor
+                row["updated_at"] = datetime.now(timezone.utc)
+            return
+        if q.startswith("update user_connector_credentials set delivery_paused = false,"):
+            actor, user_id, connector = p
+            row = self.creds.get((user_id, connector))
+            if row is not None:
+                row["delivery_paused"] = False
+                row["delivery_paused_reason"] = None
+                row["delivery_paused_detail"] = None
+                row["delivery_paused_at"] = None
+                row["updated_by"] = actor
+                row["updated_at"] = datetime.now(timezone.utc)
+            return
+        return super().execute(query, params)
+
     # --- fetch_one ------------------------------------------------------
 
     def fetch_one(self, query: str, params: tuple | None = None) -> dict | None:
@@ -91,7 +117,8 @@ class _RoutesFakeStore(FakeUsersStore):
         # Metadata read (get_record).
         if q.startswith(
             "select user_id, connector, created_at, updated_at, "
-            "created_by, updated_by, key_version "
+            "created_by, updated_by, key_version, delivery_paused, "
+            "delivery_paused_reason, delivery_paused_detail, delivery_paused_at "
             "from user_connector_credentials"
         ):
             uid, conn = p
@@ -121,6 +148,10 @@ class _RoutesFakeStore(FakeUsersStore):
                     "updated_at": now,
                     "created_by": created_by,
                     "updated_by": updated_by,
+                    "delivery_paused": False,
+                    "delivery_paused_reason": None,
+                    "delivery_paused_detail": None,
+                    "delivery_paused_at": None,
                 }
             else:
                 row = dict(existing)
@@ -128,6 +159,10 @@ class _RoutesFakeStore(FakeUsersStore):
                 row["key_version"] = key_version
                 row["updated_at"] = now
                 row["updated_by"] = updated_by
+                row["delivery_paused"] = False
+                row["delivery_paused_reason"] = None
+                row["delivery_paused_detail"] = None
+                row["delivery_paused_at"] = None
             self.creds[(uid, conn)] = row
             return {
                 "user_id": row["user_id"],
@@ -137,6 +172,10 @@ class _RoutesFakeStore(FakeUsersStore):
                 "created_by": row["created_by"],
                 "updated_by": row["updated_by"],
                 "key_version": row["key_version"],
+                "delivery_paused": row["delivery_paused"],
+                "delivery_paused_reason": row["delivery_paused_reason"],
+                "delivery_paused_detail": row["delivery_paused_detail"],
+                "delivery_paused_at": row["delivery_paused_at"],
             }
 
         # DELETE … RETURNING key_version.
@@ -174,7 +213,8 @@ class _RoutesFakeStore(FakeUsersStore):
         # list_records — per-user enumeration ordered by connector ASC.
         if q.startswith(
             "select user_id, connector, created_at, updated_at, "
-            "created_by, updated_by, key_version "
+            "created_by, updated_by, key_version, delivery_paused, "
+            "delivery_paused_reason, delivery_paused_detail, delivery_paused_at "
             "from user_connector_credentials where user_id"
         ):
             (uid,) = p
@@ -189,6 +229,12 @@ class _RoutesFakeStore(FakeUsersStore):
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
+
+# Real Fernet key for the credential service. Test-only; rotated to a
+# fresh value would also work — pinned so test failures can be
+# reproduced without env drift.
+_TEST_FERNET_KEY = "OlGLYckGIbBSt54y8XVmgb441LgKJWvvYoHnpQ_cv9A="
 
 
 @pytest.fixture
@@ -222,7 +268,7 @@ def dev_env(monkeypatch):
     monkeypatch.setenv("AUTH_ENABLED", "false")
     monkeypatch.delenv("LUMOGIS_PUBLIC_ORIGIN", raising=False)
     monkeypatch.delenv("MCP_AUTH_TOKEN", raising=False)
-    monkeypatch.setenv("LUMOGIS_CREDENTIAL_KEY", TEST_FERNET_KEY)
+    monkeypatch.setenv("LUMOGIS_CREDENTIAL_KEY", _TEST_FERNET_KEY)
     monkeypatch.delenv("LUMOGIS_CREDENTIAL_KEYS", raising=False)
     yield
 
@@ -241,7 +287,7 @@ def auth_env(monkeypatch):
     monkeypatch.setenv("LUMOGIS_REFRESH_COOKIE_SECURE", "false")
     monkeypatch.delenv("LUMOGIS_PUBLIC_ORIGIN", raising=False)
     monkeypatch.delenv("MCP_AUTH_TOKEN", raising=False)
-    monkeypatch.setenv("LUMOGIS_CREDENTIAL_KEY", TEST_FERNET_KEY)
+    monkeypatch.setenv("LUMOGIS_CREDENTIAL_KEY", _TEST_FERNET_KEY)
     monkeypatch.delenv("LUMOGIS_CREDENTIAL_KEYS", raising=False)
     yield
     from routes.auth import _reset_rate_limit_for_tests
@@ -499,6 +545,33 @@ def test_get_response_never_carries_payload_or_ciphertext(store, dev_env):
     assert "sk-secret-must-not-leak" not in raw_text
 
 
+def test_get_single_reflects_delivery_paused_omits_detail(store, dev_env):
+    """``delivery_paused_detail`` is persisted for operators — never returned on GET."""
+    from services import connector_credentials as ccs
+
+    with _client() as client:
+        resp = client.put(
+            "/api/v1/me/connector-credentials/testconnector",
+            json={"payload": {"api_key": "x"}},
+        )
+        assert resp.status_code == 200
+
+        ccs.set_delivery_paused(
+            "default",
+            "testconnector",
+            paused=True,
+            reason="ntfy_upstream_410",
+            detail="upstream-body-not-on-wire",
+            actor="system",
+        )
+        row = client.get("/api/v1/me/connector-credentials/testconnector").json()
+
+    assert row["delivery_paused"] is True
+    assert row["delivery_paused_reason"] == "ntfy_upstream_410"
+    assert row["delivery_paused_at"] is not None
+    assert "delivery_paused_detail" not in row
+
+
 # ---------------------------------------------------------------------------
 # Admin routes — list / get / put / delete
 # ---------------------------------------------------------------------------
@@ -588,7 +661,9 @@ def test_admin_get_for_unregistered_stale_row(store, auth_env):
 
 
 def test_admin_delete_for_unregistered_stale_row(store, auth_env):
-    """Admin DELETE on a stale-but-stored row → 204 + audit records the historical id + admin actor."""
+    """Admin DELETE on a stale-but-stored row → 204 + audit records
+    the historical id + admin actor.
+    """
     admin = _seed(store, email="admin@home.lan", role="admin")
     bob = _seed(store, email="bob@home.lan", role="user")
     admin_hdr = {"Authorization": f"Bearer {_mint_jwt(admin, 'admin')}"}
@@ -675,7 +750,7 @@ def test_bearer_authenticated_put_bypasses_origin_check(store, monkeypatch):
     monkeypatch.setenv("AUTH_ENABLED", "true")
     monkeypatch.setenv("AUTH_SECRET", "csrf-bypass-test-secret")
     monkeypatch.setenv("LUMOGIS_PUBLIC_ORIGIN", "https://lumogis.example")
-    monkeypatch.setenv("LUMOGIS_CREDENTIAL_KEY", TEST_FERNET_KEY)
+    monkeypatch.setenv("LUMOGIS_CREDENTIAL_KEY", _TEST_FERNET_KEY)
     monkeypatch.delenv("MCP_AUTH_TOKEN", raising=False)
     alice = _seed(store, email="alice@home.lan", role="user")
     hdr = {

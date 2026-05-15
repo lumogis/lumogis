@@ -22,6 +22,13 @@ compose() {
 cmd_up() {
   (cd "$ROOT" && test -f .env || cp config/test.env.example .env)
   eval "$(python3 "$ROOT/scripts/rc_test_env_defaults.py" "$ROOT/$ENV_FILE")"
+  # Default dev stack (project name lumogis) often stays up during verify-public-rc.
+  # lumogis-test reproduces the same host port publishes (orchestrator :8000); stop the
+  # parallel orchestrator container if present so `up` can bind without EADDRINUSE.
+  if docker container inspect lumogis-orchestrator-1 >/dev/null 2>&1; then
+    echo "[integration-public-rc] Stopping lumogis-orchestrator-1 to free host :8000 for lumogis-test"
+    docker stop lumogis-orchestrator-1 >/dev/null 2>&1 || true
+  fi
   compose up -d --wait
   if [[ "${COMPOSE_PROJECT_NAME:-}" == "lumogis-test" ]]; then
     bash "$ROOT/scripts/seed-public-rc-approvals-fixture.sh"

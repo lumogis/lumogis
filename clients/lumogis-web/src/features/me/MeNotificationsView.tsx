@@ -43,8 +43,8 @@ export function MeNotificationsView(): JSX.Element {
   const filtered = useMemo(() => {
     const channels = q.data?.channels ?? [];
     if (filter === "all") return channels;
-    if (filter === "configured") return channels.filter((c) => c.configured);
-    if (filter === "not_configured") return channels.filter((c) => !c.configured);
+    if (filter === "configured") return channels.filter((c) => c.status === "configured");
+    if (filter === "not_configured") return channels.filter((c) => c.status === "not_configured");
     return channels.filter((c) => c.active_tier === filter);
   }, [q.data?.channels, filter]);
 
@@ -119,6 +119,12 @@ export function MeNotificationsView(): JSX.Element {
             {summary.not_configured}
           </div>
         </div>
+        <div style={{ border: "1px solid rgba(128,128,128,0.25)", borderRadius: 8, padding: "0.75rem" }}>
+          <div style={{ fontSize: "0.8rem", opacity: 0.8 }}>Paused</div>
+          <div style={{ fontSize: "1.35rem", fontWeight: 700 }} aria-label={`Paused channels: ${summary.paused}`}>
+            {summary.paused}
+          </div>
+        </div>
       </div>
 
       <div style={{ marginBottom: "0.75rem" }}>
@@ -176,7 +182,11 @@ export function MeNotificationsView(): JSX.Element {
                   {c.connector}
                 </td>
                 <td style={{ padding: "0.5rem 0.35rem" }}>
-                  {c.configured ? (
+                  {c.status === "paused" ? (
+                    <span style={{ color: "var(--warn, #ca8a04)" }} aria-label={`${c.label} paused`}>
+                      Paused
+                    </span>
+                  ) : c.status === "configured" ? (
                     <span aria-label={`${c.label} configured`}>Configured</span>
                   ) : (
                     <span style={{ color: "var(--warn, #b45309)" }} aria-label={`${c.label} not configured`}>

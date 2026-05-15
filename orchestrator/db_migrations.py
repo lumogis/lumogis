@@ -54,6 +54,11 @@ for human readers cross-referencing plans/ADRs):
                     from the per-user export path; restore requires
                     the matching key. See plan + ADR
                     `credential_scopes_shared_system`.)
+  019 lumogis-web.sql  (lumogis-web app schema when applicable)
+  020 captures.sql   (captures ledger / related persistence)
+  021 user-connector-credentials delivery pause  (`delivery_paused` +
+                     reason/detail/at timestamps on pause from ntfy
+                     upstream 410; cleared on credential PUT — LUM-39)
 
 The 013 chunk also wires `db_default_user_remap.py` from
 `docker-entrypoint.sh` immediately after this runner — that step is NOT a

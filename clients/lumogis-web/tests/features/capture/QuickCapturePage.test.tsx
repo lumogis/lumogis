@@ -133,30 +133,6 @@ describe("QuickCapturePage", () => {
     expect(screen.getByTestId("quick-capture-add-memory")).toBeDisabled();
   });
 
-  it("shows validation error when saving empty note online (no API call)", async () => {
-    const tokens = new AccessTokenStore();
-    tokens.set("tok");
-    const fetchImpl = vi.fn(async (input: RequestInfo, _init?: RequestInit) => {
-      const path = pathnameOf(input);
-      if (path.includes("/auth/me")) return meResponse();
-      return jsonResponse(404, { detail: "unexpected" });
-    });
-    const client = new ApiClient({ tokens, fetchImpl: fetchImpl as unknown as typeof fetch });
-    const user = userEvent.setup();
-
-    renderPage(client);
-    await waitFor(() => expect(screen.getByTestId("quick-capture-page")).toBeInTheDocument());
-    await user.click(screen.getByTestId("quick-capture-save-server"));
-
-    await waitFor(() => {
-      expect(screen.getByTestId("quick-capture-error")).toHaveTextContent(/Enter some text/i);
-    });
-    const capturePosts = (fetchImpl.mock.calls as [RequestInfo, RequestInit?][]).filter(
-      ([u, i]) => pathnameOf(u) === "/api/v1/captures" && i?.method === "POST",
-    );
-    expect(capturePosts.length).toBe(0);
-  });
-
   it("Add to memory disabled when offline after capture exists", async () => {
     const tokens = new AccessTokenStore();
     tokens.set("tok");

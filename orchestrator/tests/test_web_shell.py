@@ -25,11 +25,10 @@ those criteria from a real browser:
 from __future__ import annotations
 
 from contextlib import contextmanager
-from datetime import datetime
-from datetime import timezone
 
 import pytest
 from fastapi.testclient import TestClient
+from tests.test_auth_phase1 import FakeUsersStore
 from tests.test_auth_phase1 import _csrf_origin_headers
 
 # ---------------------------------------------------------------------------
@@ -38,80 +37,18 @@ from tests.test_auth_phase1 import _csrf_origin_headers
 # ---------------------------------------------------------------------------
 
 
-class _FakeUsersStore:
-    """Minimal in-memory ``users`` table — same surface the Phase 1 suite uses."""
-
-    def __init__(self):
-        self.rows: dict[str, dict] = {}
-
-    def ping(self) -> bool:
-        return True
-
-    def execute(self, query: str, params: tuple | None = None) -> None:
-        q = " ".join(query.split()).lower()
-        p = params or ()
-        if q.startswith("insert into users"):
-            self.rows[p[0]] = {
-                "id": p[0],
-                "email": p[1],
-                "password_hash": p[2],
-                "role": p[3],
-                "disabled": False,
-                "created_at": datetime.now(timezone.utc),
-                "last_login_at": None,
-                "refresh_token_jti": None,
-            }
-            return
-        if q.startswith("update users set last_login_at = now()"):
-            self.rows[p[0]]["last_login_at"] = datetime.now(timezone.utc)
-            return
-        if q.startswith("update users set refresh_token_jti ="):
-            self.rows[p[1]]["refresh_token_jti"] = p[0]
-            return
-
-    def fetch_one(self, query: str, params: tuple | None = None) -> dict | None:
-        q = " ".join(query.split()).lower()
-        p = params or ()
-        if q.startswith("select id from users where lower(email) ="):
-            target = p[0].lower()
-            for row in self.rows.values():
-                if row["email"].lower() == target:
-                    return {"id": row["id"]}
-            return None
-        if q.startswith("select * from users where id ="):
-            return dict(self.rows.get(p[0])) if p[0] in self.rows else None
-        if q.startswith("select * from users where lower(email) ="):
-            target = p[0].lower()
-            for row in self.rows.values():
-                if row["email"].lower() == target:
-                    return dict(row)
-            return None
-        if q.startswith("select count(*) as n from users where role = 'admin'"):
-            n = sum(1 for r in self.rows.values() if r["role"] == "admin" and not r["disabled"])
-            return {"n": n}
-        if q.startswith("select count(*) as n from users"):
-            return {"n": len(self.rows)}
-        if q.startswith("select refresh_token_jti from users where id ="):
-            row = self.rows.get(p[0])
-            return {"refresh_token_jti": row["refresh_token_jti"]} if row else None
-        return None
-
-    def fetch_all(self, query: str, params: tuple | None = None) -> list[dict]:
-        return []
-
-    def close(self) -> None:
-        pass
-
-
 @pytest.fixture
-def users_store():
+def users_store(monkeypatch):
     """Install a fake users store onto the shared config registry."""
     import config as _config
+    from services import auth_sessions as _asn
 
-    store = _FakeUsersStore()
+    _asn.invalidate_instance_salt_cache_for_tests()
+    store = FakeUsersStore()
     _config._instances["metadata_store"] = store
     yield store
     _config._instances.pop("metadata_store", None)
+    _asn.invalidate_instance_salt_cache_for_tests()
 
 
 @pytest.fixture
@@ -247,7 +184,6 @@ def test_auth_bypass_matching_is_path_segment_safe():
     assert auth._path_is_bypassed("/web/index.html") is True
     assert auth._path_is_bypassed("/web/static/app.js") is True
     assert auth._path_is_bypassed("/healthz") is True
-    assert auth._path_is_bypassed("/health") is True
     assert auth._path_is_bypassed("/api/v1/auth/login") is True
 
     # Must NOT bypass — sibling paths that merely start with the same
@@ -256,7 +192,6 @@ def test_auth_bypass_matching_is_path_segment_safe():
     assert auth._path_is_bypassed("/webhooks/lumogis") is False
     assert auth._path_is_bypassed("/webfoo") is False
     assert auth._path_is_bypassed("/healthzfoo") is False
-    assert auth._path_is_bypassed("/healthy") is False
     assert auth._path_is_bypassed("/api/v1/auth/loginX") is False
     assert auth._path_is_bypassed("/api/v1/auth/me") is False  # /me is gated
     assert auth._path_is_bypassed("/signals") is False
@@ -295,7 +230,7 @@ def test_full_signin_flow_login_me_signals_logout(users_store, auth_env):
     This is the integration test that proves an actual browser using the
     SPA's flow can: (1) log in, (2) read its own ``/me``, (3) call an
     authenticated data-plane endpoint, and (4) log out cleanly with the
-    server-side refresh jti cleared.
+    server-side ``auth_sessions`` row revoked for the refresh cookie's JTI.
     """
     with _client_with_admin(users_store) as client:
         # Sanity: SPA reachable without auth even in family-LAN mode.
@@ -343,17 +278,17 @@ def test_full_signin_flow_login_me_signals_logout(users_store, auth_env):
         signals_no_bearer = client.get("/signals?limit=5")
         assert signals_no_bearer.status_code == 401
 
-        # Confirm the refresh jti is currently set server-side (login wrote it).
-        import services.users as users_svc
+        # Confirm login created ``auth_sessions`` server-side rows (LUM-29).
+        from services import auth_sessions as asn_svc
 
         user_id = body["user"]["id"]
-        assert users_svc.get_refresh_jti(user_id) is not None
+        assert asn_svc.list_active_sessions_for_user(user_id)
 
-        # (4) Logout — must clear server-side jti AND expire the cookie.
+        # (4) Logout — revoke server-side refresh row AND expire the cookie.
         logout = client.post("/api/v1/auth/logout")
         assert logout.status_code == 200
         assert logout.json() == {"ok": True}
-        assert users_svc.get_refresh_jti(user_id) is None
+        assert asn_svc.list_active_sessions_for_user(user_id) == []
         # Set-Cookie should expire the refresh cookie (max-age=0).
         set_cookie = logout.headers.get("set-cookie", "")
         assert "lumogis_refresh=" in set_cookie

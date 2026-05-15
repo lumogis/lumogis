@@ -649,9 +649,6 @@ export function humaniseChatError(status: number, detail: string): string {
   if (status === 400 && detail === "system_message_position") {
     return "System messages must appear before any user message.";
   }
-  if (status === 400 && detail === "empty_message") {
-    return "Enter a message before sending.";
-  }
   if (status === 400 && detail.startsWith("invalid_model:")) {
     return `Selected model is not available: ${detail.slice("invalid_model:".length)}.`;
   }

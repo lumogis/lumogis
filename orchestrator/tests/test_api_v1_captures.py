@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Lumogis
-"""Phase-5 capture API — **5B** CRUD + **5C** attachments + **5D** transcribe + **5G** index (in-memory store).
+"""Phase-5 capture API — **5B** CRUD + **5C** attachments + **5D** transcribe
++ **5G** index (in-memory store).
 
 Legacy ``POST /upload`` remains **501**. ``POST …/index`` is **live** (**5G**).
 """
@@ -69,11 +70,6 @@ def _inject_transcript(
     }
 
 
-@pytest.fixture(autouse=True)
-def _single_user_dev_auth(monkeypatch):
-    monkeypatch.setenv("AUTH_ENABLED", "false")
-
-
 @pytest.fixture
 def captures_ms(monkeypatch: pytest.MonkeyPatch) -> CapturesMemoryMetadataStore:
     """Swap the autouse mock for a store that understands capture SQL."""
@@ -110,12 +106,6 @@ def _assert_501(resp):
 
 
 # ── Create ───────────────────────────────────────────────────────────
-
-
-def test_create_capture_rejects_blank_text_without_url(client: TestClient):
-    resp = client.post("/api/v1/captures", json={"text": "  \t  "})
-    assert resp.status_code == 422
-    assert resp.json()["detail"]["error"] == "capture_requires_text_or_url"
 
 
 def test_create_capture_201(client: TestClient):

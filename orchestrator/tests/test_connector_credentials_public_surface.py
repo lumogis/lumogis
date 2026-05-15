@@ -24,6 +24,7 @@ EXPECTED_PUBLIC_SURFACE: set[str] = {
     "put_payload",
     "delete_payload",
     "resolve",
+    "set_delivery_paused",
     "count_rows_by_key_version",
     "reencrypt_all_to_current_version",
     "get_current_key_version",

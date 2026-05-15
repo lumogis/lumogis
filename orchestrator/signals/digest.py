@@ -32,6 +32,13 @@ _ENABLED = os.environ.get("SIGNAL_DIGEST_ENABLED", "true").lower() != "false"
 _INTERVAL = int(os.environ.get("SIGNAL_DIGEST_INTERVAL", "86400"))
 _COUNT = int(os.environ.get("SIGNAL_DIGEST_COUNT", "5"))
 
+# Session advisory keys for `_send_digest` (see LUM-39). Keeps uvicorn
+# ``--workers N`` fan-out to a single digest run per DB per tick — lock is
+# per Postgres backend session / worker process.
+# Stable salt + issue id; grep the repo for ``pg_advisory`` before picking a new pair.
+ADVISORY_LOCK_KEY1 = 8420607
+ADVISORY_LOCK_KEY2 = 39
+
 _job_id = "signal_digest"
 
 
@@ -68,41 +75,66 @@ def stop() -> None:
 
 
 def _send_digest() -> None:
-    since = datetime.now(timezone.utc) - timedelta(seconds=_INTERVAL)
-    user_ids = _fetch_active_user_ids(since)
-    if not user_ids:
-        _log.info("signal_digest: no signals in window, skipping")
+    ms = config.get_metadata_store()
+    try:
+        got = ms.fetch_one(
+            "SELECT pg_try_advisory_lock(%s::integer, %s::integer) AS ok",
+            (ADVISORY_LOCK_KEY1, ADVISORY_LOCK_KEY2),
+        )
+    except Exception as exc:
+        _log.warning("signal_digest: advisory lock try failed: %s", exc)
+        return
+    if not got or not got.get("ok"):
+        _log.debug("signal_digest: skipped, advisory lock not acquired")
         return
 
-    notifier = config.get_notifier()
-    for user_id in user_ids:
-        signals = _fetch_top_signals_for_user(user_id, since)
-        if not signals:
-            continue
+    try:
+        since = datetime.now(timezone.utc) - timedelta(seconds=_INTERVAL)
+        user_ids = _fetch_active_user_ids(since)
+        if not user_ids:
+            _log.info("signal_digest: no signals in window, skipping")
+            return
 
-        count = len(signals)
-        title = f"Signal digest — {count} item{'s' if count != 1 else ''}"
-        message = _format_digest(signals)
+        notifier = config.get_notifier()
+        for user_id in user_ids:
+            signals = _fetch_top_signals_for_user(user_id, since)
+            if not signals:
+                continue
 
+            count = len(signals)
+            title = f"Signal digest — {count} item{'s' if count != 1 else ''}"
+            message = _format_digest(signals)
+
+            try:
+                sent = notifier.notify(title, message, priority=0.5, user_id=user_id)
+                if sent:
+                    _log.info(
+                        "signal_digest: sent digest user_id=%s count=%d",
+                        user_id,
+                        count,
+                    )
+                else:
+                    _log.warning(
+                        "signal_digest: notifier returned False — digest not delivered "
+                        "(user_id=%s)",
+                        user_id,
+                    )
+            except Exception as exc:
+                _log.error(
+                    "signal_digest: notifier error (user_id=%s): %s",
+                    user_id,
+                    exc,
+                )
+    finally:
         try:
-            sent = notifier.notify(title, message, priority=0.5, user_id=user_id)
-            if sent:
-                _log.info(
-                    "signal_digest: sent digest user_id=%s count=%d",
-                    user_id,
-                    count,
-                )
-            else:
-                _log.warning(
-                    "signal_digest: notifier returned False — digest not delivered (user_id=%s)",
-                    user_id,
-                )
-        except Exception as exc:
-            _log.error(
-                "signal_digest: notifier error (user_id=%s): %s",
-                user_id,
-                exc,
+            un = ms.fetch_one(
+                "SELECT pg_advisory_unlock(%s::integer, %s::integer) AS ok",
+                (ADVISORY_LOCK_KEY1, ADVISORY_LOCK_KEY2),
             )
+            if un is not None and un.get("ok") is False:
+                _log.warning("signal_digest: pg_advisory_unlock returned false (session mismatch)")
+        except Exception as exc:
+            _log.error("signal_digest: advisory unlock failed: %s", exc)
 
 
 def _fetch_active_user_ids(since: datetime) -> list[str]:

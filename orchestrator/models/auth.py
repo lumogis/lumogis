@@ -41,12 +41,34 @@ class UserPublic(BaseModel):
     role: Role
 
 
+class SessionRowPublic(BaseModel):
+    """Active auth session row exposed to the authenticated caller (LUM-29)."""
+
+    id: str
+    device_label: str
+    created_at: datetime
+    last_used_at: datetime | None = None
+    expires_at: datetime
+
+
+class SessionListResponse(BaseModel):
+    sessions: list[SessionRowPublic]
+
+
+class SessionAdminRowPublic(SessionRowPublic):
+    ip_hint: str | None = None  # first 4 hex chars of salted ip hash
+    ua_hint: str | None = None
+
+
+class SessionAdminListResponse(BaseModel):
+    sessions: list[SessionAdminRowPublic]
+
+
 class UserAdminView(UserPublic):
     """Admin-only listing shape returned by ``/api/v1/admin/users`` routes.
 
     Adds operational fields useful to administrators (account state, age,
-    last sign-in). Still excludes ``password_hash`` and ``refresh_token_jti``
-    — those are server-internal.
+    last sign-in). Still excludes secrets such as ``password_hash``.
     """
 
     disabled: bool
@@ -69,7 +91,7 @@ class InternalUser(BaseModel):
     disabled: bool = False
     created_at: datetime
     last_login_at: datetime | None = None
-    refresh_token_jti: str | None = None
+    token_version: int = 1
 
 
 class LoginRequest(BaseModel):

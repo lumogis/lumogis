@@ -19,6 +19,10 @@ from auth import auth_enabled
 from models.api_v1 import AdminDiagnosticsCapabilities
 from models.api_v1 import AdminDiagnosticsCapabilityService
 from models.api_v1 import AdminDiagnosticsCore
+from models.api_v1 import AdminDiagnosticsFoundationCapabilityRegistry
+from models.api_v1 import AdminDiagnosticsFoundationPermissions
+from models.api_v1 import AdminDiagnosticsFoundationSignals
+from models.api_v1 import AdminDiagnosticsFoundationToolCatalog
 from models.api_v1 import AdminDiagnosticsResponse
 from models.api_v1 import AdminDiagnosticsSpeechToText
 from models.api_v1 import AdminDiagnosticsStoreItem
@@ -90,6 +94,131 @@ def _capabilities_block(
     )
 
 
+def _sorted_count_map(counts: dict[str, int]) -> dict[str, int]:
+    return dict(sorted(counts.items()))
+
+
+def _permissions_module_probe(admin_user_id: str) -> tuple[bool, bool]:
+    """Return ``(import_ok, connector_mode_lookup_ok)`` for Ask/Do sanity."""
+    try:
+        import permissions as perm_module
+    except Exception:
+        return False, False
+    try:
+        mode = perm_module.get_connector_mode(
+            user_id=admin_user_id,
+            connector="__lumogis_admin_diag_probe__",
+        )
+    except Exception:
+        return True, False
+    if isinstance(mode, str) and mode.strip().upper() in ("ASK", "DO"):
+        return True, True
+    return True, False
+
+
+def _build_foundation_signals(
+    *,
+    admin_user_id: str,
+    me_tools: object,
+    capabilities: AdminDiagnosticsCapabilities,
+) -> AdminDiagnosticsFoundationSignals:
+    """ADR 034 read layer — derives from catalog façade rows already built for diagnostics."""
+    items = getattr(me_tools, "tools", None) or []
+
+    entries_by_transport: dict[str, int] = {}
+    unavailable_by_source: dict[str, int] = {}
+    unavailable_capability_catalog_entries = 0
+    catalog_only_transport_entries = 0
+
+    for row in items:
+        transport = row.transport
+        entries_by_transport[transport] = entries_by_transport.get(transport, 0) + 1
+        source = row.source
+        if not row.available:
+            unavailable_by_source[source] = unavailable_by_source.get(source, 0) + 1
+            if source == "capability":
+                unavailable_capability_catalog_entries += 1
+        if transport == "catalog_only":
+            catalog_only_transport_entries += 1
+
+    import_ok, lookup_ok = _permissions_module_probe(admin_user_id)
+    connector_perm_unknown = 0
+    for row in items:
+        conn = row.connector
+        if conn and str(conn).strip() and row.permission_mode == "unknown":
+            connector_perm_unknown += 1
+
+    total_entries = len(items)
+    summary = getattr(me_tools, "summary", None)
+    if total_entries == 0 and summary is not None:
+        total_entries = int(summary.total)
+
+    return AdminDiagnosticsFoundationSignals(
+        tool_catalog=AdminDiagnosticsFoundationToolCatalog(
+            total_entries=total_entries,
+            entries_by_transport=_sorted_count_map(entries_by_transport),
+            unavailable_entries_by_source=_sorted_count_map(unavailable_by_source),
+            unavailable_capability_catalog_entries=unavailable_capability_catalog_entries,
+            catalog_only_transport_entries=catalog_only_transport_entries,
+        ),
+        permissions=AdminDiagnosticsFoundationPermissions(
+            ask_do_module_import_ok=import_ok,
+            connector_mode_metadata_lookup_ok=lookup_ok,
+            catalog_rows_with_connector_but_unknown_permission_mode=connector_perm_unknown,
+        ),
+        capability_registry=AdminDiagnosticsFoundationCapabilityRegistry(
+            registered_services_total=capabilities.total,
+            registered_services_unhealthy=capabilities.unhealthy,
+        ),
+    )
+
+
+def _foundation_extra_warnings(
+    sig: AdminDiagnosticsFoundationSignals,
+) -> list[AdminDiagnosticsWarning]:
+    out: list[AdminDiagnosticsWarning] = []
+    if not sig.permissions.ask_do_module_import_ok:
+        out.append(
+            AdminDiagnosticsWarning(
+                code="permissions_module_import_failed",
+                message="Could not import the permissions module; Ask/Do sanity check skipped.",
+            )
+        )
+    elif not sig.permissions.connector_mode_metadata_lookup_ok:
+        out.append(
+            AdminDiagnosticsWarning(
+                code="connector_mode_lookup_failed",
+                message=(
+                    "Connector mode metadata probe failed against Postgres "
+                    "(see stores.postgres status); Ask/Do read model may be stale."
+                ),
+            )
+        )
+    uh = sig.capability_registry.registered_services_unhealthy
+    if uh > 0:
+        out.append(
+            AdminDiagnosticsWarning(
+                code="capability_services_unhealthy",
+                message=(
+                    f"{uh} registered capability service(s) are unhealthy — "
+                    "capability-backed catalog rows may show as unavailable."
+                ),
+            )
+        )
+    n = sig.permissions.catalog_rows_with_connector_but_unknown_permission_mode
+    if n > 0:
+        out.append(
+            AdminDiagnosticsWarning(
+                code="tool_catalog_permission_mode_unknown",
+                message=(
+                    f"{n} catalog row(s) have a connector id but permission_mode stayed unknown "
+                    "(check connector_permissions or orchestrator logs)."
+                ),
+            )
+        )
+    return out
+
+
 def _speech_to_text_block() -> AdminDiagnosticsSpeechToText:
     """STT readiness slice — re-pings adapter when backend is not ``none``."""
 
@@ -159,6 +288,12 @@ def build_admin_diagnostics_response(
         by_source=dict(summary.by_source),
     )
 
+    foundation_signals = _build_foundation_signals(
+        admin_user_id=admin_user_id,
+        me_tools=me_tools,
+        capabilities=capabilities,
+    )
+
     mcp_enabled, mcp_auth_required = _mcp_flags()
     core = AdminDiagnosticsCore(
         auth_enabled=auth_enabled(),
@@ -177,6 +312,7 @@ def build_admin_diagnostics_response(
             ),
         ),
     ]
+    warnings.extend(_foundation_extra_warnings(foundation_signals))
 
     critical_ok = stores[0].status == "ok"  # postgres
     others_ok = all(s.status in ("ok", "not_configured") for s in stores[1:])
@@ -189,6 +325,7 @@ def build_admin_diagnostics_response(
         stores=stores,
         capabilities=capabilities,
         tools=tools,
+        foundation_signals=foundation_signals,
         warnings=warnings,
         speech_to_text=_speech_to_text_block(),
     )

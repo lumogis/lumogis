@@ -1,5 +1,15 @@
 # Documentation Index
 
+Last reviewed: 2026-05-14
+Verified against commit: 6c9828f
+
+## Canonical docs
+
+- [`LUMOGIS_CONTEXT_PACK.md`](LUMOGIS_CONTEXT_PACK.md) — canonical repo-evidence onboarding for Cursor, ChatGPT, Claude, and other assistants (maintained by **`/update-context-pack`**; do not duplicate elsewhere)
+- [`LUMOGIS_REFERENCE_MANUAL.md`](LUMOGIS_REFERENCE_MANUAL.md) — consolidated operator and contributor reference
+- [`capabilities.md`](capabilities.md) — shipped capability narrative (kept in sync with releases; see public export / release skills)
+- [Repository root `README.md`](../README.md) — product overview and quickstart (Lumogis Web + Caddy + Core)
+
 ## Documentation structure
 
 | Directory | Contents |
@@ -13,22 +23,12 @@
 | `release/` | Release and export workflows (maintainers) |
 | `private/` | Private maintainer material (not in public export) |
 
-> Status: Active
-> Last reviewed: 2026-05-08
-> Verified against commit: **e23f9d0**
-> Owner: Docs Librarian
-
-## Canonical docs
-
-- [`LUMOGIS_CONTEXT_PACK.md`](LUMOGIS_CONTEXT_PACK.md) — canonical repo-evidence onboarding for Cursor, ChatGPT, Claude, and other assistants (maintained by **`/update-context-pack`**; do not duplicate elsewhere)
-- [`LUMOGIS_REFERENCE_MANUAL.md`](LUMOGIS_REFERENCE_MANUAL.md) — consolidated operator and contributor reference
-- [Repository root `README.md`](../README.md) — product overview and quickstart (Lumogis Web + Caddy + Core)
-
 ## Architecture
 
 - [`../ARCHITECTURE.md`](../ARCHITECTURE.md) — Core structure, Caddy routing, MCP/capability registry
 - [`architecture/plugin-imports.md`](architecture/plugin-imports.md) — plugin import conventions
 - [`architecture/tool-vocabulary.md`](architecture/tool-vocabulary.md) — LLM vs MCP tool naming
+- Maintainer-only plans and closeouts: [`private/architecture/`](private/architecture/) and [`private/archive/`](private/archive/) (may be omitted from public export trees—see release scripts)
 
 ## Decisions / ADRs
 
@@ -71,6 +71,7 @@
 - [`extending/examples/example_plugin/`](extending/examples/example_plugin/) — minimal plugin template
 - [`../AGENTS.md`](../AGENTS.md) — coding-agent routing and guardrails (read with [`LUMOGIS_CONTEXT_PACK.md`](LUMOGIS_CONTEXT_PACK.md))
 
-## Documentation inventory
+## Archive
 
-Periodic audits and the machine-readable inventory live under [`_librarian/`](_librarian/).
+- Historical maintainer extractions and closeouts: [`private/archive/`](private/archive/)
+- Docs librarian inventory and daily reports: [`_librarian/`](_librarian/)

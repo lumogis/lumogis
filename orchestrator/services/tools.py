@@ -11,12 +11,104 @@ Event.TOOL_REGISTERED with a ToolSpec object.
 
 import json
 import logging
+import os
+from datetime import datetime
+from datetime import timezone
 
 import hooks
 from events import Event
 from models.tool_spec import ToolSpec
+from services.injection_sanitiser import ResolvedOrigin
+from services.injection_sanitiser import redact_for_log
+from services.injection_sanitiser import sanitise_at_ingest
+from services.injection_sanitiser import sanitize_attribute_source_token
+from services.injection_sanitiser import wrap_retrieved_chunk
+
+import config
 
 _log = logging.getLogger(__name__)
+
+
+def _origin_from_search_metadata(metadata: dict | None) -> ResolvedOrigin:
+    iso_now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    md = metadata or {}
+    om = md.get("origin")
+
+    if isinstance(om, dict):
+        scope_raw = str(om.get("scope") or "personal")
+        hits = list(om.get("pattern_hits") or [])
+
+        return {
+            "trusted": bool(om.get("trusted", False)),
+            "scope": (
+                scope_raw if scope_raw in ("personal", "shared", "system", "unknown") else "unknown"
+            ),
+            "source": str(
+                om.get("source") or sanitize_attribute_source_token(md.get("file_path", "legacy"))
+            ),
+            "session_id": om.get("session_id"),
+            "ingested": str(om.get("ingested") or iso_now),
+            "pattern_hits": hits,
+            "pre_wrapped": bool(om.get("pre_wrapped", False)),
+        }
+
+    scope_payload = str(md.get("scope") or "unknown")
+
+    return {
+        "trusted": False,
+        "scope": scope_payload if scope_payload in ("personal", "shared", "system") else "unknown",
+        "source": sanitize_attribute_source_token(str(md.get("file_path") or "legacy")),
+        "session_id": None,
+        "ingested": iso_now,
+        "pattern_hits": [],
+    }
+
+
+def _tool_body_from_chunk(chunk_text: str, metadata: dict | None, *, user_id: str) -> str:
+    """Truncate plaintext before escaping/wrapping + optional context rescan."""
+
+    body_plain = chunk_text[:500]
+
+    if not config.is_injection_sanitiser_enabled():
+        return body_plain
+
+    rescan = os.environ.get("INJECTION_CONTEXT_RESCAN", "false").strip().lower() in (
+        "true",
+        "1",
+        "yes",
+        "on",
+    )
+
+    if rescan:
+        import config as _cfg
+
+        outcome = sanitise_at_ingest(
+            body_plain,
+            scanner=_cfg.get_injection_scanner(),
+            skip_if_empty=False,
+        )
+        body_plain = outcome["text"]
+        hooks.fire_background(
+            Event.INJECTION_FLAGGED,
+            user_id=user_id,
+            source=_origin_from_search_metadata(metadata)["source"],
+            file_path="<tool_search_hit>",
+            chunk_index=None,
+            severity=outcome["max_severity"],
+            action=os.environ.get("INJECTION_ACTION", "wrap"),
+            pattern_hits=outcome["pattern_hits"],
+            sanitised_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            stage="tool_result",
+            text_probe=redact_for_log(outcome["text"]),
+        )
+
+    resolved = _origin_from_search_metadata(metadata)
+
+    if resolved.get("pre_wrapped"):
+        return chunk_text[:500]
+
+    flagged = bool(resolved.get("pattern_hits"))
+    return wrap_retrieved_chunk(body_plain, resolved, injection_flagged=flagged)
 
 
 def _search_files(input_: dict, *, user_id: str) -> str:
@@ -30,7 +122,7 @@ def _search_files(input_: dict, *, user_id: str) -> str:
                 "results": [
                     {
                         "path": r.file_path,
-                        "text": r.chunk_text[:500],
+                        "text": _tool_body_from_chunk(r.chunk_text, r.metadata, user_id=user_id),
                         "score": r.score,
                     }
                     for r in results

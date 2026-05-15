@@ -136,7 +136,6 @@ describe("humaniseChatError", () => {
     expect(humaniseChatError(503, "llm_provider_unavailable")).toMatch(/unavailable/);
     expect(humaniseChatError(400, "last_message_must_be_user")).toMatch(/last message/i);
     expect(humaniseChatError(400, "system_message_position")).toMatch(/System messages/);
-    expect(humaniseChatError(400, "empty_message")).toMatch(/Enter a message/i);
     expect(humaniseChatError(400, "invalid_model:claude-7")).toMatch(/claude-7/);
     expect(humaniseChatError(401, "")).toMatch(/sign in/i);
   });
@@ -206,34 +205,6 @@ describe("ChatPage — render + send", () => {
 
     expect(screen.getByLabelText(/user message/i)).toHaveTextContent("Hi");
     expect(screen.queryByRole("button", { name: /stop/i })).not.toBeInTheDocument();
-  });
-
-  it("disables Send when the composer is empty after models hydrate", async () => {
-    const client = buildClient();
-    renderChat(client);
-    await waitFor(() => {
-      expect(screen.getByLabelText(/model$/i)).toBeInTheDocument();
-    });
-    const send = screen.getByRole("button", { name: /^send$/i });
-    expect(send).toBeDisabled();
-    expect((screen.getByLabelText(/^message$/i) as HTMLTextAreaElement).value).toBe("");
-  });
-
-  it("shows friendly copy when the server rejects an empty message", async () => {
-    const user = userEvent.setup();
-    const client = buildClient({
-      chat: () => jsonResponse(400, { detail: "empty_message" }),
-    });
-
-    renderChat(client);
-    await waitFor(() => screen.getByLabelText(/model$/i));
-
-    await user.type(screen.getByLabelText(/^message$/i), "Hello");
-    await user.click(screen.getByRole("button", { name: /send/i }));
-
-    await waitFor(() => {
-      expect(screen.getByRole("alert")).toHaveTextContent(/Enter a message/i);
-    });
   });
 
   it("renders a humanised error when the server returns 503 llm_provider_key_missing", async () => {

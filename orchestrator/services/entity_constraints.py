@@ -367,7 +367,10 @@ def check_alias_uniqueness(user_id: str) -> int:
                 eid_str = str(eid)
                 violating_entities.add(eid_str)
                 if not _open_violation_exists(ms, eid_str, rule):
-                    detail = f"Alias '{alias_val}' is shared with {len(entity_ids) - 1} other entity/entities"
+                    detail = (
+                        f"Alias '{alias_val}' is shared with "
+                        f"{len(entity_ids) - 1} other entity/entities"
+                    )
                     _insert_violation(ms, user_id, eid_str, rule, "WARNING", detail)
                     inserted += 1
 

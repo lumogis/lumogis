@@ -40,7 +40,6 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from tests.ephemeral_fernet_key import TEST_FERNET_KEY
 
 # ---------------------------------------------------------------------------
 # Fake metadata store: handles users + file_index, no-ops everything else.
@@ -85,6 +84,8 @@ class _IsolationStore:
         # Per-user routine_do_tracking — same chunk; per-user since
         # migration 016.
         self.routine_do: dict[tuple[str, str, str], dict] = {}
+        self.app_settings: dict[str, str] = {}
+        self.auth_sessions: dict[str, dict] = {}
 
     def ping(self) -> bool:
         return True
@@ -116,6 +117,7 @@ class _IsolationStore:
                 "created_at": datetime.now(timezone.utc),
                 "last_login_at": None,
                 "refresh_token_jti": None,
+                "token_version": 1,
             }
             return
         if q.startswith("update users set last_login_at = now()"):
@@ -123,6 +125,36 @@ class _IsolationStore:
             return
         if q.startswith("update users set refresh_token_jti ="):
             self.users[p[1]]["refresh_token_jti"] = p[0]
+            return
+        if q.startswith("insert into app_settings"):
+            key, val = str(p[0]), str(p[1])
+            self.app_settings.setdefault(key, val)
+            return
+        if q.startswith("insert into auth_sessions"):
+            sid, uid, fam, hsh, exp, dlab, ih, uh = (
+                p[0],
+                p[1],
+                p[2],
+                p[3],
+                p[4],
+                p[5],
+                p[6],
+                p[7],
+            )
+            now = datetime.now(timezone.utc)
+            self.auth_sessions[str(sid)] = {
+                "id": sid,
+                "user_id": uid,
+                "family_id": fam,
+                "refresh_token_hash": hsh,
+                "created_at": now,
+                "last_used_at": None,
+                "expires_at": exp,
+                "revoked_at": None,
+                "device_label": dlab,
+                "ip_hash": ih,
+                "ua_hash": uh,
+            }
             return
 
         if q.startswith("insert into mcp_tokens"):
@@ -205,7 +237,8 @@ class _IsolationStore:
                 existing["updated_at"] = now
             return
         if q.startswith(
-            "insert into routine_do_tracking (user_id, connector, action_type, auto_approved, granted_at)"
+            "insert into routine_do_tracking "
+            "(user_id, connector, action_type, auto_approved, granted_at)"
         ):
             user_id, connector, action_type = p
             now = datetime.now(timezone.utc)
@@ -278,6 +311,15 @@ class _IsolationStore:
         if q.startswith("select refresh_token_jti from users where id ="):
             row = self.users.get(p[0])
             return {"refresh_token_jti": row["refresh_token_jti"]} if row else None
+        if "select token_version from users where id =" in q:
+            row = self.users.get(str(p[0]))
+            if row is None:
+                return None
+            return {"token_version": int(row.get("token_version") or 1)}
+        if "select value from app_settings where key =" in q:
+            key = str(p[0])
+            val = self.app_settings.get(key)
+            return None if val is None else {"value": val}
 
         if q.startswith("select * from mcp_tokens where id = %s"):
             (tid,) = p
@@ -310,10 +352,11 @@ class _IsolationStore:
             uid, conn = p
             row = self.creds.get((uid, conn))
             return {"ciphertext": row["ciphertext"]} if row else None
-        if q.startswith(
-            "select user_id, connector, created_at, updated_at, "
-            "created_by, updated_by, key_version "
-            "from user_connector_credentials"
+        if (
+            q.startswith("select user_id, connector,")
+            and "from user_connector_credentials" in q
+            and "where user_id = %s and connector = %s" in q
+            and not q.startswith("select ciphertext from user_connector_credentials")
         ):
             uid, conn = p
             row = self.creds.get((uid, conn))
@@ -332,6 +375,10 @@ class _IsolationStore:
                     "updated_at": now,
                     "created_by": created_by,
                     "updated_by": updated_by,
+                    "delivery_paused": False,
+                    "delivery_paused_reason": None,
+                    "delivery_paused_detail": None,
+                    "delivery_paused_at": None,
                 }
             else:
                 row = dict(existing)
@@ -339,6 +386,10 @@ class _IsolationStore:
                 row["key_version"] = key_version
                 row["updated_at"] = now
                 row["updated_by"] = updated_by
+                row["delivery_paused"] = False
+                row["delivery_paused_reason"] = None
+                row["delivery_paused_detail"] = None
+                row["delivery_paused_at"] = None
             self.creds[(uid, conn)] = row
             return {
                 "user_id": row["user_id"],
@@ -348,6 +399,10 @@ class _IsolationStore:
                 "created_by": row["created_by"],
                 "updated_by": row["updated_by"],
                 "key_version": row["key_version"],
+                "delivery_paused": row["delivery_paused"],
+                "delivery_paused_reason": row["delivery_paused_reason"],
+                "delivery_paused_detail": row["delivery_paused_detail"],
+                "delivery_paused_at": row["delivery_paused_at"],
             }
         if q.startswith("delete from user_connector_credentials"):
             uid, conn = p
@@ -451,10 +506,9 @@ class _IsolationStore:
                 key=lambda r: (r["user_id"], r["connector"]),
             )
         # list_records — per-user enumeration ordered by connector ASC.
-        if q.startswith(
-            "select user_id, connector, created_at, updated_at, "
-            "created_by, updated_by, key_version "
-            "from user_connector_credentials where user_id"
+        if (
+            q.startswith("select user_id, connector,")
+            and "from user_connector_credentials where user_id = %s order by connector asc" in q
         ):
             (uid,) = p
             return sorted(
@@ -545,11 +599,14 @@ def isolation_env(monkeypatch):
 @pytest.fixture
 def isolation_store(monkeypatch):
     import config as _config
+    from services import auth_sessions as _asn
 
+    _asn.invalidate_instance_salt_cache_for_tests()
     store = _IsolationStore()
     _config._instances["metadata_store"] = store
     yield store
     _config._instances.pop("metadata_store", None)
+    _asn.invalidate_instance_salt_cache_for_tests()
 
 
 @pytest.fixture
@@ -1024,7 +1081,10 @@ def test_two_users_have_independent_caldav_credentials(
     """Alice's and Bob's CalDAV credentials never cross-contaminate."""
     import jwt
 
-    monkeypatch.setenv("LUMOGIS_CREDENTIAL_KEY", TEST_FERNET_KEY)
+    monkeypatch.setenv(
+        "LUMOGIS_CREDENTIAL_KEY",
+        "OlGLYckGIbBSt54y8XVmgb441LgKJWvvYoHnpQ_cv9A=",
+    )
     monkeypatch.delenv("LUMOGIS_CREDENTIAL_KEYS", raising=False)
     monkeypatch.delenv("LUMOGIS_PUBLIC_ORIGIN", raising=False)
     # CALENDAR_* env MUST NOT influence resolution under AUTH_ENABLED=true.

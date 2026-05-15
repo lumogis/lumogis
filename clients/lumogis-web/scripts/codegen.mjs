@@ -93,11 +93,12 @@ async function runCheck() {
 
 function canonicalise(text) {
   const obj = JSON.parse(text);
-  // Match orchestrator `scripts.dump_openapi._normalise`: pin version so the
-  // committed snapshot does not churn on every FastAPI default bump, while
-  // `codegen --check` still compares schema shape against a live server.
-  if (obj.info && typeof obj.info === "object") {
-    obj.info = { ...obj.info, version: "snapshot" };
+  // Match orchestrator/scripts/dump_openapi.py `_normalise`: committed snapshot
+  // uses a constant version so git-sha churn cannot drift the file; live
+  // `/openapi.json` still exposes the real semver — strip before compare.
+  const info = obj.info;
+  if (info && typeof info === "object") {
+    obj.info = { ...info, version: "snapshot" };
   }
   return JSON.stringify(sortObject(obj));
 }

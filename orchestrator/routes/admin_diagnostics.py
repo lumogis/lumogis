@@ -10,7 +10,8 @@ ciphertext belongs elsewhere (or nowhere).
 Surfaces
 --------
 * ``GET /api/v1/admin/diagnostics`` — curated Core/store/capability/tool
-  summary for Lumogis Web admin shell (read-only; no secrets). Implemented
+  summary for Lumogis Web admin shell (read-only; no secrets), including
+  Agent Harness Foundation sanity fields (ADR 034). Implemented
   in :mod:`services.admin_diagnostics`.
 
 Initial surface (plan ``credential_management_ux`` D3 + D4)

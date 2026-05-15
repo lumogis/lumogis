@@ -10,11 +10,11 @@ from __future__ import annotations
 
 import importlib.util
 import logging
+from unittest.mock import patch
 
-import config
 import main
 
-from unittest.mock import patch
+import config
 
 
 def test_service_mode_import_error_falls_back_disabled(caplog):

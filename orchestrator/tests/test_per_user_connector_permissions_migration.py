@@ -9,7 +9,7 @@ Plan: ``.cursor/plans/per_user_connector_permissions.plan.md`` §"Test cases"
 These tests exercise the migration body against a real PostgreSQL
 instance. They skip when no Postgres is reachable so the unit-test suite
 on a developer laptop without Docker still runs green; in CI / the
-``docker compose -f docker-compose.test.yml`` flow, Postgres is up and
+``make compose-test`` (Docker) flow, Postgres is up and
 the tests run.
 
 Each test sets up an isolated schema (``test_mig016_<uuid>``) so parallel

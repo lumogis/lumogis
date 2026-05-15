@@ -51,7 +51,32 @@ function diagPayload() {
       unavailable: 2,
       by_source: { core: 5, mcp: 3, capability: 2 },
     },
+    foundation_signals: {
+      tool_catalog: {
+        total_entries: 10,
+        entries_by_transport: { llm_loop: 7, mcp_surface: 3 },
+        unavailable_entries_by_source: { capability: 2 },
+        unavailable_capability_catalog_entries: 2,
+        catalog_only_transport_entries: 0,
+      },
+      permissions: {
+        ask_do_module_import_ok: true,
+        connector_mode_metadata_lookup_ok: true,
+        catalog_rows_with_connector_but_unknown_permission_mode: 0,
+      },
+      capability_registry: {
+        registered_services_total: 1,
+        registered_services_unhealthy: 0,
+      },
+    },
     warnings: [{ code: "codegen_check_requires_live_core", message: "Web codegen check needs Core." }],
+    speech_to_text: {
+      backend: "none" as const,
+      transcribe_available: false,
+      max_audio_bytes: 1,
+      max_duration_sec: 1,
+      endpoint: "/api/v1/voice/transcribe",
+    },
   };
 }
 
@@ -96,6 +121,7 @@ describe("AdminDiagnosticsView", () => {
     await waitFor(() => expect(diagUrl).toContain("/api/v1/admin/diagnostics"));
     expect(await screen.findByLabelText(/Overall status: ok/)).toBeInTheDocument();
     expect(screen.getByLabelText(/Tool catalog total: 10/)).toBeInTheDocument();
+    expect(screen.getByText(/Tool & permission sanity/)).toBeInTheDocument();
     expect(screen.getByText("lumogis-graph")).toBeInTheDocument();
     expect(screen.getByText(/codegen_check_requires_live_core/)).toBeInTheDocument();
   });
@@ -148,5 +174,36 @@ describe("AdminDiagnosticsView", () => {
 
     await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
     expect(screen.getByRole("alert")).toHaveTextContent(/Admin role required/i);
+  });
+
+  it("shows a soft message when foundation_signals is omitted (older Core)", async () => {
+    const legacy = { ...diagPayload() };
+    delete (legacy as Partial<typeof legacy>).foundation_signals;
+
+    const fetchImpl = vi.fn(async (input: RequestInfo) => {
+      const u = String(input);
+      if (u.includes("/api/v1/auth/me")) return jsonResponse(200, adminUser);
+      if (u.includes("/api/v1/admin/diagnostics") && !u.includes("fingerprint")) {
+        return jsonResponse(200, legacy);
+      }
+      if (u.includes("credential-key-fingerprint")) {
+        return jsonResponse(200, {
+          current_key_version: 1,
+          rows_by_key_version: { user: {}, household: {}, system: {} },
+        });
+      }
+      return jsonResponse(404, {});
+    });
+    const store = new AccessTokenStore();
+    const client = new ApiClient({ tokens: store, fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    render(
+      <AuthProvider client={client} tokens={store} skipRefreshOnMount>
+        <AdminDiagnosticsView />
+      </AuthProvider>,
+    );
+
+    await screen.findByLabelText(/Overall status: ok/);
+    expect(screen.getByRole("status")).toHaveTextContent(/Tool and permission sanity slice not present/i);
   });
 });

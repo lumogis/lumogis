@@ -9,9 +9,13 @@
 PYTHON ?= python3
 
 .PHONY: dev build test test-integration test-integration-full lint ingest health logs \
+        audit-local web-audit-fix \
         compose-policy-check \
+        graph-relates-to-merge-policy-check \
         verify-public-rc verify-public-rc-full \
         compose-lint compose-test compose-test-stack-control compose-test-integration \
+        compose-policy-check compose-policy-check-baseline compose-policy-check-adversarial \
+        compose-policy-check-adversarial-envfile \
         mock-capability-test \
         sync-vendored test-kg test-kg-image compose-test-kg \
         test-graph-parity \
@@ -19,7 +23,8 @@ PYTHON ?= python3
         web-install web-codegen web-codegen-check web-test web-lint web-build web-dev web-e2e \
         test-web-e2e \
         web-e2e-prove web-caddy-headers web-caddy-headers-prove \
-        m1-compat-with-retry
+        m1-compat-with-retry \
+        auth-sessions-grep-guard
 
 # ─── User-facing convenience ─────────────────────────────────────────────────
 
@@ -37,15 +42,46 @@ ingest:
 	  -H "Content-Type: application/json" \
 	  -d '{"path": "/data"}' | python3 -m json.tool
 
+# LUM-43 — compose policy (host Python + PyYAML + Docker Compose CLI).
+compose-policy-check-baseline:
+	$(PYTHON) scripts/check_compose_policy.py -f docker-compose.yml
+
+# compose-policy-check: mock overlay needs MOCK_CAPABILITY_SHARED_SECRET for `docker compose config`.
+compose-policy-check:
+	MOCK_CAPABILITY_SHARED_SECRET=lumogis-ci-mock-capability-placeholder \
+	  $(PYTHON) scripts/check_compose_policy.py -f docker-compose.yml -f docker-compose.mock-capability.yml
+
+# Expect checker exit 1 (policy violation); make exit 0 means the guard caught the regression.
+compose-policy-check-adversarial:
+	@$(PYTHON) scripts/check_compose_policy.py -f docker-compose.yml -f docker-compose.test-policy-adversarial.yml; \
+	ec=$$?; \
+	if [ $$ec -eq 1 ]; then exit 0; fi; \
+	echo "compose-policy-check-adversarial: expected policy violation (exit 1), got $$ec" >&2; \
+	exit 1
+
+compose-policy-check-adversarial-envfile:
+	@$(PYTHON) scripts/check_compose_policy.py -f docker-compose.yml -f docker-compose.test-policy-adversarial-envfile.yml; \
+	ec=$$?; \
+	if [ $$ec -eq 1 ]; then exit 0; fi; \
+	echo "compose-policy-check-adversarial-envfile: expected policy violation (exit 1), got $$ec" >&2; \
+	exit 1
+
 # ─── Docker-based CI (no running stack or local Python required) ──────────────
+
+# LUM-29 — forbid legacy ``refresh_token_jti`` mentions in orchestrator prod modules.
+auth-sessions-grep-guard:
+	@$(PYTHON) scripts/check_refresh_token_jti_guard.py
 
 # Run ruff inside the orchestrator container (no local Python needed).
 # Dev deps (ruff) are installed on the fly; they are not in the production image.
 compose-lint:
-	COMPOSE_FILE=docker-compose.yml docker compose run --rm --entrypoint "" orchestrator \
+	COMPOSE_FILE=docker-compose.yml \
+	QDRANT_HOST_PORT=$${QDRANT_HOST_PORT:-6335} \
+	docker compose run --rm --entrypoint "" orchestrator \
 	  sh -c 'pip install -q -r /project/orchestrator/requirements-dev.txt && \
 	         ruff check /project/orchestrator/ && \
-	         ruff format --check /project/orchestrator/'
+	         ruff format --check /project/orchestrator/ && \
+	         python /project/scripts/check_refresh_token_jti_guard.py'
 
 compose-policy-check:
 	@python3 -c "import yaml" 2>/dev/null || \
@@ -65,6 +101,9 @@ compose-policy-check:
 # Set VERIFY_PUBLIC_RC_SKIP_WEB_E2E=1 in full mode to skip Playwright (discouraged).
 # Set LUMOGIS_RC_GRAPH_PARITY=1 in full mode to include test-graph-parity.
 
+graph-relates-to-merge-policy-check: ## LUM-208 — AST-aware scan for invalid RELATES_TO MERGE shapes
+	$(PYTHON) scripts/check_graph_relates_to_merge_policy.py
+
 m1-compat-with-retry: ## Live FalkorDB compat gate (requires FALKORDB_URL + RUN_M1_COMPAT=1); one retry on flake
 	cd orchestrator && (RUN_M1_COMPAT=1 $(PYTHON) -m pytest tests/premium/test_graph_writer.py::TestFalkorDBCompatGate -q || (sleep 2 && RUN_M1_COMPAT=1 $(PYTHON) -m pytest tests/premium/test_graph_writer.py::TestFalkorDBCompatGate -q))
 
@@ -76,6 +115,7 @@ verify-public-rc: ## RC gate (smoke) — run before /publish-private-main-to-pub
 	@echo "==> verify-public-rc (smoke)"
 	scripts/check-main-hygiene.sh
 	$(MAKE) compose-policy-check
+	$(MAKE) graph-relates-to-merge-policy-check
 	$(MAKE) compose-test
 	@if [ -z "$${VERIFY_PUBLIC_RC_SKIP_WEB_CODEGEN_CHECK:-}" ]; then \
 	  $(MAKE) web-codegen-check; \
@@ -116,13 +156,18 @@ verify-public-rc-full: ## Full RC gate — includes e2e and optional graph parit
 # can find docker-compose.yml + .env.example at the repo root.
 # Force AUTH_ENABLED=false so host .env (e.g. local smoke / family-LAN) does not
 # leak into TestClient runs — most suites assume dev-mode auth unless they monkeypatch.
+# Orchestrator depends on Qdrant; avoid host port clash when dev stack already publishes Qdrant on 6334.
 compose-test:
-	COMPOSE_FILE=docker-compose.yml docker compose run --rm -e AUTH_ENABLED=false -w /project/orchestrator orchestrator sh -c \
+	COMPOSE_FILE=docker-compose.yml \
+	QDRANT_HOST_PORT=$${QDRANT_HOST_PORT:-6335} \
+	docker compose run --rm -e AUTH_ENABLED=false -w /project/orchestrator orchestrator sh -c \
 	  "pip install -q -r requirements.txt && pip install -q -r requirements-dev.txt && python -m pytest tests -x -q"
 
 # Stack-control unit tests (mounts stack-control/; dev deps from stack-control/requirements-dev.txt).
 compose-test-stack-control:
-	COMPOSE_FILE=docker-compose.yml docker compose run --rm -v $(PWD)/stack-control:/sc:rw orchestrator sh -c \
+	COMPOSE_FILE=docker-compose.yml \
+	QDRANT_HOST_PORT=$${QDRANT_HOST_PORT:-6335} \
+	docker compose run --rm -v $(PWD)/stack-control:/sc:rw orchestrator sh -c \
 	  "pip install -q -r /sc/requirements-dev.txt && cd /sc && python -m pytest test_main.py -q"
 
 # Run integration tests (requires stack to be up; mounts repo-root tests/ into container).
@@ -130,6 +175,7 @@ compose-test-stack-control:
 # If FalkorDB is not in COMPOSE_FILE, graph tests are skipped automatically.
 compose-test-integration:
 	COMPOSE_FILE=docker-compose.yml:docker-compose.falkordb.yml \
+	QDRANT_HOST_PORT=$${QDRANT_HOST_PORT:-6335} \
 	docker compose run --rm \
 	  -v $(PWD)/tests:/integration-tests:ro \
 	  orchestrator \
@@ -141,10 +187,22 @@ mock-capability-test:
 
 # ─── Developer tools (requires local venv) ───────────────────────────────────
 
+# Dependency CVE audit (npm audit + pip-audit). Free/local only; needs network for advisory DBs.
+# Bootstrap: creates .venv-audit/ when pip-audit is not on PATH (gitignored).
+# Optional env: LUMOGIS_DEVTOOLS=/path/to/lumogis-devtools (default ../lumogis-devtools).
+# AUDIT_SKIP_NPM=1 or AUDIT_SKIP_PIP=1 to scan one ecosystem only.
+audit-local:
+	bash scripts/audit_local.sh
+
+# npm audit fix must run under clients/lumogis-web (package-lock.json lives there; repo root has none).
+web-audit-fix:
+	cd clients/lumogis-web && npm audit fix
+
 # Requires local venv (contributors only)
 lint:
 	ruff check orchestrator/
 	ruff format --check orchestrator/
+	@$(PYTHON) scripts/check_refresh_token_jti_guard.py
 
 # Requires local venv — see CONTRIBUTING.md (orchestrator + stack-control requirements-dev.txt).
 # Orchestrator route tests use unauthenticated TestClient with the synthetic `default`

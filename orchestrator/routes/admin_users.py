@@ -9,7 +9,7 @@ Routes
 ------
 * ``POST   /api/v1/admin/users``              — create a user (admin or user role).
 * ``GET    /api/v1/admin/users``              — list all users with operational fields.
-* ``POST   /api/v1/admin/users/{id}/password`` — set a user's password (clears refresh jti).
+* ``POST   /api/v1/admin/users/{id}/password`` — set password (invalidates sessions per LUM-29).
 * ``PATCH  /api/v1/admin/users/{id}``       — update role and/or disabled flag.
 * ``DELETE /api/v1/admin/users/{id}``        — hard-delete a user.
 
@@ -23,10 +23,8 @@ Safety invariants enforced here (not in :mod:`services.users`)
    admin locking themselves out mid-session.
 5. **Email uniqueness** enforced by the underlying
    :func:`services.users.create_user` (returns 409 on duplicate).
-6. **Disable / role-demote / delete** all clear the active refresh jti
-   in :func:`services.users.set_disabled` / :func:`delete_user`, so the
-   user cannot rotate refresh tokens after the change. Access tokens
-   remain valid until TTL expiry — documented limitation in plan §12.
+6. **Disable / role-demote / delete** revoke browser sessions via
+   :mod:`services.auth_sessions`; access JWTs obey ``token_version`` until TTL.
 """
 
 from __future__ import annotations
@@ -44,6 +42,8 @@ from fastapi import Response
 from fastapi import status
 from models.auth import AckOk
 from models.auth import AdminUserPasswordResetRequest
+from models.auth import SessionAdminListResponse
+from models.auth import SessionAdminRowPublic
 from models.auth import UserAdminView
 from models.auth import UserCreateRequest
 from models.auth import UserPatchRequest
@@ -53,6 +53,7 @@ from models.user_export import ImportReceipt
 from models.user_export import ImportRefused
 from models.user_export import ImportRequest
 
+from services import auth_sessions as auth_sessions_service
 from services import user_export as user_export_service
 from services import users as users_service
 
@@ -119,8 +120,7 @@ def reset_user_password(
 ) -> AckOk:
     """Set ``user_id``'s password. Allowed for disabled accounts (login stays blocked).
 
-    Clears the target's ``refresh_token_jti`` so existing refresh cookies for
-    that user stop working.
+    Revokes browser refresh sessions via ``services.users`` password path (LUM-29).
     """
     try:
         users_service.admin_reset_user_password(user_id, body.new_password)
@@ -206,6 +206,53 @@ def patch_user(user_id: str, body: UserPatchRequest, request: Request) -> UserAd
         caller.user_id,
     )
     return _to_admin_view(updated)
+
+
+def _hash_preview(h: str) -> str | None:
+    """First four hex chars of a 64-char hash (admin hint only)."""
+    if len(h) < 4:
+        return None
+    return h[:4]
+
+
+@router.get("/{user_id}/sessions", response_model=SessionAdminListResponse)
+def admin_list_user_sessions(user_id: str) -> SessionAdminListResponse:
+    """List active ``auth_sessions`` rows for ``user_id`` (admin)."""
+    if users_service.get_user_by_id(user_id) is None:
+        raise HTTPException(status_code=404, detail="user not found")
+    rows = auth_sessions_service.list_sessions_for_admin(user_id)
+    sessions: list[SessionAdminRowPublic] = []
+    for r in rows:
+        sessions.append(
+            SessionAdminRowPublic(
+                id=r.id,
+                device_label=r.device_label,
+                created_at=r.created_at,
+                last_used_at=r.last_used_at,
+                expires_at=r.expires_at,
+                ip_hint=_hash_preview(r.ip_hash),
+                ua_hint=_hash_preview(r.ua_hash),
+            )
+        )
+    return SessionAdminListResponse(sessions=sessions)
+
+
+@router.delete(
+    "/{user_id}/sessions/{session_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_same_origin)],
+)
+def admin_revoke_user_session(user_id: str, session_id: str, request: Request) -> None:
+    caller = get_user(request)
+    if users_service.get_user_by_id(user_id) is None:
+        raise HTTPException(status_code=404, detail="user not found")
+    row = auth_sessions_service.revoke_session_admin(
+        target_user_id=user_id,
+        session_id=session_id,
+        admin_user_id=caller.user_id,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="not found")
 
 
 @router.delete(

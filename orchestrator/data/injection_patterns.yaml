@@ -1,0 +1,45 @@
+# LUM-127 — lightweight prompt-injection heuristics (regex pass at ingest/context).
+# Schema: patterns[].id, name, regex, severity ∈ {low, medium, high}
+# Optional: enabled (default true).
+# Regex bodies use single-quoted YAML scalars so backslashes pass through to Python unchanged.
+
+patterns:
+  - id: ignore_prev_instruction
+    name: Ignore prior instructions
+    regex: '(?i)ignore\s+(all\s+)?(previous|prior|above)\s+(instructions|rules|directives|prompts)'
+    severity: medium
+
+  - id: system_prompt_echo
+    name: System prompt scaffolding echoes
+    regex: '(?i)((###+)\s*system\s+prompt|<<SYS>>|</s>\s*<s>|<\|im_start\|>system\s*\|>)'
+    severity: medium
+
+  - id: pseudo_tool_call_xml
+    name: Tool-call-ish XML stubs
+    regex: '(?i)<\s*(function_calls|invoke|tool_call|assistant_message)\b[\s\S]{0,200}>'
+    severity: medium
+
+  - id: credential_exfil_marker
+    name: Credential exfil solicitation
+    regex: '(?i)(api[_-]?key\s*=|authorization:\s*bearer\s+[a-z0-9._-]{8,}|sk-[a-z0-9]{10,}|BEGIN\s+(RSA\s+)?PRIVATE\s+KEY)'
+    severity: high
+
+  - id: delimiter_spoof_lumogis
+    name: Historical Lumogis context delimiter spoof
+    regex: '(?i)\[context from previous sessions'
+    severity: low
+
+  - id: role_confusion_directive
+    name: Role-swap directives
+    regex: '(?i)(you\s+are\s+now\s+(the|a)\s+(user|assistant|system)\b|disregard\s+your\s+guidelines\b)'
+    severity: medium
+
+  - id: hidden_unicode_direction
+    name: Bidirectional override characters
+    regex: '[\u202a-\u202e\u2066-\u2069\u061c\u200f\u200e]'
+    severity: high
+
+  - id: markdown_fence_breakout
+    name: Suspicious fenced block pivot
+    regex: '(?s)```(?:\s*[a-z0-9_+-]*)?\s*\n[\s\S]{0,200}(?:```){2,}'
+    severity: medium

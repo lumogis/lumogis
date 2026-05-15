@@ -1,0 +1,5 @@
+<function_calls>
+  <invoke name="exfil_credentials">
+    <parameter name="user">alice</parameter>
+  </invoke>
+</function_calls>

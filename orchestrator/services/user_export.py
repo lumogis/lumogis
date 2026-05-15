@@ -151,6 +151,7 @@ _OMITTED_USER_TABLES: dict[str, str] = {
     # household key to decrypt).
     "user_connector_credentials": "excluded (sensitive, non-portable in standard export)",
     "user_batch_jobs": "excluded (operational queue state, non-portable)",
+    "action_proposals": "excluded (Ask/Do proposal queue; operational, non-portable)",
     # Web Push subscription rows are per-user *device handles* —
     # endpoint URLs minted by the recipient's browser/push service
     # against this Lumogis origin. Replaying them at a destination
@@ -164,7 +165,14 @@ _OMITTED_USER_TABLES: dict[str, str] = {
     # and are meaningless at the destination (different secret → tokens
     # would never validate, so revocations are inert). Forward-compat
     # scaffolding only in v1 (table is INERT — see migration 019).
-    "auth_refresh_revocations": "excluded (per-instance auth state; tokens unrecoverable at destination)",
+    "auth_refresh_revocations": (
+        "excluded (per-instance auth state; tokens unrecoverable at destination)"
+    ),
+    # Dual-token browser sessions (LUM-29): refresh hashes bind to this instance's
+    # JWT secrets; destination installs mint fresh cookies after login.
+    "auth_sessions": (
+        "excluded (per-instance refresh session hashes; JWT secret-bound; non-portable)"
+    ),
 }
 
 
@@ -194,11 +202,15 @@ _OMITTED_NON_USER_TABLES: dict[str, str] = {
     # with the household ``LUMOGIS_CREDENTIAL_KEY``. Per-user export
     # bundles never carry tier-table material; operator backup =
     # pg_dump of the table (recipient needs the household key).
-    "household_connector_credentials": "excluded (household-tier; sensitive, non-portable in standard export)",
+    "household_connector_credentials": (
+        "excluded (household-tier; sensitive, non-portable in standard export)"
+    ),
     # Instance/system connector credentials (per ADR
     # ``credential_scopes_shared_system``) — same crypto as household
     # tier; operator-owned, never user-owned. Same omission rationale.
-    "instance_system_connector_credentials": "excluded (instance/system tier; sensitive, non-portable in standard export)",
+    "instance_system_connector_credentials": (
+        "excluded (instance/system tier; sensitive, non-portable in standard export)"
+    ),
 }
 
 
@@ -1167,7 +1179,12 @@ def _detect_dangling_references(
 
     dc_rows = sections.get("postgres/dedup_candidates.json", [])
     run_ids = _ids("deduplication_runs", "run_id")
-    _check("dedup_candidates", "run_id", {r["run_id"] for r in dc_rows if r.get("run_id")}, run_ids)
+    _check(
+        "dedup_candidates",
+        "run_id",
+        {r["run_id"] for r in dc_rows if r.get("run_id")},
+        run_ids,
+    )
 
     return dangling
 

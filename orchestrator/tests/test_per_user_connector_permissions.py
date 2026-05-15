@@ -61,10 +61,12 @@ class _FakeConnectorPermStore:
         * INSERT INTO connector_permissions (user_id, connector, mode) VALUES (...)
           ON CONFLICT (user_id, connector) DO UPDATE SET mode = EXCLUDED.mode, updated_at = NOW()
         * DELETE FROM connector_permissions WHERE user_id = %s AND connector = %s
-        * INSERT INTO routine_do_tracking (user_id, connector, action_type, approval_count) VALUES (...)
+        * INSERT INTO routine_do_tracking
+          (user_id, connector, action_type, approval_count) VALUES (...)
           ON CONFLICT (user_id, connector, action_type) DO UPDATE
           SET approval_count = routine_do_tracking.approval_count + 1, updated_at = NOW()
-        * INSERT INTO routine_do_tracking (user_id, connector, action_type, auto_approved, granted_at) VALUES (...)
+        * INSERT INTO routine_do_tracking
+          (user_id, connector, action_type, auto_approved, granted_at) VALUES (...)
           ON CONFLICT (user_id, connector, action_type) DO UPDATE
           SET auto_approved = TRUE, granted_at = NOW(), updated_at = NOW()
         * INSERT INTO users ...

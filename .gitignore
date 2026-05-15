@@ -8,6 +8,7 @@ __pycache__/
 .pytest_cache/
 venv/
 .venv/
+.venv-audit/
 
 # Cursor IDE — local workspace (plans, skills, rules); not part of public
 # release trees. See docs/release/public-agpl-release-workflow.md.
@@ -64,3 +65,4 @@ docker-compose.override.yml
 docker-compose.test-policy-adversarial*.yml
 
 lumogis-data/
+.venv-pytest-run/

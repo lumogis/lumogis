@@ -40,3 +40,5 @@ def test_event_constants():
     assert Event.ENTITY_CREATED == "on_entity_created"
     assert Event.SESSION_ENDED == "on_session_ended"
     assert Event.TOOL_REGISTERED == "on_tool_registered"
+    assert Event.INJECTION_FLAGGED == "on_injection_flagged"
+    assert Event.TOOL_CHAIN_CAP_TRIPPED == "on_tool_chain_cap_tripped"

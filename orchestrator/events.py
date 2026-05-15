@@ -24,3 +24,8 @@ class Event:
     ACTION_EXECUTED = "on_action_executed"
     ACTION_REGISTERED = "on_action_registered"
     ROUTINE_ELEVATION_READY = "on_routine_elevation_ready"
+
+    # Injection / retrieval hardening — see services/injection_sanitiser (LUM-127).
+    # INGEST_CHUNK_READY is deferred to LUM-132 PreIngest hooks.
+    INJECTION_FLAGGED = "on_injection_flagged"
+    TOOL_CHAIN_CAP_TRIPPED = "on_tool_chain_cap_tripped"

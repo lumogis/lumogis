@@ -17,7 +17,6 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.mark.integration
-@pytest.mark.public_rc
 def test_health_detailed(api):
     r = api.get("/health")
     assert r.status_code == 200
@@ -27,7 +26,6 @@ def test_health_detailed(api):
 
 
 @pytest.mark.integration
-@pytest.mark.public_rc
 def test_status_page(api):
     r = api.get("/")
     assert r.status_code == 200
@@ -37,7 +35,6 @@ def test_status_page(api):
 
 
 @pytest.mark.integration
-@pytest.mark.public_rc
 def test_ingest_and_file_index(api, repo_root: Path):
     """Ingest a real file and verify it appears in the file_index count (not semantic search).
 
@@ -210,7 +207,6 @@ def test_signal_source_add_idempotent(api):
 
 
 @pytest.mark.integration
-@pytest.mark.public_rc
 def test_signals_endpoint(api):
     """`GET /signals` always returns a valid response regardless of content."""
     sig = api.get("/signals", params={"limit": 10})
@@ -232,7 +228,6 @@ def test_signals_populate_after_poll_window(api):
 
 
 @pytest.mark.integration
-@pytest.mark.public_rc
 def test_feedback_explicit(api):
     r = api.post(
         "/feedback",
@@ -247,7 +242,6 @@ def test_feedback_explicit(api):
 
 
 @pytest.mark.integration
-@pytest.mark.public_rc
 def test_routine_run_writes_audit_log(api):
     r = api.post("/routines/inbox_digest/run")
     assert r.status_code == 200

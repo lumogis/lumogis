@@ -27,10 +27,12 @@ import time
 from collections import defaultdict
 from collections import deque
 from typing import Deque
+from uuid import uuid4
 
 from actions import audit as audit_module
 from actions import registry as actions_registry
 from actions.executor import is_hard_limited
+from actions.proposal_execute import claim_and_execute_proposal
 from auth import get_user
 from authz import require_user
 from fastapi import APIRouter
@@ -47,6 +49,7 @@ from models.api_v1 import ElevateRequest
 from models.api_v1 import ElevateResponse
 from models.api_v1 import ElevationCandidateItem
 from models.api_v1 import PendingApprovalsResponse
+from models.api_v1 import ProposalExecuteWireResponse
 from permissions import elevate_to_routine
 from permissions import set_connector_mode
 from services.api_v1_risk import elevation_eligible
@@ -324,6 +327,38 @@ def elevate(body: ElevateRequest, request: Request) -> ElevateResponse:
         ) from exc
 
     return ElevateResponse(connector=body.connector, action_type=body.action_type)
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/approvals/proposals/{proposal_id}/execute
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/proposals/{proposal_id}/execute",
+    response_model=ProposalExecuteWireResponse,
+    dependencies=[Depends(_approvals_rate_check)],
+)
+def execute_approved_proposal(
+    proposal_id: int,
+    request: Request,
+    as_user: str | None = Query(None),
+) -> ProposalExecuteWireResponse:
+    """Claim one **approved** proposal row and run :func:`actions.executor.execute`."""
+    caller = get_user(request)
+    target_user_id = _resolve_as_user(caller, as_user)
+    worker_id = f"http-{uuid4()}"
+    result = claim_and_execute_proposal(
+        proposal_id,
+        worker_id=worker_id,
+        user_id=target_user_id,
+    )
+    return ProposalExecuteWireResponse(
+        success=result.success,
+        output=result.output,
+        error=result.error,
+        reverse_token=result.reverse_token,
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -234,6 +234,16 @@ class ElevateResponse(BaseModel):
     elevated: Literal[True] = True
 
 
+class ProposalExecuteWireResponse(BaseModel):
+    """Wire shape aligned with ``ActionResult`` for proposal execute."""
+
+    model_config = _RES
+    success: bool
+    output: str
+    error: Optional[str] = None
+    reverse_token: Optional[str] = None
+
+
 # ── Audit ────────────────────────────────────────────────────────────
 
 
@@ -672,7 +682,7 @@ class MeNotificationChannelItem(BaseModel):
         default=None,
         description="Web Push: whether VAPID keys are set on the server.",
     )
-    status: Literal["configured", "not_configured"]
+    status: Literal["configured", "not_configured", "paused"]
     why_not_available: Optional[str] = Field(
         default=None,
         description="Hint when not configured; never contains secrets.",
@@ -684,8 +694,15 @@ class MeNotificationsSummary(BaseModel):
 
     model_config = _RES
     total: int = Field(ge=0)
-    configured: int = Field(ge=0)
+    configured: int = Field(
+        ge=0,
+        description="Channels fully active (``status=configured`` only — excludes paused).",
+    )
     not_configured: int = Field(ge=0)
+    paused: int = Field(
+        ge=0,
+        description="Channels with ``status=paused`` (credential present, delivery blocked).",
+    )
     by_active_tier: dict[str, int] = Field(
         description="Counts per ``active_tier`` value.",
     )
@@ -772,6 +789,61 @@ class AdminDiagnosticsTools(BaseModel):
     by_source: dict[str, int] = Field(description="Counts keyed by ``ToolCatalogEntry.source``.")
 
 
+class AdminDiagnosticsFoundationToolCatalog(BaseModel):
+    """Extra read-only tool-catalog aggregates for operators (ADR 034 — diagnostics)."""
+
+    model_config = _RES
+    total_entries: int = Field(
+        ge=0,
+        description="Tool catalog rows for the sampled admin user_id.",
+    )
+    entries_by_transport: dict[str, int] = Field(
+        description="Counts per transport; keys sorted lexically.",
+    )
+    unavailable_entries_by_source: dict[str, int] = Field(
+        description="Unavailable row counts per ``source`` (omits sources with zero).",
+    )
+    unavailable_capability_catalog_entries: int = Field(
+        ge=0,
+        description=("Capability-source catalog rows marked unavailable (often health/auth)."),
+    )
+    catalog_only_transport_entries: int = Field(
+        ge=0,
+        description="Rows with catalog_only transport.",
+    )
+
+
+class AdminDiagnosticsFoundationPermissions(BaseModel):
+    """Read-only Ask/Do / connector metadata sanity (no policy changes)."""
+
+    model_config = _RES
+    ask_do_module_import_ok: bool
+    connector_mode_metadata_lookup_ok: bool
+    catalog_rows_with_connector_but_unknown_permission_mode: int = Field(
+        ge=0,
+        description=(
+            "Rows with connector set but permission_mode=unknown (possible resolver errors)."
+        ),
+    )
+
+
+class AdminDiagnosticsFoundationCapabilityRegistry(BaseModel):
+    """Capability discovery summary mirrored for the foundation_signals block."""
+
+    model_config = _RES
+    registered_services_total: int = Field(ge=0)
+    registered_services_unhealthy: int = Field(ge=0)
+
+
+class AdminDiagnosticsFoundationSignals(BaseModel):
+    """Agent Harness Foundation diagnostics slice (ADR 034) — observability only."""
+
+    model_config = _RES
+    tool_catalog: AdminDiagnosticsFoundationToolCatalog
+    permissions: AdminDiagnosticsFoundationPermissions
+    capability_registry: AdminDiagnosticsFoundationCapabilityRegistry
+
+
 class AdminDiagnosticsWarning(BaseModel):
     """Safe operator warning (no raw exceptions)."""
 
@@ -839,6 +911,9 @@ class AdminDiagnosticsResponse(BaseModel):
     stores: List[AdminDiagnosticsStoreItem]
     capabilities: AdminDiagnosticsCapabilities
     tools: AdminDiagnosticsTools
+    foundation_signals: AdminDiagnosticsFoundationSignals = Field(
+        description="Read-only tool / permission / capability sanity (ADR 034); no execution.",
+    )
     warnings: List[AdminDiagnosticsWarning]
     speech_to_text: AdminDiagnosticsSpeechToText
 
@@ -878,6 +953,7 @@ __all__ = [
     "ConnectorModeResponse",
     "ElevateRequest",
     "ElevateResponse",
+    "ProposalExecuteWireResponse",
     "AuditEntry",
     "AuditEntryDTO",
     "AuditListResponse",
@@ -905,6 +981,10 @@ __all__ = [
     "AdminDiagnosticsCapabilityService",
     "AdminDiagnosticsCapabilities",
     "AdminDiagnosticsTools",
+    "AdminDiagnosticsFoundationToolCatalog",
+    "AdminDiagnosticsFoundationPermissions",
+    "AdminDiagnosticsFoundationCapabilityRegistry",
+    "AdminDiagnosticsFoundationSignals",
     "AdminDiagnosticsWarning",
     "AdminDiagnosticsSpeechToText",
     "TranscriptionSegment",

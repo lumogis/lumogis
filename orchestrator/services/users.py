@@ -86,7 +86,7 @@ def _row_to_internal(row: dict) -> InternalUser:
         disabled=row["disabled"],
         created_at=row["created_at"],
         last_login_at=row.get("last_login_at"),
-        refresh_token_jti=row.get("refresh_token_jti"),
+        token_version=int(row.get("token_version") or 1),
     )
 
 
@@ -175,19 +175,23 @@ def set_disabled(
     """
     ms = config.get_metadata_store()
     if disabled:
-        # Local import — keep services.users boot light and avoid the
-        # circular ``services.users`` ↔ ``services.mcp_tokens`` graph
-        # (cascade revocation needs the same metadata store).
+        # Local imports — keep ``services.users`` boot light and avoid the
+        # ``services.users`` ↔ ``services.mcp_tokens`` ↔ ``auth`` import cycles
+        # at module load.
+        from auth import invalidate_token_version_cache
+
+        from services import auth_sessions as _auth_sess
         from services import mcp_tokens as _mcp_tokens
 
         with ms.transaction():
-            ms.execute(
-                "UPDATE users SET disabled = TRUE, refresh_token_jti = NULL WHERE id = %s",
-                (user_id,),
-            )
             cascaded = _mcp_tokens.cascade_revoke_for_user(
                 user_id,
                 by_admin_user_id=by_admin_user_id or "",
+            )
+            revoked_sess = _auth_sess.revoke_all_active_in_transaction_for_user(ms, user_id)
+            ms.execute(
+                "UPDATE users SET disabled = TRUE, token_version = token_version + 1 WHERE id = %s",
+                (user_id,),
             )
         # D14: emit one ``__mcp_token__.cascade_revoked`` audit row per
         # affected token AFTER the transaction commits. Per-token audits
@@ -208,6 +212,11 @@ def set_disabled(
                 },
                 result_summary={"revoked_at": tok.revoked_at},
             )
+        _auth_sess.emit_session_rows_cascade_audits(
+            acting_user_id=actor_id,
+            revoked_rows=revoked_sess,
+        )
+        invalidate_token_version_cache(user_id)
         # Per-user connector-permission cache hygiene
         # (plan ``per_user_connector_permissions`` D5 / cache-clear-placement
         # decision). Runs AFTER the with-transaction block and AFTER the
@@ -250,6 +259,8 @@ def delete_user(user_id: str) -> bool:
     from permissions import clear_cache_for_user
 
     clear_cache_for_user(user_id)
+    # SCOPE-EXEMPT: auth_sessions rows are keyed by user_id only (purge on user delete).
+    ms.execute("DELETE FROM auth_sessions WHERE user_id = %s", (user_id,))
     ms.execute("DELETE FROM users WHERE id = %s", (user_id,))
     return True
 
@@ -311,19 +322,28 @@ def record_login(user_id: str) -> None:
 
 
 def _apply_new_password(user_id: str, new_password: str) -> None:
-    """Replace ``password_hash`` and clear ``refresh_token_jti`` for ``user_id``.
+    """Replace ``password_hash``. Bumps ``token_version`` and revokes auth sessions.
 
-    Does **not** verify the previous password — callers must enforce authz.
-    Clearing ``refresh_token_jti`` invalidates existing refresh cookies for
-    that user; the current access JWT (if any) remains valid until TTL
-    expiry — same limitation as :func:`set_disabled`.
+    Callers must enforce authz. Post-commit: clears the in-process
+    ``token_version`` cache used by access-JWT verification.
     """
+    from auth import invalidate_token_version_cache
+
+    from services import auth_sessions as _auth_sess
+
     validate_password_policy(new_password)
     pw_hash = hash_password(new_password)
     ms = config.get_metadata_store()
-    ms.execute(
-        "UPDATE users SET password_hash = %s, refresh_token_jti = NULL WHERE id = %s",
-        (pw_hash, user_id),
+    with ms.transaction():
+        ms.execute(
+            "UPDATE users SET password_hash = %s, token_version = token_version + 1 WHERE id = %s",
+            (pw_hash, user_id),
+        )
+        revoked = _auth_sess.revoke_all_active_in_transaction_for_user(ms, user_id)
+    invalidate_token_version_cache(user_id)
+    _auth_sess.emit_session_rows_cascade_audits(
+        acting_user_id=user_id,
+        revoked_rows=revoked,
     )
 
 
@@ -379,30 +399,6 @@ def cli_reset_password(
     if user is None:
         raise LookupError("user not found")
     _apply_new_password(user.id, new_password)
-
-
-def set_refresh_jti(user_id: str, jti: str | None) -> None:
-    """Set (or clear) the active refresh jti for ``user_id``.
-
-    Single-active-jti per user — the v1 contract. ``None`` clears it (used
-    by ``/logout``, by ``set_disabled``, and by ``delete_user``).
-    """
-    ms = config.get_metadata_store()
-    ms.execute(
-        "UPDATE users SET refresh_token_jti = %s WHERE id = %s",
-        (jti, user_id),
-    )
-
-
-def get_refresh_jti(user_id: str) -> str | None:
-    ms = config.get_metadata_store()
-    row = ms.fetch_one(
-        "SELECT refresh_token_jti FROM users WHERE id = %s",
-        (user_id,),
-    )
-    if row is None:
-        return None
-    return row.get("refresh_token_jti")
 
 
 def bootstrap_if_empty() -> InternalUser | None:

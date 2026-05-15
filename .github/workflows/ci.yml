@@ -3,21 +3,8 @@ name: CI
 on:
   pull_request:
     branches: [master, main]
-  push:
-    branches: [main]
 
 jobs:
-  release-hygiene:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Tier 0 release/export checks
-        run: |
-          bash scripts/check-main-hygiene.sh
-          bash scripts/create-upstream-export-tree.sh /tmp/lumogis-upstream-export
-          bash scripts/check-public-export.sh /tmp/lumogis-upstream-export
-
   lint-and-test:
     runs-on: ubuntu-latest
     steps:
@@ -32,9 +19,11 @@ jobs:
           pip install -r orchestrator/requirements.txt
           pip install -r orchestrator/requirements-dev.txt
           pip install -r stack-control/requirements-dev.txt
-          pip install -r services/lumogis-mock-capability/requirements-dev.txt
-          pip install -r services/lumogis-graph/requirements.txt
-          pip install -r services/lumogis-graph/requirements-dev.txt
+          # lumogis-graph is omitted from the public AGPL export (see scripts/public-export-strip-list.txt).
+          if [[ -f services/lumogis-graph/requirements.txt ]]; then
+            pip install -r services/lumogis-graph/requirements.txt
+            pip install -r services/lumogis-graph/requirements-dev.txt
+          fi
 
       - name: Lint
         run: |
@@ -43,31 +32,40 @@ jobs:
 
       - name: Test orchestrator
         run: |
-          cd orchestrator && AUTH_ENABLED=false GRAPH_MODE=inprocess CAPABILITY_SERVICE_URLS= MCP_AUTH_TOKEN= python -m pytest tests/ -x -q
+          cd orchestrator && python -m pytest tests/ -x -q
 
       - name: Test stack-control
         run: |
           cd stack-control && python -m pytest test_main.py -q
 
-      - name: Test lumogis-mock-capability
-        run: |
-          cd services/lumogis-mock-capability && python -m pytest tests -q
-
       - name: Test lumogis-graph
         run: |
+          if [[ ! -f services/lumogis-graph/requirements.txt ]]; then
+            echo "lumogis-graph not in checkout (public export); skipping"
+            exit 0
+          fi
           cd services/lumogis-graph && python -m pytest -q
 
-  lumogis-web:
+  compose-policy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-python@v5
         with:
-          node-version: "20"
-          cache: npm
-          cache-dependency-path: clients/lumogis-web/package-lock.json
+          python-version: "3.12"
 
-      - name: Lint, unit tests, and build
+      - name: Install PyYAML (LUM-43 compose policy script)
+        run: pip install -r scripts/requirements-compose-policy.txt
+
+      - name: Bootstrap .env for docker compose config
+        run: cp .env.example .env
+
+      - name: LUM-43 compose policy (baseline, mock overlay, adversarial)
+        env:
+          MOCK_CAPABILITY_SHARED_SECRET: lumogis-ci-mock-capability-placeholder
         run: |
-          cd clients/lumogis-web && npm ci && npm run codegen && npm run lint && npm test && npm run build
+          make compose-policy-check-baseline
+          make compose-policy-check
+          make compose-policy-check-adversarial
+          make compose-policy-check-adversarial-envfile

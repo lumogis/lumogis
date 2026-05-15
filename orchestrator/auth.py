@@ -22,13 +22,17 @@ from __future__ import annotations
 import hmac
 import logging
 import os
+import threading
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Literal
 
 import jwt
 from fastapi import Request
 from fastapi.responses import JSONResponse
+
+import config
 
 _log = logging.getLogger(__name__)
 
@@ -68,6 +72,116 @@ def refresh_token_ttl_seconds() -> int:
         return 30 * 24 * 3600
 
 
+def require_tv_claim() -> bool:
+    raw = os.environ.get("LUMOGIS_REQUIRE_TV_CLAIM", "false").strip().lower()
+    return raw in ("true", "1", "yes")
+
+
+def token_version_cache_ttl_seconds() -> int:
+    raw = os.environ.get("LUMOGIS_TOKEN_VERSION_CACHE_TTL_SECONDS", "30")
+    try:
+        return min(3600, max(0, int(raw)))
+    except ValueError:
+        return 30
+
+
+# ---------------------------------------------------------------------------
+# Per-user ``token_version`` cache (LUM-29) — bounded LRU + TTL, single-process.
+# ---------------------------------------------------------------------------
+
+_TOKEN_VER_CACHE_MAX = 4096
+
+
+class _TTLVersionLRU:
+    """Maps user_id → (token_version, monotonic_timestamp)."""
+
+    def __init__(self, maxsize: int) -> None:
+        self._maxsize = maxsize
+        self._data: "OrderedDict[str, tuple[int, float]]" = OrderedDict()
+        self._lock = threading.Lock()
+
+    def get_fresh(self, user_id: str, ttl_s: int) -> int | None:
+        if ttl_s <= 0:
+            return None
+        now = time.monotonic()
+        with self._lock:
+            item = self._data.get(user_id)
+            if item is None:
+                return None
+            ver, ts = item
+            if (now - ts) > float(ttl_s):
+                del self._data[user_id]
+                return None
+            self._data.move_to_end(user_id)
+            return ver
+
+    def put(self, user_id: str, version: int) -> None:
+        with self._lock:
+            self._data[user_id] = (version, time.monotonic())
+            self._data.move_to_end(user_id)
+            while len(self._data) > self._maxsize:
+                self._data.popitem(last=False)
+
+    def invalidate(self, user_id: str) -> None:
+        with self._lock:
+            self._data.pop(user_id, None)
+
+
+_TOKEN_VER_CACHE = _TTLVersionLRU(maxsize=_TOKEN_VER_CACHE_MAX)
+
+
+def invalidate_token_version_cache(user_id: str) -> None:
+    """Drop cached ``token_version`` for ``user_id`` (post-commit callers only)."""
+    _TOKEN_VER_CACHE.invalidate(user_id)
+
+
+def resolve_current_token_version(user_id: str) -> int:
+    """Return the live ``users.token_version`` (BIGINT → int), with TTL cache."""
+    ttl = token_version_cache_ttl_seconds()
+    if ttl > 0:
+        hit = _TOKEN_VER_CACHE.get_fresh(user_id, ttl)
+        if hit is not None:
+            return hit
+    ms = config.get_metadata_store()
+    row = ms.fetch_one("SELECT token_version FROM users WHERE id = %s", (user_id,))
+    if row is None:
+        return 0
+    ver = int(row["token_version"])
+    if ttl > 0:
+        _TOKEN_VER_CACHE.put(user_id, ver)
+    return ver
+
+
+def jwt_revocation_failure_reason(payload: dict) -> str | None:
+    """After ``verify_token`` succeeds: return 401 reason or ``None`` if OK.
+
+    When ``AUTH_ENABLED=false`` this should not run (middleware short-circuits),
+    but remains safe if called from tests.
+    """
+    if not auth_enabled():
+        return None
+    sub = payload.get("sub")
+    if not isinstance(sub, str):
+        return "invalid token"
+
+    require_tv = require_tv_claim()
+    tv_raw = payload.get("tv")
+    if tv_raw is None:
+        if require_tv:
+            return "invalid token"
+        return None
+
+    try:
+        tv_claim = int(tv_raw)
+    except (TypeError, ValueError):
+        return "invalid token"
+
+    current = resolve_current_token_version(sub)
+    if tv_claim != current:
+        return "invalid token"
+    return None
+
+
 def _access_secret() -> str:
     return os.environ.get("AUTH_SECRET", "").strip()
 
@@ -93,18 +207,38 @@ def _refresh_secret() -> str:
     return os.environ.get("AUTH_SECRET", "").strip()
 
 
-def mint_access_token(user_id: str, role: Role) -> str:
-    """Mint an HS256 access JWT signed with ``AUTH_SECRET``."""
+def mint_access_token(
+    user_id: str,
+    role: Role,
+    *,
+    session_id: str | None = None,
+    token_version: int | None = None,
+) -> str:
+    """Mint an HS256 access JWT signed with ``AUTH_SECRET``.
+
+    When ``session_id`` and ``token_version`` are both set (login / refresh),
+    the JWT carries ``sid`` and ``tv`` for revocation (LUM-29).
+
+    When both are omitted (default), those claims are omitted so tests that
+    mint bearers for synthetic ``sub`` values without a backing ``users`` row
+    are not rejected by the token-version gate. The two arguments must be
+    passed together or both omitted.
+    """
     secret = _access_secret()
     if not secret:
         raise RuntimeError("AUTH_SECRET is not set; cannot mint access token")
+    if (session_id is None) ^ (token_version is None):
+        raise ValueError("session_id and token_version must be passed together or both omitted")
     now = int(time.time())
-    payload = {
+    payload: dict = {
         "sub": user_id,
         "role": role,
         "iat": now,
         "exp": now + access_token_ttl_seconds(),
     }
+    if session_id is not None and token_version is not None:
+        payload["sid"] = session_id
+        payload["tv"] = int(token_version)
     return jwt.encode(payload, secret, algorithm="HS256")
 
 
@@ -148,7 +282,7 @@ def verify_refresh_token(token: str) -> dict | None:
     """Decode a refresh JWT (see :func:`_refresh_secret` for resolution).
 
     Returns the payload dict (with ``sub`` and ``jti``) or ``None``. Does
-    NOT check ``users.refresh_token_jti`` — that is the route's job.
+    NOT consult ``auth_sessions`` — callers validate persisted rows/hash.
     """
     secret = _refresh_secret()
     if not secret:
@@ -272,7 +406,10 @@ def _check_mcp_bearer(request: Request) -> JSONResponse | None:
     #    "MCP_AUTH_TOKEN match wins" in multi-user mode. A presented
     #    bearer that decodes as a Lumogis JWT is the ONLY non-lmcp_…
     #    accept path; the resolver later reads sub from _current_bearer.
-    if verify_token(presented) is not None:
+    jwt_payload = verify_token(presented)
+    if jwt_payload is not None:
+        if jwt_revocation_failure_reason(jwt_payload) is not None:
+            return _mcp_401("invalid token")
         return None
 
     # 5. AUTH_ENABLED=true — non-lmcp_… non-JWT bearer.
@@ -291,11 +428,11 @@ def _check_mcp_bearer(request: Request) -> JSONResponse | None:
 # Login is the obvious one. /api/v1/auth/refresh and /logout consume the
 # refresh cookie, not a Bearer, so they live outside the bearer gate too —
 # the route handlers do their own credential checks. /healthz is plumbing.
-# ``/health`` is the detailed status JSON reverse-proxied by Caddy — exempt so
-# the front door probe matches legacy smoke behaviour without minting a JWT.
 # /web is the static Lumogis Web SPA shell — it must be reachable so the
 # user can see the login form (the page body contains no secrets; all
 # authenticated work happens in the browser via subsequent fetch calls).
+# /openapi.json is the machine-readable schema (no secrets; Lumogis Web
+# codegen and release gates fetch it from a live Core without a Bearer).
 #
 # Matching is path-segment-safe (see :func:`_path_is_bypassed`):
 # ``/web`` matches ``/web`` and ``/web/anything`` but NOT ``/webhook``.
@@ -306,9 +443,9 @@ _AUTH_BYPASS_PREFIXES: tuple[str, ...] = (
     "/api/v1/auth/login",
     "/api/v1/auth/refresh",
     "/api/v1/auth/logout",
-    "/health",
     "/healthz",
     "/web",
+    "/openapi.json",
 )
 
 
@@ -390,6 +527,10 @@ async def auth_middleware(request: Request, call_next):
     payload = verify_token(token)
     if not payload:
         return JSONResponse(status_code=401, content={"error": "invalid token"})
+
+    rejection = jwt_revocation_failure_reason(payload)
+    if rejection is not None:
+        return JSONResponse(status_code=401, content={"error": rejection})
 
     role = payload.get("role", "user")
     if role not in ("admin", "user"):

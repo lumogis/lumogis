@@ -20,6 +20,7 @@ class _DigestStore:
 
     def __init__(self, signals_by_user: dict[str, list[dict]]):
         self.signals_by_user = signals_by_user
+        self.advisory_try_ok: bool = True
 
     def fetch_all(self, query: str, params: tuple | None = None):
         q = " ".join(query.split()).lower()
@@ -32,6 +33,11 @@ class _DigestStore:
         return []
 
     def fetch_one(self, query: str, params: tuple | None = None):
+        q = " ".join(query.split()).lower()
+        if "pg_try_advisory_lock" in q:
+            return {"ok": self.advisory_try_ok}
+        if "pg_advisory_unlock" in q:
+            return {"ok": True}
         return None
 
     def execute(self, query: str, params: tuple | None = None):
@@ -150,3 +156,60 @@ def test_send_digest_continues_after_one_user_error(install_store, monkeypatch):
 
     digest._send_digest()
     assert notifier.notify.call_count == 2
+
+
+def test_digest_skips_when_lock_not_acquired(install_store, monkeypatch):
+    store = install_store(
+        {
+            "alice": [
+                {
+                    "title": "A1",
+                    "url": "u",
+                    "content_summary": "s",
+                    "relevance_score": 0.5,
+                    "importance_score": 0.5,
+                }
+            ],
+        }
+    )
+    store.advisory_try_ok = False
+
+    notifier = MagicMock()
+    import config as _config
+
+    monkeypatch.setattr(_config, "get_notifier", lambda: notifier)
+
+    from signals import digest
+
+    digest._send_digest()
+
+    notifier.notify.assert_not_called()
+
+
+def test_digest_runs_when_lock_acquired(install_store, monkeypatch):
+    install_store(
+        {
+            "zoe": [
+                {
+                    "title": "Z1",
+                    "url": "u",
+                    "content_summary": "s",
+                    "relevance_score": 0.5,
+                    "importance_score": 0.5,
+                }
+            ],
+        }
+    )
+
+    notifier = MagicMock()
+    notifier.notify.return_value = True
+    import config as _config
+
+    monkeypatch.setattr(_config, "get_notifier", lambda: notifier)
+
+    from signals import digest
+
+    digest._send_digest()
+
+    assert notifier.notify.call_count == 1
+    assert notifier.notify.call_args.kwargs["user_id"] == "zoe"

@@ -11,6 +11,9 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
+from models.api_v1 import MeToolsItem
+from models.api_v1 import MeToolsResponse
+from models.api_v1 import MeToolsSummary
 from models.capability import CapabilityLicenseMode
 from models.capability import CapabilityManifest
 from models.capability import CapabilityMaturity
@@ -103,6 +106,14 @@ def test_admin_diagnostics_200_admin(client, monkeypatch) -> None:
     assert tools["total"] == tools["available"] + tools["unavailable"]
     assert isinstance(tools["by_source"], dict)
     assert isinstance(body["warnings"], list)
+    assert len(body["warnings"]) >= 1
+    fs = body["foundation_signals"]
+    assert fs["tool_catalog"]["total_entries"] >= 0
+    assert isinstance(fs["tool_catalog"]["entries_by_transport"], dict)
+    assert isinstance(fs["tool_catalog"]["unavailable_entries_by_source"], dict)
+    assert isinstance(fs["permissions"]["ask_do_module_import_ok"], bool)
+    assert isinstance(fs["permissions"]["connector_mode_metadata_lookup_ok"], bool)
+    assert fs["capability_registry"]["registered_services_total"] == cap["total"]
     st = body["speech_to_text"]
     assert "backend" in st and st["backend"] in ("none", "fake_stt", "whisper_sidecar")
     assert "transcribe_available" in st
@@ -207,7 +218,7 @@ def test_admin_diagnostics_tools_summary_from_catalog_stub(client, monkeypatch) 
 
     def _fake_build(uid: str):
         assert uid == "admin-tools"
-        return SimpleNamespace(summary=summary)
+        return SimpleNamespace(summary=summary, tools=[])
 
     monkeypatch.setattr(
         "services.admin_diagnostics.me_tools_catalog_svc.build_me_tools_response",
@@ -221,3 +232,70 @@ def test_admin_diagnostics_tools_summary_from_catalog_stub(client, monkeypatch) 
     assert t["available"] == 4
     assert t["unavailable"] == 1
     assert t["by_source"] == {"capability": 1, "core": 3, "mcp": 1}
+    assert r.json()["foundation_signals"]["tool_catalog"]["total_entries"] == 5
+
+
+def test_admin_diagnostics_foundation_warns_on_unhealthy_capabilities(client, monkeypatch) -> None:
+    fixed = datetime(2026, 4, 26, 12, 0, 0, tzinfo=timezone.utc)
+
+    class _Reg:
+        def all_services(self):
+            return [
+                RegisteredService(
+                    manifest=_manifest("svc-down"),
+                    base_url="http://x:1",
+                    registered_at=fixed,
+                    healthy=False,
+                ),
+            ]
+
+    monkeypatch.setattr(
+        "services.admin_diagnostics.config.get_capability_registry",
+        lambda: _Reg(),
+    )
+    hdr = _auth_header(monkeypatch, "admin-foundation-cap", "admin")
+    r = client.get("/api/v1/admin/diagnostics", headers=hdr)
+    assert r.status_code == 200
+    codes = [w["code"] for w in r.json()["warnings"]]
+    assert "capability_services_unhealthy" in codes
+
+
+def test_admin_diagnostics_foundation_warns_connector_permission_unknown_row(
+    client, monkeypatch
+) -> None:
+    resp = MeToolsResponse(
+        tools=[
+            MeToolsItem(
+                name="probe_perm",
+                label="Probe perm",
+                source="plugin",
+                transport="llm_loop",
+                origin_tier="plugin",
+                available=True,
+                connector="ntfy",
+                permission_mode="unknown",
+            ),
+        ],
+        summary=MeToolsSummary(
+            total=1,
+            available=1,
+            unavailable=0,
+            by_source={"plugin": 1},
+        ),
+    )
+
+    def _fake_build(uid: str) -> MeToolsResponse:
+        assert uid == "admin-found-perm"
+        return resp
+
+    monkeypatch.setattr(
+        "services.admin_diagnostics.me_tools_catalog_svc.build_me_tools_response",
+        _fake_build,
+    )
+    hdr = _auth_header(monkeypatch, "admin-found-perm", "admin")
+    r = client.get("/api/v1/admin/diagnostics", headers=hdr)
+    assert r.status_code == 200
+    fs = r.json()["foundation_signals"]
+    assert fs["permissions"]["catalog_rows_with_connector_but_unknown_permission_mode"] == 1
+    codes = [w["code"] for w in r.json()["warnings"]]
+    assert "tool_catalog_permission_mode_unknown" in codes

@@ -14,6 +14,14 @@ os.environ["RESTART_SECRET"] = "test-secret"
 
 import main  # noqa: E402 — must come after env setup
 
+_ORIGINAL_CURRENT_RESTART_SECRET = main._current_restart_secret
+
+
+@pytest.fixture(autouse=True)
+def hermetic_restart_secret(monkeypatch):
+    """Ignore live /project/.env in compose run — tests use a fixed token."""
+    monkeypatch.setattr(main, "_current_restart_secret", lambda: "test-secret")
+
 
 @pytest.fixture
 def client():
@@ -116,24 +124,24 @@ class TestRestart:
         assert resp.status_code == 504
 
     def test_no_secret_configured_returns_503(self, client, monkeypatch):
-        monkeypatch.setattr(main, "_RESTART_SECRET_ENV", "")
-        with patch("main._PROJECT_ENV_FILE") as mock_path:
-            mock_path.exists.return_value = False
-            resp = client.post("/restart", headers=_auth_headers())
+        monkeypatch.setattr(main, "_current_restart_secret", lambda: "")
+        resp = client.post("/restart")
         assert resp.status_code == 503
 
-    def test_secret_read_from_env_file(self, client, tmp_path):
+    def test_secret_read_from_env_file(self, client, tmp_path, monkeypatch):
         env_file = tmp_path / ".env"
         env_file.write_text("RESTART_SECRET=file-secret\n")
+        monkeypatch.setattr(main, "_current_restart_secret", _ORIGINAL_CURRENT_RESTART_SECRET)
         mock_result = MagicMock()
         mock_result.returncode = 0
-        mock_result.stdout = ""
+        mock_result.stdout = "done"
         mock_result.stderr = ""
         with patch("main._PROJECT_ENV_FILE", env_file):
-            with patch("main.subprocess.run", return_value=mock_result):
+            with patch("main.subprocess.run", return_value=mock_result) as mock_run:
                 resp = client.post(
                     "/restart",
                     headers={"X-Lumogis-Restart-Token": "file-secret"},
                 )
         assert resp.status_code == 200
         assert resp.json()["status"] == "restarted"
+        mock_run.assert_called_once()

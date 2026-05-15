@@ -7,8 +7,8 @@ App creation, lifespan (health checks, collection init, shutdown),
 and router includes. All endpoint logic lives in routes/.
 """
 
-import logging
 import importlib.util
+import logging
 import os
 from contextlib import asynccontextmanager
 
@@ -53,6 +53,7 @@ from routes.events import router as events_router
 from routes.mcp_tokens import admin_router as mcp_tokens_admin_router
 from routes.mcp_tokens import router as mcp_tokens_router
 from routes.me import router as me_router
+from routes.me_sessions import router as me_sessions_router
 from routes.scope import router as scope_router
 from routes.signals import router as signals_router
 from routes.web import router as web_router
@@ -330,7 +331,10 @@ async def lifespan(app: FastAPI):
         try:
             reranker.warmup()
         except Exception as exc:
-            _log.warning("Reranker warmup failed (%s) — search will proceed without reranking", exc)
+            _log.warning(
+                "Reranker warmup failed (%s) — search will proceed without reranking",
+                exc,
+            )
             config._instances["reranker"] = None
     elif reranker is not None:
         _log.info("Reranker warmup skipped — embedding not ready")
@@ -341,9 +345,11 @@ async def lifespan(app: FastAPI):
 
     seed_defaults()
 
-    from actions.rc_fixture_registry import register_rc_approval_fixture_actions_if_enabled
-
-    register_rc_approval_fixture_actions_if_enabled()
+    try:
+        config.warmup_injection_sanitiser()
+    except RuntimeError:
+        _log.exception("Injection sanitiser warmup failed — refusing startup")
+        raise
 
     plugin_routers = load_plugins()
     for plugin_router in plugin_routers:
@@ -431,6 +437,36 @@ async def lifespan(app: FastAPI):
             coalesce=True,
         )
         _log.info("Batch queue APScheduler jobs registered")
+
+    _proposals_q_en = os.environ.get("ACTION_PROPOSALS_QUEUE_ENABLED", "true").lower() not in (
+        "false",
+        "0",
+        "no",
+    )
+    if scheduler and _proposals_q_en:
+        from services.proposal_queue import ACTION_PROPOSALS_CLAIM_STUCK_AFTER_SECONDS
+        from services.proposal_queue import ACTION_PROPOSALS_CLAIM_SWEEPER_SECONDS
+        from services.proposal_queue import reset_stuck_claims
+
+        def _proposal_stuck_sweep() -> None:
+            try:
+                reset_stuck_claims(
+                    stuck_after_seconds=ACTION_PROPOSALS_CLAIM_STUCK_AFTER_SECONDS,
+                )
+            except Exception:
+                _log.exception("proposal_queue_stuck_sweeper failed")
+
+        scheduler.add_job(
+            _proposal_stuck_sweep,
+            trigger="interval",
+            seconds=ACTION_PROPOSALS_CLAIM_SWEEPER_SECONDS,
+            id="proposal_queue_stuck_sweeper",
+            name="Action proposals stuck-claim sweeper",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        _log.info("Action proposals queue APScheduler stuck sweeper registered")
 
     _graph_mode = _wire_graph_mode_handlers(config.read_graph_mode_from_env())
     config.set_effective_graph_mode_for_process(_graph_mode)
@@ -520,7 +556,8 @@ async def lifespan(app: FastAPI):
             _log.info("Weekly quality maintenance job registered (Sunday %02d:00 UTC)", _wq_hour)
     elif scheduler and _graph_mode != "inprocess":
         _log.info(
-            "Weekly KG quality maintenance NOT registered on Core (graph_mode=%s — owned by lumogis-graph service)",
+            "Weekly KG quality maintenance NOT registered on Core "
+            "(graph_mode=%s — owned by lumogis-graph service)",
             _graph_mode,
         )
 
@@ -673,6 +710,7 @@ app.include_router(auth_router)
 app.include_router(admin_users_router)
 app.include_router(admin_user_imports_router)
 app.include_router(me_router)
+app.include_router(me_sessions_router)
 app.include_router(mcp_tokens_router)
 app.include_router(mcp_tokens_admin_router)
 app.include_router(connector_credentials_router)

@@ -151,7 +151,9 @@ class TestFetchCatalog:
         assert row["description"] == "Alibaba Qwen 2.5"
 
     def test_live_rows_without_fallback_omit_capabilities(self, tmp_path, monkeypatch):
-        """Models present in live registry but absent from fallback must not have spurious capabilities."""
+        """Models present in live registry but absent from fallback must not have
+        spurious capabilities.
+        """
         fb_file = tmp_path / "fallback.json"
         fb_file.write_text("[]")
         monkeypatch.setattr(ollama_client, "_FALLBACK_CATALOG_PATH", fb_file)

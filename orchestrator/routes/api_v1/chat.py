@@ -22,7 +22,6 @@ Shipped behaviour pinned by the plan:
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
 from uuid import uuid4
 
@@ -41,7 +40,6 @@ from models.api_v1 import ChatCompletionResponse
 from models.api_v1 import ChatMessageDTO
 from models.api_v1 import ModelDescriptor
 from models.api_v1 import ModelsResponse
-from models.stream import StreamEvent
 from routes.chat import should_prepend_local_loading_note
 from routes.chat import stream_completion
 from services.connector_credentials import ConnectorNotConfigured
@@ -70,11 +68,6 @@ def _validate_messages(messages: list[ChatMessageDTO]) -> None:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="last_message_must_be_user",
         )
-    if not messages[-1].content.strip():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="empty_message",
-        )
     for idx, msg in enumerate(messages):
         if msg.role == "system" and idx != 0:
             raise HTTPException(
@@ -88,17 +81,6 @@ def _split_messages(messages: list[ChatMessageDTO]) -> tuple[str, list[dict]]:
     question = messages[-1].content
     history = [{"role": m.role, "content": m.content} for m in messages[:-1]]
     return question, history
-
-
-def _rc_chat_stub_enabled() -> bool:
-    """Test-only streaming stub (RC compose). Does not replace real LLM output."""
-    raw = os.environ.get("LUMOGIS_RC_CHAT_STUB", "").strip().lower()
-    return raw in ("1", "true", "yes")
-
-
-def _rc_chat_stub_reply() -> str:
-    body = os.environ.get("LUMOGIS_RC_CHAT_STUB_REPLY", "RC_CHAT_STUB_ACK").strip()
-    return body if body else "RC_CHAT_STUB_ACK"
 
 
 @router.post("/chat/completions")
@@ -117,20 +99,6 @@ def chat_completions(body: ChatCompletionRequest, request: Request) -> Any:
     use_tools = config.get_model_config(body.model).get("tools", False)
 
     if body.stream:
-        if _rc_chat_stub_enabled():
-
-            def _stub_events():
-                yield StreamEvent(type="text", content=_rc_chat_stub_reply())
-
-            return StreamingResponse(
-                stream_completion(
-                    _stub_events(),
-                    body.model,
-                    prepend_loading_note=False,
-                ),
-                media_type="text/event-stream",
-            )
-
         # Synchronous credential pre-flight — see the parallel comment in
         # ``routes/chat.py``. Doing this lazily inside the SSE generator
         # leaks credential errors out as HTTP 200 + text/event-stream.

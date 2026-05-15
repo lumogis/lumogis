@@ -56,7 +56,6 @@ from typing import Any
 from typing import Literal
 
 from actions.audit import write_audit
-from auth import auth_enabled
 from cryptography.fernet import Fernet
 from cryptography.fernet import InvalidToken
 from cryptography.fernet import MultiFernet
@@ -390,7 +389,9 @@ def _resolve_env_fallback(
     ``connector`` is taken for the DEBUG log only — the helper does
     NOT validate registry membership (the caller already did so).
     """
-    if auth_enabled():
+    from auth import auth_enabled as _auth_enabled
+
+    if _auth_enabled():
         if fallback_env:
             _log.debug(
                 "credential resolve: ignoring fallback_env=%r under "

@@ -103,7 +103,7 @@ def test_me_notifications_safe_json_no_secret_material(client, monkeypatch) -> N
         "status",
         "why_not_available",
     }
-    sum_keys = {"total", "configured", "not_configured", "by_active_tier"}
+    sum_keys = {"total", "configured", "not_configured", "paused", "by_active_tier"}
     assert set(body["summary"].keys()) == sum_keys
     for ch in body["channels"]:
         assert set(ch.keys()) == ch_keys
@@ -123,7 +123,7 @@ def test_me_notifications_summary_counts(client, monkeypatch) -> None:
     b = r.json()
     s = b["summary"]
     assert s["total"] == len(b["channels"])
-    assert s["configured"] + s["not_configured"] == s["total"]
+    assert s["configured"] + s["not_configured"] + s["paused"] == s["total"]
     assert sum(s["by_active_tier"].values()) == s["total"]
 
 
@@ -158,6 +158,50 @@ def test_me_notifications_ntfy_user_tier_metadata_only(client, monkeypatch) -> N
     assert ntfy["topic_configured"] is None
     assert ntfy["token_configured"] is None
     assert ntfy["url_configured"] is None
+
+
+def test_me_notifications_ntfy_delivery_paused_row(client, monkeypatch) -> None:
+    uid = "ntfy-paused-user"
+    hdr = _auth_header(monkeypatch, uid, "user")
+    ts = datetime(2026, 4, 25, 12, 0, 0, tzinfo=timezone.utc)
+    rec = ccs.CredentialRecord(
+        user_id=uid,
+        connector=NTFY,
+        created_at=ts,
+        updated_at=ts,
+        created_by="self",
+        updated_by="self",
+        key_version=1,
+        delivery_paused=True,
+        delivery_paused_reason="ntfy_upstream_410",
+        delivery_paused_detail="secret-detail-must-never-hit-json",
+        delivery_paused_at=ts,
+    )
+
+    def _get(u: str, c: str):
+        return rec if (u, c) == (uid, NTFY) else None
+
+    with (
+        patch("services.me_notifications.ccs.get_record", _get),
+        patch("services.me_notifications.ct.household_get_record", lambda _c: None),
+        patch("services.me_notifications.ct.system_get_record", lambda _c: None),
+        patch("services.me_notifications._ntfy_env_fallback_available", lambda: False),
+    ):
+        r = client.get("/api/v1/me/notifications", headers=hdr)
+
+    assert r.status_code == 200
+    body = r.json()
+    ntfy = next(c for c in body["channels"] if c["connector"] == NTFY)
+    assert ntfy["status"] == "paused"
+    assert ntfy["configured"] is True
+    assert ntfy["why_not_available"] and "410" in ntfy["why_not_available"]
+    assert "secret-detail-must-never-hit-json" not in json.dumps(body)
+
+    sm = body["summary"]
+    assert sm["paused"] == 1
+    assert sm["configured"] == 0
+    assert sm["not_configured"] == 1
+    assert sm["configured"] + sm["not_configured"] + sm["paused"] == sm["total"]
 
 
 def test_me_notifications_ntfy_env_fallback_no_secret_values(client, monkeypatch) -> None:

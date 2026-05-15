@@ -14,7 +14,7 @@ Test groups:
   9.  graph_projected_at nulled on winner after merge
   10. POST /entities/merge route — 200, 400, 404, 500
 
-Runs: docker compose -f docker-compose.test.yml run --rm orchestrator pytest
+Runs from repo root: make compose-test (or COMPOSE_FILE=docker-compose.yml docker compose run …).
 """
 
 import inspect

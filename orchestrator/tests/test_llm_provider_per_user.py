@@ -39,10 +39,10 @@ for _mod, _attrs in (
             setattr(m, _a, type(_a, (), {"__init__": lambda self, *a, **kw: None}))
         sys.modules[_mod] = m
 
-from tests.test_connector_credentials_service import _FakeStore
+from tests.test_connector_credentials_service import _FakeStore  # noqa: E402
 
-import config
-from services import connector_credentials as svc
+import config  # noqa: E402
+from services import connector_credentials as svc  # noqa: E402
 
 
 class _StubAdapter:

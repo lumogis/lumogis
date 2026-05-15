@@ -11,7 +11,7 @@ for migration 016 (D6.5 acceptance).
 These tests exercise the migration body against a real PostgreSQL
 instance. They skip when no Postgres is reachable so the unit-test
 suite on a developer laptop without Docker still runs green; in CI /
-the ``docker compose -f docker-compose.test.yml`` flow Postgres is up
+the ``make compose-test`` (Docker) flow, Postgres is up
 and the tests run.
 
 Each test sets up an isolated schema (``test_mig018_<uuid>``) so

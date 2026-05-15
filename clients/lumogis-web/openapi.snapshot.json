@@ -144,6 +144,122 @@
         "title": "AdminDiagnosticsCore",
         "type": "object"
       },
+      "AdminDiagnosticsFoundationCapabilityRegistry": {
+        "description": "Capability discovery summary mirrored for the foundation_signals block.",
+        "properties": {
+          "registered_services_total": {
+            "minimum": 0.0,
+            "title": "Registered Services Total",
+            "type": "integer"
+          },
+          "registered_services_unhealthy": {
+            "minimum": 0.0,
+            "title": "Registered Services Unhealthy",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "registered_services_total",
+          "registered_services_unhealthy"
+        ],
+        "title": "AdminDiagnosticsFoundationCapabilityRegistry",
+        "type": "object"
+      },
+      "AdminDiagnosticsFoundationPermissions": {
+        "description": "Read-only Ask/Do / connector metadata sanity (no policy changes).",
+        "properties": {
+          "ask_do_module_import_ok": {
+            "title": "Ask Do Module Import Ok",
+            "type": "boolean"
+          },
+          "catalog_rows_with_connector_but_unknown_permission_mode": {
+            "description": "Rows with connector set but permission_mode=unknown (possible resolver errors).",
+            "minimum": 0.0,
+            "title": "Catalog Rows With Connector But Unknown Permission Mode",
+            "type": "integer"
+          },
+          "connector_mode_metadata_lookup_ok": {
+            "title": "Connector Mode Metadata Lookup Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ask_do_module_import_ok",
+          "connector_mode_metadata_lookup_ok",
+          "catalog_rows_with_connector_but_unknown_permission_mode"
+        ],
+        "title": "AdminDiagnosticsFoundationPermissions",
+        "type": "object"
+      },
+      "AdminDiagnosticsFoundationSignals": {
+        "description": "Agent Harness Foundation diagnostics slice (ADR 034) — observability only.",
+        "properties": {
+          "capability_registry": {
+            "$ref": "#/components/schemas/AdminDiagnosticsFoundationCapabilityRegistry"
+          },
+          "permissions": {
+            "$ref": "#/components/schemas/AdminDiagnosticsFoundationPermissions"
+          },
+          "tool_catalog": {
+            "$ref": "#/components/schemas/AdminDiagnosticsFoundationToolCatalog"
+          }
+        },
+        "required": [
+          "tool_catalog",
+          "permissions",
+          "capability_registry"
+        ],
+        "title": "AdminDiagnosticsFoundationSignals",
+        "type": "object"
+      },
+      "AdminDiagnosticsFoundationToolCatalog": {
+        "description": "Extra read-only tool-catalog aggregates for operators (ADR 034 — diagnostics).",
+        "properties": {
+          "catalog_only_transport_entries": {
+            "description": "Rows with catalog_only transport.",
+            "minimum": 0.0,
+            "title": "Catalog Only Transport Entries",
+            "type": "integer"
+          },
+          "entries_by_transport": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "description": "Counts per transport; keys sorted lexically.",
+            "title": "Entries By Transport",
+            "type": "object"
+          },
+          "total_entries": {
+            "description": "Tool catalog rows for the sampled admin user_id.",
+            "minimum": 0.0,
+            "title": "Total Entries",
+            "type": "integer"
+          },
+          "unavailable_capability_catalog_entries": {
+            "description": "Capability-source catalog rows marked unavailable (often health/auth).",
+            "minimum": 0.0,
+            "title": "Unavailable Capability Catalog Entries",
+            "type": "integer"
+          },
+          "unavailable_entries_by_source": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "description": "Unavailable row counts per ``source`` (omits sources with zero).",
+            "title": "Unavailable Entries By Source",
+            "type": "object"
+          }
+        },
+        "required": [
+          "total_entries",
+          "entries_by_transport",
+          "unavailable_entries_by_source",
+          "unavailable_capability_catalog_entries",
+          "catalog_only_transport_entries"
+        ],
+        "title": "AdminDiagnosticsFoundationToolCatalog",
+        "type": "object"
+      },
       "AdminDiagnosticsResponse": {
         "description": "Response for ``GET /api/v1/admin/diagnostics`` — curated operator diagnostics.",
         "properties": {
@@ -152,6 +268,10 @@
           },
           "core": {
             "$ref": "#/components/schemas/AdminDiagnosticsCore"
+          },
+          "foundation_signals": {
+            "$ref": "#/components/schemas/AdminDiagnosticsFoundationSignals",
+            "description": "Read-only tool / permission / capability sanity (ADR 034); no execution."
           },
           "generated_at": {
             "description": "UTC timestamp when the snapshot was built.",
@@ -196,6 +316,7 @@
           "stores",
           "capabilities",
           "tools",
+          "foundation_signals",
           "warnings",
           "speech_to_text"
         ],
@@ -1424,6 +1545,34 @@
           "created_by": {
             "title": "Created By",
             "type": "string"
+          },
+          "delivery_paused": {
+            "default": false,
+            "title": "Delivery Paused",
+            "type": "boolean"
+          },
+          "delivery_paused_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivery Paused At"
+          },
+          "delivery_paused_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivery Paused Reason"
           },
           "key_version": {
             "title": "Key Version",
@@ -2816,7 +2965,8 @@
           "status": {
             "enum": [
               "configured",
-              "not_configured"
+              "not_configured",
+              "paused"
             ],
             "title": "Status",
             "type": "string"
@@ -2959,6 +3109,7 @@
             "type": "object"
           },
           "configured": {
+            "description": "Channels fully active (``status=configured`` only — excludes paused).",
             "minimum": 0.0,
             "title": "Configured",
             "type": "integer"
@@ -2966,6 +3117,12 @@
           "not_configured": {
             "minimum": 0.0,
             "title": "Not Configured",
+            "type": "integer"
+          },
+          "paused": {
+            "description": "Channels with ``status=paused`` (credential present, delivery blocked).",
+            "minimum": 0.0,
+            "title": "Paused",
             "type": "integer"
           },
           "total": {
@@ -2978,6 +3135,7 @@
           "total",
           "configured",
           "not_configured",
+          "paused",
           "by_active_tier"
         ],
         "title": "MeNotificationsSummary",
@@ -3519,6 +3677,47 @@
         "title": "ProfileRequest",
         "type": "object"
       },
+      "ProposalExecuteWireResponse": {
+        "description": "Wire shape aligned with ``ActionResult`` for proposal execute.",
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "output": {
+            "title": "Output",
+            "type": "string"
+          },
+          "reverse_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reverse Token"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "output"
+        ],
+        "title": "ProposalExecuteWireResponse",
+        "type": "object"
+      },
       "PutConnectorCredentialRequest": {
         "additionalProperties": false,
         "description": "Request body for ``PUT /…/connector-credentials/{connector}``.\n\nThe plaintext ``payload`` is JSON-encoded by the service and sealed\nwith the household MultiFernet before insertion. ``extra=\"forbid\"``\nrejects unknown top-level fields with HTTP 422.",
@@ -3679,6 +3878,86 @@
         "title": "SectionSummary",
         "type": "object"
       },
+      "SessionAdminListResponse": {
+        "properties": {
+          "sessions": {
+            "items": {
+              "$ref": "#/components/schemas/SessionAdminRowPublic"
+            },
+            "title": "Sessions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "sessions"
+        ],
+        "title": "SessionAdminListResponse",
+        "type": "object"
+      },
+      "SessionAdminRowPublic": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "device_label": {
+            "title": "Device Label",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "ip_hint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ip Hint"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "ua_hint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ua Hint"
+          }
+        },
+        "required": [
+          "id",
+          "device_label",
+          "created_at",
+          "expires_at"
+        ],
+        "title": "SessionAdminRowPublic",
+        "type": "object"
+      },
       "SessionEndRequest": {
         "properties": {
           "messages": {
@@ -3700,6 +3979,22 @@
         "title": "SessionEndRequest",
         "type": "object"
       },
+      "SessionListResponse": {
+        "properties": {
+          "sessions": {
+            "items": {
+              "$ref": "#/components/schemas/SessionRowPublic"
+            },
+            "title": "Sessions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "sessions"
+        ],
+        "title": "SessionListResponse",
+        "type": "object"
+      },
       "SessionMessage": {
         "properties": {
           "content": {
@@ -3716,6 +4011,49 @@
           "content"
         ],
         "title": "SessionMessage",
+        "type": "object"
+      },
+      "SessionRowPublic": {
+        "description": "Active auth session row exposed to the authenticated caller (LUM-29).",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "device_label": {
+            "title": "Device Label",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          }
+        },
+        "required": [
+          "id",
+          "device_label",
+          "created_at",
+          "expires_at"
+        ],
+        "title": "SessionRowPublic",
         "type": "object"
       },
       "SettingsUpdate": {
@@ -3884,7 +4222,7 @@
         "type": "object"
       },
       "UserAdminView": {
-        "description": "Admin-only listing shape returned by ``/api/v1/admin/users`` routes.\n\nAdds operational fields useful to administrators (account state, age,\nlast sign-in). Still excludes ``password_hash`` and ``refresh_token_jti``\n— those are server-internal.",
+        "description": "Admin-only listing shape returned by ``/api/v1/admin/users`` routes.\n\nAdds operational fields useful to administrators (account state, age,\nlast sign-in). Still excludes secrets such as ``password_hash``.",
         "properties": {
           "created_at": {
             "format": "date-time",
@@ -5346,7 +5684,7 @@
     },
     "/api/v1/admin/users/{user_id}/password": {
       "post": {
-        "description": "Set ``user_id``'s password. Allowed for disabled accounts (login stays blocked).\n\nClears the target's ``refresh_token_jti`` so existing refresh cookies for\nthat user stop working.",
+        "description": "Set ``user_id``'s password. Allowed for disabled accounts (login stays blocked).\n\nRevokes browser refresh sessions via ``services.users`` password path (LUM-29).",
         "operationId": "reset_user_password_api_v1_admin_users__user_id__password_post",
         "parameters": [
           {
@@ -5615,6 +5953,93 @@
         ]
       }
     },
+    "/api/v1/admin/users/{user_id}/sessions": {
+      "get": {
+        "description": "List active ``auth_sessions`` rows for ``user_id`` (admin).",
+        "operationId": "admin_list_user_sessions_api_v1_admin_users__user_id__sessions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionAdminListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Admin List User Sessions",
+        "tags": [
+          "admin-users"
+        ]
+      }
+    },
+    "/api/v1/admin/users/{user_id}/sessions/{session_id}": {
+      "delete": {
+        "operationId": "admin_revoke_user_session_api_v1_admin_users__user_id__sessions__session_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Admin Revoke User Session",
+        "tags": [
+          "admin-users"
+        ]
+      }
+    },
     "/api/v1/approvals/connector/{connector}/mode": {
       "post": {
         "operationId": "set_mode_api_v1_approvals_connector__connector__mode_post",
@@ -5766,6 +6191,66 @@
           }
         },
         "summary": "Pending",
+        "tags": [
+          "v1",
+          "v1-approvals"
+        ]
+      }
+    },
+    "/api/v1/approvals/proposals/{proposal_id}/execute": {
+      "post": {
+        "description": "Claim one **approved** proposal row and run :func:`actions.executor.execute`.",
+        "operationId": "execute_approved_proposal_api_v1_approvals_proposals__proposal_id__execute_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "proposal_id",
+            "required": true,
+            "schema": {
+              "title": "Proposal Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "as_user",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "As User"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProposalExecuteWireResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Execute Approved Proposal",
         "tags": [
           "v1",
           "v1-approvals"
@@ -6045,7 +6530,7 @@
     },
     "/api/v1/auth/logout": {
       "post": {
-        "description": "Clear the refresh cookie and the server-side jti.\n\nIdempotent and tolerant of missing/invalid cookies — a logout request\nthat arrives without a valid cookie still clears any stale state.",
+        "description": "Revoke the refresh session server-side and expire the cookie.",
         "operationId": "logout_api_v1_auth_logout_post",
         "parameters": [
           {
@@ -6119,7 +6604,7 @@
     },
     "/api/v1/auth/refresh": {
       "post": {
-        "description": "Rotate the refresh JWT and issue a new access token.\n\nFailure modes (see plan §12):\n\n* Cookie absent / signature invalid / expired / format invalid → 401.\n* ``jti != users.refresh_token_jti`` → 401, defensively clear the\n  column, clear the cookie. Possible token-theft signal — logged\n  ``WARNING`` with ``user_id``.\n* User row missing or ``disabled = TRUE`` → 401, clear cookie.\n* DB error during rotation → 500, do not issue new tokens; old cookie\n  remains valid for retry.",
+        "description": "Rotate the refresh JWT via ``auth_sessions`` and issue a new access token.",
         "operationId": "refresh_api_v1_auth_refresh_post",
         "parameters": [
           {
@@ -7446,6 +7931,20 @@
         ]
       }
     },
+    "/api/v1/me/logout-all": {
+      "post": {
+        "operationId": "logout_all_sessions_api_v1_me_logout_all_post",
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Logout All Sessions",
+        "tags": [
+          "me-sessions"
+        ]
+      }
+    },
     "/api/v1/me/mcp-tokens": {
       "get": {
         "description": "List the caller's MCP tokens, newest-created first.\n\n``include_revoked=false`` (default) returns only active tokens — the\ncommon dashboard view. ``include_revoked=true`` includes revoked\nrows so the dashboard's \"Revoked\" collapsible can populate.",
@@ -7601,7 +8100,7 @@
     },
     "/api/v1/me/password": {
       "post": {
-        "description": "Verify the current password, set a new hash, clear ``refresh_token_jti``.\n\nUnavailable when ``AUTH_ENABLED=false``. Wrong current password → 403 with\na generic ``invalid credentials`` detail (no account enumeration). Policy\nviolations → 400. Existing refresh cookies stop working; access JWTs live\nuntil TTL expiry.",
+        "description": "Verify the current password and apply a new hash (LUM-29 session invalidation).\n\nUnavailable when ``AUTH_ENABLED=false``. Wrong current password → 403 with\na generic ``invalid credentials`` detail (no account enumeration). Policy\nviolations → 400. Browser refresh sessions are revoked server-side; access\nJWTs are invalidated via ``token_version`` before TTL when cached.",
         "operationId": "change_my_password_api_v1_me_password_post",
         "requestBody": {
           "content": {
@@ -7808,6 +8307,62 @@
         "summary": "Put My Permission",
         "tags": [
           "me-permissions"
+        ]
+      }
+    },
+    "/api/v1/me/sessions": {
+      "get": {
+        "operationId": "list_my_sessions_api_v1_me_sessions_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List My Sessions",
+        "tags": [
+          "me-sessions"
+        ]
+      }
+    },
+    "/api/v1/me/sessions/{session_id}": {
+      "delete": {
+        "operationId": "delete_my_session_api_v1_me_sessions__session_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete My Session",
+        "tags": [
+          "me-sessions"
         ]
       }
     },

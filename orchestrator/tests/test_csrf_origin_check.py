@@ -27,12 +27,8 @@ from __future__ import annotations
 
 import pytest
 
-# Reuse the FakeUsersStore + auth_env / dev_env fixtures from the Phase 1
-# test module — they're tagged @pytest.fixture there, not in conftest.
-from tests.test_auth_phase1 import FakeUsersStore  # noqa: F401 — re-exported as fixtures
-from tests.test_auth_phase1 import auth_env  # noqa: F401 — re-exported as fixtures
-from tests.test_auth_phase1 import dev_env  # noqa: F401 — re-exported as fixtures
-from tests.test_auth_phase1 import users_store  # noqa: F401 — re-exported as fixtures
+# Register Phase-1 fakes + fixtures without importing fixture names (avoids F811 shadowing).
+pytest_plugins = ("tests.test_auth_phase1",)
 
 PUBLIC_ORIGIN = "https://lumogis.lan"
 

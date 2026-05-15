@@ -112,6 +112,7 @@ def test_notify_returns_false_on_credential_unavailable(patched_loader, mock_htt
 
 def test_notify_returns_false_on_non_2xx(patched_loader, monkeypatch):
     patched_loader(lambda uid: {"url": "http://ntfy:80", "topic": "t", "token": ""})
+    m_pause = MagicMock()
 
     def _fake_post(url, content, headers, timeout):
         resp = MagicMock()
@@ -119,10 +120,12 @@ def test_notify_returns_false_on_non_2xx(patched_loader, monkeypatch):
         return resp
 
     monkeypatch.setattr("adapters.ntfy_notifier.httpx.post", _fake_post)
+    monkeypatch.setattr("adapters.ntfy_notifier.ccs.set_delivery_paused", m_pause)
 
     from adapters.ntfy_notifier import NtfyNotifier
 
     assert NtfyNotifier().notify("t", "m", priority=0.5, user_id="alice") is False
+    m_pause.assert_not_called()
 
 
 def test_notify_returns_false_on_network_error(patched_loader, monkeypatch):
@@ -145,3 +148,51 @@ def test_priority_mapping():
     assert NtfyNotifier._map_priority(0.8) == 4
     assert NtfyNotifier._map_priority(0.5) == 3
     assert NtfyNotifier._map_priority(0.1) == 1
+
+
+def test_ntfy_upstream_410_pauses_row(monkeypatch, patched_loader):
+    patched_loader(lambda uid: {"url": "http://ntfy:80", "topic": "t", "token": ""})
+    m_pause = MagicMock()
+
+    long_body = "x" * 900
+
+    def _fake_post(url, content, headers, timeout):
+        resp = MagicMock()
+        resp.status_code = 410
+        resp.text = long_body
+        return resp
+
+    monkeypatch.setattr("adapters.ntfy_notifier.httpx.post", _fake_post)
+    monkeypatch.setattr("adapters.ntfy_notifier.ccs.set_delivery_paused", m_pause)
+
+    monkeypatch.setattr(
+        "adapters.ntfy_notifier.ccs.get_record",
+        lambda uid, conn: MagicMock() if uid == "alice" else None,
+    )
+
+    from adapters.ntfy_notifier import NtfyNotifier
+
+    assert NtfyNotifier().notify("t", "m", priority=0.5, user_id="alice") is False
+    m_pause.assert_called_once()
+    assert len(m_pause.call_args.kwargs["detail"]) <= 512
+    assert m_pause.call_args.kwargs["reason"] == "ntfy_upstream_410"
+
+
+def test_ntfy_upstream_410_skips_pause_without_user_row(monkeypatch, patched_loader):
+    patched_loader(lambda uid: {"url": "http://ntfy:80", "topic": "t", "token": ""})
+    m_pause = MagicMock()
+
+    def _fake_post(url, content, headers, timeout):
+        resp = MagicMock()
+        resp.status_code = 410
+        resp.text = "gone"
+        return resp
+
+    monkeypatch.setattr("adapters.ntfy_notifier.httpx.post", _fake_post)
+    monkeypatch.setattr("adapters.ntfy_notifier.ccs.set_delivery_paused", m_pause)
+    monkeypatch.setattr("adapters.ntfy_notifier.ccs.get_record", lambda _u, _c: None)
+
+    from adapters.ntfy_notifier import NtfyNotifier
+
+    assert NtfyNotifier().notify("t", "m", priority=0.5, user_id="nobody") is False
+    m_pause.assert_not_called()

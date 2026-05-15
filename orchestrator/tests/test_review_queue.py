@@ -16,7 +16,7 @@ Test groups:
   11. Auth: no token required (matches existing admin read pattern)
   12. item not found returns 404
 
-Runs: docker compose -f docker-compose.test.yml run --rm orchestrator pytest
+Runs from repo root: make compose-test (or COMPOSE_FILE=docker-compose.yml docker compose run …).
 """
 
 import json

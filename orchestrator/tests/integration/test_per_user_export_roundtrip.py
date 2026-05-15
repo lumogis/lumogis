@@ -86,6 +86,8 @@ class _RoundtripStore:
         # table_name -> list[row dict]
         self.tables: dict[str, list[dict]] = {}
         self.exec_log: list[tuple[str, tuple]] = []
+        self.app_settings: dict[str, str] = {}
+        self.auth_sessions: dict[str, dict] = {}
 
     # --- lifecycle ----------------------------------------------------
 
@@ -123,6 +125,7 @@ class _RoundtripStore:
                 "created_at": datetime.now(timezone.utc),
                 "last_login_at": None,
                 "refresh_token_jti": None,
+                "token_version": 1,
             }
             return
         if ql.startswith("update users set last_login_at = now()"):
@@ -130,6 +133,36 @@ class _RoundtripStore:
             return
         if ql.startswith("update users set refresh_token_jti ="):
             self.users[p[1]]["refresh_token_jti"] = p[0]
+            return
+        if ql.startswith("insert into app_settings"):
+            key, val = str(p[0]), str(p[1])
+            self.app_settings.setdefault(key, val)
+            return
+        if ql.startswith("insert into auth_sessions"):
+            sid, uid, fam, hsh, exp, dlab, ih, uh = (
+                p[0],
+                p[1],
+                p[2],
+                p[3],
+                p[4],
+                p[5],
+                p[6],
+                p[7],
+            )
+            now = datetime.now(timezone.utc)
+            self.auth_sessions[str(sid)] = {
+                "id": sid,
+                "user_id": uid,
+                "family_id": fam,
+                "refresh_token_hash": hsh,
+                "created_at": now,
+                "last_used_at": None,
+                "expires_at": exp,
+                "revoked_at": None,
+                "device_label": dlab,
+                "ip_hash": ih,
+                "ua_hash": uh,
+            }
             return
 
         # --- generic INSERT INTO <table> (col, ...) VALUES (%s, ...) ---
@@ -178,6 +211,15 @@ class _RoundtripStore:
         if q.startswith("select refresh_token_jti from users where id ="):
             row = self.users.get(p[0])
             return {"refresh_token_jti": row["refresh_token_jti"]} if row else None
+        if "select token_version from users where id =" in q:
+            row = self.users.get(str(p[0]))
+            if row is None:
+                return None
+            return {"token_version": int(row.get("token_version") or 1)}
+        if "select value from app_settings where key =" in q:
+            key = str(p[0])
+            val = self.app_settings.get(key)
+            return None if val is None else {"value": val}
 
         # SELECT COUNT(*) AS n FROM <table> WHERE … — the export-side
         # data inventory + per-table size stats all use this shape.
@@ -300,11 +342,14 @@ def export_dir(tmp_path, monkeypatch):
 def store(monkeypatch):
     """Install the in-memory metadata store as the global singleton."""
     import config as _config
+    from services import auth_sessions as _asn
 
+    _asn.invalidate_instance_salt_cache_for_tests()
     s = _RoundtripStore()
     _config._instances["metadata_store"] = s
     yield s
     _config._instances.pop("metadata_store", None)
+    _asn.invalidate_instance_salt_cache_for_tests()
 
 
 @contextmanager

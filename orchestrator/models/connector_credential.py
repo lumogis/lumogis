@@ -2,12 +2,12 @@
 # Copyright (C) 2026 Lumogis
 """Pydantic models for the per-user connector credentials HTTP surface.
 
-Mirrors the row metadata returned by
-:class:`services.connector_credentials.CredentialRecord` 1:1 so the
-route layer can do
-``ConnectorCredentialPublic.model_validate(record.__dict__)`` without
-field renaming. Plaintext payload and ciphertext bytes NEVER appear on
-this surface.
+Aligns with :class:`services.connector_credentials.CredentialRecord` metadata
+columns **except** :attr:`~services.connector_credentials.CredentialRecord.delivery_paused_detail`,
+which is DB/diagnostic-only and intentionally omitted from the wire model.
+Routes must project with an explicit dict (or ``dataclasses.asdict`` minus
+that key) — never ``ConnectorCredentialPublic.model_validate(record.__dict__)``
+verbatim. Plaintext payload and ciphertext bytes NEVER appear on this surface.
 """
 
 from __future__ import annotations
@@ -35,6 +35,9 @@ class ConnectorCredentialPublic(BaseModel):
     created_by: str
     updated_by: str
     key_version: int
+    delivery_paused: bool = False
+    delivery_paused_reason: str | None = None
+    delivery_paused_at: datetime | None = None
 
 
 class PutConnectorCredentialRequest(BaseModel):

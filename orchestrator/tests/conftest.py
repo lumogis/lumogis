@@ -86,7 +86,7 @@ os.environ.setdefault("OLLAMA_CATALOG_FALLBACK", str(_CONFIG_DIR / "ollama_catal
 for _stack_only_env in ("GRAPH_MODE", "CAPABILITY_SERVICE_URLS"):
     os.environ.pop(_stack_only_env, None)
 
-import config as _config
+import config as _config  # noqa: E402 — after env/path bootstrap; see module docstring above.
 
 
 def _match_clause(payload: dict, clause: dict) -> bool:

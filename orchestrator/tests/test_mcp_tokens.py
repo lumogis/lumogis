@@ -41,7 +41,8 @@ class _FakeStore:
       * SELECT * FROM mcp_tokens WHERE user_id = %s [AND revoked_at IS NULL] ORDER BY ...
       * SELECT * FROM mcp_tokens [WHERE revoked_at IS NULL] ORDER BY ...
       * UPDATE mcp_tokens SET revoked_at = NOW() WHERE id = %s AND revoked_at IS NULL
-      * UPDATE mcp_tokens SET revoked_at = NOW() WHERE user_id = %s AND revoked_at IS NULL RETURNING *
+      * UPDATE mcp_tokens SET revoked_at = NOW() WHERE user_id = %s
+        AND revoked_at IS NULL RETURNING *
       * UPDATE mcp_tokens SET last_used_at = NOW() WHERE id = %s
       * INSERT INTO audit_log (...) RETURNING id
     """
@@ -146,7 +147,8 @@ class _FakeStore:
         p = params or ()
 
         if q.startswith(
-            "update mcp_tokens set revoked_at = now() where user_id = %s and revoked_at is null returning *"
+            "update mcp_tokens set revoked_at = now() where user_id = %s "
+            "and revoked_at is null returning *"
         ):
             (uid,) = p
             now = datetime.now(timezone.utc)

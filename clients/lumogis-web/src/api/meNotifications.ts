@@ -25,7 +25,7 @@ export interface MeNotificationChannelItem {
   key_version: number | null;
   subscription_count: number | null;
   push_service_configured: boolean | null;
-  status: "configured" | "not_configured";
+  status: "configured" | "not_configured" | "paused";
   why_not_available: string | null;
 }
 
@@ -33,6 +33,7 @@ export interface MeNotificationsSummary {
   total: number;
   configured: number;
   not_configured: number;
+  paused: number;
   by_active_tier: Record<string, number>;
 }
 

@@ -12,8 +12,8 @@ Covers:
 * :func:`main._enforce_auth_consistency` refusal modes.
 * ``/api/v1/auth/login`` end-to-end with rate limiting and timing-attack
   floor on the unknown-email path.
-* ``/api/v1/auth/refresh`` rotation + jti eviction.
-* ``/api/v1/auth/logout`` clears server-side jti.
+* ``/api/v1/auth/refresh`` rotation via ``auth_sessions`` reuse detection.
+* ``/api/v1/auth/logout`` revokes server-side refresh session row.
 * ``/api/v1/auth/me`` for both dev mode and authenticated mode.
 """
 
@@ -24,11 +24,11 @@ import time
 import uuid
 from contextlib import contextmanager
 from datetime import datetime
+from datetime import timedelta
 from datetime import timezone
 
 import pytest
 from fastapi.testclient import TestClient
-from tests.ephemeral_fernet_key import TEST_FERNET_KEY
 
 
 def _csrf_origin_headers() -> dict[str, str]:
@@ -43,10 +43,12 @@ def _csrf_origin_headers() -> dict[str, str]:
 
 
 class FakeUsersStore:
-    """Tiny in-memory MetadataStore that knows just enough about ``users``."""
+    """Tiny in-memory MetadataStore: ``users``, ``auth_sessions``, ``app_settings``."""
 
     def __init__(self):
         self.rows: dict[str, dict] = {}
+        self.auth_sessions: dict[str, dict] = {}
+        self.settings: dict[str, str] = {}
         self.exec_log: list[tuple[str, tuple]] = []
 
     def ping(self) -> bool:
@@ -56,6 +58,7 @@ class FakeUsersStore:
         self.exec_log.append((query, params or ()))
         q = " ".join(query.split()).lower()
         p = params or ()
+
         if q.startswith("insert into users"):
             self.rows[p[0]] = {
                 "id": p[0],
@@ -65,32 +68,97 @@ class FakeUsersStore:
                 "disabled": False,
                 "created_at": datetime.now(timezone.utc),
                 "last_login_at": None,
-                "refresh_token_jti": None,
+                "token_version": 1,
             }
             return
+        if q.startswith("insert into app_settings"):
+            key, val = p[0], p[1]
+            if key not in self.settings:
+                self.settings[key] = val
+            return
+        if q.startswith("insert into auth_sessions"):
+            sid, uid, fam, hsh, exp, dlab, ih, uh = (
+                p[0],
+                p[1],
+                p[2],
+                p[3],
+                p[4],
+                p[5],
+                p[6],
+                p[7],
+            )
+            now = datetime.now(timezone.utc)
+            self.auth_sessions[sid] = {
+                "id": sid,
+                "user_id": uid,
+                "family_id": fam,
+                "refresh_token_hash": hsh,
+                "created_at": now,
+                "last_used_at": None,
+                "expires_at": exp,
+                "revoked_at": None,
+                "device_label": dlab,
+                "ip_hash": ih,
+                "ua_hash": uh,
+            }
+            return
+
         if q.startswith("update users set role ="):
             self.rows[p[1]]["role"] = p[0]
             return
-        if q.startswith("update users set disabled = true, refresh_token_jti = null"):
-            self.rows[p[0]]["disabled"] = True
-            self.rows[p[0]]["refresh_token_jti"] = None
+
+        # LUM-29 combined disable (+ token_version bump lives in services.users.disable path)
+        if "update users set disabled = true" in q:
+            uid = str(p[-1])
+            row = self.rows.get(uid)
+            if row:
+                row["disabled"] = True
+                row["token_version"] = int(row.get("token_version") or 1) + 1
             return
+
         if q.startswith("update users set disabled = false where id ="):
             self.rows[p[0]]["disabled"] = False
             return
         if q.startswith("update users set last_login_at = now()"):
             self.rows[p[0]]["last_login_at"] = datetime.now(timezone.utc)
             return
-        if q.startswith("update users set refresh_token_jti ="):
-            self.rows[p[1]]["refresh_token_jti"] = p[0]
-            return
-        if q.startswith("update users set password_hash ="):
+
+        # Password change (+ token_version bump) — `_apply_new_password`
+        if "update users set password_hash" in q and "token_version" in q:
             self.rows[p[1]]["password_hash"] = p[0]
-            self.rows[p[1]]["refresh_token_jti"] = None
+            self.rows[p[1]]["token_version"] = int(self.rows[p[1]].get("token_version") or 1) + 1
             return
+
+        if q.startswith("delete from auth_sessions where user_id ="):
+            uid = str(p[0])
+            self.auth_sessions = {
+                k: v for k, v in self.auth_sessions.items() if v["user_id"] != uid
+            }
+            return
+
         if q.startswith("delete from users where id ="):
             self.rows.pop(p[0], None)
+            uid_del = str(p[0])
+            self.auth_sessions = {
+                k: v for k, v in self.auth_sessions.items() if v["user_id"] != uid_del
+            }
             return
+
+        # auth_sessions revocation (logout / reuse / revoke-one)
+        if "update auth_sessions set revoked_at" in q:
+            now = datetime.now(timezone.utc)
+            if "where family_id =" in q:
+                fid = str(p[0])
+                for srow in list(self.auth_sessions.values()):
+                    if srow["family_id"] == fid and srow["revoked_at"] is None:
+                        srow["revoked_at"] = now
+                return
+            if "where id =" in q and "user_id" not in q:
+                sid = str(p[0])
+                srow = self.auth_sessions.get(sid)
+                if srow and srow["revoked_at"] is None:
+                    srow["revoked_at"] = now
+                return
 
     def fetch_one(self, query: str, params: tuple | None = None) -> dict | None:
         q = " ".join(query.split()).lower()
@@ -120,15 +188,91 @@ class FakeUsersStore:
                 key=lambda r: r["created_at"],
             )
             return {"id": admins[0]["id"]} if admins else None
-        if q.startswith("select refresh_token_jti from users where id ="):
-            row = self.rows.get(p[0])
-            return {"refresh_token_jti": row["refresh_token_jti"]} if row else None
+        if "select token_version from users where id =" in q:
+            row = self.rows.get(str(p[0]))
+            if not row:
+                return None
+            return {"token_version": int(row.get("token_version") or 1)}
+        if "select value from app_settings where key =" in q:
+            key = str(p[0])
+            if key not in self.settings:
+                return None
+            return {"value": self.settings[key]}
+        if (
+            "update users set token_version = token_version + 1" in q
+            and "returning token_version" in q
+        ):
+            uid = str(p[0])
+            row = self.rows.get(uid)
+            if not row:
+                return None
+            row["token_version"] = int(row.get("token_version") or 1) + 1
+            return {"token_version": row["token_version"]}
+
+        if "select * from auth_sessions where id =" in q and len(p) == 2:
+            sid, uid = str(p[0]), str(p[1])
+            srow = self.auth_sessions.get(sid)
+            if not srow or srow["user_id"] != uid:
+                return None
+            return dict(srow)
+
+        if "select * from auth_sessions where id =" in q and len(p) == 1:
+            sid = str(p[0])
+            srow = self.auth_sessions.get(sid)
+            if not srow:
+                return None
+            return dict(srow)
+
         return None
 
     def fetch_all(self, query: str, params: tuple | None = None) -> list[dict]:
         q = " ".join(query.split()).lower()
+        p = params or ()
         if q.startswith("select * from users order by created_at"):
             return sorted((dict(r) for r in self.rows.values()), key=lambda r: r["created_at"])
+
+        if (
+            "select * from auth_sessions" in q
+            and "where user_id =" in q
+            and "revoked_at is null" in q
+        ):
+            uid = str(p[0])
+            rows = [
+                dict(srow)
+                for srow in self.auth_sessions.values()
+                if str(srow["user_id"]) == uid and srow["revoked_at"] is None
+            ]
+            rows.sort(key=lambda r: r["created_at"], reverse=True)
+            return rows[:100]
+
+        now = datetime.now(timezone.utc)
+        if "update auth_sessions set revoked_at" in q and "where user_id" in q and "returning" in q:
+            uid = str(p[0])
+            out = []
+            for srow in list(self.auth_sessions.values()):
+                if srow["user_id"] != uid:
+                    continue
+                if srow["revoked_at"] is None:
+                    srow["revoked_at"] = now
+                    out.append(dict(srow))
+            return out
+        if (
+            "update auth_sessions set revoked_at" in q
+            and "where family_id" in q
+            and "returning" in q
+        ):
+            fid = str(p[0])
+            out = []
+            for srow in list(self.auth_sessions.values()):
+                if srow["family_id"] != fid:
+                    continue
+                if srow["revoked_at"] is None:
+                    srow["revoked_at"] = now
+                    out.append(dict(srow))
+            return out
+        if "update mcp_tokens set revoked_at" in q and "returning" in q:
+            return []
+
         return []
 
     def close(self) -> None:
@@ -156,11 +300,14 @@ class FakeUsersStore:
 @pytest.fixture
 def users_store(monkeypatch):
     import config as _config
+    from services import auth_sessions as _asn
 
+    _asn.invalidate_instance_salt_cache_for_tests()
     store = FakeUsersStore()
     _config._instances["metadata_store"] = store
     yield store
     _config._instances.pop("metadata_store", None)
+    _asn.invalidate_instance_salt_cache_for_tests()
 
 
 @pytest.fixture
@@ -172,10 +319,16 @@ def auth_env(monkeypatch):
     monkeypatch.setenv("ACCESS_TOKEN_TTL_SECONDS", "900")
     monkeypatch.setenv("REFRESH_TOKEN_TTL_SECONDS", "3600")
     monkeypatch.setenv("LUMOGIS_REFRESH_COOKIE_SECURE", "false")
-    # Real Fernet key so `_enforce_auth_consistency`'s post-AUTH_SECRET
-    # LUMOGIS_CREDENTIAL_KEY[S] gate passes for every AUTH_ENABLED=true
-    # test in this file. Placeholder-refusal tests override via monkeypatch.
-    monkeypatch.setenv("LUMOGIS_CREDENTIAL_KEY", TEST_FERNET_KEY)
+    # Real (deterministic) Fernet key so `_enforce_auth_consistency`'s
+    # post-AUTH_SECRET LUMOGIS_CREDENTIAL_KEY[S] gate passes for every
+    # AUTH_ENABLED=true test in this file. The placeholder-refusal
+    # tests below override this with monkeypatch on a per-test basis.
+    # Generated once with `Fernet.generate_key().decode()` and pinned;
+    # the value is not security-sensitive (test-only).
+    monkeypatch.setenv(
+        "LUMOGIS_CREDENTIAL_KEY",
+        "OlGLYckGIbBSt54y8XVmgb441LgKJWvvYoHnpQ_cv9A=",
+    )
     yield
     # Reset rate limit state between tests so the per-IP bucket from one
     # test doesn't bleed into the next.
@@ -213,6 +366,25 @@ def test_mint_and_verify_access_token_round_trip(auth_env):
     assert payload["sub"] == "user-abc"
     assert payload["role"] == "admin"
     assert payload["exp"] > payload["iat"]
+    assert "sid" not in payload and "tv" not in payload
+
+    tok2 = auth.mint_access_token(
+        "user-abc",
+        "admin",
+        session_id="s1",
+        token_version=2,
+    )
+    p2 = auth.verify_token(tok2)
+    assert p2 is not None and p2["sid"] == "s1" and p2["tv"] == 2
+
+
+def test_mint_access_token_rejects_partial_session_claims(auth_env):
+    import auth
+
+    with pytest.raises(ValueError, match="together"):
+        auth.mint_access_token("user-abc", "admin", session_id="s1")
+    with pytest.raises(ValueError, match="together"):
+        auth.mint_access_token("user-abc", "admin", token_version=1)
 
 
 def test_mint_and_verify_refresh_token_round_trip(auth_env):
@@ -303,16 +475,33 @@ def test_count_users_and_count_admins(users_store):
     assert users_svc.count_admins() == 1
 
 
-def test_set_disabled_clears_refresh_jti(users_store):
+def test_set_disabled_revokes_sessions_and_bumps_token_version(users_store, auth_env):
     import services.users as users_svc
+    from auth import mint_refresh_token
+
+    from services import auth_sessions as asn_svc
 
     u = users_svc.create_user("alice@home.lan", "verylongpassword12", "admin")
-    users_svc.set_refresh_jti(u.id, "abc123")
-    assert users_svc.get_refresh_jti(u.id) == "abc123"
+    asn_svc.ensure_instance_salt()
+    session_id = uuid.uuid4().hex
+    jwt = mint_refresh_token(u.id, session_id)
+    asn_svc.insert_login_session(
+        session_id=session_id,
+        user_id=u.id,
+        refresh_jwt=jwt,
+        expires_at=datetime.now(timezone.utc) + timedelta(seconds=3600),
+        device_label="Test · 20990101-0000",
+        ip_hash="0" * 64,
+        ua_hash="1" * 64,
+    )
+    assert len(asn_svc.list_active_sessions_for_user(u.id)) == 1
+
     users_svc.set_disabled(u.id, True)
-    assert users_svc.get_refresh_jti(u.id) is None
+
     refreshed = users_svc.get_user_by_id(u.id)
     assert refreshed is not None and refreshed.disabled is True
+    assert int(refreshed.token_version) == 2
+    assert asn_svc.list_active_sessions_for_user(u.id) == []
 
 
 def test_verify_credentials_disabled_user_returns_none(users_store):
@@ -530,7 +719,7 @@ def test_enforce_auth_consistency_accepts_keys_csv_when_single_key_unset(
     monkeypatch.delenv("LUMOGIS_CREDENTIAL_KEY", raising=False)
     monkeypatch.setenv(
         "LUMOGIS_CREDENTIAL_KEYS",
-        f"{TEST_FERNET_KEY},{TEST_FERNET_KEY}",
+        "OlGLYckGIbBSt54y8XVmgb441LgKJWvvYoHnpQ_cv9A=,OlGLYckGIbBSt54y8XVmgb441LgKJWvvYoHnpQ_cv9A=",
     )
     main._enforce_auth_consistency()
 
@@ -754,7 +943,7 @@ def test_refresh_rotates_jti_and_evicts_old_cookie(users_store, auth_env):
         rotated = r1.cookies.get("lumogis_refresh")
         assert rotated and rotated != first_cookie
 
-        # Replaying the FIRST cookie now must fail (single-active-jti).
+        # Replaying the FIRST cookie → reuse cascade for that device family → 401.
         client.cookies.clear()
         r2 = client.post(
             "/api/v1/auth/refresh",
@@ -793,28 +982,26 @@ def test_refresh_without_cookie_returns_401(users_store, auth_env):
     assert resp.status_code == 401
 
 
-def test_logout_clears_users_refresh_token_jti(users_store, auth_env):
-    import services.users as users_svc
-
+def test_logout_revokes_refresh_row(users_store, auth_env):
     with _client_with_admin(users_store) as client:
-        client.post(
+        login = client.post(
             "/api/v1/auth/login",
             json={"email": "alice@home.lan", "password": "verylongpassword12"},
         )
-        user = users_svc.get_user_by_email("alice@home.lan")
-        assert user is not None
-        assert users_svc.get_refresh_jti(user.id) is not None
-        resp = client.post("/api/v1/auth/logout")
-        assert resp.status_code == 200
-        assert users_svc.get_refresh_jti(user.id) is None
+        cookie = login.cookies.get("lumogis_refresh")
+        assert cookie
+        client.post("/api/v1/auth/logout")
+
+        replay = client.post(
+            "/api/v1/auth/refresh",
+            cookies={"lumogis_refresh": cookie},
+            headers=_csrf_origin_headers(),
+        )
+        assert replay.status_code == 401
 
 
-def test_login_evicts_previous_refresh_jti(users_store, auth_env):
-    """Single-active-session: re-login on a different device evicts the first.
-
-    Stops at the eviction assertion. Whether the second cookie still works
-    is covered by :func:`test_refresh_rotates_jti_and_evicts_old_cookie`.
-    """
+def test_second_login_keeps_prior_device_refresh(users_store, auth_env):
+    """LUM-29: concurrent ``auth_sessions`` rows — neither login evicts the other."""
     with _client_with_admin(users_store) as client:
         first = client.post(
             "/api/v1/auth/login",
@@ -832,9 +1019,17 @@ def test_login_evicts_previous_refresh_jti(users_store, auth_env):
         assert second_cookie and second_cookie != first_cookie
 
         client.cookies.clear()
-        evict = client.post(
+        refresh_first = client.post(
             "/api/v1/auth/refresh",
             cookies={"lumogis_refresh": first_cookie},
             headers=_csrf_origin_headers(),
         )
-        assert evict.status_code == 401
+        assert refresh_first.status_code == 200, refresh_first.text
+
+        client.cookies.clear()
+        refresh_second = client.post(
+            "/api/v1/auth/refresh",
+            cookies={"lumogis_refresh": second_cookie},
+            headers=_csrf_origin_headers(),
+        )
+        assert refresh_second.status_code == 200, refresh_second.text

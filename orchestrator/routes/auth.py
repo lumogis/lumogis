@@ -3,18 +3,19 @@
 """Browser-facing auth endpoints.
 
 Mounted at ``/api/v1/auth/*``. Single responsibility: authenticate the
-caller, mint and rotate JWTs, expose the current user identity. All
-admin user-management lives in ``routes/admin.py`` (Phase 2).
+caller, mint and rotate JWTs, expose the current user identity.
+
+Session contract (LUM-29): refresh bearer ``jti`` maps to ``auth_sessions.id``;
+multi-device rows track ``family_id`` for reuse detection.
 
 Endpoint summary
 ----------------
 * ``POST /api/v1/auth/login``   — verify (email, password); return access
   JWT and (when configured) set the refresh cookie.
-* ``POST /api/v1/auth/refresh`` — rotate the refresh JWT and issue a new
-  access token. Single-active-jti per user enforced via
-  ``users.refresh_token_jti``.
-* ``POST /api/v1/auth/logout``  — clear the refresh jti server-side and
-  expire the cookie.
+* ``POST /api/v1/auth/refresh`` — rotate refresh via ``auth_sessions`` and
+  issue a new access token.
+* ``POST /api/v1/auth/logout``  — revoke the current ``auth_sessions`` row
+  and expire the cookie.
 * ``GET  /api/v1/auth/me``      — return the calling user's
   :class:`UserPublic` snapshot (or the synthesised dev user when
   ``AUTH_ENABLED=false``).
@@ -36,6 +37,9 @@ import time
 import uuid
 from collections import defaultdict
 from collections import deque
+from datetime import datetime
+from datetime import timedelta
+from datetime import timezone
 from threading import Lock
 from typing import Deque
 
@@ -60,6 +64,10 @@ from fastapi import status
 from models.auth import LoginRequest
 from models.auth import LoginResponse
 from models.auth import UserPublic
+from services.auth_sessions import RefreshError
+from services.auth_sessions import RefreshReuseError
+
+from services import auth_sessions as auth_sess
 
 _log = logging.getLogger(__name__)
 
@@ -167,9 +175,21 @@ def _client_ip(request: Request) -> str:
     return _proxied_client_ip(request)
 
 
-def _login_response(user_id: str, role: str, email: str) -> LoginResponse:
+def _login_response(
+    user_id: str,
+    role: str,
+    email: str,
+    *,
+    session_id: str,
+    token_version: int,
+) -> LoginResponse:
     return LoginResponse(
-        access_token=mint_access_token(user_id, role),
+        access_token=mint_access_token(
+            user_id,
+            role,
+            session_id=session_id,
+            token_version=token_version,
+        ),
         token_type="bearer",
         expires_in=access_token_ttl_seconds(),
         user=UserPublic(id=user_id, email=email, role=role),
@@ -220,14 +240,37 @@ def login(body: LoginRequest, request: Request, response: Response) -> LoginResp
 
     _rate_record_success(ip, email_key)
 
-    new_jti = uuid.uuid4().hex
-    users_svc.set_refresh_jti(user.id, new_jti)
+    salt = auth_sess.ensure_instance_salt()
+    session_id = uuid.uuid4().hex
+    refresh_jwt = mint_refresh_token(user.id, session_id)
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=refresh_token_ttl_seconds())
+    ua = request.headers.get("User-Agent") or ""
+    ip_h, ua_h = auth_sess.fingerprint_hashes(
+        normalized_ip=_client_ip(request),
+        user_agent=ua,
+        salt=salt,
+    )
+    label = auth_sess.compute_device_label(ua, utc_now=datetime.now(timezone.utc))
+    auth_sess.insert_login_session(
+        session_id=session_id,
+        user_id=user.id,
+        refresh_jwt=refresh_jwt,
+        expires_at=expires_at,
+        device_label=label,
+        ip_hash=ip_h,
+        ua_hash=ua_h,
+    )
     users_svc.record_login(user.id)
 
-    refresh_jwt = mint_refresh_token(user.id, new_jti)
     _set_refresh_cookie(response, refresh_jwt)
 
-    return _login_response(user.id, user.role, user.email)
+    return _login_response(
+        user.id,
+        user.role,
+        user.email,
+        session_id=session_id,
+        token_version=user.token_version,
+    )
 
 
 @router.post(
@@ -240,18 +283,7 @@ def refresh(
     response: Response,
     lumogis_refresh: str | None = Cookie(default=None),
 ) -> LoginResponse:
-    """Rotate the refresh JWT and issue a new access token.
-
-    Failure modes (see plan §12):
-
-    * Cookie absent / signature invalid / expired / format invalid → 401.
-    * ``jti != users.refresh_token_jti`` → 401, defensively clear the
-      column, clear the cookie. Possible token-theft signal — logged
-      ``WARNING`` with ``user_id``.
-    * User row missing or ``disabled = TRUE`` → 401, clear cookie.
-    * DB error during rotation → 500, do not issue new tokens; old cookie
-      remains valid for retry.
-    """
+    """Rotate the refresh JWT via ``auth_sessions`` and issue a new access token."""
     if not auth_enabled():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -266,34 +298,44 @@ def refresh(
         _clear_refresh_cookie(response)
         raise HTTPException(status_code=401, detail="invalid refresh token")
 
-    user_id = payload["sub"]
-    presented_jti = payload["jti"]
+    user_id = str(payload["sub"])
+    presented_jti = str(payload["jti"])
 
     user = users_svc.get_user_by_id(user_id)
     if user is None or user.disabled:
         _clear_refresh_cookie(response)
         raise HTTPException(status_code=401, detail="invalid refresh token")
 
-    active_jti = users_svc.get_refresh_jti(user_id)
-    if active_jti is None or active_jti != presented_jti:
-        users_svc.set_refresh_jti(user_id, None)
-        _clear_refresh_cookie(response)
-        _log.warning(
-            "refresh: jti mismatch user_id=%s (possible replay or evicted by newer login)",
-            user_id,
-        )
-        raise HTTPException(status_code=401, detail="invalid refresh token")
-
-    new_jti = uuid.uuid4().hex
     try:
-        users_svc.set_refresh_jti(user_id, new_jti)
+        new_sid, new_refresh, tv = auth_sess.rotate_refresh(
+            user_id=user_id,
+            jti=presented_jti,
+            refresh_jwt=lumogis_refresh,
+            refresh_ttl_seconds=refresh_token_ttl_seconds(),
+        )
+    except RefreshReuseError:
+        _clear_refresh_cookie(response)
+        raise HTTPException(status_code=401, detail="invalid refresh token") from None
+    except RefreshError:
+        _clear_refresh_cookie(response)
+        raise HTTPException(status_code=401, detail="invalid refresh token") from None
     except Exception as exc:
-        _log.exception("refresh: rotation update failed for user_id=%s", user_id)
+        _log.exception("refresh: rotation failed for user_id=%s", user_id)
         raise HTTPException(status_code=500, detail="refresh rotation failed") from exc
 
-    new_refresh = mint_refresh_token(user_id, new_jti)
+    user2 = users_svc.get_user_by_id(user_id)
+    if user2 is None:
+        _clear_refresh_cookie(response)
+        raise HTTPException(status_code=401, detail="invalid refresh token")
+
     _set_refresh_cookie(response, new_refresh)
-    return _login_response(user.id, user.role, user.email)
+    return _login_response(
+        user2.id,
+        user2.role,
+        user2.email,
+        session_id=new_sid,
+        token_version=int(tv),
+    )
 
 
 @router.post("/logout")
@@ -301,18 +343,18 @@ def logout(
     response: Response,
     lumogis_refresh: str | None = Cookie(default=None),
 ) -> dict:
-    """Clear the refresh cookie and the server-side jti.
+    """Revoke the refresh session server-side and expire the cookie."""
 
-    Idempotent and tolerant of missing/invalid cookies — a logout request
-    that arrives without a valid cookie still clears any stale state.
-    """
     if lumogis_refresh:
         payload = verify_refresh_token(lumogis_refresh)
-        if payload and "sub" in payload:
+        if payload and "sub" in payload and "jti" in payload:
             try:
-                users_svc.set_refresh_jti(payload["sub"], None)
+                auth_sess.revoke_session_for_user(
+                    session_id=str(payload["jti"]),
+                    user_id=str(payload["sub"]),
+                )
             except Exception:
-                _log.exception("logout: failed to clear refresh_token_jti")
+                _log.exception("logout: failed to revoke auth session row")
     _clear_refresh_cookie(response)
     return {"ok": True}
 

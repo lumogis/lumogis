@@ -189,12 +189,12 @@ def me_notifications_view(request: Request) -> MeNotificationsResponse:
     dependencies=[Depends(require_same_origin)],
 )
 def change_my_password(body: MePasswordChangeRequest, request: Request) -> AckOk:
-    """Verify the current password, set a new hash, clear ``refresh_token_jti``.
+    """Verify the current password and apply a new hash (LUM-29 session invalidation).
 
     Unavailable when ``AUTH_ENABLED=false``. Wrong current password → 403 with
     a generic ``invalid credentials`` detail (no account enumeration). Policy
-    violations → 400. Existing refresh cookies stop working; access JWTs live
-    until TTL expiry.
+    violations → 400. Browser refresh sessions are revoked server-side; access
+    JWTs are invalidated via ``token_version`` before TTL when cached.
     """
     if not auth_enabled():
         raise HTTPException(

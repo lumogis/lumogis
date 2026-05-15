@@ -58,7 +58,6 @@ def _require_smoke_creds() -> None:
 
 
 @pytest.mark.integration
-@pytest.mark.public_rc
 def test_spa_index_html(web_client: httpx.Client) -> None:
     r = web_client.get("/")
     assert r.status_code == 200
@@ -68,7 +67,6 @@ def test_spa_index_html(web_client: httpx.Client) -> None:
 
 
 @pytest.mark.integration
-@pytest.mark.public_rc
 def test_health_through_caddy(web_client: httpx.Client) -> None:
     r = web_client.get("/health")
     assert r.status_code == 200

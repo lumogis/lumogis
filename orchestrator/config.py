@@ -632,6 +632,66 @@ def get_notifier():
     return _instances["notifier"]
 
 
+def is_injection_sanitiser_enabled() -> bool:
+    return os.environ.get("INJECTION_SANITISER_ENABLED", "true").strip().lower() in (
+        "true",
+        "1",
+        "yes",
+        "on",
+    )
+
+
+def get_tool_chain_cap() -> int:
+    raw = os.environ.get("TOOL_CHAIN_CAP", "10")
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return 10
+
+
+def get_injection_scanner():
+    """Return cached injection scanner singleton (currently only ``null`` / passthrough).
+
+    Mirrors :func:`get_notifier` extensibility: future scanners plug in behind
+    ``INJECTION_SCANNER`` without refactoring call sites.
+    """
+    if "injection_scanner" not in _instances:
+        backend = os.environ.get("INJECTION_SCANNER", "null").strip().lower()
+        if backend != "null":
+            raise RuntimeError(
+                f"Unsupported INJECTION_SCANNER={backend!r} (only 'null' shipped in this release). "
+                "If startup must proceed without this adapter, disable pattern loading via "
+                "INJECTION_SANITISER_ENABLED=false in .env."
+            )
+        from adapters.null_injection_scanner import NullInjectionScanner
+
+        _instances["injection_scanner"] = NullInjectionScanner()
+        _log.info("Injection scanner adapter: NullInjectionScanner")
+    return _instances["injection_scanner"]
+
+
+def warmup_injection_sanitiser() -> None:
+    """Eager-load YAML regex table + scanner before ``Startup complete``.
+
+    Raises :class:`RuntimeError` carrying ``INJECTION_SANITISER_ENABLED=false``
+    remediation when patterns are malformed or inaccessible.
+    """
+    if not is_injection_sanitiser_enabled():
+        _log.info("Injection sanitiser disabled via INJECTION_SANITISER_ENABLED")
+        return
+    try:
+        from services.injection_sanitiser import ensure_patterns_loaded
+
+        ensure_patterns_loaded()
+        get_injection_scanner().scan("")
+    except Exception as exc:
+        raise RuntimeError(
+            f"Injection sanitiser startup failed: {exc}. "
+            "Remediation: fix orchestrator/data/injection_patterns.yaml (or "
+            "INJECTION_PATTERN_FILE) or set INJECTION_SANITISER_ENABLED=false in .env."
+        ) from exc
+
+
 def get_scheduler():
     """Return the shared APScheduler BackgroundScheduler singleton.
 
@@ -939,10 +999,13 @@ def get_capability_registry():
 def get_tool_catalog_enabled() -> bool:
     """If true, :mod:`loop` may append OOP capability tool schemas and dispatch them.
 
-    Default **false** — unchanged chat behaviour. Set ``LUMOGIS_TOOL_CATALOG_ENABLED=true``
-    to opt in. Not cached so tests can toggle env in-process.
+    Default **true** when unset. Set ``LUMOGIS_TOOL_CATALOG_ENABLED=false`` (or ``0`` / ``no``)
+    to opt out explicitly. Truthy tokens: ``1`` / ``true`` / ``yes``. Not cached so tests can
+    toggle env in-process.
     """
     raw = os.environ.get("LUMOGIS_TOOL_CATALOG_ENABLED", "").strip().lower()
+    if raw == "":
+        return True
     return raw in ("1", "true", "yes")
 
 
@@ -1332,6 +1395,13 @@ def get_kg_webhook_secret() -> str | None:
     Whitespace is stripped; empty strings collapse to None so an
     accidentally-blank `GRAPH_WEBHOOK_SECRET=` line in .env is treated the
     same as the variable being absent.
+
+    The ``query_graph`` HTTP proxy path (:func:`get_graph_proxy_require_service_bearer`)
+    applies a **stricter** gate: it fail-closes outbound calls without a
+    configured secret unless the operator sets
+    ``LUMOGIS_GRAPH_PROXY_ALLOW_INSECURE_MISSING_SECRET``. Other Core readers
+    of this secret (e.g. graph webhook dispatcher) keep their historical
+    contract unchanged.
     """
     raw = os.environ.get("GRAPH_WEBHOOK_SECRET", "").strip()
     return raw or None

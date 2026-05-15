@@ -45,6 +45,7 @@ REQUIRED_V1_PATHS = frozenset(
         "/api/v1/approvals/pending",
         "/api/v1/approvals/connector/{connector}/mode",
         "/api/v1/approvals/elevate",
+        "/api/v1/approvals/proposals/{proposal_id}/execute",
         "/api/v1/audit",
         "/api/v1/audit/{reverse_token}/reverse",
         "/api/v1/captures",

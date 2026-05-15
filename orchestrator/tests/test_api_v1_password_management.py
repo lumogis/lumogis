@@ -9,9 +9,6 @@ import json
 import pytest
 import services.users as users_svc
 from fastapi.testclient import TestClient
-from tests.test_auth_phase1 import auth_env  # noqa: F401
-from tests.test_auth_phase1 import dev_env  # noqa: F401
-from tests.test_auth_phase1 import users_store  # noqa: F401
 from tests.test_auth_phase2 import _admin_headers
 from tests.test_auth_phase2 import _client
 from tests.test_auth_phase2 import _user_headers
@@ -112,7 +109,9 @@ def test_me_password_same_as_current_400(users_store, auth_env):
     assert r.status_code == 400
 
 
-def test_me_password_clears_refresh_jti(users_store, auth_env):
+def test_me_password_revokes_browser_sessions(users_store, auth_env):
+    from services import auth_sessions as asn_svc
+
     with _client(users_store) as client:
         login = client.post(
             "/api/v1/auth/login",
@@ -121,7 +120,8 @@ def test_me_password_clears_refresh_jti(users_store, auth_env):
         assert login.status_code == 200
         admin = users_svc.get_user_by_email("admin@home.lan")
         assert admin is not None
-        assert users_svc.get_refresh_jti(admin.id) is not None
+        assert len(asn_svc.list_active_sessions_for_user(admin.id)) >= 1
+        pre_ver = admin.token_version
         r = client.post(
             "/api/v1/me/password",
             headers=_admin_headers(users_store),
@@ -131,7 +131,9 @@ def test_me_password_clears_refresh_jti(users_store, auth_env):
             },
         )
         assert r.status_code == 200
-        assert users_svc.get_refresh_jti(admin.id) is None
+        assert asn_svc.list_active_sessions_for_user(admin.id) == []
+        bumped = users_svc.get_user_by_id(admin.id)
+        assert bumped is not None and bumped.token_version > pre_ver
 
 
 def test_admin_reset_password_unauthenticated_401(users_store, auth_env):

@@ -60,6 +60,7 @@ the failure is logged but not re-raised (per the service contract).
 from __future__ import annotations
 
 import logging
+from dataclasses import asdict
 
 from auth import get_user
 from authz import require_admin
@@ -126,14 +127,12 @@ system_admin_router = APIRouter(
 def _to_public(record: ccs.CredentialRecord) -> ConnectorCredentialPublic:
     """Project a service ``CredentialRecord`` onto the wire model.
 
-    The service dataclass mirrors the Pydantic model field-for-field
-    (per plan §3 — ``models/connector_credential.py``), so
-    ``model_validate(record.__dict__)`` is a one-line projection with
-    no field renaming. The wrapper still exists so the route layer
-    has exactly one place to change if the projection ever needs to
-    diverge (e.g. hiding an internal column).
+    ``delivery_paused_detail`` is persisted for operators only — it never
+    appears on connector-credential GET responses.
     """
-    return ConnectorCredentialPublic.model_validate(record.__dict__)
+    data = asdict(record)
+    data.pop("delivery_paused_detail", None)
+    return ConnectorCredentialPublic.model_validate(data)
 
 
 def _bad_connector_id_400(connector: str, exc: ValueError) -> HTTPException:

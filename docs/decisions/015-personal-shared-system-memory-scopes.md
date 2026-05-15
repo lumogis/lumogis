@@ -208,8 +208,8 @@ pass above.
 **What becomes easier:**
 
 - **Household sharing actually works for the rewritten surfaces.** Alice marks the meal plan
-  `shared`; Bob's reads through `routes/data.py`, `routes/signals.py`, `services/memory.py`,
-  `services/search.py`, `services/entities.py`, `services/ingest.py`, and the MCP tools
+  `shared`; Bob's reads through `orchestrator/routes/data.py`, `orchestrator/routes/signals.py`, `orchestrator/services/memory.py`,
+  `orchestrator/services/search.py`, `orchestrator/services/entities.py`, `orchestrator/services/ingest.py`, and the MCP tools
   (`memory.search`, `memory.get_recent`, `entity.lookup`, `entity.search`) honour the union
   semantics correctly. The publish/unpublish round-trip is reversible, idempotent, and tested
   end-to-end in `tests/integration/test_household_sharing.py`.

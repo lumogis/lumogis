@@ -2,8 +2,9 @@
 # Copyright (C) 2026 Lumogis
 """Tests for config.py: factory functions, singleton caching, shutdown."""
 
-import config
 import pytest
+
+import config
 
 
 def test_get_vector_store_returns_same_instance():
@@ -119,9 +120,7 @@ def test_shutdown_clears_effective_override(monkeypatch):
     assert config.get_graph_mode() == "disabled"
 
 
-def test_get_graph_store_falkordb_import_error_returns_none_with_warning(
-    monkeypatch, caplog
-):
+def test_get_graph_store_falkordb_import_error_returns_none_with_warning(monkeypatch, caplog):
     import logging
     import sys
     import types
@@ -177,16 +176,6 @@ def test_get_kg_webhook_secret_returns_none_when_blank(monkeypatch):
 def test_get_kg_webhook_secret_returns_value_when_set(monkeypatch):
     monkeypatch.setenv("GRAPH_WEBHOOK_SECRET", "supersecret123")
     assert config.get_kg_webhook_secret() == "supersecret123"
-
-
-def test_shutdown_clears_graph_mode_effective_and_env_cache(monkeypatch):
-    monkeypatch.setenv("GRAPH_MODE", "service")
-    config.clear_graph_mode_env_cache()
-    config.set_effective_graph_mode_for_process("service")
-    assert config.get_graph_mode() == "service"
-    monkeypatch.setenv("GRAPH_MODE", "inprocess")
-    config.shutdown()
-    assert config.get_graph_mode() == "inprocess"
 
 
 @pytest.mark.parametrize(

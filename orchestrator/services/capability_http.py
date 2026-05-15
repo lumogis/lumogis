@@ -6,8 +6,10 @@
 `lumogis-graph` shape: ``{base}/tools/{tool_name}`` with
 ``X-Lumogis-User`` (attribution only) and optional ``Authorization: Bearer``
 shared secret. Generic callers can require a service bearer; the KG
-graph proxy documents ``require_service_bearer`` behaviour in
-    :func:`services.kg_premium_core.graph_query_tool_proxy_call`.
+graph proxy gates missing secrets via
+:func:`config.get_graph_proxy_require_service_bearer` (Core operator opt-in
+``LUMOGIS_GRAPH_PROXY_ALLOW_INSECURE_MISSING_SECRET`` — **not** an automatic
+read of the KG service's ``KG_ALLOW_INSECURE_WEBHOOKS``).
 
 X-Lumogis-User is **not** authentication; service auth is the bearer when
 configured, or the request is rejected (when :data:`REQUIRE_BEARER_DEFAULT`).

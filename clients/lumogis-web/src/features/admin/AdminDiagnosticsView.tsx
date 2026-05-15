@@ -34,7 +34,7 @@ export function AdminDiagnosticsView(): JSX.Element {
 
   if (summary.isPending) {
     return (
-      <section aria-busy="true" data-testid="lumogis-admin-diagnostics">
+      <section aria-busy="true">
         <h2>Diagnostics</h2>
         <p>Loading…</p>
       </section>
@@ -52,7 +52,7 @@ export function AdminDiagnosticsView(): JSX.Element {
             : err.detail
         : "Diagnostics unavailable.";
     return (
-      <section data-testid="lumogis-admin-diagnostics">
+      <section>
         <h2>Diagnostics</h2>
         <p role="alert">{detail}</p>
       </section>
@@ -79,7 +79,7 @@ export function AdminDiagnosticsView(): JSX.Element {
   }
 
   return (
-    <section className="lumogis-admin-dense-section" data-testid="lumogis-admin-diagnostics">
+    <section className="lumogis-admin-dense-section">
       <h2>Diagnostics</h2>
       <p style={{ maxWidth: "42rem", opacity: 0.9 }}>
         Read-only instance overview for admins. Does not run tools, change configuration, or reveal
@@ -180,6 +180,44 @@ export function AdminDiagnosticsView(): JSX.Element {
             </li>
           ))}
       </ul>
+
+      <h3 style={{ fontSize: "1rem", marginTop: "1.25rem" }}>Tool & permission sanity</h3>
+      {d.foundation_signals ? (
+        <>
+          <p style={{ fontSize: "0.85rem", opacity: 0.85, maxWidth: "42rem" }}>
+            Read-only catalog, Ask/Do probe, and capability registry mirrors (ADR&nbsp;034). No behaviour changes.
+          </p>
+          <ul style={{ margin: "0.35rem 0", paddingLeft: "1.2rem", fontSize: "0.9rem" }}>
+            <li>
+              Catalog rows (sample admin user): {d.foundation_signals.tool_catalog.total_entries}; unavailable capability
+              rows: {d.foundation_signals.tool_catalog.unavailable_capability_catalog_entries}; catalog-only transport
+              rows: {d.foundation_signals.tool_catalog.catalog_only_transport_entries}
+            </li>
+            <li>
+              Permissions module:{" "}
+              {d.foundation_signals.permissions.ask_do_module_import_ok ? "import ok" : "import failed"};
+              connector-mode probe:{" "}
+              {d.foundation_signals.permissions.connector_mode_metadata_lookup_ok
+                ? "ok"
+                : "failed (check Postgres)"}
+            </li>
+            <li>
+              Connector-linked catalog rows still showing unknown permission_mode:{" "}
+              {d.foundation_signals.permissions.catalog_rows_with_connector_but_unknown_permission_mode}
+            </li>
+            <li>
+              Capability registry (same as summary above):{" "}
+              {d.foundation_signals.capability_registry.registered_services_total} registered, unhealthy{" "}
+              {d.foundation_signals.capability_registry.registered_services_unhealthy}
+            </li>
+          </ul>
+        </>
+      ) : (
+        <p style={{ fontSize: "0.85rem", opacity: 0.85, maxWidth: "42rem" }} role="status">
+          Tool and permission sanity slice not present — Core may be older than this Web build. Other diagnostics still
+          apply.
+        </p>
+      )}
 
       {d.warnings.length > 0 ? (
         <>

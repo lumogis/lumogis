@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Lumogis
-"""Phase-5 capture persistence — CRUD (**5B**), attachments (**5C**), transcripts (**5D**), index (**5G**).
+"""Phase-5 capture persistence — CRUD (**5B**), attachments (**5C**),
+transcripts (**5D**), index (**5G**).
 
 All SQL uses parameterised placeholders only.
 """
@@ -284,8 +285,10 @@ def list_captures(
 
     rows = ms.fetch_all(
         "SELECT c.*, "
-        "(SELECT COUNT(*) FROM capture_attachments a WHERE a.capture_id = c.id) AS attachment_count, "
-        "(SELECT COUNT(*) FROM capture_transcripts t WHERE t.capture_id = c.id) AS transcript_count "
+        "(SELECT COUNT(*) FROM capture_attachments a "
+        " WHERE a.capture_id = c.id) AS attachment_count, "
+        "(SELECT COUNT(*) FROM capture_transcripts t "
+        " WHERE t.capture_id = c.id) AS transcript_count "
         f"FROM captures c WHERE {where} "
         "ORDER BY c.updated_at DESC LIMIT %s OFFSET %s",
         (*params, limit, offset),
@@ -710,7 +713,8 @@ def delete_capture_attachment(
         _log.warning("attachment delete: unlink failed: %s", exc)
 
     ms.execute(
-        "DELETE FROM capture_attachments WHERE id = %s::uuid AND capture_id = %s::uuid AND user_id = %s",
+        "DELETE FROM capture_attachments "
+        "WHERE id = %s::uuid AND capture_id = %s::uuid AND user_id = %s",
         (attachment_id, capture_id, user_id),
     )
 
@@ -911,10 +915,13 @@ def finish_capture_transcribe(
         )
     else:
         row = ms.fetch_one(
-            "INSERT INTO capture_transcripts (capture_id, attachment_id, user_id, provider, model, "
-            "transcript_text, transcript_status, transcript_provenance, language, confidence, error) "
+            "INSERT INTO capture_transcripts "
+            "(capture_id, attachment_id, user_id, provider, model, "
+            "transcript_text, transcript_status, transcript_provenance, "
+            "language, confidence, error) "
             "VALUES (%s::uuid, %s::uuid, %s, %s, %s, %s, %s, 'server_stt', %s, %s, %s) "
-            "RETURNING id, attachment_id, transcript_status, transcript_text, transcript_provenance, "
+            "RETURNING id, attachment_id, transcript_status, transcript_text, "
+            "transcript_provenance, "
             "language, confidence, created_at, updated_at",
             (
                 capture_id,

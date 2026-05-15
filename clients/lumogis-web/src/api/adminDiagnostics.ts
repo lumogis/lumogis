@@ -46,6 +46,40 @@ export interface AdminDiagnosticsTools {
   by_source: Record<string, number>;
 }
 
+/** ADR 034 — Agent Harness Foundation; read-only operator signals */
+export interface AdminDiagnosticsFoundationToolCatalog {
+  total_entries: number;
+  entries_by_transport: Record<string, number>;
+  unavailable_entries_by_source: Record<string, number>;
+  unavailable_capability_catalog_entries: number;
+  catalog_only_transport_entries: number;
+}
+
+export interface AdminDiagnosticsFoundationPermissions {
+  ask_do_module_import_ok: boolean;
+  connector_mode_metadata_lookup_ok: boolean;
+  catalog_rows_with_connector_but_unknown_permission_mode: number;
+}
+
+export interface AdminDiagnosticsFoundationCapabilityRegistry {
+  registered_services_total: number;
+  registered_services_unhealthy: number;
+}
+
+export interface AdminDiagnosticsFoundationSignals {
+  tool_catalog: AdminDiagnosticsFoundationToolCatalog;
+  permissions: AdminDiagnosticsFoundationPermissions;
+  capability_registry: AdminDiagnosticsFoundationCapabilityRegistry;
+}
+
+export interface AdminDiagnosticsSpeechToText {
+  backend: "none" | "fake_stt" | "whisper_sidecar";
+  transcribe_available: boolean;
+  max_audio_bytes: number;
+  max_duration_sec: number;
+  endpoint: string;
+}
+
 export interface AdminDiagnosticsWarning {
   code: string;
   message: string;
@@ -58,7 +92,10 @@ export interface AdminDiagnosticsResponse {
   stores: AdminDiagnosticsStoreItem[];
   capabilities: AdminDiagnosticsCapabilities;
   tools: AdminDiagnosticsTools;
+  /** Present on current Core; omit on older builds. */
+  foundation_signals?: AdminDiagnosticsFoundationSignals;
   warnings: AdminDiagnosticsWarning[];
+  speech_to_text: AdminDiagnosticsSpeechToText;
 }
 
 /** Curated Core / store / capability / tool diagnostics (admin-only). */

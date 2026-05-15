@@ -25,6 +25,7 @@ this background path.
 import logging
 
 import httpx
+from connectors.registry import NTFY
 from services.ntfy_runtime import load_ntfy_runtime_config
 
 from services import connector_credentials as ccs
@@ -79,6 +80,40 @@ class NtfyNotifier:
                     user_id,
                 )
                 return True
+            if resp.status_code == 410:
+                raw_body = getattr(resp, "text", "") or ""
+                body_preview = raw_body[:512]
+                _log.warning(
+                    "ntfy upstream returned 410 Gone — topic missing or expired",
+                    extra={
+                        "ntfy_upstream_code": "ntfy_upstream_410",
+                        "http_status": 410,
+                        "body_preview": body_preview,
+                        "user_id": user_id,
+                    },
+                )
+                meta = ccs.get_record(user_id, NTFY)
+                if meta is None:
+                    _log.info(
+                        "ntfy: pause_skipped_no_row user_id=%s",
+                        user_id,
+                    )
+                    return False
+                try:
+                    ccs.set_delivery_paused(
+                        user_id,
+                        NTFY,
+                        paused=True,
+                        reason="ntfy_upstream_410",
+                        detail=body_preview,
+                        actor="system",
+                    )
+                except Exception:
+                    _log.exception(
+                        "ntfy_delivery_pause_persist_failed user_id=%s",
+                        user_id,
+                    )
+                return False
             _log.warning(
                 "ntfy returned %d for %r (user_id=%s)",
                 resp.status_code,

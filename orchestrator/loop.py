@@ -11,9 +11,13 @@ Exports:
     ask_stream() — generator, yields StreamEvent objects for real-time streaming
 """
 
+import json
 import logging
+from dataclasses import dataclass
 from typing import Generator
 
+import hooks
+from events import Event
 from models.llm import LLMResponse
 from models.stream import StreamEvent
 from services.tools import TOOLS
@@ -45,6 +49,54 @@ SYSTEM_PROMPT_NO_TOOLS = (
     "switch to Claude (Cloud) or Qwen 2.5 (Local) which have file search capabilities. "
     "Answer questions using only your own knowledge."
 )
+
+
+@dataclass
+class ToolChainBudget:
+    """Per-request pessimistic dispatch counter for abusive tool-loop fan-out."""
+
+    cap: int
+    observed: int = 0
+    tripped_event: bool = False
+
+
+def _lumogis_blocked_payload(tool_name: str, budget: ToolChainBudget) -> str:
+    return json.dumps(
+        {
+            "lumogis_blocked": True,
+            "reason": "tool_chain_cap",
+            "blocked_tool": tool_name,
+            "cap": budget.cap,
+            "observed": budget.observed,
+        }
+    )
+
+
+def dispatch_tool_under_cap(
+    tool_name: str,
+    arguments: dict,
+    *,
+    user_id: str,
+    budget: ToolChainBudget | None,
+) -> str:
+    """Increment pessimistic budget before ``run_tool``; return stub JSON when tripped."""
+
+    if budget is None or budget.cap <= 0:
+        return run_tool(tool_name, arguments, user_id=user_id)
+
+    if budget.observed >= budget.cap:
+        if not budget.tripped_event:
+            budget.tripped_event = True
+            hooks.fire_background(
+                Event.TOOL_CHAIN_CAP_TRIPPED,
+                user_id=user_id,
+                cap=budget.cap,
+                observed=budget.observed,
+            )
+        return _lumogis_blocked_payload(tool_name, budget)
+
+    budget.observed += 1
+    return run_tool(tool_name, arguments, user_id=user_id)
 
 
 def _system_prompt(use_tools: bool) -> str:
@@ -84,6 +136,9 @@ def ask(
         tools = None
     system = _system_prompt(use_tools)
 
+    cap_cfg = config.get_tool_chain_cap()
+    chain_budget = ToolChainBudget(cap=cap_cfg) if cap_cfg > 0 else None
+
     try:
         for _round in range(MAX_TOOL_ROUNDS + 1):
             response: LLMResponse = provider.chat(
@@ -105,7 +160,9 @@ def ask(
                 return response.text
 
             for tc in response.tool_calls:
-                result = run_tool(tc.name, tc.arguments, user_id=user_id)
+                result = dispatch_tool_under_cap(
+                    tc.name, tc.arguments, user_id=user_id, budget=chain_budget
+                )
                 messages.append(
                     {
                         "role": "tool",
@@ -148,13 +205,18 @@ def ask_stream(
         tools = None
     system = _system_prompt(use_tools)
 
+    cap_cfg = config.get_tool_chain_cap()
+    chain_budget = ToolChainBudget(cap=cap_cfg) if cap_cfg > 0 else None
+
     try:
         try:
             provider = config.get_llm_provider(model, user_id=user_id)
             messages = list(history) if history else []
             messages.append({"role": "user", "content": question})
 
-            yield from _stream_loop(provider, messages, tools, system, user_id=user_id)
+            yield from _stream_loop(
+                provider, messages, tools, system, user_id=user_id, chain_budget=chain_budget
+            )
         except Exception as exc:
             _log.exception("ask_stream failed for model=%s", model)
             yield StreamEvent(type="error", content=_friendly_error(exc))
@@ -182,6 +244,7 @@ def _stream_loop(
     system: str,
     *,
     user_id: str,
+    chain_budget: ToolChainBudget | None = None,
 ) -> Generator[StreamEvent, None, None]:
     """Inner streaming loop with tool-call handling. ``user_id`` is required."""
     for _round in range(MAX_TOOL_ROUNDS + 1):
@@ -217,7 +280,9 @@ def _stream_loop(
             return
 
         for tc in tool_calls:
-            result = run_tool(tc["name"], tc["arguments"], user_id=user_id)
+            result = dispatch_tool_under_cap(
+                tc["name"], tc["arguments"], user_id=user_id, budget=chain_budget
+            )
             messages.append(
                 {
                     "role": "tool",

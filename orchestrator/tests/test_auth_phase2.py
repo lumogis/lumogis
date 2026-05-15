@@ -33,11 +33,8 @@ import jwt
 import pytest
 from fastapi.testclient import TestClient
 
-# Reuse the fakes + fixtures from Phase 1 — same in-memory MetadataStore.
-from tests.test_auth_phase1 import FakeUsersStore  # noqa: F401
-from tests.test_auth_phase1 import auth_env  # noqa: F401
-from tests.test_auth_phase1 import dev_env  # noqa: F401
-from tests.test_auth_phase1 import users_store  # noqa: F401
+# Register Phase-1 fakes + fixtures without importing fixture names (avoids F811 shadowing).
+pytest_plugins = ("tests.test_auth_phase1",)
 
 # ---------------------------------------------------------------------------
 # Helpers

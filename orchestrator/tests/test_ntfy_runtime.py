@@ -17,9 +17,10 @@ Pins the ADR 018 D3 split for the ntfy connector:
 from __future__ import annotations
 
 import pytest
-from tests.ephemeral_fernet_key import TEST_FERNET_KEY
 
 from services import connector_credentials as ccs
+
+_TEST_FERNET_KEY = "OlGLYckGIbBSt54y8XVmgb441LgKJWvvYoHnpQ_cv9A="
 
 
 class _FakeStore:
@@ -48,7 +49,8 @@ class _FakeStore:
             return {"ciphertext": row["ciphertext"]} if row else None
         if q.startswith(
             "select user_id, connector, created_at, updated_at, "
-            "created_by, updated_by, key_version "
+            "created_by, updated_by, key_version, delivery_paused, "
+            "delivery_paused_reason, delivery_paused_detail, delivery_paused_at "
             "from user_connector_credentials"
         ):
             uid, conn = p
@@ -69,6 +71,10 @@ class _FakeStore:
                 "updated_at": now,
                 "created_by": created_by,
                 "updated_by": updated_by,
+                "delivery_paused": False,
+                "delivery_paused_reason": None,
+                "delivery_paused_detail": None,
+                "delivery_paused_at": None,
             }
             self.creds[(uid, conn)] = row
             return {
@@ -79,6 +85,10 @@ class _FakeStore:
                 "created_by": created_by,
                 "updated_by": updated_by,
                 "key_version": key_version,
+                "delivery_paused": False,
+                "delivery_paused_reason": None,
+                "delivery_paused_detail": None,
+                "delivery_paused_at": None,
             }
         if q.startswith("insert into audit_log"):
             return {"id": 1}
@@ -97,7 +107,7 @@ def store(monkeypatch):
 
     s = _FakeStore()
     _config._instances["metadata_store"] = s
-    monkeypatch.setenv("LUMOGIS_CREDENTIAL_KEY", TEST_FERNET_KEY)
+    monkeypatch.setenv("LUMOGIS_CREDENTIAL_KEY", _TEST_FERNET_KEY)
     monkeypatch.delenv("LUMOGIS_CREDENTIAL_KEYS", raising=False)
     ccs.reset_for_tests()
     yield s
@@ -125,6 +135,19 @@ def test_auth_enabled_with_row_returns_payload(store, monkeypatch):
 
     cfg = load_ntfy_runtime_config("alice")
     assert cfg == {"url": "http://ntfy.lan:8088", "topic": "alice", "token": "tok"}
+
+
+def test_auth_enabled_delivery_paused_raises_not_configured(store, monkeypatch):
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    monkeypatch.delenv("NTFY_URL", raising=False)
+    _seed(store, "alice", {"url": "http://ntfy.lan:8088", "topic": "alice"})
+    store.creds[("alice", "ntfy")]["delivery_paused"] = True
+
+    from services.ntfy_runtime import load_ntfy_runtime_config
+
+    with pytest.raises(ccs.ConnectorNotConfigured) as exc:
+        load_ntfy_runtime_config("alice")
+    assert "paused" in str(exc.value).lower()
 
 
 def test_auth_enabled_url_defaults_from_env(store, monkeypatch):

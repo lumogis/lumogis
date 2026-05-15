@@ -17,7 +17,7 @@ From the ``orchestrator`` directory (same as other ``scripts.*`` modules)::
 Omit ``--password`` to be prompted securely via :func:`getpass.getpass`.
 
 The script validates the same minimum length as login / bootstrap (12 characters),
-updates the stored argon2 hash, clears ``refresh_token_jti`` for that user, and
+updates the stored argon2 hash, revokes persisted browser refresh sessions / bumps
 prints a short JSON line **without** echoing the password.
 
 Exit codes: ``0`` success, ``1`` operational failure, ``2`` usage / argparse error.

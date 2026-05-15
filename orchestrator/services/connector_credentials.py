@@ -30,13 +30,17 @@ system tiers). This module:
 * keeps every public verb (``get_record``, ``list_records``,
   ``get_payload``, ``put_payload``, ``delete_payload``, ``resolve``,
   ``reencrypt_all_to_current_version``, ``count_rows_by_key_version``,
+  ``set_delivery_paused``,
   ``register_change_listener``, ``reset_listeners_for_tests``)
   exactly as before. Callers do not see the internal split.
 
 Public surface
 --------------
-* :class:`CredentialRecord` — frozen dataclass mirroring a row's
-  metadata (NEVER carries ciphertext or plaintext).
+* :class:`CredentialRecord` — frozen dataclass mirroring a row's DB
+  metadata **including pause diagnostics** (:attr:`delivery_paused_detail`).
+  It is **not** 1:1 with :class:`~models.connector_credential.ConnectorCredentialPublic`
+  (the wire shape omits ``delivery_paused_detail``). Routes must not use
+  ``ConnectorCredentialPublic.model_validate(record.__dict__)`` verbatim.
 * :func:`get_payload` — decrypt + return the JSON dict, ``None`` on
   miss (registry-strict).
 * :func:`get_record` — metadata-only single-row fetch, ``None`` on
@@ -59,16 +63,15 @@ Public surface
 
 Registry-strictness model (locked across all six callable verbs)
 ----------------------------------------------------------------
-================ ===================== =========================== ==============================================
-Function         ``validate_format``   ``require_registered``      Rationale
-================ ===================== =========================== ==============================================
-put_payload      yes                   **yes**                     Cannot create rows for unknown connectors.
-get_payload      yes                   **yes**                     Plaintext-bearing path; runtime-style use.
-resolve          yes                   **yes**                     Runtime path; fail-closed.
-get_record       yes                   no                          Operator/admin metadata read on stale rows.
-list_records     n/a                   no                          Operator visibility includes historical rows.
-delete_payload   yes                   no                          Operator/admin cleanup of stale rows.
-================ ===================== =========================== ==============================================
+Each verb uses ``validate_format`` and/or ``require_registered`` as follows:
+
+* ``put_payload`` — validate yes, require registered **yes** —
+  cannot create rows for unknown connectors.
+* ``get_payload`` — validate yes, require registered **yes** — plaintext path; runtime-style use.
+* ``resolve`` — validate yes, require registered **yes** — runtime path; fail-closed.
+* ``get_record`` — validate yes, require registered no — admin metadata on stale rows.
+* ``list_records`` — n/a, require registered no — operator visibility includes historical rows.
+* ``delete_payload`` — validate yes, require registered no — admin cleanup of stale rows.
 """
 
 from __future__ import annotations
@@ -152,11 +155,13 @@ ACTION_CRED_ROTATED = "__connector_credential__.rotated"
 
 @dataclass(frozen=True)
 class CredentialRecord:
-    """Row metadata as serialised by the route layer.
+    """Row metadata returned by every metadata read path.
 
-    Mirrors :class:`models.connector_credential.ConnectorCredentialPublic`
-    1:1 so route code can do
-    ``ConnectorCredentialPublic.model_validate(record.__dict__)``.
+    Carries **delivery pause** diagnostics from
+    ``user_connector_credentials`` (:attr:`delivery_paused_detail`).
+    The HTTP wire model :class:`~models.connector_credential.ConnectorCredentialPublic`
+    **omits** ``delivery_paused_detail`` — use the route helper that
+    builds an explicit dict projection.
 
     NEVER carries ciphertext or plaintext.
     """
@@ -168,6 +173,10 @@ class CredentialRecord:
     created_by: str
     updated_by: str
     key_version: int
+    delivery_paused: bool = False
+    delivery_paused_reason: str | None = None
+    delivery_paused_detail: str | None = None
+    delivery_paused_at: datetime | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -319,6 +328,10 @@ def _record_from_row(row: dict) -> CredentialRecord:
         created_by=row["created_by"],
         updated_by=row["updated_by"],
         key_version=row["key_version"],
+        delivery_paused=bool(row.get("delivery_paused", False)),
+        delivery_paused_reason=row.get("delivery_paused_reason"),
+        delivery_paused_detail=row.get("delivery_paused_detail"),
+        delivery_paused_at=row.get("delivery_paused_at"),
     )
 
 
@@ -328,7 +341,10 @@ def _record_from_row(row: dict) -> CredentialRecord:
 
 
 _SELECT_RECORD_COLS = (
-    "user_id, connector, created_at, updated_at, created_by, updated_by, key_version"
+    "user_id, connector, created_at, updated_at, "
+    "created_by, updated_by, key_version, "
+    "delivery_paused, delivery_paused_reason, "
+    "delivery_paused_detail, delivery_paused_at"
 )
 
 
@@ -437,6 +453,10 @@ def put_payload(
         "ON CONFLICT (user_id, connector) DO UPDATE SET "
         "  ciphertext = EXCLUDED.ciphertext, "
         "  key_version = EXCLUDED.key_version, "
+        "  delivery_paused = false, "
+        "  delivery_paused_reason = NULL, "
+        "  delivery_paused_detail = NULL, "
+        "  delivery_paused_at = NULL, "
         "  updated_at = NOW(), "
         "  updated_by = EXCLUDED.updated_by "
         f"RETURNING {_SELECT_RECORD_COLS}",
@@ -470,6 +490,61 @@ def put_payload(
     )
     _fire_change(user_id, connector, action="put")
     return record
+
+
+def set_delivery_paused(
+    user_id: str,
+    connector: str,
+    *,
+    paused: bool,
+    reason: str | None,
+    detail: str | None,
+    actor: str,
+) -> None:
+    """Persist delivery-pause metadata for a user-owned credential row only.
+
+    Does **not** read or mutate ``ciphertext``. Used when the ntfy
+    upstream rejects delivery (HTTP 410). ``detail`` is truncated to
+    512 Unicode chars defensively — storage is ``TEXT`` without DB cap.
+    """
+    connectors_registry.require_registered(connector)
+    actor_clean = _actor_str(actor)
+    if detail is not None and len(detail) > 512:
+        detail = detail[:512]
+
+    ms = config.get_metadata_store()
+    if paused:
+        # SCOPE-EXEMPT: credentials table; no scope column; pause by row PK.
+        ms.execute(
+            "UPDATE user_connector_credentials SET "
+            "delivery_paused = true, "
+            "delivery_paused_reason = %s, "
+            "delivery_paused_detail = %s, "
+            "delivery_paused_at = NOW(), "
+            "updated_at = NOW(), updated_by = %s "
+            # SCOPE-EXEMPT: PK filter on per-user credential row (see block comment above).
+            "WHERE user_id = %s AND connector = %s",
+            (
+                reason,
+                detail,
+                actor_clean,
+                user_id,
+                connector,
+            ),
+        )
+    else:
+        # SCOPE-EXEMPT: credentials table; no scope column; unpause by row PK.
+        ms.execute(
+            "UPDATE user_connector_credentials SET "
+            "delivery_paused = false, "
+            "delivery_paused_reason = NULL, "
+            "delivery_paused_detail = NULL, "
+            "delivery_paused_at = NULL, "
+            "updated_at = NOW(), updated_by = %s "
+            # SCOPE-EXEMPT: PK filter on per-user credential row (see block comment above).
+            "WHERE user_id = %s AND connector = %s",
+            (actor_clean, user_id, connector),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -776,6 +851,7 @@ __all__ = [
     "put_payload",
     "delete_payload",
     "resolve",
+    "set_delivery_paused",
     "count_rows_by_key_version",
     "reencrypt_all_to_current_version",
     "get_current_key_version",

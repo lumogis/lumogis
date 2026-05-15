@@ -63,6 +63,12 @@ def load_ntfy_runtime_config(user_id: str) -> NtfyRuntimeConfig:
     payload = ccs.get_payload(user_id, NTFY)
 
     if payload is not None:
+        rec = ccs.get_record(user_id, NTFY)
+        if rec is not None and rec.delivery_paused:
+            raise ccs.ConnectorNotConfigured(
+                "ntfy delivery is paused pending credential update "
+                "(upstream returned gone); open Connectors to fix or clear."
+            )
         topic = (payload.get("topic") or "").strip()
         if not topic:
             raise ccs.ConnectorNotConfigured(

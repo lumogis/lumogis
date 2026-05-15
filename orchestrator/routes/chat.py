@@ -5,6 +5,7 @@
 import json
 import logging
 import time
+import uuid
 from typing import Any
 from typing import Generator
 from typing import List
@@ -29,9 +30,15 @@ from pydantic import BaseModel
 from services.connector_credentials import ConnectorNotConfigured
 from services.connector_credentials import CredentialUnavailable
 from services.context_budget import allocate
+from services.context_budget import estimate_tokens
 from services.context_budget import get_budget
 from services.context_budget import truncate_messages
 from services.context_budget import truncate_text
+from services.injection_sanitiser import ResolvedOrigin
+from services.injection_sanitiser import apply_retrieved_chunk_markup
+from services.injection_sanitiser import assistant_nonce_acknowledgement
+from services.injection_sanitiser import build_outer_injected_bundle
+from services.injection_sanitiser import sanitize_attribute_source_token
 from services.llm_connector_map import connector_for_api_key_env
 from services.llm_connector_map import get_user_credentials_snapshot
 from services.llm_connector_map import vendor_label_for_connector
@@ -223,9 +230,50 @@ def stream_completion(
     yield "data: [DONE]\n\n"
 
 
+def _fit_plaintext_bundle(
+    fragments: list[str],
+    hints: list[ResolvedOrigin | None],
+    max_tokens: int,
+) -> tuple[list[str], list[ResolvedOrigin | None]]:
+    """Drop plaintext fragments from the tail until corpus fits approximate tokens."""
+
+    fr = list(fragments)
+    h = list(hints)
+    if max_tokens <= 0:
+        return [], []
+
+    while len(h) < len(fr):
+        h.append(None)
+    while len(h) > len(fr):
+        h.pop()
+
+    while fr and sum(estimate_tokens(chunk) for chunk in fr if chunk) > max_tokens:
+        fr.pop()
+        if h:
+            h.pop()
+
+    return fr, h
+
+
 def _inject_context(question: str, history: list[dict], model: str, user_id: str) -> list[dict]:
-    """Retrieve session memory and plugin context, then budget-trim history."""
+    """Retrieve session memory / graph snippets, annotate corpus, trim history."""
+    from datetime import datetime
+    from datetime import timezone
+
     from services.memory import retrieve_context
+
+    def _resolved_session_origin(hit_scope: str, session_sid: str) -> ResolvedOrigin:
+        iso_stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        scope_val = hit_scope if hit_scope in ("personal", "shared", "system") else "personal"
+        token = sanitize_attribute_source_token(f"session_memory:{session_sid or 'anonymous'}")
+        return {
+            "trusted": False,
+            "scope": scope_val,
+            "source": token,
+            "session_id": session_sid or None,
+            "ingested": iso_stamp,
+            "pattern_hits": [],
+        }
 
     budget = get_budget(model)
     budget_plan = allocate(
@@ -239,28 +287,23 @@ def _inject_context(question: str, history: list[dict], model: str, user_id: str
         },
     )
 
-    context_parts: list[str] = []
+    fragments_plain: list[str] = []
+    origin_hints: list[ResolvedOrigin | None] = []
 
     hits = retrieve_context(question, limit=3, user_id=user_id)
-    if hits:
-        session_texts = [f"[Previous session] {h.summary}" for h in hits]
-        session_block = "\n".join(session_texts)
-        session_block = truncate_text(session_block, budget_plan.get("session_context"))
-        context_parts.append(session_block)
+    for hit in hits:
+        stripped = hit.summary.strip()
+        if stripped:
+            fragments_plain.append(stripped)
+            origin_hints.append(_resolved_session_origin(hit.scope, hit.session_id))
 
-    fragments: list[str] = list(context_parts)
-    hooks.fire(Event.CONTEXT_BUILDING, query=question, context_fragments=fragments)
+    n_session = len(fragments_plain)
 
-    # When the graph runs as an out-of-process service, the in-process
-    # CONTEXT_BUILDING listener is gone (the plugin self-disables in non-
-    # `inprocess` modes). Issue a synchronous /context HTTP call to the KG
-    # service to obtain the same fragments. The 40 ms hard timeout lives
-    # inside `get_context_sync`; on timeout / KG-down it returns [], so this
-    # extension never blocks the chat reply for more than the budget. The
-    # CONTEXT_BUILDING event still fires above for any other subscribers
-    # (today there are none besides the graph plugin, but this preserves the
-    # contract). `config.get_graph_mode()` is `@cache`-decorated so this is
-    # a dict lookup, not an env-var read, on the chat hot path.
+    hooks.fire(Event.CONTEXT_BUILDING, query=question, context_fragments=fragments_plain)
+
+    while len(origin_hints) < len(fragments_plain):
+        origin_hints.append(None)
+
     if config.get_graph_mode() == "service":
         try:
             from services.graph_webhook_dispatcher import get_context_sync
@@ -279,32 +322,60 @@ def _inject_context(question: str, history: list[dict], model: str, user_id: str
                 user_id=user_id,
                 max_fragments=3,
             )
-            fragments.extend(graph_fragments)
+            for frag_line in graph_fragments:
+                fragments_plain.append(frag_line)
+                origin_hints.append(None)
 
-    if len(fragments) > len(context_parts):
-        plugin_text = "\n".join(fragments[len(context_parts) :])
-        plugin_text = truncate_text(plugin_text, budget_plan.get("plugin_context"))
-        context_parts.append(plugin_text)
+    session_budget = budget_plan.get("session_context")
+    plugin_budget = budget_plan.get("plugin_context")
+    sess_frags = fragments_plain[:n_session]
+    sess_hints = origin_hints[:n_session]
+    graph_frags = fragments_plain[n_session:]
+    graph_hints = origin_hints[n_session:]
+
+    sess_frags, sess_hints = _fit_plaintext_bundle(sess_frags, sess_hints, session_budget)
+    graph_frags, graph_hints = _fit_plaintext_bundle(graph_frags, graph_hints, plugin_budget)
+    fragments_plain = sess_frags + graph_frags
+    origin_hints = sess_hints + graph_hints
 
     history_budget = budget_plan.get("history")
     trimmed_history = truncate_messages(history, max_tokens=history_budget)
 
-    if context_parts:
-        context_block = "\n\n".join(context_parts)
+    if not fragments_plain:
+        return trimmed_history
+
+    if config.is_injection_sanitiser_enabled():
+        apply_retrieved_chunk_markup(
+            fragments_plain,
+            origin_hints,
+            user_id=user_id,
+            query=question,
+        )
+        nonce_tail = uuid.uuid4().hex
+        joined_inner = "\n\n".join(fragments_plain)
+        outer = build_outer_injected_bundle(joined_inner, nonce=nonce_tail)
         context_msg = {
             "role": "user",
-            "content": (
-                "[Context from previous sessions "
-                "— use this to inform your answer]"
-                f"\n{context_block}"
-            ),
+            "content": outer,
         }
         ack_msg = {
             "role": "assistant",
-            "content": "Understood. I'll use this context to inform my responses.",
+            "content": assistant_nonce_acknowledgement(nonce_tail),
         }
         return [context_msg, ack_msg] + trimmed_history
-    return trimmed_history
+
+    joined_plain = "\n\n".join(fragments_plain)
+    pooled_budget = max(96, budget_plan.get("session_context") + budget_plan.get("plugin_context"))
+    joined_plain = truncate_text(joined_plain, max_tokens=pooled_budget)
+    context_msg = {
+        "role": "user",
+        "content": f"Retrieved excerpts for grounding:\n{joined_plain}",
+    }
+    ack_msg = {
+        "role": "assistant",
+        "content": "Acknowledged excerpts are reference-only scaffolding.",
+    }
+    return [context_msg, ack_msg] + trimmed_history
 
 
 @router.post("/v1/chat/completions")

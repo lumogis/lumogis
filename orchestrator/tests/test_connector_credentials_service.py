@@ -42,12 +42,18 @@ class _FakeStore:
     Recognised statements (normalised: lowercased, single-spaced):
 
       * SELECT ciphertext FROM user_connector_credentials WHERE …
-      * SELECT user_id, connector, … FROM user_connector_credentials WHERE user_id = %s AND connector = %s
-      * SELECT user_id, connector, … FROM user_connector_credentials WHERE user_id = %s ORDER BY connector ASC
-      * SELECT user_id, connector, ciphertext, key_version FROM user_connector_credentials ORDER BY …
+      * SELECT user_id, connector, … FROM user_connector_credentials
+        WHERE user_id = %s AND connector = %s
+      * SELECT user_id, connector, … FROM user_connector_credentials
+        WHERE user_id = %s ORDER BY connector ASC
+      * SELECT user_id, connector, ciphertext, key_version
+        FROM user_connector_credentials ORDER BY …
       * INSERT INTO user_connector_credentials (...) ON CONFLICT … RETURNING …
-      * UPDATE user_connector_credentials SET ciphertext = %s, key_version = %s, updated_at = NOW(), updated_by = %s WHERE user_id = %s AND connector = %s
-      * DELETE FROM user_connector_credentials WHERE user_id = %s AND connector = %s RETURNING key_version
+      * UPDATE user_connector_credentials
+        SET ciphertext = %s, key_version = %s, updated_at = NOW(), updated_by = %s
+        WHERE user_id = %s AND connector = %s
+      * DELETE FROM user_connector_credentials
+        WHERE user_id = %s AND connector = %s RETURNING key_version
       * INSERT INTO audit_log (...) RETURNING id
     """
 
@@ -94,6 +100,10 @@ class _FakeStore:
             "updated_at": now,
             "created_by": created_by,
             "updated_by": updated_by,
+            "delivery_paused": False,
+            "delivery_paused_reason": None,
+            "delivery_paused_detail": None,
+            "delivery_paused_at": None,
         }
 
     # ---- MetadataStore protocol --------------------------------------
@@ -102,6 +112,30 @@ class _FakeStore:
         self.exec_log.append((query, params or ()))
         q = self._norm(query)
         p = params or ()
+
+        if q.startswith("update user_connector_credentials set delivery_paused = true,"):
+            reason, detail, actor, user_id, connector = p
+            row = self.rows.get((user_id, connector))
+            if row is not None:
+                row["delivery_paused"] = True
+                row["delivery_paused_reason"] = reason
+                row["delivery_paused_detail"] = detail
+                row["delivery_paused_at"] = datetime.now(timezone.utc)
+                row["updated_by"] = actor
+                row["updated_at"] = datetime.now(timezone.utc)
+            return
+
+        if q.startswith("update user_connector_credentials set delivery_paused = false,"):
+            actor, user_id, connector = p
+            row = self.rows.get((user_id, connector))
+            if row is not None:
+                row["delivery_paused"] = False
+                row["delivery_paused_reason"] = None
+                row["delivery_paused_detail"] = None
+                row["delivery_paused_at"] = None
+                row["updated_by"] = actor
+                row["updated_at"] = datetime.now(timezone.utc)
+            return
 
         if q.startswith("update user_connector_credentials set ciphertext"):
             ciphertext, key_version, updated_by, user_id, connector = p
@@ -142,6 +176,10 @@ class _FakeStore:
                 existing["key_version"] = key_version
                 existing["updated_at"] = now
                 existing["updated_by"] = updated_by
+                existing["delivery_paused"] = False
+                existing["delivery_paused_reason"] = None
+                existing["delivery_paused_detail"] = None
+                existing["delivery_paused_at"] = None
                 row = existing
             else:
                 row = {
@@ -153,6 +191,10 @@ class _FakeStore:
                     "updated_at": now,
                     "created_by": created_by,
                     "updated_by": updated_by,
+                    "delivery_paused": False,
+                    "delivery_paused_reason": None,
+                    "delivery_paused_detail": None,
+                    "delivery_paused_at": None,
                 }
                 self.rows[(user_id, connector)] = row
             return self._project_record(row)
@@ -221,6 +263,10 @@ class _FakeStore:
             "created_by": row["created_by"],
             "updated_by": row["updated_by"],
             "key_version": row["key_version"],
+            "delivery_paused": row.get("delivery_paused", False),
+            "delivery_paused_reason": row.get("delivery_paused_reason"),
+            "delivery_paused_detail": row.get("delivery_paused_detail"),
+            "delivery_paused_at": row.get("delivery_paused_at"),
         }
 
 
@@ -267,6 +313,29 @@ def test_put_then_get_roundtrip(store):
 
     put_payload("u1", "testconnector", {"k": "v"}, actor="self")
     assert get_payload("u1", "testconnector") == {"k": "v"}
+
+
+def test_put_payload_clears_delivery_paused(store):
+    from services.connector_credentials import get_record
+    from services.connector_credentials import put_payload
+    from services.connector_credentials import set_delivery_paused
+
+    put_payload("u1", "testconnector", {"k": "v"}, actor="self")
+    set_delivery_paused(
+        "u1",
+        "testconnector",
+        paused=True,
+        reason="ntfy_upstream_410",
+        detail="upstream",
+        actor="system",
+    )
+    rec = get_record("u1", "testconnector")
+    assert rec is not None and rec.delivery_paused is True
+
+    put_payload("u1", "testconnector", {"k": "w"}, actor="self")
+    cleared = get_record("u1", "testconnector")
+    assert cleared is not None and cleared.delivery_paused is False
+    assert cleared.delivery_paused_reason is None
 
 
 def test_put_returns_credential_record(store):

@@ -125,7 +125,8 @@ _SETTING_META: dict[str, dict] = {
         "default": 0.35,
         "description": (
             "Entities scoring below this threshold are discarded immediately. "
-            "Lower = keep more entities (more noise). Higher = discard more (may miss real entities). "
+            "Lower = keep more entities (more noise). "
+            "Higher = discard more (may miss real entities). "
             "Default: 0.35."
         ),
     },
@@ -141,7 +142,8 @@ _SETTING_META: dict[str, dict] = {
         "type": "int",
         "default": 3,
         "description": (
-            "A staged entity is automatically promoted to the graph when it reaches this many mentions. "
+            "A staged entity is automatically promoted to the graph when it reaches "
+            "this many mentions. "
             "Default: 3."
         ),
     },
@@ -165,7 +167,8 @@ _SETTING_META: dict[str, dict] = {
         "type": "int",
         "default": 2,
         "description": (
-            "Entities mentioned fewer times than this are hidden from graph queries and context injection. "
+            "Entities mentioned fewer times than this are hidden from graph "
+            "queries and context injection. "
             "Default: 2."
         ),
     },
@@ -417,7 +420,10 @@ def graph_mgm():
     if not _GRAPH_MGM_HTML.exists():
         raise HTTPException(
             status_code=404,
-            detail="Graph management page not found. Check that orchestrator/static/graph_mgm.html exists.",
+            detail=(
+                "Graph management page not found. "
+                "Check that orchestrator/static/graph_mgm.html exists."
+            ),
         )
     return FileResponse(_GRAPH_MGM_HTML, media_type="text/html")
 
@@ -1801,8 +1807,10 @@ def _fetch_unified_queue(meta, admin_user_id: str, limit: int) -> list[dict]:
         # ADMIN-BYPASS: cross-user review queue (plan §2.8); admin_user_id captured for audit only.
         rows = meta.fetch_all(
             "SELECT rq.id, rq.reason, rq.created_at, rq.user_id AS rq_user_id, rq.scope, "
-            "  a.entity_id AS eid_a, a.name AS name_a, a.entity_type AS type_a, a.scope AS scope_a, "
-            "  b.entity_id AS eid_b, b.name AS name_b, b.entity_type AS type_b, b.scope AS scope_b "
+            "  a.entity_id AS eid_a, a.name AS name_a, a.entity_type AS type_a, "
+            "  a.scope AS scope_a, "
+            "  b.entity_id AS eid_b, b.name AS name_b, b.entity_type AS type_b, "
+            "  b.scope AS scope_b "
             "FROM review_queue rq "
             "JOIN entities a ON rq.candidate_a_id = a.entity_id "
             "JOIN entities b ON rq.candidate_b_id = b.entity_id "
@@ -2075,7 +2083,8 @@ def _insert_review_decision(
         )
     except Exception:
         _log.exception(
-            "review_queue/decide: failed to insert review_decision item_type=%s item_id=%s action=%s",
+            "review_queue/decide: failed to insert review_decision "
+            "item_type=%s item_id=%s action=%s",
             item_type,
             item_id,
             action,
@@ -2159,7 +2168,10 @@ def review_queue_decide(body: DecideRequest, ctx: UserContext = Depends(require_
     if action not in allowed:
         raise HTTPException(
             status_code=400,
-            detail=f"action {action!r} not valid for item_type {item_type!r}; allowed: {sorted(allowed)}",
+            detail=(
+                f"action {action!r} not valid for item_type {item_type!r}; "
+                f"allowed: {sorted(allowed)}"
+            ),
         )
 
     meta = config.get_metadata_store()
