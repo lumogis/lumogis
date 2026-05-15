@@ -326,7 +326,7 @@ Core publishes its own `CapabilityManifest` at `GET /capabilities` (no auth, nev
 
 ### Shipped examples in this repository
 
-- **`lumogis-graph`** — First-party knowledge-graph capability used when **`GRAPH_MODE=service`**. Typical merge: `docker-compose.yml` + `docker-compose.falkordb.yml` + `docker-compose.premium.yml`, plus `KG_SERVICE_URL` / `CAPABILITY_SERVICE_URLS` as in [`services/lumogis-graph/README.md`](../../services/lumogis-graph/README.md) and **[`docs/decisions/011-lumogis-graph-service-extraction.md`](../decisions/011-lumogis-graph-service-extraction.md)**.
+- **Out-of-process graph capability (`GRAPH_MODE=service`)** — When premium HTTP graph wiring ships on an operator checkout, Core treats the KG service like any capability service: manifests at `GET /capabilities`, webhook/context bridges, optional `CAPABILITY_SERVICE_URLS` discovery. Compose layout and env live with the premium bundle; **[`docs/decisions/002-graph-store-falkordb.md`](../decisions/002-graph-store-falkordb.md)** captures the architectural boundary.
 - **`lumogis-mock-capability`** — Tiny **non-production** second service for contract / discovery smoke tests. Overlay: `docker-compose.mock-capability.yml`. See [`services/lumogis-mock-capability/README.md`](../../services/lumogis-mock-capability/README.md).
 
 ---

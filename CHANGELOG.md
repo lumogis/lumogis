@@ -11,6 +11,20 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.3.1] — 2026-05-15
+
+### Added
+
+- **Clear AGPL export boundary for the public repository.** Published snapshots are produced with an explicit strip list and checks so the GitHub tree stays a minimal core; full graph implementations are obtained from complete source or premium distributions, not assumed present in every clone.
+
+### Changed
+
+- **`GRAPH_MODE` default is now `disabled`.** Fresh installs omit graph wiring until operators set `GRAPH_MODE=inprocess` (premium in-process plugin) or `GRAPH_MODE=service` (premium KG service overlay). Requests for `service`/`inprocess` degrade to `disabled` with a single structured WARNING when premium modules are absent (AGPL export / partial trees).
+- **`LUMOGIS_TOOL_CATALOG_ENABLED`** defaults to **on** when unset: operators running capability services no longer need to set this flag for the LLM to merge eligible tools. Operators who want the previous behaviour (**no** merged capability tools / OOP dispatch) must set **`LUMOGIS_TOOL_CATALOG_ENABLED=false`** explicitly.
+- **OpenAPI snapshot check** (`clients/lumogis-web`) normalises `info.version` when comparing the committed snapshot to a live `/openapi.json`, matching the snapshot dumper so version bumps do not false-fail codegen drift checks.
+
+---
+
 ## [0.3.0] — 2026-05-13
 
 ### BREAKING — Knowledge graph proxy when `GRAPH_MODE=service`

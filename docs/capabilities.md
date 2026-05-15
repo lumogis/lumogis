@@ -39,12 +39,13 @@ Self-hosters configure the stack via `.env` (see `.env.example`), Compose overla
 
 An optional knowledge graph layer relates extracted entities beyond flat search; basic chat and retrieval do not require it.
 
-- Graph can run **in-process** or in **`service`** mode via the **`lumogis-graph`** container, with FalkorDB as the backing store when that overlay is enabled; **`GRAPH_MODE`** selects **`inprocess`**, **`service`**, or **`disabled`**.
+- Graph can run **in-process** (premium plugin package present) or in **`service`** mode (premium HTTP KG capability reachable from Core). Falkor-backed stacks are activated only when operators merge the corresponding premium overlays.
+- **`GRAPH_MODE`** selects **`disabled`** (fresh default — no graph bootstrap noise), **`inprocess`**, or **`service`** and must be paired with matching premium artefacts. **`GRAPH_MODE=inprocess` without the in-process plugin is not a supported public-core mode**: Core observes the request, falls back to **`disabled`**, and emits exactly one **`graph_mode_fallback`** WARNING with reason **`inprocess_plugin_absent`** — chat and ingest continue without KG wiring.
 - In **`service`** mode, Core forwards webhook and context traffic to the graph service; the in-process graph plugin stays inactive so work is not duplicated.
 - The **`query_graph`** tool can be bridged to the out-of-process service; **`GRAPH_WEBHOOK_SECRET`** (or an explicit Core opt-in documented for insecure-missing-secret scenarios) is required for that proxy path when **`GRAPH_MODE=service`**—otherwise the bridge stays closed.
 - Capability manifests may advertise an operator **`management_url`** for a linked management UI where implemented.
 
-Operators enabling **`service`** mode should follow the graph service README for Compose env (`GRAPH_MODE`, service URL, shared secrets).
+Operators enabling **`service`** mode should coordinate `GRAPH_MODE`, KG base URLs (`KG_SERVICE_URL` / `CAPABILITY_SERVICE_URLS`), shared webhook secrets (`GRAPH_WEBHOOK_SECRET`), and capability discovery using the premium operator guide bundled with their graph overlay.
 
 ---
 
@@ -115,7 +116,7 @@ MCP exposes a **curated** subset of Core abilities over streamable HTTP at **`/m
 - Per-user opaque MCP tokens can be minted and revoked; when **`AUTH_ENABLED=true`**, MCP gates expect a JWT or an **`lmcp_…`** token as documented; legacy shared **`MCP_AUTH_TOKEN`** behaviour remains only in **`AUTH_ENABLED=false`** mode as described in policy docs.
 - Disabled users trigger MCP token revocation in the same transactional flow where the adapter supports it; in-flight JWTs remain valid until their TTL as documented.
 - The unified **tool catalog** describes tools and transports (**LLM loop**, **MCP surface**, **catalog-only** observation); **`GET /api/v1/me/tools`** exposes read-model permission labels (**ask** / **do** / **blocked** / **unknown**) without granting rights.
-- **`LUMOGIS_TOOL_CATALOG_ENABLED`** defaults **off**; when **off**, the LLM loop does not merge healthy out-of-process capability tools. When **on**, capability tools merge only with valid bearer trust and healthy endpoints, and teardown runs after each request so capability tools do not leak across turns.
+- **`LUMOGIS_TOOL_CATALOG_ENABLED`** defaults **on** when unset; when **off**, the LLM loop does not merge healthy out-of-process capability tools. When **on**, capability tools merge only with valid bearer trust and healthy endpoints, and teardown runs after each request so capability tools do not leak across turns.
 
 ---
 
@@ -155,6 +156,8 @@ Extensions split between **in-process plugins** and **out-of-process capabilitie
 ---
 
 ## Deployment
+
+The **public GitHub repository** is an **export-shaped** snapshot (some paths are omitted by policy so the published tree matches the AGPL story). A full private or premium checkout may include additional knowledge-graph implementation and test material not present in every public clone.
 
 Pre-built multi-platform images (amd64/arm64) are published to `ghcr.io/lumogis/` on every release. Use `docker-compose.ghcr.yml` for pull-based deployment without building from source:
 

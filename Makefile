@@ -18,7 +18,8 @@ PYTHON ?= python3
         demo-seed demo-test demo-ready \
         web-install web-codegen web-codegen-check web-test web-lint web-build web-dev web-e2e \
         test-web-e2e \
-        web-e2e-prove web-caddy-headers web-caddy-headers-prove
+        web-e2e-prove web-caddy-headers web-caddy-headers-prove \
+        m1-compat-with-retry
 
 # ─── User-facing convenience ─────────────────────────────────────────────────
 
@@ -64,6 +65,13 @@ compose-policy-check:
 # Set VERIFY_PUBLIC_RC_SKIP_WEB_E2E=1 in full mode to skip Playwright (discouraged).
 # Set LUMOGIS_RC_GRAPH_PARITY=1 in full mode to include test-graph-parity.
 
+m1-compat-with-retry: ## Live FalkorDB compat gate (requires FALKORDB_URL + RUN_M1_COMPAT=1); one retry on flake
+	cd orchestrator && (RUN_M1_COMPAT=1 $(PYTHON) -m pytest tests/premium/test_graph_writer.py::TestFalkorDBCompatGate -q || (sleep 2 && RUN_M1_COMPAT=1 $(PYTHON) -m pytest tests/premium/test_graph_writer.py::TestFalkorDBCompatGate -q))
+
+# NOTE: Must run on an export-shaped RC branch (after
+# create-upstream-export-tree.sh has stripped docs/private/ and other
+# private paths). Will fail by design on raw dev/main private checkouts
+# where docs/private/ is tracked.
 verify-public-rc: ## RC gate (smoke) — run before /publish-private-main-to-public
 	@echo "==> verify-public-rc (smoke)"
 	scripts/check-main-hygiene.sh

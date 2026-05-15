@@ -288,13 +288,13 @@ def _override_config(
     _config._instances["embedder"] = mock_embedder
     _config._instances["reranker"] = None
     _config._instances["scheduler"] = mock_scheduler
-    # `get_graph_mode` is `@cache`-decorated; clear before AND after every test
-    # so env-var mutations via `monkeypatch.setenv("GRAPH_MODE", ...)` actually
-    # take effect and don't leak between tests.
-    _config.get_graph_mode.cache_clear()
+    _config.set_effective_graph_mode_for_process(None)
+    _config.clear_graph_mode_env_cache()
     yield
     _config._instances.clear()
-    _config.get_graph_mode.cache_clear()
+    _config.set_effective_graph_mode_for_process(None)
+    _config.clear_graph_mode_env_cache()
+    _config._graph_store_import_warning_emitted = False
 
 
 @pytest.fixture(autouse=True)

@@ -1,50 +1,47 @@
-# ADR-002: Graph capabilities as an optional extension (Protocol + overlay)
+# ADR-002: Graph capabilities as an optional extension (Protocol + optional backend)
 
 ## Context
 
-Graph storage — nodes for people, organisations, documents, and the relationships
-between them — is a legitimate building block for many extensions. It should be
-possible for contributors to build graph plugins against a stable interface
-without graph infrastructure affecting the default installation.
+Graph storage — nodes for people, organisations, documents, and relationships
+between them — is a legitimate building block for extensions. Contributors
+should implement graph features against a stable **GraphStore** Protocol
+without imposing graph infrastructure on operators who do not need it.
 
-The naive approach (add a graph database to `docker-compose.yml`) imposes an
-extra service on every user regardless of whether they build graph plugins. It
-also implicitly commits us to one backend, discouraging alternatives.
+Bundling a concrete graph database into the default Compose stack would burden
+every household installation and implicitly favour one backend implementation.
 
 ## Decision
 
-Graph capability is exposed through a Protocol (`ports/graph_store.py`) that
-any backend can implement. Core ships no graph adapter, no graph schema, and
-no graph database in the default stack. Graph plugins define their own schemas.
+Graph capability is exposed through the **GraphStore** Protocol
+(`ports/graph_store.py`). Core does not require a graph backend in the minimal
+configuration: graph plugins and integrations opt in via configuration and
+dependency wiring.
 
-FalkorDB is provided as the **reference backend** via an optional overlay
-(`docker-compose.falkordb.yml`). Contributors who want to develop or use a
-graph plugin start FalkorDB with one command and write plugins against the
-`GraphStore` Protocol. Users who do not need graph functionality install and
-run nothing extra.
+Implementations of **GraphStore** (Falkor-backed or otherwise) are treated as
+**optional capability**: a reference FalkorDB-backed implementation and the
+full-stack graph wiring used by the maintainers ship as a **premium capability
+available separately** from the minimal public AGPL snapshot. The Protocol and
+schema expectations remain the public contract (`docs/extending/extending-the-stack.md`).
 
-This is the same pattern used throughout the stack: each optional capability
-(graph, workflow automation, LLM proxy) has a Protocol in `ports/`, a reference
-adapter in `adapters/`, and an optional Docker Compose overlay. See
-`docs/extending/extending-the-stack.md` for the full list.
+This follows the same layering used elsewhere: **ports/** define contracts;
+**adapters/** provide concrete backends when present; Compose overlays activate
+backing services only when operators merge them deliberately.
 
-### Why FalkorDB as the reference backend
+### Why FalkorDB as a reference backing technology
 
-| Concern | FalkorDB |
-|---|---|
-| Licence | MIT — permissive for downstream plugin authors |
-| Query language | Cypher — widely known, well-documented |
-| Transport | Redis protocol — minimal operational overhead, familiar tooling |
-| Footprint | Single container, low memory — suitable for self-hosters and edge |
+Where the premium Falkor reference is used, FalkorDB offers a pragmatic default:
+MIT-licensed Redis-protocol deployment, widely known **Cypher** queries, and a
+compact single-container footprint. **Other Cypher-compatible or bespoke
+implementations remain valid**: the Protocol boundary is intentional so backends
+stay swappable without forking Core.
 
 ## Consequences
 
-- **Default installation is unaffected.** No graph service runs unless the
-  overlay is explicitly enabled.
-- **Backend is swappable.** Neo4j, Memgraph, or any Cypher-compatible store can
-  implement `GraphStore` and be used in place of FalkorDB.
-- **Community graph plugins are first-class.** The schema contract is public,
-  the Protocol is stable, and a reference backend is always available for
-  local development.
-- **No Redis dependency in core.** FalkorDB and its Redis runtime live entirely
-  in the overlay and are not referenced by any service in the default stack.
+- **Minimal installs stay unaware of graph infra** unless overlays and env are
+  added.
+- **`GraphStore` remains the abstraction** for contributed graph tooling.
+- **Premium / full-tree operators** adopt the Falkor reference (or equivalents)
+  from the separately distributed capability bundles; contributors without that
+  tree still rely on the public Protocol docs.
+- **No Redis-backed graph substrate in Core by default.** Optional stacks bring
+  their backing services via explicit Compose merges.

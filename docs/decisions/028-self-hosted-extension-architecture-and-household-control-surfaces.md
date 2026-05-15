@@ -97,7 +97,7 @@ The **unified tool catalog** and **capability execution overlay** (`ToolCatalog`
 
 - [ADR 005 — Plugin boundary](005-plugin-boundary.md)
 - [ADR 010 — Ecosystem plumbing](010-ecosystem-plumbing.md)
-- [ADR 011 — Lumogis graph service extraction](011-lumogis-graph-service-extraction.md)
+- [ADR 002 — Graph capabilities / GraphStore Protocol](002-graph-store-falkordb.md)
 - [ADR 012 — Family LAN multi-user](012-family-lan-multi-user.md)
 - [ADR 017 — MCP token user map](017-mcp-token-user-map.md)
 - [ADR 018 — Per-user connector credentials](018-per-user-connector-credentials.md)

@@ -1,0 +1,45 @@
+# Public AGPL export strip list — one repo-relative path per line (lumogis-app root).
+# Lines starting with # and blank lines are ignored. Paths are stripped with rm -rf
+# from exported trees via create-upstream-export-tree.sh; check-public-export.sh rejects
+# if any listed path exists in the candidate export.
+
+# Maintainer hygiene (migrated from hard-coded omit lists)
+.cursor
+.claude
+docs/private
+docs/release
+docs/_librarian
+docs/development/local-ai-devtools.md
+
+# KG / premium surfaces (premium capability available separately)
+
+services/lumogis-graph/
+
+orchestrator/plugins/graph/
+
+orchestrator/adapters/falkordb_store.py
+
+orchestrator/services/graph_webhook_dispatcher.py
+
+orchestrator/services/kg_premium_core.py
+
+orchestrator/services/edge_quality.py
+
+docker-compose.falkordb.yml
+
+docker-compose.premium.yml
+
+docker-compose.parity-premium.yml
+
+orchestrator/tests/premium/
+
+
+docs/decisions/007-graph-plugin-architecture.md
+
+docs/decisions/008-graph-provenance-model.md
+
+docs/decisions/009-knowledge_graph_visualization.md
+
+docs/decisions/011-lumogis-graph-service-extraction.md
+
+docs/decisions/035-kg-graph-proxy-service-bearer-fail-closed.md

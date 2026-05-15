@@ -27,6 +27,8 @@ from ports.vector_store import VectorStore
 
 _log = logging.getLogger(__name__)
 _instances: dict[str, object] = {}
+_effective_graph_mode: str | None = None
+_graph_store_import_warning_emitted: bool = False
 _models_config: dict | None = None
 
 # ---------------------------------------------------------------------------
@@ -656,16 +658,34 @@ def get_graph_store():
 
     Set GRAPH_BACKEND=falkordb and FALKORDB_URL=redis://falkordb:6379 to enable.
     When disabled (default), the graph plugin silently does nothing.
+
+    If GRAPH_BACKEND=falkordb but the FalkorDB adapter cannot be imported,
+    returns ``None`` after emitting a single ``graph_store_unavailable`` WARNING.
     """
+    global _graph_store_import_warning_emitted
+
     if "graph_store" not in _instances:
         backend = os.environ.get("GRAPH_BACKEND", "none")
         if backend == "falkordb":
-            from adapters.falkordb_store import FalkorDBStore
+            try:
+                from adapters.falkordb_store import FalkorDBStore
 
-            url = os.environ.get("FALKORDB_URL", "redis://falkordb:6379")
-            graph_name = os.environ.get("FALKORDB_GRAPH_NAME", "lumogis")
-            _instances["graph_store"] = FalkorDBStore(url=url, graph_name=graph_name)
-            _log.info("GraphStore: FalkorDB at %s graph=%s", url, graph_name)
+                url = os.environ.get("FALKORDB_URL", "redis://falkordb:6379")
+                graph_name = os.environ.get("FALKORDB_GRAPH_NAME", "lumogis")
+                _instances["graph_store"] = FalkorDBStore(url=url, graph_name=graph_name)
+                _log.info("GraphStore: FalkorDB at %s graph=%s", url, graph_name)
+            except ImportError as exc:
+                _instances["graph_store"] = None
+                if not _graph_store_import_warning_emitted:
+                    _graph_store_import_warning_emitted = True
+                    _log.warning(
+                        "FalkorDB graph store unavailable — continuing without GraphStore",
+                        extra={
+                            "event": "graph_store_unavailable",
+                            "reason": "falkordb_adapter_import_error",
+                            "exc_type": type(exc).__name__,
+                        },
+                    )
         else:
             _instances["graph_store"] = None
             _log.info("GraphStore: disabled (GRAPH_BACKEND=%s)", backend)
@@ -1223,33 +1243,66 @@ _VALID_GRAPH_MODES = {"inprocess", "service", "disabled"}
 
 
 @cache
-def get_graph_mode() -> str:
-    """Return the current GRAPH_MODE: 'inprocess' (default), 'service', or 'disabled'.
-
-    - `inprocess`: Core hosts `plugins/graph/` exactly as today (legacy).
-    - `service`:   Core does NOT host the graph plugin; it dispatches webhooks
-                   and `/context` calls to an external `lumogis-graph` service
-                   discovered via `KG_SERVICE_URL` / `CAPABILITY_SERVICE_URLS`.
-    - `disabled`:  No graph at all. Webhooks are swallowed, `/context` returns [].
-                   Operator opt-out for users who don't want a graph.
-
-    Cached: this is read on every webhook fire and from chat hot path; an env
-    lookup per call is wasteful. Tests must call `get_graph_mode.cache_clear()`
-    after mutating the env var (the autouse `_override_config` test fixture
-    already does this — see `orchestrator/tests/conftest.py`).
-
-    Unknown values fall back to `inprocess` with a WARNING so a typo cannot
-    silently disable the graph.
-    """
-    raw = os.environ.get("GRAPH_MODE", "inprocess").strip().lower()
-    if raw not in _VALID_GRAPH_MODES:
+def _cached_validated_graph_mode_from_env() -> str:
+    """Read and validate GRAPH_MODE from the environment (no effective override)."""
+    raw_display = os.environ.get("GRAPH_MODE", "disabled").strip()
+    token = raw_display.lower()
+    if token not in _VALID_GRAPH_MODES:
         _log.warning(
-            "GRAPH_MODE=%r is not one of %s — falling back to 'inprocess'",
-            raw,
+            "GRAPH_MODE=%r is not one of %s — falling back to %r",
+            raw_display,
             sorted(_VALID_GRAPH_MODES),
+            "disabled",
+            extra={
+                "event": "graph_mode_fallback",
+                "requested_mode": raw_display,
+                "effective_mode": "disabled",
+                "reason": "invalid_graph_mode_env",
+            },
         )
-        return "inprocess"
-    return raw
+        return "disabled"
+    return token
+
+
+def read_graph_mode_from_env() -> str:
+    """Return validated GRAPH_MODE from the environment for lifespan wiring.
+
+    Ignores :func:`set_effective_graph_mode_for_process`; use before publishing
+    the effective mode after :func:`main._wire_graph_mode_handlers`.
+    """
+    return _cached_validated_graph_mode_from_env()
+
+
+def set_effective_graph_mode_for_process(mode: str | None) -> None:
+    """Publish Core's resolved graph mode so :func:`get_graph_mode` matches wiring.
+
+    Call exactly once per process after graph handlers are wired. Pass ``None``
+    in tests to drop the override; pair with :func:`clear_graph_mode_env_cache`
+    when tests mutate ``GRAPH_MODE``.
+    """
+    global _effective_graph_mode
+    prev = _effective_graph_mode
+    _effective_graph_mode = mode
+    if prev != mode:
+        _cached_validated_graph_mode_from_env.cache_clear()
+
+
+def clear_graph_mode_env_cache() -> None:
+    """Clear the env-based GRAPH_MODE cache (test harness / env mutation)."""
+    _cached_validated_graph_mode_from_env.cache_clear()
+
+
+def get_graph_mode() -> str:
+    """Return the effective GRAPH_MODE after lifespan publish.
+
+    Defaults to ``disabled`` when ``GRAPH_MODE`` is unset. Unknown env values map
+    to ``disabled`` with a structured WARNING. After startup, reflects the mode
+    returned from :func:`main._wire_graph_mode_handlers` (may differ from raw
+    env when premium service or in-process plugin pieces are absent).
+    """
+    if _effective_graph_mode is not None:
+        return _effective_graph_mode
+    return _cached_validated_graph_mode_from_env()
 
 
 def get_kg_service_url() -> str:
@@ -1284,13 +1337,40 @@ def get_kg_webhook_secret() -> str | None:
     return raw or None
 
 
+def get_graph_proxy_require_service_bearer() -> bool:
+    """Return whether Core requires ``GRAPH_WEBHOOK_SECRET`` before HTTP to KG ``query_graph``.
+
+    Used by :func:`services.kg_premium_core.graph_query_tool_proxy_call`
+    when ``GRAPH_MODE=service``. Implements the posture matrix::
+
+        secret present (any legacy opt-in env) → True (send bearer when configured)
+        no secret + no explicit Core opt-in → True (fail-closed: no TCP)
+        no secret + Core opt-in ``1``/``true``/``yes`` → False (legacy POST parity)
+
+    The opt-in env is evaluated **only** on Core — it does **not** mirror
+    ``KG_ALLOW_INSECURE_WEBHOOKS`` from the KG service process.
+    """
+    secret_present = bool(get_kg_webhook_secret())
+    raw = os.environ.get("LUMOGIS_GRAPH_PROXY_ALLOW_INSECURE_MISSING_SECRET", "")
+    allow_legacy = raw.strip().lower() in ("1", "true", "yes")
+    if secret_present:
+        return True
+    if allow_legacy:
+        return False
+    return True
+
+
 def shutdown() -> None:
     """Close connections and release resources."""
+    global _effective_graph_mode, _graph_store_import_warning_emitted
+
     store = _instances.get("metadata_store")
     if store and hasattr(store, "close"):
         store.close()  # type: ignore[union-attr]
     _instances.clear()
-    get_graph_mode.cache_clear()
+    _effective_graph_mode = None
+    _graph_store_import_warning_emitted = False
+    _cached_validated_graph_mode_from_env.cache_clear()
     _log.info("Config shutdown: all adapter instances released")
 
 

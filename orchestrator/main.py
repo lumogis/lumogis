@@ -8,6 +8,7 @@ and router includes. All endpoint logic lives in routes/.
 """
 
 import logging
+import importlib.util
 import os
 from contextlib import asynccontextmanager
 
@@ -67,45 +68,68 @@ _COLLECTIONS = ["documents", "conversations", "entities", "signals"]
 
 
 def _wire_graph_mode_handlers(graph_mode: str) -> str:
-    """Wire Core to the graph layer per `GRAPH_MODE`. Returns the resolved mode.
+    """Wire Core to the graph layer per validated ``GRAPH_MODE``.
 
-    Three modes select where graph projection / context lookup happens:
+    Returns the **effective** mode Core runs after fail-soft degradation.
+    ``service`` / ``inprocess`` may become ``disabled`` when premium wiring or
+    the in-process plugin package is absent (one WARNING per degraded path).
 
-    * `inprocess` (default) — `plugins/graph/` runs inside Core, hooks fire
-      in-process, weekly KG quality job is scheduled on Core's APScheduler
-      (the caller checks `if scheduler and graph_mode == "inprocess":`
-      to decide). Legacy behaviour.
-    * `service` — `plugins/graph/` self-disables (mode guard in
-      `plugins/graph/__init__.py`). Core dispatches every graph hook event
-      over HTTP to the out-of-process `lumogis-graph` service via
-      `services.graph_webhook_dispatcher`, the chat hot path calls KG
-      `/context` for graph fragments, and the LLM tool registry exposes
-      a `query_graph` proxy ToolSpec that POSTs to KG's
-      `/tools/query_graph`. Core's APScheduler does NOT register the
-      weekly KG quality job — the KG service runs that on its own
-      scheduler.
-    * `disabled` — No graph at all. The plugin self-disables, the
-      dispatcher is not wired up, the chat path skips the `/context`
-      call, and the weekly job is not registered. Use this when the
-      operator opts out of the graph entirely.
+    Callers normally pass validated tokens from :func:`config.read_graph_mode_from_env`.
+    A non-canonical literal defends depth-first by returning ``disabled`` with a WARNING.
 
-    Extracted as a module-level function so `tests/test_main_lifespan_modes.py`
-    can verify the branching without booting the full lifespan (which
-    pulls Postgres, Qdrant, Ollama, the embedder and the watchdog —
-    none of which are needed to exercise three IF branches).
+    Extracted so tests can exercise branching without the full lifespan.
     """
-    if graph_mode == "service":
-        from services.graph_webhook_dispatcher import register_core_callbacks
-        from services.tools import register_query_graph_proxy
+    if graph_mode not in ("service", "inprocess", "disabled"):
+        _log.warning(
+            "Ignoring invalid graph wiring token — falling back to disabled",
+            extra={
+                "event": "graph_mode_fallback",
+                "requested_mode": graph_mode,
+                "effective_mode": "disabled",
+                "reason": "invalid_graph_mode_env",
+            },
+        )
+        return "disabled"
 
-        register_core_callbacks()
-        register_query_graph_proxy()
-        _log.info("Graph mode: service — KG webhooks + /context proxy enabled")
+    effective_mode = graph_mode
+    if graph_mode == "service":
+        try:
+            from services.graph_webhook_dispatcher import register_core_callbacks
+            from services.kg_premium_core import register_query_graph_proxy
+
+            register_core_callbacks()
+            register_query_graph_proxy()
+            _log.info("Graph mode: service — KG webhooks + /context proxy enabled")
+        except ImportError as exc:
+            effective_mode = "disabled"
+            _log.warning(
+                "Graph service wiring unavailable — falling back to disabled",
+                extra={
+                    "event": "graph_mode_fallback",
+                    "requested_mode": graph_mode,
+                    "effective_mode": "disabled",
+                    "reason": "service_import_error",
+                    "exc_type": type(exc).__name__,
+                },
+            )
     elif graph_mode == "disabled":
         _log.info("Graph mode: disabled — no graph functionality")
     else:
-        _log.info("Graph mode: inprocess — graph plugin runs inside Core")
-    return graph_mode
+        if importlib.util.find_spec("plugins.graph") is None:
+            effective_mode = "disabled"
+            _log.warning(
+                "GRAPH_MODE=inprocess but plugins.graph package is absent "
+                "— falling back to disabled",
+                extra={
+                    "event": "graph_mode_fallback",
+                    "requested_mode": graph_mode,
+                    "effective_mode": "disabled",
+                    "reason": "inprocess_plugin_absent",
+                },
+            )
+        else:
+            _log.info("Graph mode: inprocess — graph plugin runs inside Core")
+    return effective_mode
 
 
 def _enforce_auth_consistency() -> None:
@@ -408,7 +432,8 @@ async def lifespan(app: FastAPI):
         )
         _log.info("Batch queue APScheduler jobs registered")
 
-    _graph_mode = _wire_graph_mode_handlers(config.get_graph_mode())
+    _graph_mode = _wire_graph_mode_handlers(config.read_graph_mode_from_env())
+    config.set_effective_graph_mode_for_process(_graph_mode)
 
     # STT‑1 optional speech-to-text — ping adapter when enabled (never fatal).
     try:
@@ -466,23 +491,33 @@ async def lifespan(app: FastAPI):
     # `edge_scores` / `graph_projected_at`.
     # Also guarded with `if scheduler:` to avoid crashes in test environments.
     if scheduler and _graph_mode == "inprocess":
-        from services.edge_quality import run_weekly_quality_job as _run_weekly_quality_job
-
-        _wq_hour = config.get_dedup_cron_hour_utc()
-        scheduler.add_job(
-            _run_weekly_quality_job,
-            trigger="cron",
-            day_of_week="sun",
-            hour=_wq_hour,
-            minute=0,
-            id="weekly_quality_maintenance",
-            name="Weekly KG quality maintenance",
-            replace_existing=True,
-            misfire_grace_time=60,
-            coalesce=True,
-            max_instances=1,
-        )
-        _log.info("Weekly quality maintenance job registered (Sunday %02d:00 UTC)", _wq_hour)
+        try:
+            from services.edge_quality import run_weekly_quality_job as _run_weekly_quality_job
+        except ImportError as exc:
+            _log.warning(
+                "Weekly KG quality maintenance not scheduled — edge_quality unavailable",
+                extra={
+                    "event": "weekly_quality_job_unavailable",
+                    "reason": "edge_quality_import_error",
+                    "exc_type": type(exc).__name__,
+                },
+            )
+        else:
+            _wq_hour = config.get_dedup_cron_hour_utc()
+            scheduler.add_job(
+                _run_weekly_quality_job,
+                trigger="cron",
+                day_of_week="sun",
+                hour=_wq_hour,
+                minute=0,
+                id="weekly_quality_maintenance",
+                name="Weekly KG quality maintenance",
+                replace_existing=True,
+                misfire_grace_time=60,
+                coalesce=True,
+                max_instances=1,
+            )
+            _log.info("Weekly quality maintenance job registered (Sunday %02d:00 UTC)", _wq_hour)
     elif scheduler and _graph_mode != "inprocess":
         _log.info(
             "Weekly KG quality maintenance NOT registered on Core (graph_mode=%s — owned by lumogis-graph service)",
@@ -602,9 +637,12 @@ async def lifespan(app: FastAPI):
 
     hooks.shutdown()
     if _graph_mode == "service":
-        from services import graph_webhook_dispatcher as _gwd
+        try:
+            from services import graph_webhook_dispatcher as _gwd
 
-        _gwd.shutdown()
+            _gwd.shutdown()
+        except ImportError:
+            pass
     config.shutdown()
     _log.info("Shutdown complete")
 

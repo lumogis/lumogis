@@ -181,7 +181,14 @@ def test_search_rejects_blank_q(client, kg_store):
 
 
 def test_graph_mode_service_returns_502(client, kg_store, monkeypatch):
+    import config as _cfg
+
     monkeypatch.setenv("GRAPH_MODE", "service")
-    resp = client.get("/api/v1/kg/search", params={"q": "x"})
+    _cfg.set_effective_graph_mode_for_process("service")
+    try:
+        resp = client.get("/api/v1/kg/search", params={"q": "x"})
+    finally:
+        _cfg.set_effective_graph_mode_for_process(None)
+        _cfg.clear_graph_mode_env_cache()
     assert resp.status_code == 502
     assert resp.json()["detail"]["error"] == "kg_unavailable"

@@ -6,8 +6,8 @@
 `lumogis-graph` shape: ``{base}/tools/{tool_name}`` with
 ``X-Lumogis-User`` (attribution only) and optional ``Authorization: Bearer``
 shared secret. Generic callers can require a service bearer; the KG
-graph proxy allows a missing secret for backwards compatibility (see
-:func:`graph_query_tool_proxy_call`).
+graph proxy documents ``require_service_bearer`` behaviour in
+    :func:`services.kg_premium_core.graph_query_tool_proxy_call`.
 
 X-Lumogis-User is **not** authentication; service auth is the bearer when
 configured, or the request is rejected (when :data:`REQUIRE_BEARER_DEFAULT`).
@@ -23,10 +23,6 @@ import httpx
 
 _log = logging.getLogger(__name__)
 
-# Shared with :mod:`services.tools` for ``query_graph`` JSON schema parity.
-QUERY_GRAPH_MAX_DEPTH: Final[int] = 4
-QUERY_GRAPH_PROXY_TIMEOUT_S: Final[float] = 2.5
-GRAPH_QUERY_UNAVAILABLE: Final[str] = "query_graph: graph service unavailable"
 REQUIRE_BEARER_DEFAULT: Final[bool] = True
 USER_ATTRIBUTION_HEADER: Final[str] = "X-Lumogis-User"
 
@@ -160,51 +156,3 @@ def post_capability_tool_invocation(
         )
 
     return HttpInvokeResult(ok=True, text=resp.text, http_status=200)
-
-
-def graph_query_tool_proxy_call(
-    input_: dict,
-    *,
-    user_id: str,
-) -> str:
-    """Graph ``query`` proxy for ``KG_SERVICE_URL``; preserves legacy semantics.
-
-    * Rejects ``max_depth`` above :data:`QUERY_GRAPH_MAX_DEPTH` before HTTP.
-    * Does **not** require ``GRAPH_WEBHOOK_SECRET`` (matches pre–Phase-3A Core).
-    * Returns :data:`GRAPH_QUERY_UNAVAILABLE` on any failure (fail-soft str).
-
-    KG ``POST /tools/query_graph`` expects a body matching ``QueryGraphRequest``:
-    ``{"input": {<query_graph args including user_id>}}``. Generic capability
-    tools use a **flat** JSON body via :func:`post_capability_tool_invocation`;
-    only this graph-specific bridge wraps under ``input``.
-    """
-    import config
-
-    max_depth = input_.get("max_depth")
-    if isinstance(max_depth, int) and max_depth > QUERY_GRAPH_MAX_DEPTH:
-        _log.warning(
-            "query_graph proxy: rejected max_depth=%d > cap %d",
-            max_depth,
-            QUERY_GRAPH_MAX_DEPTH,
-        )
-        return GRAPH_QUERY_UNAVAILABLE
-    base = config.get_kg_service_url()
-    if not base or not str(base).strip():
-        return GRAPH_QUERY_UNAVAILABLE
-    secret = config.get_kg_webhook_secret()
-    bearer = (secret or "").strip() or None
-
-    payload = dict(input_)
-    payload["user_id"] = user_id
-    result = post_capability_tool_invocation(
-        base_url=base,
-        tool_name="query_graph",
-        user_id=user_id,
-        json_body={"input": payload},
-        timeout_s=QUERY_GRAPH_PROXY_TIMEOUT_S,
-        service_bearer=bearer,
-        # Legacy: allow posting without bearer if operator did not set secret.
-        require_service_bearer=False,
-        unavailable_message=GRAPH_QUERY_UNAVAILABLE,
-    )
-    return result.text

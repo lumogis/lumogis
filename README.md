@@ -63,9 +63,9 @@ Details and examples: **[`docs/LUMOGIS_REFERENCE_MANUAL.md`](docs/LUMOGIS_REFERE
 
 **Five concepts**—every module maps to one: **actions**, **signals**, **services**, **plugins**, and **adapters**. Full layering (routes → services → ports ← adapters; plugins via hooks): **[`ARCHITECTURE.md`](ARCHITECTURE.md)**.
 
-![Lumogis system architecture: browser and optional LibreChat through Caddy to Core and Lumogis Web; domain core, plugins, ports plus adapters, and backing services on the host; optional lumogis-graph and LLM providers.](branding/lumogis_architecture.svg)
+![Lumogis system architecture diagram: browser and optional LibreChat through Caddy to Core and Lumogis Web; backing services include Postgres, vectors, optional graph capability, and local LLMs.](branding/lumogis_architecture.svg)
 
-† **Graph store:** FalkorDB is optional. Merge **`docker-compose.falkordb.yml`** for the in-process graph plugin and Falkor-backed paths; Falkor speaks the **Redis wire protocol** (no separate Redis container in that overlay)—see **`docker-compose.falkordb.yml`**. **`lumogis-graph`** (out-of-process KG capability) merges **`docker-compose.premium.yml`**—the **`premium` filename is historical**, not proprietary scope; see **`services/lumogis-graph/README.md`** and **[`docs/decisions/011-lumogis-graph-service-extraction.md`](docs/decisions/011-lumogis-graph-service-extraction.md)** (`GRAPH_MODE=inprocess|service`).
+† **Graph capability** is optional. The bundled community stack defaults **`GRAPH_MODE=disabled`**. Falkor-backed in-process projection, HTTP graph capability services, and related Compose overlays ship with the **premium** distribution—not the minimal AGPL export line. Architectural contract: **`ports/graph_store.py`** (Protocol) plus **[`docs/decisions/002-graph-store-falkordb.md`](docs/decisions/002-graph-store-falkordb.md)** and **`docs/extending/extending-the-stack.md`**.
 
 | Concept | Path | Purpose |
 |---|---|---|
@@ -151,8 +151,7 @@ Open **http://localhost/** after health checks settle. Inspect **`.env.example`*
 
 | Add-on | How | Notes |
 |---|---|---|
-| FalkorDB (graph backends) | `docker-compose.yml` + [`docker-compose.falkordb.yml`](docker-compose.falkordb.yml) | In-process **`plugins/graph`** and adapters use Redis-protocol Falkor—no separate Redis service in this overlay |
-| `lumogis-graph` service | … + **`docker-compose.premium.yml`** + `GRAPH_MODE=service` | Historical filename—**[`services/lumogis-graph/README.md`](services/lumogis-graph/README.md)** |
+| Knowledge graph overlays (Falkor / in-process plugin / HTTP KG bridge) | Premium Compose bundles + explicit `GRAPH_MODE` | **`GRAPH_MODE` defaults to `disabled`**—set `inprocess` or `service` only with the matching premium modules; see **ADR-002** (`docs/decisions/002-graph-store-falkordb.md`) and **`docs/extending/extending-the-stack.md`** |
 | LiteLLM | **`docker-compose.litellm.yml`** | Unified proxy overlay |
 | Activepieces | **`docker-compose.activepieces.yml`** | Automation UI |
 | GPU | **`docker-compose.gpu.yml`** | NVIDIA Container Toolkit (**[`docs/guides/gpu-setup.md`](docs/guides/gpu-setup.md)**) |

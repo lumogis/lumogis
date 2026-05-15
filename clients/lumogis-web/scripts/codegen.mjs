@@ -93,6 +93,12 @@ async function runCheck() {
 
 function canonicalise(text) {
   const obj = JSON.parse(text);
+  // Match orchestrator `scripts.dump_openapi._normalise`: pin version so the
+  // committed snapshot does not churn on every FastAPI default bump, while
+  // `codegen --check` still compares schema shape against a live server.
+  if (obj.info && typeof obj.info === "object") {
+    obj.info = { ...obj.info, version: "snapshot" };
+  }
   return JSON.stringify(sortObject(obj));
 }
 

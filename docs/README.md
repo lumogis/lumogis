@@ -55,8 +55,8 @@
 
 ## Knowledge graph
 
-- Design and boundaries: [`decisions/011-lumogis-graph-service-extraction.md`](decisions/011-lumogis-graph-service-extraction.md) and related graph ADRs
-- Service operator reference: [`../services/lumogis-graph/README.md`](../services/lumogis-graph/README.md)
+- Protocol + public/private boundary narrative: **[`decisions/002-graph-store-falkordb.md`](decisions/002-graph-store-falkordb.md)**
+- Compose / capability-service patterns (including optional HTTP KG bridges): **[`extending/extending-the-stack.md`](extending/extending-the-stack.md)**
 
 ## Lumogis Web and PWA
 

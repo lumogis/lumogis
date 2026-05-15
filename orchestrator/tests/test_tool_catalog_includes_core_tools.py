@@ -63,15 +63,3 @@ def test_core_sources_for_builtin_three() -> None:
         if e.name in _CORE_THREE:
             assert e.source == "core"
             assert e.origin_tier == "local"
-
-
-def test_query_graph_spec_with_proxy_handler_is_source_proxy() -> None:
-    """Same helper as `register_query_graph_proxy` build → ``source=proxy``."""
-    three = [s for s in services_tools.TOOL_SPECS if s.name in _CORE_THREE]
-    assert len(three) == 3
-    graph_proxy = services_tools._build_query_graph_spec(services_tools._query_graph_proxy_handler)
-    cat = _isolated_build(tool_specs=[*three, graph_proxy])
-    qrows = [e for e in cat.entries if e.name == "query_graph" and e.transport == "llm_loop"]
-    assert len(qrows) == 1
-    assert qrows[0].source == "proxy"
-    assert qrows[0].origin_tier == "capability_backed"

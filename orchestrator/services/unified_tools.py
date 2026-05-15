@@ -11,7 +11,8 @@ Classification limits (observable today):
   the three built-in LLM tool names and not the KG service proxy is labeled
   ``source="plugin"`` (true plugin-registered in-process tools).
 * ``query_graph`` is ``source="proxy"`` when the handler is
-  :func:`services.tools._query_graph_proxy_handler`, else ``source="plugin"``.
+  :func:`services.kg_premium_core._query_graph_proxy_handler` when that module is
+  present, else ``source="plugin"``.
 * ``actions.registry`` metadata is cross-referenced; actions without a
   matching tool name get their own ``transport="catalog_only"`` rows.
 * Per-user Ask/Do for the read model: :func:`build_tool_catalog_for_user` sets
@@ -110,7 +111,11 @@ def _classify_inprocess_spec(
     """Return (source, source_id, transport, origin_tier, why_na, available)."""
     if spec.name in _CORE_LLM_TOOL_NAMES:
         return ("core", "core", "llm_loop", "local", None, True)
-    if spec.name == "query_graph" and spec.handler is query_graph_proxy_handler:
+    if (
+        spec.name == "query_graph"
+        and query_graph_proxy_handler is not None
+        and spec.handler is query_graph_proxy_handler
+    ):
         return (
             "proxy",
             "lumogis-graph:service",
@@ -124,16 +129,25 @@ def _classify_inprocess_spec(
     return ("plugin", "plugin:unknown", "llm_loop", "plugin", None, True)
 
 
+def _resolve_query_graph_proxy_handler() -> Any:
+    """Return service-mode proxy handler when premium module ships; else None."""
+    try:
+        from services import kg_premium_core as kgpc
+
+        return kgpc._query_graph_proxy_handler
+    except ImportError:
+        return None
+
+
 def _entries_for_tool_specs(
     specs: list[ToolSpec],
 ) -> list[ToolCatalogEntry]:
-    from services import tools as tools_mod
-
     out: list[ToolCatalogEntry] = []
+    proxy_h = _resolve_query_graph_proxy_handler()
     for spec in specs:
         source, source_id, transport, origin_tier, why, avail = _classify_inprocess_spec(
             spec,
-            query_graph_proxy_handler=tools_mod._query_graph_proxy_handler,
+            query_graph_proxy_handler=proxy_h,
         )
         out.append(
             ToolCatalogEntry(

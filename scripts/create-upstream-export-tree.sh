@@ -35,10 +35,18 @@ mkdir -p "$OUT"
 GIT_INDEX_FILE="$TMP_INDEX" git read-tree HEAD
 GIT_INDEX_FILE="$TMP_INDEX" git checkout-index -a -f --prefix="${OUT}/"
 
-# Upstream/for public-shaped export — same omit list as check-public-export.sh (Option B + hygiene)
-rm -rf "${OUT}/.cursor" "${OUT}/.claude" "${OUT}/docs/private" \
-  "${OUT}/docs/release" "${OUT}/docs/_librarian"
-rm -f "${OUT}/docs/development/local-ai-devtools.md"
+# Public-shaped paths — scripts/public-export-strip-list.txt must match check-public-export.sh
+STRIP_LIST="$SCRIPT_DIR/public-export-strip-list.txt"
+[[ -f "$STRIP_LIST" ]] || die "missing strip list: $STRIP_LIST"
+while IFS= read -r raw_line || [[ -n "${raw_line}" ]]; do
+  line="${raw_line%%#*}"
+  line="$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  [[ -z "$line" ]] && continue
+  target="${OUT}/${line}"
+  if [[ -e "$target" ]]; then
+    rm -rf "$target"
+  fi
+done <"$STRIP_LIST"
 
 echo "create-upstream-export-tree: $OUT"
 echo "create-upstream-export-tree: top-level:"

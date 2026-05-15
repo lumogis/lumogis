@@ -2,26 +2,24 @@
 # Copyright (C) 2026 Lumogis
 """Knowledge-graph endpoints for the v1 façade.
 
-Three read-only routes:
+Three read-only routes backed by Postgres (entity cards, relations, search):
 
-* ``GET /api/v1/kg/entities/{entity_id}`` — entity card by UUID, scoped
-  by :func:`visibility.visible_filter`.
-* ``GET /api/v1/kg/entities/{entity_id}/related`` — first-degree
-  relations from ``entity_relations``.
+* ``GET /api/v1/kg/entities/{entity_id}`` —
+  scoped by :func:`visibility.visible_filter`.
+* ``GET /api/v1/kg/entities/{entity_id}/related``
 * ``GET /api/v1/kg/search`` — substring search wrapping
   :func:`services.entities.search_by_name`.
 
-Phase 0 ships an in-process implementation only — the planned
-``GRAPH_MODE=service`` httpx proxy is **deferred** until the
-``lumogis-graph`` service exists. The route module returns
-``502 {"error":"kg_unavailable"}`` if ``GRAPH_MODE=service`` is set today
-so the SPA fails closed instead of silently falling back to inprocess.
+:func:`_graph_mode_guard` uses :func:`config.get_graph_mode` (**effective**
+mode): returns ``502 kg_unavailable`` only when Core is genuinely wired in
+``service`` mode so the SPA fails closed rather than masking a KG-only façade.
+Operators who intend full service-mode KG HTTP must provision the premium KG
+overlay; degraded wiring resolves to ``disabled`` and Postgres routes continue.
 """
 
 from __future__ import annotations
 
 import logging
-import os
 
 from auth import UserContext
 from auth import get_user
@@ -50,15 +48,13 @@ router = APIRouter(
 
 
 def _graph_mode_guard() -> None:
-    """Fail closed when an operator sets ``GRAPH_MODE=service`` in v1.
+    """Fail closed when KG v1 façade cannot serve Postgres-backed reads.
 
-    The plan calls for an httpx proxy in service-mode, but the
-    ``lumogis-graph`` HTTP service does not ship in Phase 0. Returning
-    502 is louder than silently falling back to inprocess (which would
-    mask a misconfiguration in a household running the graph service for
-    other consumers).
+    Uses :func:`config.get_graph_mode` (effective Core decision). When the raw
+    operator env asks for ``GRAPH_MODE=service`` but degraded wiring resolves to
+    ``disabled``, Postgres-backed handlers continue (no stale raw-env mismatch).
     """
-    if os.environ.get("GRAPH_MODE", "inprocess").lower() == "service":
+    if config.get_graph_mode() == "service":
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail={"error": "kg_unavailable"},

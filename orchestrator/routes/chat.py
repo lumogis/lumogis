@@ -262,14 +262,24 @@ def _inject_context(question: str, history: list[dict], model: str, user_id: str
     # contract). `config.get_graph_mode()` is `@cache`-decorated so this is
     # a dict lookup, not an env-var read, on the chat hot path.
     if config.get_graph_mode() == "service":
-        from services.graph_webhook_dispatcher import get_context_sync
-
-        graph_fragments = get_context_sync(
-            query=question,
-            user_id=user_id,
-            max_fragments=3,
-        )
-        fragments.extend(graph_fragments)
+        try:
+            from services.graph_webhook_dispatcher import get_context_sync
+        except ImportError as exc:
+            _log.warning(
+                "Chat context augmentation skipped — graph webhook dispatcher unavailable",
+                extra={
+                    "event": "chat_context_augmentation_skipped",
+                    "reason": "context_sync_import_error",
+                    "exc_type": type(exc).__name__,
+                },
+            )
+        else:
+            graph_fragments = get_context_sync(
+                query=question,
+                user_id=user_id,
+                max_fragments=3,
+            )
+            fragments.extend(graph_fragments)
 
     if len(fragments) > len(context_parts):
         plugin_text = "\n".join(fragments[len(context_parts) :])

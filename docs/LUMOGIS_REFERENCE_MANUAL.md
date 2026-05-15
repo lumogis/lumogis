@@ -57,7 +57,7 @@ This manual uses **remediation** vs **cross-device Web** explicitly to avoid con
 | **Safe credential handling** | Passwords and API keys are not splashed in the UI after save. | Encrypted credential payloads, copy-once tokens where applicable—[ADR 018](decisions/018-per-user-connector-credentials.md), [027](decisions/027-credential_scopes_shared_system.md), [029](decisions/029-self-hosted-account-password-management.md). |
 | **Auditability** | Important actions leave a trail. | Append-only `audit_log`; structured logging—[ADR 019](decisions/019-structured-audit-logging.md). |
 | **Modularity** | Swap vector store, LLM, etc., via adapters and ports. | `ports/` + `config.py` factories—`ARCHITECTURE.md`. |
-| **Optional capabilities** | Heavy or isolated features can run **beside** Core, not inside its DB. | HTTP manifest at `GET /capabilities`, bearer trust—[ADR 010](decisions/010-ecosystem-plumbing.md), [011](decisions/011-lumogis-graph-service-extraction.md). |
+| **Optional capabilities** | Heavy or isolated features can run **beside** Core, not inside its DB. | HTTP manifest at `GET /capabilities`, bearer trust—[ADR 010](decisions/010-ecosystem-plumbing.md), **[ADR 002](decisions/002-graph-store-falkordb.md)** (graph Protocol + optional premium overlays). |
 | **Bounded agents under Core policy** | Assistants stay permission-gated and audited—not unconstrained operators beside household controls. | Tool loops honour Ask/Do, audit, and catalog behaviour documented in shipped ADRs and extension guidance below. |
 | **No full-corpus cloud upload by default** | Your entire indexed library is not bulk-uploaded to an LLM vendor. | If a **cloud LLM** is configured, **composed prompts + retrieved excerpts** may leave the machine; **Qdrant/Postgres and raw files stay local** unless another feature sends them out. **Connectors** intentionally reach **their** configured services. |
 
@@ -237,9 +237,9 @@ Lumogis maps code to **five** pillars ([`ARCHITECTURE.md`](../ARCHITECTURE.md)):
 
 **Technical view:**
 
-- **In-process vs service:** Graph plugin can run **in-process** or **`GRAPH_MODE=service`** with **lumogis-graph** as the writer—[ADR 011](decisions/011-lumogis-graph-service-extraction.md), [002](decisions/002-graph-store-falkordb.md), graph plugin [007](decisions/007-graph-plugin-architecture.md).
+- **In-process vs service:** Graph routing is described in **[ADR 002](decisions/002-graph-store-falkordb.md)**; premium operators enable `GRAPH_MODE=inprocess` or `GRAPH_MODE=service` with matching modules. **Default `GRAPH_MODE` is `disabled`.**
 - **FalkorDB** — backing store for KG in service mode; see `docker-compose.premium.yml` / FalkorDB overlays.
-- **`query_graph` tool** — When bridged to the service, HTTP body uses **`{"input": <payload>}`** for the KG `QueryGraphRequest` contract; generic capabilities use **flat** JSON bodies—[`tool-vocabulary.md`](architecture/tool-vocabulary.md) and [ADR 011](decisions/011-lumogis-graph-service-extraction.md).
+- **`query_graph` tool** — When bridged over HTTP, the KG contract may wrap JSON as **`{"input": <payload>}`**; generic capabilities use **flat** JSON bodies—[`tool-vocabulary.md`](architecture/tool-vocabulary.md) and **[ADR 002](decisions/002-graph-store-falkordb.md)**.
 - **KG-specific vs generic:** KG proxy and manifest are the **reference capability**; generic discovery, health, `/tools/{name}`, and bearer env patterns apply to **any** capability.
 
 ---
@@ -320,7 +320,7 @@ Lumogis maps code to **five** pillars ([`ARCHITECTURE.md`](../ARCHITECTURE.md)):
 
 **Stack:** `docker-compose.yml` — orchestrator, Postgres, Qdrant, Ollama, stack-control, **Caddy**, **lumogis-web**; optional **LibreChat** profile (legacy-compatible chat); optional FalkorDB / premium / GPU / dev overlays.
 
-**Pre-built Core + Web (GHCR):** CI publishes **`ghcr.io/lumogis/lumogis-orchestrator`** and **`ghcr.io/lumogis/lumogis-web`** (amd64/arm64). Use merge file **`docker-compose.ghcr.yml`** so those two services pull images instead of local **`build:`** — **`COMPOSE_FILE=docker-compose.yml:docker-compose.ghcr.yml`**. Overlay merge requires **Docker Compose v2 / buildx toolchain new enough for `build: !reset null`** so inherited **`build`** is dropped (see **`docker-compose.ghcr.yml`** header comments). After the first workflow push, set each new package visibility to **Public** on GitHub (**Packages → package settings**) so anonymous **`docker pull`** works. Pin tags with **`IMAGE_TAG`** (semver from **`docker/metadata-action`** has **no leading `v`**, e.g. **`IMAGE_TAG=1.2.3`**). Operational record: [ADR 036](decisions/036-docker-image-ci-ghcr.md).
+**Pre-built Core + Web (GHCR):** CI publishes **`ghcr.io/lumogis/lumogis-orchestrator`** and **`ghcr.io/lumogis/lumogis-web`** (amd64/arm64) **from `lumogis/lumogis` (public repo) only** — images reflect verified public AGPL source, not intermediate private development state (LUM-225). Use merge file **`docker-compose.ghcr.yml`** so those two services pull images instead of local **`build:`** — **`COMPOSE_FILE=docker-compose.yml:docker-compose.ghcr.yml`**. Overlay merge requires **Docker Compose v2 / buildx toolchain new enough for `build: !reset null`** so inherited **`build`** is dropped (see **`docker-compose.ghcr.yml`** header comments). After the first workflow push, set each new package visibility to **Public** on GitHub (**Packages → package settings**) so anonymous **`docker pull`** works. Pin tags with **`IMAGE_TAG`** (semver from **`docker/metadata-action`** has **no leading `v`**, e.g. **`IMAGE_TAG=1.2.3`**). Maintainers run **`make verify-public-rc`** on private `main` before `/publish-private-main-to-public`; a push to public `main` then triggers the workflow. Operational records: [ADR 036](decisions/036-docker-image-ci-ghcr.md) (multi-arch + overlay), [ADR 037](decisions/037-ghcr-publish-public-repo-only.md) (trusted source boundary).
 
 **Environment:** Copy `.env.example` → `.env`; set `LUMOGIS_PUBLIC_ORIGIN`, `AUTH_ENABLED`, secrets per docs.
 
@@ -461,7 +461,7 @@ These are **building blocks**. Most features use **several** of them. New contri
 - **New external credentials:** Connector + encrypted credential tier ([ADR 018](decisions/018-per-user-connector-credentials.md), [027](decisions/027-credential_scopes_shared_system.md)).
 - **New side effects:** Action + Ask/Do + audit ([ADR 006](decisions/006-ask-do-safety-model.md)).
 - **New LLM-callable behaviour:** `ToolSpec` backed by service or action.
-- **Heavy or optional features:** Prefer a **capability**, not a plugin ([ADR 010](decisions/010-ecosystem-plumbing.md), [011](decisions/011-lumogis-graph-service-extraction.md)).
+- **Heavy or optional features:** Prefer a **capability**, not a plugin ([ADR 010](decisions/010-ecosystem-plumbing.md); graph boundary **[ADR 002](decisions/002-graph-store-falkordb.md)**).
 - **Agent interoperability:** MCP only if the tool is **intentionally** part of the MCP surface ([ADR 017](decisions/017-mcp-token-user-map.md)).
 - **New stack daemon:** Compose overlay (or base file), wire Core through an adapter and `config.py`—not ad hoc connection strings in random modules.
 
@@ -513,7 +513,7 @@ MCP is **transport**. It exposes a **curated subset** of Core functions to exter
 - [`ARCHITECTURE.md`](../ARCHITECTURE.md) — pillars, boundaries, routing  
 - [`tool-vocabulary.md`](architecture/tool-vocabulary.md) — tools, capabilities, MCP wording  
 - [`plugin-imports.md`](architecture/plugin-imports.md) — what plugins may import  
-- **ADRs:** [005](decisions/005-plugin-boundary.md), [006](decisions/006-ask-do-safety-model.md), [010](decisions/010-ecosystem-plumbing.md), [011](decisions/011-lumogis-graph-service-extraction.md), [012](decisions/012-family-lan-multi-user.md), [018](decisions/018-per-user-connector-credentials.md), [024](decisions/024-per-user-connector-permissions.md), [027](decisions/027-credential_scopes_shared_system.md), [028](decisions/028-self-hosted-extension-architecture-and-household-control-surfaces.md)  
+- **ADRs:** [005](decisions/005-plugin-boundary.md), [006](decisions/006-ask-do-safety-model.md), [010](decisions/010-ecosystem-plumbing.md), [002](decisions/002-graph-store-falkordb.md), [012](decisions/012-family-lan-multi-user.md), [018](decisions/018-per-user-connector-credentials.md), [024](decisions/024-per-user-connector-permissions.md), [027](decisions/027-credential_scopes_shared_system.md), [028](decisions/028-self-hosted-extension-architecture-and-household-control-surfaces.md)
 
 ---
 
@@ -551,7 +551,7 @@ MCP is **transport**. It exposes a **curated subset** of Core functions to exter
 - [`ARCHITECTURE.md`](../ARCHITECTURE.md) — pillars, Caddy routing, MCP, plugins  
 - [`CONTRIBUTING.md`](../CONTRIBUTING.md) — dev setup, `compose-test`, codegen  
 - [`testing/automated-test-strategy.md`](testing/automated-test-strategy.md) — CI vs integration / web / KG / browser suites  
-- **ADRs:** [005](decisions/005-plugin-boundary.md), [006](decisions/006-ask-do-safety-model.md), [010](decisions/010-ecosystem-plumbing.md), [011](decisions/011-lumogis-graph-service-extraction.md), [012](decisions/012-family-lan-multi-user.md), [015](decisions/015-personal-shared-system-memory-scopes.md), [017](decisions/017-mcp-token-user-map.md), [018](decisions/018-per-user-connector-credentials.md), [019](decisions/019-structured-audit-logging.md), [024](decisions/024-per-user-connector-permissions.md), [026](decisions/026-llm-provider-keys-per-user.md), [027](decisions/027-credential_scopes_shared_system.md), [028](decisions/028-self-hosted-extension-architecture-and-household-control-surfaces.md), [029](decisions/029-self-hosted-account-password-management.md)  
+- **ADRs:** [002](decisions/002-graph-store-falkordb.md), [005](decisions/005-plugin-boundary.md), [006](decisions/006-ask-do-safety-model.md), [010](decisions/010-ecosystem-plumbing.md), [011](decisions/011-lumogis-graph-service-extraction.md), [012](decisions/012-family-lan-multi-user.md), [015](decisions/015-personal-shared-system-memory-scopes.md), [017](decisions/017-mcp-token-user-map.md), [018](decisions/018-per-user-connector-credentials.md), [019](decisions/019-structured-audit-logging.md), [024](decisions/024-per-user-connector-permissions.md), [026](decisions/026-llm-provider-keys-per-user.md), [027](decisions/027-credential_scopes_shared_system.md), [028](decisions/028-self-hosted-extension-architecture-and-household-control-surfaces.md), [029](decisions/029-self-hosted-account-password-management.md), [042](decisions/042-kg-public-private-export-boundary.md)
 - [Tool vocabulary](architecture/tool-vocabulary.md)  
 - [Plugin imports](architecture/plugin-imports.md)  
 - [`clients/lumogis-web/README.md`](../clients/lumogis-web/README.md)  

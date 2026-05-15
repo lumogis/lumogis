@@ -9,7 +9,21 @@ set -euo pipefail
 
 die() { echo "check-public-export: FAIL: $*" >&2; exit 1; }
 
-# Only `.env.example` is allowed. Forbid `.env`, `.env.*`, `*/.env`, `*/.env.*`.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+assert_strip_list_paths_absent() {
+  local root="$1"
+  local listf="$SCRIPT_DIR/public-export-strip-list.txt"
+  [[ -f "$listf" ]] || die "missing public strip list: $listf"
+  while IFS= read -r raw_line || [[ -n "${raw_line}" ]]; do
+    local line="${raw_line%%#*}"
+    line="$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    [[ -z "$line" ]] && continue
+    if [[ -e "$root/$line" ]]; then
+      die "forbidden path in export candidate: ${line} (see scripts/public-export-strip-list.txt)"
+    fi
+  done <"$listf"
+}
 dotenv_basename_forbidden() {
   local base
   base="$(basename "$1")"
@@ -29,6 +43,8 @@ dotenv_basename_forbidden() {
 TARGET="${1:-.}"
 TARGET="$(cd "$TARGET" && pwd)"
 
+assert_strip_list_paths_absent "$TARGET"
+
 check_license_file() {
   local lic="$1"
   [[ -f "$lic" ]] || die "LICENSE missing at $lic"
@@ -46,29 +62,6 @@ check_license_file() {
 }
 
 check_license_file "$TARGET/LICENSE"
-
-# --- Fast reject: a full dev workspace is not a publishable export (avoids
-# walking huge trees like .cursor/ or node_modules/).
-for top in .cursor .claude; do
-  if [[ -e "$TARGET/$top" ]]; then
-    die "forbidden top-level path ${top}/ — use a clean export tree (e.g. git checkout-index or git archive), not this workspace root (see docs/release/public-agpl-release-workflow.md)"
-  fi
-done
-if [[ -d "$TARGET/docs/private" ]]; then
-  die "docs/private/ must not appear in a public export — remove or empty the directory in the staging tree"
-fi
-
-# --- Option B: paths that stay on private origin/main but must not ship to upstream/main
-if [[ -d "$TARGET/docs/release" ]]; then
-  die "docs/release/ must not appear in a public export (maintainer workflow only — see Option B in docs/release/public-agpl-release-workflow.md)"
-fi
-if [[ -d "$TARGET/docs/_librarian" ]]; then
-  die "docs/_librarian/ must not appear in a public export (internal librarian reports — Option B)"
-fi
-# Archived markdown backlog is under docs/private/archive/backlog/ — covered by the docs/private/ reject above.
-if [[ -f "$TARGET/docs/development/local-ai-devtools.md" ]]; then
-  die "docs/development/local-ai-devtools.md must not appear in a public export (maintainer-only local devtools convention — Option B)"
-fi
 
 # --- No stale *-or-later in machine-readable SPDX headers (line-anchored;
 # avoids prose in docs that mention "AGPL-3.0-or-later" in backticks).
