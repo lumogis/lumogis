@@ -7,8 +7,8 @@
 **Scope:** Describes Lumogis **as of** consolidation after cross-device Lumogis Web Phase 0/1, Admin & Me shell closure, self-hosted architecture remediation Phases 0–5 (household surfaces + capability scaffolding), password-management foundation, admin user import/export UI, and extraction of the **parent** Web Phase 2 (mobile UX) plan.  
 **Authority:** Prefer **closeout reviews**, **this manual §17**, and **ADRs** over stale plan prose when sources disagree.
 
-Last reviewed: 2026-05-14
-Verified against commit: (**`agent/lum-127`** verification pass — see orchestrator/tests + ADR **039**)
+Last reviewed: 2026-05-15
+Verified against commit: **`6f3c5689b1f74e775ba66ea6dc734a77acfd6eba`** (`dev` — LUM-224 web Docker + LUM-250 `admin_users` 204; **ADR 043**)
 
 **Code cross-check (spot audit):** Key claims were traced to `orchestrator/config.py` (`get_tool_catalog_enabled`, `warmup_injection_sanitiser`, `get_tool_chain_cap`), `orchestrator/loop.py` + `orchestrator/services/unified_tools.py` (tool-list merge + teardown, **`ToolChainBudget`**), `orchestrator/services/injection_sanitiser.py` + `orchestrator/data/injection_patterns.yaml` (**`INJECTION_*`**, `<retrieved_chunk>` / **`lumogis_injected_context`** assembly), `orchestrator/services/capability_http.py` (`graph_query_tool_proxy_call` / `{"input": …}`), `orchestrator/services/execution.py` (`tool.execute.capability`), `orchestrator/routes/auth.py` (`REFRESH_COOKIE_PATH = "/api/v1/auth"`), `docker/caddy/Caddyfile` path table, `postgres/migrations/016-per-user-connector-permissions.sql` (per-user `connector_permissions`), `rg` for `from adapters` under `orchestrator/services/` and `orchestrator/routes/` (no matches), `docker-compose.yml` (no mock-capability service), and `clients/lumogis-web` routes under `/me/*` and `/admin/*`. **§19** frames extension work as **five practical families** (plus how lower-level pieces compose); it aligns with `ARCHITECTURE.md` / `CONTRIBUTING.md`, not a parallel architecture.
 
@@ -278,7 +278,7 @@ Lumogis maps code to **five** pillars ([`ARCHITECTURE.md`](../ARCHITECTURE.md)):
 | **Admin** | `/admin/users` (import/export, password reset), `/admin/connector-credentials`, `/admin/connector-permissions`, `/admin/mcp-tokens`, `/admin/audit`, `/admin/diagnostics` |
 
 **Password management** — shipped per [ADR 029](decisions/029-self-hosted-account-password-management.md).  
-**Admin import/export** — inventory + dry-run/real import via `/api/v1/admin/user-imports`; per-user export via `/api/v1/me/export` with `target_user_id`—see [`clients/lumogis-web/README.md`](../clients/lumogis-web/README.md).
+**Admin import/export** — inventory + dry-run/real import via `/api/v1/admin/user-imports`; per-user export via `/api/v1/me/export` with `target_user_id`—see [`clients/lumogis-web/README.md`](../clients/lumogis-web/README.md). Refusal → HTTP semantics (including **413** policy cap vs reserved **507** for host storage exhaustion) are documented in [`docs/guides/per-user-export-format.md`](guides/per-user-export-format.md).
 
 **Legacy admin:** FastAPI **root-mounted** pages (`/dashboard`, `/settings`, `/graph/*`, `/backup`, …) still exist and are linked from older UX; **full replacement** of that SPA by Lumogis Web is **deferred**.
 
@@ -301,7 +301,7 @@ Lumogis maps code to **five** pillars ([`ARCHITECTURE.md`](../ARCHITECTURE.md)):
 - **`/mcp/`** — MCP streamable HTTP (trailing slash matters for some clients).
 - **`/events`** — SSE stream.
 - **Caddy** — Terminates TLS optional; routes API and events to Core; SPA fallback for `/`.
-- **CSRF / Origin** — Cookie-authenticated writes use same-origin assumptions; set `LUMOGIS_PUBLIC_ORIGIN`—`ARCHITECTURE.md`, `.env.example`.
+- **CSRF / Origin** — Cookie-authenticated writes use same-origin assumptions; set `LUMOGIS_PUBLIC_ORIGIN`—`ARCHITECTURE.md`, `.env.example`. In v1, **Bearer**-authenticated writes skip `require_same_origin` by design; narrowing that bypass ships with the `cross_device_lumogis_web` cookie-session programme—see the module docstring in `orchestrator/csrf.py` and [ADR 046](decisions/046-lum-35-fp017-per-user-backup-followups.md).
 - **Refresh cookie** — `httpOnly`, `SameSite=Strict`, path scoped under `/api/v1/auth`.
 
 **Route groups (non-exhaustive):**
@@ -323,6 +323,8 @@ Lumogis maps code to **five** pillars ([`ARCHITECTURE.md`](../ARCHITECTURE.md)):
 
 **Stack:** `docker-compose.yml` — orchestrator, Postgres, Qdrant, Ollama, stack-control, **Caddy**, **lumogis-web**; optional **LibreChat** profile (legacy-compatible chat); optional FalkorDB / premium / GPU / dev overlays.
 
+**`lumogis-web` image build:** `clients/lumogis-web/Dockerfile` uses **`npm ci`** with **`COPY package.json package-lock.json`** (lockfile-pinned install), then copies the OpenAPI snapshot and sources, runs **`npm run codegen`** (after the final **`COPY src`**) and **`npm run build`**. A **`.dockerignore`** keeps generated paths, `node_modules`, and env/test fixtures out of the build context. CI hygiene: **`make web-dockerfile-check`** fails if the Dockerfile drops **`npm ci`** or the lockfile **`COPY`**. GitHub Actions job **`web-docker-build`** in **`.github/workflows/ci.yml`** runs the same **`docker compose build lumogis-web`** on pushes to **`main`/`master`** and on PRs when the path contract matches (otherwise it logs a skip line and exits green so the check can be required without stalling docs-only PRs) — see [ADR 048](decisions/048-lumogis-web-docker-build-ci.md). See [ADR 043](decisions/043-lumogis-web-dockerfile-npm-ci.md).
+
 **Pre-built Core + Web (GHCR):** CI publishes **`ghcr.io/lumogis/lumogis-orchestrator`** and **`ghcr.io/lumogis/lumogis-web`** (amd64/arm64) **from `lumogis/lumogis` (public repo) only** — images reflect verified public AGPL source, not intermediate private development state (LUM-225). Use merge file **`docker-compose.ghcr.yml`** so those two services pull images instead of local **`build:`** — **`COMPOSE_FILE=docker-compose.yml:docker-compose.ghcr.yml`**. Overlay merge requires **Docker Compose v2 / buildx toolchain new enough for `build: !reset null`** so inherited **`build`** is dropped (see **`docker-compose.ghcr.yml`** header comments). After the first workflow push, set each new package visibility to **Public** on GitHub (**Packages → package settings**) so anonymous **`docker pull`** works. Pin tags with **`IMAGE_TAG`** (semver from **`docker/metadata-action`** has **no leading `v`**, e.g. **`IMAGE_TAG=1.2.3`**). Maintainers run **`make verify-public-rc`** on private `main` before `/publish-private-main-to-public`; a push to public `main` then triggers the workflow. Operational records: [ADR 036](decisions/036-docker-image-ci-ghcr.md) (multi-arch + overlay), [ADR 037](decisions/037-ghcr-publish-public-repo-only.md) (trusted source boundary).
 
 **Environment:** Copy `.env.example` → `.env`; set `LUMOGIS_PUBLIC_ORIGIN`, `AUTH_ENABLED`, secrets per docs.
@@ -336,9 +338,14 @@ Lumogis maps code to **five** pillars ([`ARCHITECTURE.md`](../ARCHITECTURE.md)):
 | `make compose-test` | **No host pytest needed** — installs dev deps in container, runs orchestrator tests against mounted tree |
 | `make web-test` | Lumogis Web unit tests (`npm test`) |
 | `make web-build` | Production bundle (`npm run build`) |
-| `make compose-policy-check` | Compose merge policy (**LUM-43**) — validates **`docker-compose.yml`** + **`docker-compose.ghcr.yml`** |
+| `make compose-policy-check` | Compose merge policy (**LUM-43**) — validates **`docker-compose.yml`** + mock overlay + **`docker-compose.ghcr.yml`** (Pass B uses Docker; run via **`make`** so `MOCK_CAPABILITY_SHARED_SECRET` matches CI) |
+| `make compose-policy-check-baseline` | Pass A only on **`docker-compose.yml`** (no adversarial overlay) |
+| `make compose-policy-check-adversarial` | Pass A negative proof — merges **`docker-compose.test-policy-adversarial.yml`** (expect checker exit **1**, inverted to Make success) |
+| `make compose-policy-check-adversarial-envfile` | Same for **`docker-compose.test-policy-adversarial-envfile.yml`** (`env_file` violation). Tracked root fixtures (**LUM-268**); local scratch names match `.gitignore` patterns documented in [ADR 047](decisions/047-compose-policy-adversarial-ci-fixtures.md). |
 | `make mock-capability-test` | Mock capability service pytest |
 | `make web-codegen-check` | Drift check vs live OpenAPI (orchestrator must be up) |
+| `make web-dockerfile-check` | Asserts **`lumogis-web` Dockerfile** keeps **`npm ci`** + lockfile **`COPY`** (LUM-224) |
+| `make web-docker-build` | Same **`docker compose build lumogis-web`** as CI **`web-docker-build`** (LUM-254; requires Docker; from repo root) |
 
 **Why `make compose-test`:** The production orchestrator image does not include pytest; the Makefile installs `requirements-dev.txt` inside a one-off container so CI and contributors without a local venv still get a green unit run.
 
@@ -357,6 +364,7 @@ Lumogis maps code to **five** pillars ([`ARCHITECTURE.md`](../ARCHITECTURE.md)):
 - **Refresh invalidation:** Password change/reset clears refresh **JTI**—stolen cookies short-lived after rotation.
 - **Capability bearer:** Proves Core is allowed to call **your** capability instance; **`X-Lumogis-User`** labels who the action is **for**—capabilities must not treat it as proof of identity.
 - **Internet exposure:** Not the default threat model for v1; reverse-proxy hardening, TLS, rate limits, and **forgot-password** flows are incomplete—treat wide exposure as **extra** hardening work.
+- **Responsible disclosure (public tree):** The policy for reporting **undisclosed** vulnerabilities—private channels, coordinated publication, safe-harbour framing, and credit defaults—is in **`SECURITY.md`** at the repo root and duplicated at **`.github/SECURITY.md`** for GitHub’s Security tab. See [ADR 044](decisions/044-coordinated-vulnerability-disclosure-policy.md).
 
 ---
 
@@ -512,7 +520,7 @@ MCP is **transport**. It exposes a **curated subset** of Core functions to exter
 
 ### 19.8 Links for detailed implementation
 
-- [`CONTRIBUTING.md`](../CONTRIBUTING.md) — dev setup, codegen, adapter walkthrough, plugin how-to  
+- [`CONTRIBUTING.md`](../CONTRIBUTING.md) — dev setup, codegen, adapter walkthrough, plugin how-to, **changelog / PR CI gate** (**§Changelog**)
 - [`ARCHITECTURE.md`](../ARCHITECTURE.md) — pillars, boundaries, routing  
 - [`tool-vocabulary.md`](architecture/tool-vocabulary.md) — tools, capabilities, MCP wording  
 - [`plugin-imports.md`](architecture/plugin-imports.md) — what plugins may import  
@@ -552,7 +560,7 @@ MCP is **transport**. It exposes a **curated subset** of Core functions to exter
 - [`README.md`](../README.md) — install, stack, optional LibreChat profile notes  
 - **[Capabilities](../capabilities.md)** — concise shipped-capability overview for contributors and self-hosters  
 - [`ARCHITECTURE.md`](../ARCHITECTURE.md) — pillars, Caddy routing, MCP, plugins  
-- [`CONTRIBUTING.md`](../CONTRIBUTING.md) — dev setup, `compose-test`, codegen  
+- [`CONTRIBUTING.md`](../CONTRIBUTING.md) — dev setup, `compose-test`, codegen, **`make changelog-check`** path gate (mirrors `.github/workflows/changelog.yml`)
 - [`testing/automated-test-strategy.md`](testing/automated-test-strategy.md) — CI vs integration / web / KG / browser suites  
 - **ADRs:** [005](decisions/005-plugin-boundary.md), [006](decisions/006-ask-do-safety-model.md), [010](decisions/010-ecosystem-plumbing.md), [002](decisions/002-graph-store-falkordb.md), [012](decisions/012-family-lan-multi-user.md), [015](decisions/015-personal-shared-system-memory-scopes.md), [017](decisions/017-mcp-token-user-map.md), [018](decisions/018-per-user-connector-credentials.md), [019](decisions/019-structured-audit-logging.md), [024](decisions/024-per-user-connector-permissions.md), [026](decisions/026-llm-provider-keys-per-user.md), [027](decisions/027-credential_scopes_shared_system.md), [028](decisions/028-self-hosted-extension-architecture-and-household-control-surfaces.md), [029](decisions/029-self-hosted-account-password-management.md), [041](decisions/041-jwt-access-token-revocation-multi-device-sessions.md)
 - [Tool vocabulary](architecture/tool-vocabulary.md)  

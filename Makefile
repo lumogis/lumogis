@@ -20,11 +20,13 @@ PYTHON ?= python3
         sync-vendored test-kg test-kg-image compose-test-kg \
         test-graph-parity \
         demo-seed demo-test demo-ready \
-        web-install web-codegen web-codegen-check web-test web-lint web-build web-dev web-e2e \
+        web-install web-codegen web-codegen-check web-dockerfile-check web-docker-build web-test web-lint web-build web-dev web-e2e \
         test-web-e2e \
         web-e2e-prove web-caddy-headers web-caddy-headers-prove \
         m1-compat-with-retry \
-        auth-sessions-grep-guard
+        auth-sessions-grep-guard \
+        changelog-check \
+        verify-no-telemetry
 
 # ─── User-facing convenience ─────────────────────────────────────────────────
 
@@ -47,9 +49,7 @@ compose-policy-check-baseline:
 	$(PYTHON) scripts/check_compose_policy.py -f docker-compose.yml
 
 # compose-policy-check: mock overlay needs MOCK_CAPABILITY_SHARED_SECRET for `docker compose config`.
-compose-policy-check:
-	MOCK_CAPABILITY_SHARED_SECRET=lumogis-ci-mock-capability-placeholder \
-	  $(PYTHON) scripts/check_compose_policy.py -f docker-compose.yml -f docker-compose.mock-capability.yml
+# Also validates docker-compose.ghcr.yml (CI publish path).
 
 # Expect checker exit 1 (policy violation); make exit 0 means the guard caught the regression.
 compose-policy-check-adversarial:
@@ -72,6 +72,13 @@ compose-policy-check-adversarial-envfile:
 auth-sessions-grep-guard:
 	@$(PYTHON) scripts/check_refresh_token_jti_guard.py
 
+# LUM-193 — optional pre-push mirror of the CI changelog path gate.
+changelog-check:
+	@scripts/check-changelog-touched.sh
+
+verify-no-telemetry:
+	grep -r "posthog\|mixpanel\|amplitude" orchestrator/ && echo "FAIL: analytics library found" && exit 1 || echo "OK: no analytics libraries found"
+
 # Run ruff inside the orchestrator container (no local Python needed).
 # Dev deps (ruff) are installed on the fly; they are not in the production image.
 compose-lint:
@@ -86,6 +93,8 @@ compose-lint:
 compose-policy-check:
 	@python3 -c "import yaml" 2>/dev/null || \
 	  python3 -m pip install -q -r scripts/requirements-compose-policy.txt
+	MOCK_CAPABILITY_SHARED_SECRET=lumogis-ci-mock-capability-placeholder \
+	  $(PYTHON) scripts/check_compose_policy.py -f docker-compose.yml -f docker-compose.mock-capability.yml
 	@python3 scripts/check_compose_policy.py \
 	  --project-directory "$(CURDIR)" \
 	  -f docker-compose.yml \
@@ -95,9 +104,11 @@ compose-policy-check:
 # verify-public-rc: smoke gate — run before /publish-private-main-to-public.
 # verify-public-rc-full: full gate — includes Playwright e2e + optional graph parity.
 #
-# web-codegen-check requires LUMOGIS_OPENAPI_URL (orchestrator must be reachable).
+# web-codegen-check runs scripts.dump_openapi (no running orchestrator).
 # Set VERIFY_PUBLIC_RC_SKIP_WEB_CODEGEN_CHECK=1 to skip (non-default; requires
-# Implementation Log justification — avoids false-red when Core is not running).
+# Implementation Log justification).
+# Set VERIFY_PUBLIC_RC_SKIP_INTEGRATION=1 on verify-public-rc (only) to skip
+# integration-public-rc.sh (dev machines with production stacks); never for publish prep.
 # Set VERIFY_PUBLIC_RC_SKIP_WEB_E2E=1 in full mode to skip Playwright (discouraged).
 # Set LUMOGIS_RC_GRAPH_PARITY=1 in full mode to include test-graph-parity.
 
@@ -112,27 +123,44 @@ m1-compat-with-retry: ## Live FalkorDB compat gate (requires FALKORDB_URL + RUN_
 # private paths). Will fail by design on raw dev/main private checkouts
 # where docs/private/ is tracked.
 verify-public-rc: ## RC gate (smoke) — run before /publish-private-main-to-public
-	@echo "==> verify-public-rc (smoke)"
-	scripts/check-main-hygiene.sh
-	$(MAKE) compose-policy-check
-	$(MAKE) graph-relates-to-merge-policy-check
-	$(MAKE) compose-test
-	@if [ -z "$${VERIFY_PUBLIC_RC_SKIP_WEB_CODEGEN_CHECK:-}" ]; then \
+	@set -e; \
+	echo "==> verify-public-rc (smoke)"; \
+	_qdrant_user_set=0; \
+	[ -n "$${QDRANT_HOST_PORT:-}" ] && _qdrant_user_set=1; \
+	export QDRANT_HOST_PORT="$${QDRANT_HOST_PORT:-$$($(CURDIR)/scripts/integration-public-rc.sh print-qdrant-host-port)}"; \
+	echo "[verify-public-rc] Using QDRANT_HOST_PORT=$$QDRANT_HOST_PORT"; \
+	scripts/check-main-hygiene.sh; \
+	$(MAKE) compose-policy-check; \
+	$(MAKE) graph-relates-to-merge-policy-check; \
+	$(MAKE) compose-test; \
+	if [ -z "$${VERIFY_PUBLIC_RC_SKIP_WEB_CODEGEN_CHECK:-}" ]; then \
 	  $(MAKE) web-codegen-check; \
 	else \
 	  echo "WARN: web-codegen-check skipped (VERIFY_PUBLIC_RC_SKIP_WEB_CODEGEN_CHECK set)"; \
-	fi
-	$(MAKE) web-lint
-	$(MAKE) web-test
-	$(MAKE) web-build
-	scripts/integration-public-rc.sh full-cycle
-	scripts/create-upstream-export-tree.sh
-	scripts/check-public-export.sh /tmp/lumogis-upstream-export
-	@echo "==> verify-public-rc PASSED"
+	fi; \
+	$(MAKE) web-lint; \
+	$(MAKE) web-test; \
+	$(MAKE) web-build; \
+	if [ "$${VERIFY_PUBLIC_RC_SKIP_INTEGRATION:-}" != "1" ] && [ "$$_qdrant_user_set" -eq 0 ]; then \
+	  export QDRANT_HOST_PORT="$$(env -u QDRANT_HOST_PORT $(CURDIR)/scripts/integration-public-rc.sh print-qdrant-host-port)"; \
+	  echo "[verify-public-rc] Using QDRANT_HOST_PORT=$$QDRANT_HOST_PORT (integration stack)"; \
+	fi; \
+	if [ "$${VERIFY_PUBLIC_RC_FORCE_INTEGRATION:-}" = "1" ]; then \
+	  scripts/integration-public-rc.sh full-cycle; \
+	elif [ "$${VERIFY_PUBLIC_RC_SKIP_INTEGRATION:-}" = "1" ]; then \
+	  echo "WARN: integration step skipped (VERIFY_PUBLIC_RC_SKIP_INTEGRATION=1) — only use this on dev machines with live production stacks"; \
+	else \
+	  scripts/integration-public-rc.sh full-cycle; \
+	fi; \
+	scripts/create-upstream-export-tree.sh; \
+	scripts/check-public-export.sh /tmp/lumogis-upstream-export; \
+	echo "==> verify-public-rc PASSED"
 
+# Runs verify-public-rc with VERIFY_PUBLIC_RC_FORCE_INTEGRATION=1 so integration
+# always executes even if VERIFY_PUBLIC_RC_SKIP_INTEGRATION=1 is set in the environment.
 verify-public-rc-full: ## Full RC gate — includes e2e and optional graph parity
 	@echo "==> verify-public-rc-full"
-	$(MAKE) verify-public-rc
+	@VERIFY_PUBLIC_RC_FORCE_INTEGRATION=1 $(MAKE) verify-public-rc
 	@if [ -z "$${VERIFY_PUBLIC_RC_SKIP_WEB_E2E:-}" ]; then \
 	  $(MAKE) web-e2e-prove; \
 	else \
@@ -295,11 +323,24 @@ web-codegen:
 	cd clients/lumogis-web && npm run codegen
 
 # CI gate per parent plan §"Phase 1 Pass 1.1 item 1" — fail if the committed
-# OpenAPI snapshot drifts from the live orchestrator spec. Requires the
-# orchestrator to be reachable at $LUMOGIS_OPENAPI_URL (default
-# http://localhost:8000/openapi.json).
+# OpenAPI snapshot drifts from the orchestrator spec (via scripts.dump_openapi).
+# Ensures a repo-local venv has orchestrator imports (PEP 668–safe); same tree as
+# scripts/integration-public-rc.sh uses optional .venv.
 web-codegen-check:
+	@test -d "$(CURDIR)/.venv" || $(PYTHON) -m venv "$(CURDIR)/.venv"
+	"$(CURDIR)/.venv/bin/pip" install -q -r orchestrator/requirements.txt
 	cd clients/lumogis-web && npm run codegen:check
+
+# LUM-224 — fail if Dockerfile drops lockfile COPY or npm ci (supply-chain regression guard).
+web-dockerfile-check:
+	@grep -qF 'COPY package.json package-lock.json' clients/lumogis-web/Dockerfile \
+	  || (echo "web-dockerfile-check: clients/lumogis-web/Dockerfile must COPY package.json package-lock.json" >&2; exit 1)
+	@grep -qE '^[[:space:]]*RUN[[:space:]]+npm ci([[:space:]]|$$)' clients/lumogis-web/Dockerfile \
+	  || (echo "web-dockerfile-check: clients/lumogis-web/Dockerfile must RUN npm ci" >&2; exit 1)
+
+# LUM-254 — same image build CI exercises (requires Docker; run from repo root).
+web-docker-build:
+	docker compose build lumogis-web
 
 web-test:
 	cd clients/lumogis-web && npm test
@@ -308,7 +349,7 @@ web-lint:
 	cd clients/lumogis-web && npm run lint
 
 web-build:
-	cd clients/lumogis-web && npm run build
+	cd clients/lumogis-web && npm run codegen && npm run build
 
 web-dev:
 	cd clients/lumogis-web && npm run dev

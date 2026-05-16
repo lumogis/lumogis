@@ -20,6 +20,7 @@ from fastapi import APIRouter
 from fastapi import Depends
 from fastapi import HTTPException
 from fastapi import Request
+from fastapi import Response
 from fastapi import status
 from models.auth import SessionListResponse
 from models.auth import SessionRowPublic
@@ -59,9 +60,11 @@ def list_my_sessions(request: Request) -> SessionListResponse:
 @router.delete(
     "/sessions/{session_id}",
     status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
+    response_class=Response,
     dependencies=[Depends(require_same_origin)],
 )
-def delete_my_session(session_id: str, request: Request) -> None:
+def delete_my_session(session_id: str, request: Request) -> Response:
     if not auth_enabled():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -71,14 +74,17 @@ def delete_my_session(session_id: str, request: Request) -> None:
     row = auth_sess.revoke_session_for_user(session_id=session_id, user_id=ctx.user_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post(
     "/logout-all",
     status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
+    response_class=Response,
     dependencies=[Depends(require_same_origin)],
 )
-def logout_all_sessions(request: Request) -> None:
+def logout_all_sessions(request: Request) -> Response:
     if not auth_enabled():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -90,3 +96,4 @@ def logout_all_sessions(request: Request) -> None:
         cascade_actor_user_id=ctx.user_id,
     )
     invalidate_token_version_cache(ctx.user_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

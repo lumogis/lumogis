@@ -62,7 +62,10 @@ REMEDIATION-PLAN.md
 docker-compose.override.yml
 
 # Compose policy test artefacts (local dev only)
-docker-compose.test-policy-adversarial*.yml
+docker-compose.test-policy-adversarial-local*.yml  # LUM-268 — convention; see .cursor/adrs/LUM-268-compose-policy-adversarial-fixture.md
+docker-compose.test-policy-adversarial*.local.yml
+docker-compose.test-policy-*-local*.yml
+docker-compose.test-policy-*.local.yml
 
 lumogis-data/
 .venv-pytest-run/

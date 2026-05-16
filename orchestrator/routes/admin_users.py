@@ -240,9 +240,11 @@ def admin_list_user_sessions(user_id: str) -> SessionAdminListResponse:
 @router.delete(
     "/{user_id}/sessions/{session_id}",
     status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
+    response_class=Response,
     dependencies=[Depends(require_same_origin)],
 )
-def admin_revoke_user_session(user_id: str, session_id: str, request: Request) -> None:
+def admin_revoke_user_session(user_id: str, session_id: str, request: Request) -> Response:
     caller = get_user(request)
     if users_service.get_user_by_id(user_id) is None:
         raise HTTPException(status_code=404, detail="user not found")
@@ -253,6 +255,7 @@ def admin_revoke_user_session(user_id: str, session_id: str, request: Request) -
     )
     if row is None:
         raise HTTPException(status_code=404, detail="not found")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.delete(

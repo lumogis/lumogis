@@ -1,0 +1,68 @@
+# Changelog gate for product-path PRs (LUM-193).
+#
+# Security: keep `pull_request` (not `pull_request_target`) unless reviewed; fork PRs use the
+# default read-only token. Never interpolate `github.event.pull_request.body` directly in `run:`.
+#
+# Checkout: `dangoslen/changelog-enforcer` uses the GitHub API — `actions/checkout` omitted by design.
+#
+# Path list: keep in sync with `scripts/changelog-gate-paths.txt` (local `make changelog-check`).
+# Mock capability subtree is excluded with a negated `paths` entry (`paths-ignore` cannot pair with `paths` on the same event).
+name: Changelog
+
+on:
+  pull_request:
+    branches: [dev, main, master]
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+    paths:
+      - "orchestrator/**"
+      - "clients/**"
+      - "stack-control/**"
+      - "services/**"
+      - "!services/lumogis-mock-capability/**"
+      - "mcp-servers/**"
+      - "docker-compose*.yml"
+      - "postgres/migrations/**"
+      - "scripts/**"
+      - "docker/**"
+      - "config/**"
+      - "branding/**"
+      - "Makefile"
+      - "pyproject.toml"
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: changelog-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  changelog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - id: skip
+        env:
+          PR_BODY: ${{ github.event.pull_request.body || '' }}
+        run: |
+          if printf '%s' "${PR_BODY}" | grep -qiF '[skip changelog]'; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.skip.outputs.skip != 'true'
+        uses: dangoslen/changelog-enforcer@8b5e9dc3121363bb7c0115f8533404d92af382de # v3.7.0
+        with:
+          changeLogPath: CHANGELOG.md
+          skipLabels: Skip-Changelog
+          missingUpdateErrorMessage: >-
+            Update CHANGELOG.md under [Unreleased] for product changes, or use label Skip-Changelog /
+            add [skip changelog] to the PR body. See CONTRIBUTING.md.
+
+  actionlint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rhysd/actionlint@914e7df21a07ef503a81201c76d2b11c789d3fca # v1.7.12

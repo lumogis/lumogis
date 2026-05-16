@@ -93,6 +93,13 @@ Do not invent a new workflow when an existing skill owns the task.
 - `orchestrator/plugins/graph/__pycache__/` is **generated Python cache**.
 - These should **not** be committed unless explicitly intended.
 
+## verify-public-rc environment requirements
+
+- **Docker and UFW:** Docker publishes ports via iptables. On hosts using **ufw**, the default `FORWARD` policy can block container-to-container or published-port traffic until Docker chains are allowed. For a quick non-persistent check: `sudo iptables -I DOCKER-USER -j ACCEPT`. For a durable host fix, add an equivalent allow rule block to **`/etc/ufw/after.rules`** (see UFW + Docker documentation) so it survives `ufw reload`.
+- **`make verify-public-rc`:** Safe on a busy developer machine when you set **`VERIFY_PUBLIC_RC_SKIP_INTEGRATION=1`** (skips `integration-public-rc.sh` with a warning). Use only when a long-lived production-style stack would otherwise conflict; do not use this mode as the final gate before publish.
+- **`make verify-public-rc-full`:** Expects a clean environment — stop conflicting stacks first. Treat this as the full pre-publish gate; integration always runs even if **`VERIFY_PUBLIC_RC_SKIP_INTEGRATION=1`** is set in the environment.
+- **`QDRANT_HOST_PORT`:** Host publish port for Qdrant defaults to **6334** in the main compose file. **`config/test.env.example`** sets **`QDRANT_HOST_PORT=6335`** for the **`lumogis-test`** compose project so the RC stack can run beside a default dev stack.
+
 ## Relationship to skills
 
 - **AGENTS.md** — routing and guardrails only.

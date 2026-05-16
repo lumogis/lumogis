@@ -1,8 +1,13 @@
 name: CI
 
+permissions:
+  contents: read
+
 on:
   pull_request:
     branches: [master, main]
+  push:
+    branches: [main, master]
 
 jobs:
   lint-and-test:
@@ -69,3 +74,41 @@ jobs:
           make compose-policy-check
           make compose-policy-check-adversarial
           make compose-policy-check-adversarial-envfile
+
+  web-docker-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: web-docker-build-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate path-detection script syntax
+        run: bash -n .github/scripts/web-docker-build-paths.sh
+
+      - name: Determine if web Docker build is needed
+        id: paths
+        shell: bash
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
+        run: bash -euo pipefail .github/scripts/web-docker-build-paths.sh
+
+      - name: Bootstrap .env for compose
+        if: steps.paths.outputs.should_build == 'true'
+        run: |
+          test -f .env.example || (echo "web-docker-build: missing .env.example" >&2; exit 1)
+          cp .env.example .env
+
+      - name: Docker compose build lumogis-web
+        if: steps.paths.outputs.should_build == 'true'
+        run: docker compose build lumogis-web
+
+      - name: Skip web Docker build (path contract)
+        if: steps.paths.outputs.should_build != 'true'
+        run: |
+          echo 'SKIP_WEB_DOCKER_BUILD: no paths matched contract'

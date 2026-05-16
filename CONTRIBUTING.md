@@ -118,6 +118,47 @@ Other compose targets: `make compose-lint`, `make compose-test-integration` (see
 
 ---
 
+## Changelog
+
+We follow [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) in [CHANGELOG.md](CHANGELOG.md).
+
+### When you must update the changelog
+
+If your pull request changes **product-facing paths** tracked in [`.github/workflows/changelog.yml`](.github/workflows/changelog.yml), **`CHANGELOG.md` must appear in the PR diff** (typically under **`[Unreleased]`** with **Added** / **Changed** / **Fixed** / **Removed** as appropriate). The same path list lives in [scripts/changelog-gate-paths.txt](scripts/changelog-gate-paths.txt) for local checks—**keep these in sync** when globs change.
+
+PRs that touch only paths outside that filter (for example **`docs/**`** alone or **`.github/`** alone) **do not** run this workflow and have **no** changelog obligation from that gate.
+
+### Bypasses (maintainers)
+
+- GitHub label **`Skip-Changelog`** (see `skipLabels` in the workflow).
+- The literal **`[skip changelog]`** anywhere in the **PR description/body** (case-insensitive), matching CI.
+
+Third-party outages or misconfiguration may block the check until fixed; the same bypasses are the supported escape hatches—document in the PR when you use them.
+
+### Branch protection / required checks
+
+If this workflow is marked **required** in branch protection while it uses **workflow-level `paths:`** filters, **docs-only** (or otherwise filtered) PRs may show **no status** from this job and appear stuck (“waiting for status”). **Do not** mark the changelog check **required** until you add a job-level path filter with an always-reporting success job, or your process explicitly handles that case.
+
+### Fork pull requests
+
+Workflows on forks may show **Expected — Waiting for status** until a maintainer approves the first run on that PR. That is normal GitHub behaviour, not a bug in this gate.
+
+### Public vs private enforcement
+
+The **published** GitHub workflow ships with this repository and may also appear in the **public** export tree, but **identical enforcement on `lumogis/lumogis`** may lag until maintainer work (see Linear **LUM-227** / children of **LUM-193**). Outside contributors should still follow this document; parity is tracked separately.
+
+### Local check (optional)
+
+Before pushing:
+
+```bash
+make changelog-check
+```
+
+Uses [scripts/check-changelog-touched.sh](scripts/check-changelog-touched.sh) (diff vs `origin/dev`, then `origin/main`, then `HEAD~1`). To mimic the **PR-body** skip locally, set **`CHANGELOG_GATE_PR_BODY`** to a string containing **`[skip changelog]`**.
+
+---
+
 ## How to write a new extractor
 
 Extractors are auto-discovered by file extension. Add one file to `adapters/`:
@@ -376,7 +417,7 @@ Describe in the PR body what you ran (`make test`, `make compose-test`, integrat
 
 **For bug reports:** open an Issue with reproduction steps, your OS, and Docker version.
 
-**For security issues:** do not open a public Issue. Email [lumogis@pm.me](mailto:lumogis@pm.me).
+**For security issues:** do not open a public Issue. Email [lumogis@pm.me](mailto:lumogis@pm.me). You may also use GitHub **Private vulnerability reporting** on [lumogis/lumogis](https://github.com/lumogis/lumogis) when it is enabled there.
 
 ---
 

@@ -431,8 +431,6 @@ def _check_mcp_bearer(request: Request) -> JSONResponse | None:
 # /web is the static Lumogis Web SPA shell — it must be reachable so the
 # user can see the login form (the page body contains no secrets; all
 # authenticated work happens in the browser via subsequent fetch calls).
-# /openapi.json is the machine-readable schema (no secrets; Lumogis Web
-# codegen and release gates fetch it from a live Core without a Bearer).
 #
 # Matching is path-segment-safe (see :func:`_path_is_bypassed`):
 # ``/web`` matches ``/web`` and ``/web/anything`` but NOT ``/webhook``.
@@ -445,7 +443,6 @@ _AUTH_BYPASS_PREFIXES: tuple[str, ...] = (
     "/api/v1/auth/logout",
     "/healthz",
     "/web",
-    "/openapi.json",
 )
 
 

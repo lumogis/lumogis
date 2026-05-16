@@ -104,5 +104,3 @@ Telemetry disclosure is tracked for release under **LUM-217**; a dedicated TELEM
 ## Security Design Notes
 
 For themes covered in the initial security review (SQL injection, path traversal, MCP boundary, Ask/Do boundary), see **`docs/LUMOGIS_REFERENCE_MANUAL.md`** and the cited **ADRs** under **`docs/decisions/`**.
-
-→ See [TELEMETRY.md](TELEMETRY.md) for telemetry policy and verification.

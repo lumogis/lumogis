@@ -61,6 +61,9 @@ representative at an online or offline event.
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
 reported to the community leaders responsible for enforcement at
 [lumogis@pm.me](mailto:lumogis@pm.me).
+
+Security vulnerabilities are handled under **[SECURITY.md](SECURITY.md)** (private channels described there). Please do **not** report undisclosed vulnerabilities via public GitHub Issues or by threading them into conduct reports — use the security channels instead.
+
 All complaints will be reviewed and investigated promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the

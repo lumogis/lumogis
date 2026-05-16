@@ -9,19 +9,23 @@
 // Modes:
 //   pnpm codegen              -> regenerate types from snapshot
 //   pnpm codegen --live       -> regenerate types from $LUMOGIS_OPENAPI_URL
-//   pnpm codegen --check      -> compare snapshot to $LUMOGIS_OPENAPI_URL,
-//                                 exit 1 if they drift. Used in CI per parent
-//                                 plan §"Phase 1 Pass 1.1 item 1" — the SPA
-//                                 snapshot must match the shipped spec.
+//   pnpm codegen --check      -> compare snapshot to python -m scripts.dump_openapi
+//                                 (no running server), exit 1 if they drift.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+// openapi.snapshot.json lives under clients/lumogis-web; repo root is three levels up from scripts/.
 const repoRoot = resolve(__dirname, "..");
+const appRoot = resolve(__dirname, "..", "..", "..");
+const orchestratorDir = resolve(appRoot, "orchestrator");
+const venvPython = resolve(appRoot, ".venv", "bin", "python3");
+const pythonExe = process.env.LUMOGIS_OPENAPI_PYTHON || (existsSync(venvPython) ? venvPython : "python3");
 const snapshotPath = resolve(repoRoot, "openapi.snapshot.json");
 const outDir = resolve(repoRoot, "src/api/generated");
 const outFile = resolve(outDir, "openapi.d.ts");
@@ -47,7 +51,7 @@ if (checkMode) {
 const source = useLive ? liveUrl : snapshotPath;
 await mkdir(outDir, { recursive: true });
 
-const result = spawnSync("npx", ["--yes", "openapi-typescript", source, "-o", outFile], {
+const result = spawnSync("npx", ["openapi-typescript", source, "-o", outFile], {
   stdio: "inherit",
   cwd: repoRoot,
 });
@@ -58,31 +62,68 @@ process.exit(result.status ?? 1);
 
 async function runCheck() {
   const snapshot = readFileSync(snapshotPath, "utf-8");
-  let live;
-  try {
-    const res = await fetch(liveUrl);
-    if (!res.ok) {
-      console.error(`codegen --check: live spec fetch failed: HTTP ${res.status}`);
-      process.exit(2);
+  const tmpLive = join(tmpdir(), `lumogis-openapi-live-${process.pid}.json`);
+  const dump = spawnSync(
+    pythonExe,
+    ["-m", "scripts.dump_openapi", "--pretty", "--sort-keys", "--out", tmpLive],
+    {
+      cwd: orchestratorDir,
+      stdio: ["inherit", "inherit", "inherit"],
+    },
+  );
+  if (dump.error || dump.status !== 0) {
+    console.error("codegen --check: dump_openapi failed (see errors above)");
+    try {
+      unlinkSync(tmpLive);
+    } catch {
+      /* ignore */
     }
-    live = await res.text();
-  } catch (err) {
-    console.error(`codegen --check: live spec fetch error: ${err.message ?? err}`);
-    console.error(`Set $LUMOGIS_OPENAPI_URL or start the orchestrator first.`);
     process.exit(2);
   }
 
-  // Normalise whitespace + key order for a stable diff. Both files come from
-  // FastAPI's deterministic OpenAPI generator so canonical re-serialisation
-  // gives a byte-for-byte comparison.
+  let liveRaw;
+  try {
+    liveRaw = readFileSync(tmpLive, "utf-8");
+  } finally {
+    try {
+      unlinkSync(tmpLive);
+    } catch {
+      /* ignore */
+    }
+  }
+
   const a = canonicalise(snapshot);
-  const b = canonicalise(live);
+  const b = canonicalise(liveRaw);
   if (a === b) {
-    console.log("codegen --check: snapshot matches live spec ✓");
+    console.log("codegen --check: snapshot matches orchestrator OpenAPI ✓");
     return;
   }
 
-  console.error("codegen --check: snapshot drifts from live spec");
+  console.error("codegen --check: snapshot drifts from orchestrator OpenAPI");
+  const tmpA = join(tmpdir(), `lumogis-openapi-snap-${process.pid}.json`);
+  const tmpB = join(tmpdir(), `lumogis-openapi-gen-${process.pid}.json`);
+  try {
+    writeFileSync(tmpA, `${JSON.stringify(JSON.parse(a), null, 2)}\n`);
+    writeFileSync(tmpB, `${JSON.stringify(JSON.parse(b), null, 2)}\n`);
+    const diff = spawnSync("diff", ["-u", tmpA, tmpB], { encoding: "utf-8" });
+    if (diff.stdout) {
+      console.error(diff.stdout);
+    }
+    if (diff.stderr) {
+      console.error(diff.stderr);
+    }
+  } finally {
+    try {
+      unlinkSync(tmpA);
+    } catch {
+      /* ignore */
+    }
+    try {
+      unlinkSync(tmpB);
+    } catch {
+      /* ignore */
+    }
+  }
   console.error("Refresh by running:");
   console.error(
     "  cd orchestrator && python -m scripts.dump_openapi --pretty --sort-keys --out ../clients/lumogis-web/openapi.snapshot.json",
@@ -93,9 +134,6 @@ async function runCheck() {
 
 function canonicalise(text) {
   const obj = JSON.parse(text);
-  // Match orchestrator/scripts/dump_openapi.py `_normalise`: committed snapshot
-  // uses a constant version so git-sha churn cannot drift the file; live
-  // `/openapi.json` still exposes the real semver — strip before compare.
   const info = obj.info;
   if (info && typeof info === "object") {
     obj.info = { ...info, version: "snapshot" };

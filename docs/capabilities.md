@@ -56,7 +56,6 @@ Structured memory and extracted entities sit alongside search so chat can draw o
 - Memory uses **personal**, **shared**, and **system** scopes for isolation and household-wide context where configured.
 - Entity extraction stores and links entities through ingestion and session flows.
 - Context assembly applies a **context budget** before model calls so prompts stay bounded.
-- **Ingestion hygiene** runs pattern checks on indexed material, records structured origin metadata on vectors, wraps retrieved fragments in explicit delimiters when assembling chat context, and enforces a configurable ceiling on how many tool calls the model may chain in one turn—reducing prompt-injection and runaway-tool risk from untrusted corpus text. Operators can disable or tune the layer via documented environment variables.
 
 ---
 
@@ -101,7 +100,6 @@ Household auth and connector secrets are centered on Core with encrypted storage
 
 - Accounts use **`admin`** vs **`user`** roles; bootstrap admin creation applies when the database has no users and bootstrap env is set.
 - **`AUTH_ENABLED`** gates interactive auth; JWT access tokens and refresh via httpOnly cookie under **`/api/v1/auth`** implement session rotation.
-- **Multiple signed-in devices** use per-session refresh rows instead of a single refresh slot, so logging in on a second browser or phone does not evict the first by default; **access** tokens carry a server-side **version** epoch so password changes and explicit global sign-out invalidate outstanding access JWTs immediately, not only after their short TTL.
 - Connector credentials are encrypted (including rotation-friendly key handling); saved secrets are not shown again in the UI after save.
 - Credential resolution walks **per-user**, **household**, then **instance-system** tiers where configured; decrypt failures fail closed without silent fallback across tiers.
 - **Connector permissions** (**Ask** / **Do** / blocked) are **per-user**; APIs exist for users to manage their own modes and for admins to manage others; legacy global permission endpoints are deprecated.
@@ -118,7 +116,7 @@ MCP exposes a **curated** subset of Core abilities over streamable HTTP at **`/m
 - Per-user opaque MCP tokens can be minted and revoked; when **`AUTH_ENABLED=true`**, MCP gates expect a JWT or an **`lmcp_…`** token as documented; legacy shared **`MCP_AUTH_TOKEN`** behaviour remains only in **`AUTH_ENABLED=false`** mode as described in policy docs.
 - Disabled users trigger MCP token revocation in the same transactional flow where the adapter supports it; in-flight JWTs remain valid until their TTL as documented.
 - The unified **tool catalog** describes tools and transports (**LLM loop**, **MCP surface**, **catalog-only** observation); **`GET /api/v1/me/tools`** exposes read-model permission labels (**ask** / **do** / **blocked** / **unknown**) without granting rights.
-- **`LUMOGIS_TOOL_CATALOG_ENABLED`** defaults **on** when unset so healthy capability tools merge with valid bearer trust and teardown runs after each request. Set **`LUMOGIS_TOOL_CATALOG_ENABLED=false`** to restore the older behaviour where the loop does not merge out-of-process capability tools.
+- **`LUMOGIS_TOOL_CATALOG_ENABLED`** defaults **on** when unset so healthy capability endpoints can be merged into the loop when bearer trust is valid; set **`LUMOGIS_TOOL_CATALOG_ENABLED=false`** explicitly to keep **only** Core-registered tools in the LLM path. Capability tools merge only with valid bearer trust and healthy endpoints, and teardown runs after each request so capability tools do not leak across turns.
 
 ---
 
@@ -151,7 +149,6 @@ Extensions split between **in-process plugins** and **out-of-process capabilitie
 
 - Chat flows run a **bounded** tool-calling loop with **`run_tool`** execution and connector permission checks (**Ask** vs **Do**).
 - **Actions** carry structured audit through append-only logs; tool execution records capability calls where applicable.
-- **Approved action proposals** are executed through an API that claims work atomically in the database so two clients cannot apply the same **Do** twice; failed or abandoned claims move to a terminal error state rather than silently re-queuing completed side effects.
 - **CapabilityRegistry** discovers optional services and health for bridging tools when catalog integration is enabled.
 - **Hooks** and domain **events** synchronously extend Core and plugins at documented extension points.
 - **Diagnostics** give admins read-only visibility into flags, stores, capabilities, summaries, and baseline readiness signals—operator diagnosis, not automatic remediation.
@@ -168,7 +165,7 @@ COMPOSE_FILE=docker-compose.yml:docker-compose.ghcr.yml docker compose up -d --p
 
 Build-from-source deployment (the default developer flow) remains fully supported via `docker compose up --build`.
 
-- **Qdrant** is reachable inside Compose as **`qdrant:6333`**; the default **host** publish port is **`6334`** (override with **`QDRANT_HOST_PORT`**) so another vector store can keep host **6333** if needed.
+The **`make verify-public-rc`** gate (or the narrower integration script it chains) uses a separate Compose project name and pinned test env for Core so it can run beside a normal developer stack without picking up the wrong orchestrator variables from a local `.env`.
 
 ---
 

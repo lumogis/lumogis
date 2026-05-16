@@ -1,0 +1,17 @@
+# Product paths that require a CHANGELOG.md update when changed in a PR.
+# Keep in sync with `paths:` in `.github/workflows/changelog.yml` (include list only).
+# Lines starting with # and blank lines are ignored.
+
+orchestrator/**
+clients/**
+stack-control/**
+services/**
+mcp-servers/**
+docker-compose*.yml
+postgres/migrations/**
+scripts/**
+docker/**
+config/**
+branding/**
+Makefile
+pyproject.toml

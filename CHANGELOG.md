@@ -9,6 +9,28 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+### Changed
+
+### Fixed
+
+---
+
+## [0.4.1] — 2026-05-16
+
+### Added
+
+- **PR changelog gate** on pull requests that touch product paths: GitHub Actions enforces a `CHANGELOG.md` update unless `Skip-Changelog` or `[skip changelog]` appears in the PR body; see `CONTRIBUTING.md`, `.github/workflows/changelog.yml`, and local `make changelog-check`.
+
+### Security
+
+- **Graph statistics visibility:** regression coverage for operator graph statistics is consolidated into the knowledge-graph service test suite with explicit query capture; redundant Core-side test scaffolding is removed from the default layout.
+
+### Fixed
+
+- **Release verification (Compose):** the overlay used for `make verify-public-rc` replaces the orchestrator `env_file` list so the disposable `lumogis-test` stack uses **`config/test.env.example` only** and does not inherit stray variables from a developer root `.env` via Compose merge semantics. The RC integration helper starts Qdrant before dependent services and verifies it is on the project bridge network, avoiding intermittent “vector store unreachable” failures when another Compose stack runs on the same host.
+
 ---
 
 ## [0.4.0] — 2026-05-15

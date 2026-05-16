@@ -45,29 +45,33 @@ recorded before this change was deployed.
 
 ## Graph stats: FalkorDB node count hardcoded to `user_id = "default"` (M4)
 
-**Status:** Open
-**Introduced:** M4 (`GET /graph/stats` in `orchestrator/plugins/graph/viz_routes.py`)
+**Status:** Resolved (historical) — **2026-05-16**, **LUM-23** / **FP-042** closure.
 
-### Background
+**Introduced:** M4 (stats path originally described against Core; canonical implementation now lives in the KG service.)
 
-The stats endpoint counts graph nodes with a Cypher filter scoped to
-`user_id = "default"`. That matches today’s single-user posture and is
-consistent with other graph paths that assume one logical tenant.
+### Background (historical)
 
-Postgres-backed fields on the same response (e.g. top entities by
-`mention_count`) already use the authenticated `user_id` from `get_user()`.
+Earlier revisions scoped FalkorDB node counts for `GET /graph/stats` with a
+literal `user_id = "default"` predicate. That matched a single-tenant posture
+but was incorrect for authenticated multi-user / household-visible reads.
 
-### Debt
+### Resolution (as shipped)
 
-When multi-tenant isolation lands (Phase 6), the FalkorDB node count (and any
-other graph-wide aggregates that assume a single tenant) must use the same
-`user_id` as the rest of the request, not a literal `"default"`, so tenants
-cannot infer global graph size and counts stay private per tenant.
+- **Canonical implementation:** `services/lumogis-graph/graph/viz_routes.py`
+  (`get_stats`) — **`visible_cypher_fragment(UserContext)`** +
+  **`visible_filter`**; Cypher binds **`$vis_me`** from the authenticated
+  `user_id`; **no** literal `user_id = 'default'` predicate in the stats path.
+- **Evidence:** `services/lumogis-graph/tests/test_graph_stats_privacy.py`
+  (regression suite).
+- **Note:** `orchestrator/plugins/graph/viz_routes.py` is a **shim**
+  re-export; prior DEBT references to it as the live stats implementation
+  were stale.
 
-### Resolution (when done)
+### Follow-ups (separate issues)
 
-- Parameterise the stats Cypher with `$uid` from auth-derived `user_id`.
-- Revisit any similar literals in viz or admin graph endpoints added before Phase 6.
+- **`GET /graph/health`** and other admin aggregates in
+  `graph_admin_routes.py` may still use tenant literals under an admin token —
+  track under **LUM-40** (child issue), not this row.
 
 ---
 

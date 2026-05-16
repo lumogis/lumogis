@@ -133,6 +133,26 @@ Refusals always carry a structured detail body of the form
 `{"refusal_reason": "...", "payload": {...}}` so operators can grep on
 `refusal_reason` without parsing free text.
 
+## Policy cap vs host storage exhaustion (413 vs 507)
+
+**413 Content Too Large** is returned for refusal reason `archive_too_large`
+when the incoming archive exceeds the configured policy cap
+(`_MAX_ARCHIVE_BYTES` in the orchestrator) before streaming persistence
+completes. That refusal is a **policy** boundary — it is **not** the same
+semantics as the host running out of disk.
+
+**507 Insufficient Storage** is **reserved** for genuine host-level write
+failures while materialising an export or import artifact (for example
+`OSError(errno.ENOSPC)` during ZIP writes). Current builds may still surface
+generic 5xx on those paths; this guide does **not** claim they emit 507 today.
+
+> **Reserved (not emitted in current builds):** a future implementation may
+> map `ENOSPC`-class failures to **507** with structured logging and tests.
+> Until that ships, clients must not assume 507 on storage exhaustion.
+
+For the deprecated admin NDJSON export and its **410 Gone** successor
+pointer, see **## Legacy `GET /api/v1/admin/export` — `410 Gone`**.
+
 ## Audit lifecycle (refused vs failed)
 
 The import service distinguishes two failure-shaped outcomes that

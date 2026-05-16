@@ -31,6 +31,10 @@ docker-compose.premium.yml
 
 docker-compose.parity-premium.yml
 
+docker-compose.public-rc-stack.yml
+
+docker-compose.parity.yml
+
 orchestrator/tests/premium/
 
 

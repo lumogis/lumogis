@@ -34,6 +34,14 @@ Bypass conditions (intentional, narrow)
 4. ``AUTH_ENABLED=false`` (single-user dev) — there are no real
    sessions to forge.
 
+Per-user backup and admin POST surfaces mount ``Depends(require_same_origin)``
+(ADR 016). Un-skipping deferred CSRF blocking behaviour for
+Bearer-authenticated calls on those routes is explicitly deferred to the
+``cross_device_lumogis_web`` programme (cookie-session phase). Until then,
+bypass #3 remains the intentional v1 contract; do not remove it without
+updating ADR 016 and the paired regression tests that pin Bearer skip plus
+non-Bearer enforcement in ``orchestrator/tests/test_user_export_routes.py``.
+
 Bypass condition (4) is consulted lazily so this module does not import
 ``auth`` at module load time (avoids circular imports — ``auth.py``
 already imports nothing from ``orchestrator``-level modules besides

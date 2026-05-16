@@ -1,0 +1,11 @@
+# LUM-43 adversarial fixture — intentional policy violation.
+# Not for `docker compose up` or production use.
+# Do not copy snippets into a runtime compose file.
+#
+# These overlays ship in the public AGPL tree; some secret scanners may flag the
+# environment key name POSTGRES_PASSWORD even though the value is a non-secret marker.
+
+services:
+  test-policy-violator-env:
+    environment:
+      POSTGRES_PASSWORD: LUMOGIS_TEST_POLICY_REJECTED_VALUE

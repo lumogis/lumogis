@@ -1,0 +1,9 @@
+# LUM-43 adversarial fixture — intentional policy violation.
+# Not for `docker compose up` or production use.
+# Do not copy snippets into a runtime compose file.
+#
+# Pass A checks raw YAML only; the env_file path is not resolved at check time.
+
+services:
+  test-policy-violator-envfile:
+    env_file: [.env]
