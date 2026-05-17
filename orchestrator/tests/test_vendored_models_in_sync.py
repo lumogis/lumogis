@@ -19,6 +19,7 @@ import pytest
 
 # orchestrator/tests/ -> repo root is parents[2]
 _REPO_ROOT = Path(__file__).resolve().parents[2]
+_GRAPH_VENDOR_MODELS = _REPO_ROOT / "services" / "lumogis-graph" / "models"
 
 
 def _expected_vendored_text(canonical: Path) -> str:
@@ -44,8 +45,15 @@ def _expected_vendored_text(canonical: Path) -> str:
     ids=["webhook", "capability"],
 )
 def test_vendored_file_matches_canonical_model(stem: str) -> None:
+    """No-op skip on AGPL-shaped trees where ``lumogis-graph`` is omitted from export."""
+    if not _GRAPH_VENDOR_MODELS.is_dir():
+        pytest.skip(
+            "services/lumogis-graph/models not present "
+            "(omitted from some checkouts/export trees by policy)."
+        )
+
     canonical = _REPO_ROOT / "orchestrator" / "models" / f"{stem}.py"
-    vendored = _REPO_ROOT / "services" / "lumogis-graph" / "models" / f"{stem}.py"
+    vendored = _GRAPH_VENDOR_MODELS / f"{stem}.py"
     assert canonical.is_file(), f"missing {canonical}"
     assert vendored.is_file(), f"missing {vendored}"
     expected = _expected_vendored_text(canonical)
