@@ -1,0 +1,221 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Lumogis
+#
+# LUM-276 — post-publish `gh attestation verify` for images built by publish-image.yml.
+#
+# Trigger: workflow `name: Publish image` (see publish-image.yml). Do not match on filename alone.
+#
+# Detective only — do not add this workflow as a branch-protection required check.
+
+name: Attestation verify
+
+on:
+  workflow_run:
+    workflows: ["Publish image"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      publish_run_id:
+        description: Debug — succeeded GitHub Actions run id of Publish image
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || (
+        github.event.workflow_run.conclusion == 'success'
+        && github.event.workflow_run.head_repository.full_name == github.repository
+      )
+    permissions:
+      attestations: read
+      contents: read
+      issues: write
+      packages: read
+    steps:
+      - name: Resolve run metadata
+        id: runmeta
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            rid="${{ inputs.publish_run_id }}"
+            sha="$(gh run view "${rid}" --repo lumogis/lumogis --json headSha -q .headSha)"
+            url="$(gh run view "${rid}" --repo lumogis/lumogis --json url -q .url)"
+            {
+              echo "run_id=${rid}"
+              echo "head_sha=${sha}"
+              echo "html_url=${url}"
+            } >> "$GITHUB_OUTPUT"
+          else
+            {
+              echo "run_id=${{ github.event.workflow_run.id }}"
+              echo "head_sha=${{ github.event.workflow_run.head_sha }}"
+              echo "html_url=${{ github.event.workflow_run.html_url }}"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: List jobs and verify attestations
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          set -o pipefail
+          RUN_ID="${{ steps.runmeta.outputs.run_id }}"
+          HEAD_SHA="${{ steps.runmeta.outputs.head_sha }}"
+          HTML_URL="${{ steps.runmeta.outputs.html_url }}"
+
+          iss_first() {
+            gh issue list -R lumogis/lumogis --label attestation-failure --state open \
+              --search "in:body ${HEAD_SHA}" --json number --jq '.[0].number // empty' 2>/dev/null || true
+          }
+
+          upsert_issue() {
+            local title="$1"
+            local body_file="$2"
+            gh label create attestation-failure --force 2>/dev/null || true
+            local num
+            num="$(iss_first)"
+            if [[ -n "${num:-}" ]]; then
+              gh issue comment "${num}" -R lumogis/lumogis -F "${body_file}"
+            else
+              gh issue create -R lumogis/lumogis --label attestation-failure --title "${title}" -F "${body_file}"
+            fi
+          }
+
+          if ! gh api "repos/lumogis/lumogis/contents/.github/workflows/attestation-guard.yml?ref=main" --silent 2>/dev/null; then
+            body="$(mktemp)"
+            {
+              echo "head_sha: ${HEAD_SHA}"
+              echo
+              echo "**Guard workflow missing on \`main\`:** \`.github/workflows/attestation-guard.yml\` returns 404 from Contents API."
+              echo
+              echo "**Triggering workflow run:** ${HTML_URL}"
+              echo
+              echo "LUM-276 detective backstop — restore \`attestation-guard.yml\` on \`main\` immediately."
+            } > "${body}"
+            upsert_issue "Guard workflow deleted — attestation-guard.yml missing on main" "${body}"
+            rm -f "${body}"
+            exit 1
+          fi
+
+          fetch_jobs() {
+            local attempt errf
+            errf="$(mktemp)"
+            for attempt in 1 2; do
+              if gh api "repos/lumogis/lumogis/actions/runs/${RUN_ID}/jobs" --paginate 2>"${errf}" \
+                | jq -s 'map(.jobs // []) | add // []' > /tmp/jobs_flat.json; then
+                rm -f "${errf}"
+                return 0
+              fi
+              if [[ ${attempt} -eq 1 ]]; then
+                sleep 30
+              fi
+            done
+            echo "::error::Failed to list jobs for run ${RUN_ID} after retry (infrastructure — not opening issue)"
+            cat "${errf}" >&2 || true
+            rm -f "${errf}"
+            return 1
+          }
+
+          report_contract_failure() {
+            local title="$1"
+            local msg="$2"
+            body="$(mktemp)"
+            {
+              echo "head_sha: ${HEAD_SHA}"
+              echo
+              echo "${msg}"
+              echo
+              echo "**workflow_run:** ${HTML_URL}"
+            } > "${body}"
+            upsert_issue "${title}" "${body}"
+            rm -f "${body}"
+            exit 1
+          }
+
+          if ! fetch_jobs; then
+            exit 1
+          fi
+
+          digest_for() {
+            local jname="$1"
+            jq -r --arg n "${jname}" '.[] | select(.name == $n) | .outputs.image_digest // empty' /tmp/jobs_flat.json | head -1
+          }
+
+          ORCH="$(digest_for publish-orchestrator)"
+          WEB="$(digest_for publish-lumogis-web)"
+
+          if [[ -z "${ORCH}" ]]; then
+            report_contract_failure "Attestation verify failed: missing digest for publish-orchestrator @ ${HEAD_SHA:0:7}" \
+              "**Contract failure:** no \`outputs.image_digest\` for job \`publish-orchestrator\` on run ${RUN_ID}."
+          fi
+          if [[ -z "${WEB}" ]]; then
+            report_contract_failure "Attestation verify failed: missing digest for publish-lumogis-web @ ${HEAD_SHA:0:7}" \
+              "**Contract failure:** no \`outputs.image_digest\` for job \`publish-lumogis-web\` on run ${RUN_ID}."
+          fi
+
+          validate_digest() {
+            local d="$1"
+            local label="$2"
+            if [[ ! "${d}" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+              report_contract_failure "Attestation verify failed: bad digest format @ ${HEAD_SHA:0:7}" \
+                "**Contract failure:** ${label} digest \`${d}\` does not match \`^sha256:[a-f0-9]{64}$\`"
+            fi
+          }
+
+          validate_digest "${ORCH}" "publish-orchestrator"
+          validate_digest "${WEB}" "publish-lumogis-web"
+
+          VERIFY_ERR="$(mktemp)"
+          FAIL=0
+          FAIL_LINES=""
+          if ! gh attestation verify \
+            "oci://ghcr.io/lumogis/lumogis-orchestrator@${ORCH}" \
+            --repo lumogis/lumogis \
+            --predicate-type https://slsa.dev/provenance/v1 2>"${VERIFY_ERR}"; then
+            FAIL=1
+            FAIL_LINES+="lumogis-orchestrator: $(cat "${VERIFY_ERR}")"$'\n'
+          fi
+          : > "${VERIFY_ERR}"
+          if ! gh attestation verify \
+            "oci://ghcr.io/lumogis/lumogis-web@${WEB}" \
+            --repo lumogis/lumogis \
+            --predicate-type https://slsa.dev/provenance/v1 2>"${VERIFY_ERR}"; then
+            FAIL=1
+            FAIL_LINES+="lumogis-web: $(cat "${VERIFY_ERR}")"$'\n'
+          fi
+          rm -f "${VERIFY_ERR}"
+
+          if [[ "${FAIL}" -ne 0 ]]; then
+            body="$(mktemp)"
+            {
+              echo "head_sha: ${HEAD_SHA}"
+              echo
+              echo "**Publish run:** ${HTML_URL}"
+              echo
+              echo "**Digests (OCI index):**"
+              echo "- lumogis-orchestrator: \`${ORCH}\`"
+              echo "- lumogis-web: \`${WEB}\`"
+              echo
+              echo "**Failures:**"
+              printf '%s\n' "${FAIL_LINES}"
+              echo
+              echo "**Reproducer (plan canonical):**"
+              echo "\`\`\`bash"
+              echo "gh attestation verify \"oci://ghcr.io/lumogis/lumogis-orchestrator@${ORCH}\" --repo lumogis/lumogis --predicate-type https://slsa.dev/provenance/v1"
+              echo "gh attestation verify \"oci://ghcr.io/lumogis/lumogis-web@${WEB}\" --repo lumogis/lumogis --predicate-type https://slsa.dev/provenance/v1"
+              echo "\`\`\`"
+            } > "${body}"
+            upsert_issue "Attestation verify failed: orchestrator, web @ ${HEAD_SHA:0:7}" "${body}"
+            rm -f "${body}"
+            exit 1
+          fi
+
+          echo "All attestations verified for run ${RUN_ID}"
