@@ -1,0 +1,5 @@
+# Default owner for all files
+* @lumogis
+
+# Workflows are a supply-chain target — require maintainer review on all changes
+.github/workflows/ @lumogis
