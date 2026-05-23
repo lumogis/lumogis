@@ -403,6 +403,8 @@ No code changes to lumogis are required. The PR modifies only `COMMUNITY-PLUGINS
 
 Maintainers review PRs. We aim for a first response within **48 hours**.
 
+All changes to `.github/workflows/` require **maintainer review**, enforced via [`.github/CODEOWNERS`](.github/CODEOWNERS). Branch protection on `main` requires approvals and review from code owners. **Do not merge workflow changes without explicit maintainer approval.**
+
 **Pushing to the public GitHub repo:** follow **`docs/release/public-agpl-release-workflow.md`** so only the export-shaped tree is published.
 
 **PRs must:**
