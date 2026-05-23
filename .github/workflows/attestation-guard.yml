@@ -2,6 +2,8 @@
 # Copyright (C) 2026 Lumogis
 #
 # LUM-276 — preventive guard: actionlint + yq structural checks on publish-image.yml.
+# LUM-324 — run on all pull_request events; full guard only when .github/workflows/**
+#           changes; guard-skip reports the required "guard" check otherwise.
 #
 # SECURITY: Never use pull_request_target in this workflow — it would run untrusted
 # PR head code with elevated token exposure. Fork PRs must stay on pull_request.
@@ -12,19 +14,54 @@ name: Attestation guard
 
 on:
   pull_request:
-    paths:
-      - '.github/workflows/**'
   push:
-    branches: [main]
+    branches:
+      - main
     paths:
       - '.github/workflows/**'
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  detect-workflow-paths:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      workflows: ${{ steps.paths.outputs.changed }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+      - name: Detect .github/workflows path changes
+        id: paths
+        run: |
+          set -euo pipefail
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.head.sha }}"
+          if git diff --name-only "$base" "$head" | grep -qE '^\.github/workflows/'; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  guard-skip:
+    name: guard
+    needs: detect-workflow-paths
+    if: github.event_name == 'pull_request' && needs.detect-workflow-paths.outputs.workflows != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No workflow paths changed — attestation guard skipped."
+
   guard:
+    needs: detect-workflow-paths
+    if: |
+      github.event_name != 'pull_request' ||
+      needs.detect-workflow-paths.outputs.workflows == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
