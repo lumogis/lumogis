@@ -37,9 +37,7 @@ def test_validate_outbound_blocks_metadata_ipv4_with_resolver():
         return ["169.254.169.254"]
 
     with pytest.raises(ValueError, match="169.254"):
-        validate_outbound_connector_base_url(
-            "http://metadata.example/", resolve_host=_res
-        )
+        validate_outbound_connector_base_url("http://metadata.example/", resolve_host=_res)
 
 
 def test_validate_outbound_allows_private_when_flag_true(monkeypatch):

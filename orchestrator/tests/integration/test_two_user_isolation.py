@@ -441,9 +441,7 @@ class _IsolationStore:
             and "where user_id = %s and source_id = %s::uuid" in q
         ):
             user_id, source_id, external_kind, external_id = p
-            row = self.external_documents.get(
-                (user_id, str(source_id), external_kind, external_id)
-            )
+            row = self.external_documents.get((user_id, str(source_id), external_kind, external_id))
             if row is None:
                 return None
             return {
@@ -1559,8 +1557,7 @@ def test_two_users_have_independent_paperless_ingest(
     alice_ids = {d["id"] for d in alice_chunks}
     bob_ids = {d["id"] for d in bob_chunks}
     assert alice_ids.isdisjoint(bob_ids), (
-        f"DATA LEAK: Alice and Bob share paperless Qdrant point ids: "
-        f"{alice_ids & bob_ids!r}"
+        f"DATA LEAK: Alice and Bob share paperless Qdrant point ids: {alice_ids & bob_ids!r}"
     )
 
     expected_alice_pid = external_document_chunk_point_id(

@@ -262,9 +262,7 @@ class FakeUsersStore:
         if q.startswith("select id from auth_sessions where user_id ="):
             uid = str(p[0])
             return [
-                {"id": sid}
-                for sid, srow in self.auth_sessions.items()
-                if srow["user_id"] == uid
+                {"id": sid} for sid, srow in self.auth_sessions.items() if srow["user_id"] == uid
             ]
 
         now = datetime.now(timezone.utc)

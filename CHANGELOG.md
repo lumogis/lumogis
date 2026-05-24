@@ -11,6 +11,14 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.5.2] — 2026-05-24
+
+### Fixed
+
+- **Public CI lint:** orchestrator **`ruff format`** pass so the published **`lint-and-test`** job’s format check exits cleanly on GitHub Actions (no runtime behaviour change).
+
+---
+
 ## [0.5.1] — 2026-05-24
 
 ### Fixed

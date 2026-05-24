@@ -333,9 +333,7 @@ def _inject_context(
         config.get_auto_rag_max_tokens(),
         int(doc_fraction * est_window),
     )
-    doc_hits = retrieve_document_context(
-        question, user_id, max_tokens=documents_slot_tokens
-    )
+    doc_hits = retrieve_document_context(question, user_id, max_tokens=documents_slot_tokens)
     for hit in doc_hits:
         stripped = hit.chunk_text.strip()
         if not stripped:
@@ -400,9 +398,7 @@ def _inject_context(
 
     sess_frags, sess_hints = _fit_plaintext_bundle(sess_frags, sess_hints, session_budget)
     doc_frags, doc_hints = _fit_plaintext_bundle(doc_frags, doc_hints, documents_budget)
-    graph_frags, graph_hints = _fit_plaintext_bundle(
-        graph_frags, graph_hints, entities_budget
-    )
+    graph_frags, graph_hints = _fit_plaintext_bundle(graph_frags, graph_hints, entities_budget)
     fragments_plain = sess_frags + doc_frags + graph_frags
     origin_hints = sess_hints + doc_hints + graph_hints
 

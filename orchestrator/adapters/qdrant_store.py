@@ -330,9 +330,7 @@ class QdrantStore:
     def _should_branch_to_filter(branch: dict) -> Filter:
         """One arm of a top-level ``should`` list (nested ``must`` or flat clause)."""
         if "must" in branch:
-            inner = [
-                QdrantStore._field_condition_from_clause(c) for c in branch["must"]
-            ]
+            inner = [QdrantStore._field_condition_from_clause(c) for c in branch["must"]]
             return Filter(must=inner)
         return Filter(must=[QdrantStore._field_condition_from_clause(branch)])
 

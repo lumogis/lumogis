@@ -67,9 +67,7 @@ def _stack_down_ps() -> str:
 def _config_port_8000() -> str:
     doc = {
         "services": {
-            "orchestrator": {
-                "ports": [{"published": "8000", "target": 8000, "protocol": "tcp"}]
-            }
+            "orchestrator": {"ports": [{"published": "8000", "target": 8000, "protocol": "tcp"}]}
         }
     }
     return json.dumps(doc) + "\n"
@@ -78,9 +76,7 @@ def _config_port_8000() -> str:
 def _config_with_falkor() -> str:
     doc = {
         "services": {
-            "orchestrator": {
-                "ports": [{"published": "8000", "target": 8000, "protocol": "tcp"}]
-            },
+            "orchestrator": {"ports": [{"published": "8000", "target": 8000, "protocol": "tcp"}]},
             "falkordb": {"image": "falkordb/falkordb:test"},
         }
     }

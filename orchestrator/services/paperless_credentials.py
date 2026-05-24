@@ -40,9 +40,7 @@ def load_connection(user_id: str) -> PaperlessConnection:
         return PaperlessConnection(base_url=base_url, token=token)
 
     if auth_enabled():
-        raise ccs.ConnectorNotConfigured(
-            f"no paperless credential row for user_id={user_id!r}"
-        )
+        raise ccs.ConnectorNotConfigured(f"no paperless credential row for user_id={user_id!r}")
 
     env_url = os.environ.get("PAPERLESS_BASE_URL", "")
     if not env_url:
