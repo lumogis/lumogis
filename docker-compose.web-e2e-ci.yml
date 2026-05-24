@@ -1,0 +1,35 @@
+# LUM-60 — slim GitHub Actions stack: no Ollama, no public-rc graph sidecars.
+# Merge last: docker compose -f docker-compose.yml -f docker-compose.web-e2e-ci.yml ...
+# Avoid `docker-compose.test.yml` `include:` + service override — breaks on GHA Compose
+# (`services.orchestrator conflicts with imported resource`). Pin orchestrator test env here.
+#
+# Bootstrap + Playwright smoke credentials must be supplied by the host environment
+# (CI secrets) so they match; see CONTRIBUTING.md / web-e2e workflow.
+# Email must satisfy LoginRequest / EmailStr validation (example.com OK; .test rejected).
+services:
+  orchestrator:
+    env_file:
+      - config/test.env.example
+    depends_on: !override
+      qdrant:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      stack-control:
+        condition: service_started
+    environment:
+      COMPOSE_FILE: docker-compose.yml:docker-compose.web-e2e-ci.yml
+      GRAPH_MODE: disabled
+      LUMOGIS_BOOTSTRAP_ADMIN_EMAIL: ${LUMOGIS_BOOTSTRAP_ADMIN_EMAIL}
+      LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD: ${LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD}
+      LUMOGIS_WEB_SMOKE_EMAIL: ${LUMOGIS_WEB_SMOKE_EMAIL}
+      LUMOGIS_WEB_SMOKE_PASSWORD: ${LUMOGIS_WEB_SMOKE_PASSWORD}
+
+  stack-control:
+    environment:
+      COMPOSE_FILE: docker-compose.yml:docker-compose.web-e2e-ci.yml
+
+  # Host psql for onboarding_dismiss_persists reset (Playwright on GHA runner).
+  postgres:
+    ports:
+      - "127.0.0.1:5432:5432"

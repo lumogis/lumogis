@@ -1,0 +1,2 @@
+# LUM-190 — pinned Bandit for CI + `make bandit-check` (quarterly bump review).
+bandit==1.9.4

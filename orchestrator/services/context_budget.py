@@ -5,6 +5,11 @@
 Provides model-aware token budgets so LLM calls never exceed the
 model's practical context limit. Each model in config/models.yaml
 has a context_budget field; models without it fall back to 2048.
+
+Named fractional slots (``allocate`` reserves) include ``entities`` for
+CONTEXT_BUILDING / ``[Graph]`` corpus lines — distinct from ``plugin_context``
+for other hook subscribers — and ``documents`` for LUM-308 auto-RAG chat
+injection (session → documents → graph assembly order).
 """
 
 import logging

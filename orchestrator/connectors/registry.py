@@ -112,6 +112,26 @@ canonical multi-user poll cadence is per-source ``sources.poll_interval``.
 """
 
 
+PAPERLESS = "paperless"
+"""paperless-ngx document archive connector (LUM-281 v0.1).
+
+Per-user payload shape (sealed JSON; ``base_url`` and ``token`` required):
+
+    {
+        "base_url": "http://paperless:8000",
+        "token": "<paperless API token>"
+    }
+
+``base_url`` is the paperless REST API root (not a document list URL).
+Outbound URL policy is enforced by
+:func:`services.outbound_http_url.validate_outbound_connector_base_url`.
+Resolution lives in :mod:`services.paperless_credentials`. Under
+``AUTH_ENABLED=true`` a missing row is ``connector_not_configured``;
+``PAPERLESS_BASE_URL`` and ``PAPERLESS_TOKEN`` env vars are only honored
+when ``AUTH_ENABLED=false`` for ``user_id="default"``.
+"""
+
+
 # Cloud LLM vendor keys (rollout step 4 from ADR 018; plan
 # llm_provider_keys_per_user_migration). One registered connector per
 # distinct ``api_key_env`` value in ``config/models.yaml``. Payload shape
@@ -188,6 +208,10 @@ CONNECTORS: dict[str, ConnectorSpec] = {
     CALDAV: ConnectorSpec(
         id=CALDAV,
         description="CalDAV calendar source — per-user base URL / username / password.",
+    ),
+    PAPERLESS: ConnectorSpec(
+        id=PAPERLESS,
+        description="paperless-ngx archive — per-user API base URL and token (read-only ingest).",
     ),
     LLM_ANTHROPIC: ConnectorSpec(
         id=LLM_ANTHROPIC,

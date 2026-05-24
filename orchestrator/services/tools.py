@@ -111,12 +111,26 @@ def _tool_body_from_chunk(chunk_text: str, metadata: dict | None, *, user_id: st
     return wrap_retrieved_chunk(body_plain, resolved, injection_flagged=flagged)
 
 
-def _search_files(input_: dict, *, user_id: str) -> str:
+def _search_files(
+    input_: dict,
+    *,
+    user_id: str,
+    auto_rag_point_ids: set[str] | None = None,
+) -> str:
     query = input_.get("query", "")
     try:
         from services.search import semantic_search
 
         results = semantic_search(query, limit=5, user_id=user_id)
+        filtered = []
+        for r in results:
+            if (
+                auto_rag_point_ids is not None
+                and r.point_id is not None
+                and r.point_id in auto_rag_point_ids
+            ):
+                continue
+            filtered.append(r)
         return json.dumps(
             {
                 "results": [
@@ -125,9 +139,9 @@ def _search_files(input_: dict, *, user_id: str) -> str:
                         "text": _tool_body_from_chunk(r.chunk_text, r.metadata, user_id=user_id),
                         "score": r.score,
                     }
-                    for r in results
+                    for r in filtered
                 ],
-                "count": len(results),
+                "count": len(filtered),
             }
         )
     except Exception:
@@ -395,7 +409,13 @@ def _check_permission(connector: str, action_type: str, is_write: bool, *, user_
     return check_permission(connector, action_type, is_write, user_id=user_id)
 
 
-def run_tool(name: str, input_: dict, *, user_id: str) -> str:
+def run_tool(
+    name: str,
+    input_: dict,
+    *,
+    user_id: str,
+    auto_rag_point_ids: set[str] | None = None,
+) -> str:
     """Look up ToolSpec, check permission, execute handler.
 
     ``user_id`` is keyword-only and **required** in Phase 3 — tool calls
@@ -432,6 +452,8 @@ def run_tool(name: str, input_: dict, *, user_id: str) -> str:
         )
 
     try:
+        if spec.name == "search_files" and auto_rag_point_ids is not None:
+            return spec.handler(input_, user_id=user_id, auto_rag_point_ids=auto_rag_point_ids)
         return spec.handler(input_, user_id=user_id)
     except TypeError as exc:
         if "user_id" in str(exc):

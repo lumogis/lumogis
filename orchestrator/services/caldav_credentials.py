@@ -54,6 +54,7 @@ from auth import auth_enabled
 from connectors.registry import CALDAV
 
 from services import connector_credentials as ccs
+from services.outbound_http_url import validate_outbound_connector_base_url
 
 _PAYLOAD_KEYS: tuple[str, str, str] = ("base_url", "username", "password")
 """Wire contract for the encrypted CalDAV payload (v1).
@@ -167,5 +168,7 @@ def _validate_payload(payload: Any) -> tuple[str, str, str]:
     # the validator to second-guess otherwise-valid hostnames.
     if not parsed.netloc.strip():
         raise ValueError("caldav base_url must include a non-empty host")
+
+    validate_outbound_connector_base_url(values["base_url"])
 
     return values["base_url"], values["username"], values["password"]

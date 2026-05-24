@@ -3141,6 +3141,42 @@
         "title": "MeNotificationsSummary",
         "type": "object"
       },
+      "MeOnboardingPatchRequest": {
+        "additionalProperties": false,
+        "description": "Body for ``PATCH /api/v1/me/onboarding`` — v1 only records completion.",
+        "properties": {
+          "completed": {
+            "const": true,
+            "title": "Completed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "completed"
+        ],
+        "title": "MeOnboardingPatchRequest",
+        "type": "object"
+      },
+      "MeOnboardingResponse": {
+        "description": "First-run onboarding completion state for the authenticated user.",
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "UTC instant when onboarding was completed; null means show the gate.",
+            "title": "Completed At"
+          }
+        },
+        "title": "MeOnboardingResponse",
+        "type": "object"
+      },
       "MePasswordChangeRequest": {
         "description": "Body for ``POST /api/v1/me/password`` — policy enforced again in :mod:`services.users`.",
         "properties": {
@@ -4164,6 +4200,18 @@
             ],
             "default": 3600,
             "title": "Poll Interval"
+          },
+          "source_type": {
+            "anyOf": [
+              {
+                "const": "paperless",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Type"
           },
           "url": {
             "title": "Url",
@@ -8093,6 +8141,68 @@
           }
         },
         "summary": "Notification channels status (read-only)",
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/onboarding": {
+      "get": {
+        "description": "Return whether the caller has completed first-run onboarding (LUM-165).\n\n``AUTH_ENABLED=false`` always returns a synthetic ``completed_at`` (UTC now)\nso single-user dev never shows the modal. ``Cache-Control: no-store`` on\nboth auth modes for this route family.",
+        "operationId": "get_my_onboarding_api_v1_me_onboarding_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeOnboardingResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "First-run onboarding completion state",
+        "tags": [
+          "me"
+        ]
+      },
+      "patch": {
+        "description": "Idempotently record onboarding completion (LUM-165).\n\n``AUTH_ENABLED=false`` returns a synthetic ``completed_at`` without touching\nPostgres. When auth is on, the persisted column is set at most once.",
+        "operationId": "patch_my_onboarding_api_v1_me_onboarding_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MeOnboardingPatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeOnboardingResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Mark first-run onboarding complete",
         "tags": [
           "me"
         ]

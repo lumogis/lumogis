@@ -63,8 +63,9 @@ Structured memory and extracted entities sit alongside search so chat can draw o
 
 Surfaces for quick capture and optional speech input complement chat and ingest.
 
-- **`/capture` (QuickCapture)** uses bounded client-side staging (IndexedDB) with explicit sync steps rather than silent server writes from the queue alone.
+- **Quick capture** uses bounded client-side staging (IndexedDB) with explicit sync steps rather than silent server writes from the queue alone.
 - **Authenticated capture ledger APIs** under **`/api/v1/captures`** create, list, update, and delete capture rows for the signed-in user; support attachments and capture-linked transcription requests; and expose indexing submission so captures can enter the ingest pipeline. Pending captures stay editable; indexed captures block destructive edits enforced by the API.
+- **paperless-ngx polling ingest (self-hosted):** operators can register read-only **paperless** poll sources that fetch new documents over REST, deduplicate via **`external_documents`**, and index through the normal chunk → embed → Qdrant path with per-user encrypted credentials.
 - **Semantic search** over captures versus ordinary **`documents`** remains uneven—treat capture-oriented discovery as still catching up to library search.
 - **Push-to-talk** transcription via **`POST /api/v1/voice/transcribe`** accepts short audio uploads and returns plain text for an editable field when speech-to-text is enabled (`STT_BACKEND`); **off** by default. A lightweight **`fake_stt`** backend supports tests and scaffolding; production-style deployments use Whisper-class STT in-process or via an optional HTTP sidecar enabled through Compose.
 
@@ -77,6 +78,7 @@ Enable STT only when you accept extra CPU/RAM (and optional GPU) cost; use the S
 The first-party SPA is the primary household UI: chat, search, approvals, and Me/Admin settings on the same origin as Core via Caddy.
 
 - **Me**: profile (including password change), connectors, connector permissions, LLM providers, MCP tokens, notifications, export, tools/capabilities overview.
+- **First-run onboarding:** a skippable orientation modal per user; completion is stored on the user record and can be dismissed without blocking core chat.
 - **Admin**: users (import/export, password reset), connector credentials (including household and instance-system tiers where exposed), per-user connector permissions, MCP tokens, audit, diagnostics.
 - Password change for self-service and admin-led reset are implemented; email-based forgot-password is not part of the shipped surface.
 - Older FastAPI-hosted HTML pages (dashboard, settings, graph views, backup, and similar) still exist for compatibility; full replacement by Lumogis Web is not claimed as finished.
@@ -91,6 +93,7 @@ Retrieval combines structured metadata with dense vectors (and optional hybrid /
 
 - Qdrant-backed search applies **user_id** filtering on queries.
 - Composed prompts sent to a **cloud LLM** (if configured) include retrieval excerpts and bounded context—not the entire local corpus; connectors still reach their own external APIs when used.
+- **Auto-RAG (opt-in via `LUMOGIS_AUTO_RAG_ENABLED`):** before each OpenAI-style **`POST /v1/chat/completions`** turn, Core may pull a small slate of relevant **`documents`** chunks (same visibility rules as **`search_files`**), optionally rerank with the configured BGE cross-encoder, wrap them through the injection sanitiser when enabled, and prepend them to the assembled context so the model does not need to call **`search_files`** first. **`search_files`** remains available and dedupes chunks already injected in the same request (matched by Qdrant point id). Operators should expect extra latency (embed + vector search + optional rerank) when auto-RAG is on; the first reranker batch after a cold process start can take seconds while the model loads. **Privacy:** injected **`document:{file_path}`** attribute tokens and chunk text follow the same exposure class as explicit **`search_files`** results—they are sent to whichever LLM you configure for that chat.
 
 ---
 
@@ -116,7 +119,7 @@ MCP exposes a **curated** subset of Core abilities over streamable HTTP at **`/m
 - Per-user opaque MCP tokens can be minted and revoked; when **`AUTH_ENABLED=true`**, MCP gates expect a JWT or an **`lmcp_…`** token as documented; legacy shared **`MCP_AUTH_TOKEN`** behaviour remains only in **`AUTH_ENABLED=false`** mode as described in policy docs.
 - Disabled users trigger MCP token revocation in the same transactional flow where the adapter supports it; in-flight JWTs remain valid until their TTL as documented.
 - The unified **tool catalog** describes tools and transports (**LLM loop**, **MCP surface**, **catalog-only** observation); **`GET /api/v1/me/tools`** exposes read-model permission labels (**ask** / **do** / **blocked** / **unknown**) without granting rights.
-- **`LUMOGIS_TOOL_CATALOG_ENABLED`** defaults **on** when unset so healthy capability endpoints can be merged into the loop when bearer trust is valid; set **`LUMOGIS_TOOL_CATALOG_ENABLED=false`** explicitly to keep **only** Core-registered tools in the LLM path. Capability tools merge only with valid bearer trust and healthy endpoints, and teardown runs after each request so capability tools do not leak across turns.
+- **`LUMOGIS_TOOL_CATALOG_ENABLED`** defaults **on** when unset; when **off** (explicit **`false`** / **`0`** / **`no`**), the LLM loop does not merge healthy out-of-process capability tools. When **on**, capability tools merge only with valid bearer trust and healthy endpoints, and teardown runs after each request so capability tools do not leak across turns.
 
 ---
 
@@ -163,9 +166,26 @@ Pre-built multi-platform images (amd64/arm64) are published to `ghcr.io/lumogis/
 COMPOSE_FILE=docker-compose.yml:docker-compose.ghcr.yml docker compose up -d --pull always
 ```
 
-Build-from-source deployment (the default developer flow) remains fully supported via `docker compose up --build`.
+**First-run operators:** step-by-step published-image path, smoke checks, and common failures — **[`docs/deployment/quickstart.md`](deployment/quickstart.md)**.
+
+**Off-LAN access:** Tailscale-first remote access patterns — **[`docs/deployment/remote-access.md`](deployment/remote-access.md)**.
+
+**Health checks:** **`make doctor`** reports Compose service status, config grammar, optional HTTP probes, and an optional JSON contract for automation (**`scripts/doctor/README.md`**).
+
+### Verifying image provenance
 
 The **`make verify-public-rc`** gate (or the narrower integration script it chains) uses a separate Compose project name and pinned test env for Core so it can run beside a normal developer stack without picking up the wrong orchestrator variables from a local `.env`.
+
+After pulling an image, confirm build provenance against the digest you resolved (digest pins are recommended; tags can move):
+
+```bash
+gh attestation verify oci://ghcr.io/lumogis/lumogis-orchestrator@sha256:<digest> -R lumogis/lumogis
+gh attestation verify oci://ghcr.io/lumogis/lumogis-web@sha256:<digest> -R lumogis/lumogis
+```
+
+For convenience you can substitute a tag for the `@sha256:…` suffix (for example `@v0.4.0`); prefer digests when you need a stable verifier subject. Advanced consumers may also inspect in-manifest BuildKit provenance with **`cosign`** or **`docker buildx imagetools`**; this section focuses on **`gh attestation verify`**.
+
+Build-from-source deployment (the default developer flow) remains fully supported via `docker compose up --build`.
 
 ---
 

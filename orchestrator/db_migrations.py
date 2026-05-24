@@ -59,6 +59,19 @@ for human readers cross-referencing plans/ADRs):
   021 user-connector-credentials delivery pause  (`delivery_paused` +
                      reason/detail/at timestamps on pause from ntfy
                      upstream 410; cleared on credential PUT — LUM-39)
+  022 action-proposals-claim  (atomic `approved`→`executing` claim path for
+                     the action proposal queue — LUM-123; see ADR 040)
+  023 auth-sessions-and-token-version  (browser/device refresh sessions
+                     table + `users.token_version` — LUM-29; see ADR 041)
+  024 sessions-user-updated-at-index  (composite `idx_sessions_user_updated_at`
+                     on `sessions (user_id, updated_at DESC)` for
+                     `recent_sessions` / recency reads — LUM-209)
+  025 user-onboarding-completed-at  (nullable ``users.onboarding_completed_at``;
+                     first-run onboarding gate for Lumogis Web — LUM-165)
+
+  Lexical ordering applies **all** ``024-*.sql`` files before ``025-*.sql``;
+  two ``024-*`` prefixes already coexist (``024-paperless-external-documents.sql``
+  sorts before ``024-sessions-user-updated-at-index.sql``).
 
 The 013 chunk also wires `db_default_user_remap.py` from
 `docker-entrypoint.sh` immediately after this runner — that step is NOT a

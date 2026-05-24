@@ -25,6 +25,7 @@ from fastapi.responses import JSONResponse
 from fastapi.responses import StreamingResponse
 from loop import ask
 from loop import ask_stream
+from models.memory import DocumentContextHit
 from models.stream import StreamEvent
 from pydantic import BaseModel
 from services.connector_credentials import ConnectorNotConfigured
@@ -255,11 +256,36 @@ def _fit_plaintext_bundle(
     return fr, h
 
 
-def _inject_context(question: str, history: list[dict], model: str, user_id: str) -> list[dict]:
+def _resolved_document_origin(hit: DocumentContextHit) -> ResolvedOrigin:
+    from datetime import datetime
+    from datetime import timezone
+
+    iso_stamp = hit.ingested or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    scope_val = hit.scope if hit.scope in ("personal", "shared", "system") else "personal"
+    token = sanitize_attribute_source_token(f"document:{hit.file_path}")
+    return {
+        "trusted": False,
+        "scope": scope_val,
+        "source": token,
+        "session_id": None,
+        "ingested": iso_stamp,
+        "pattern_hits": [],
+    }
+
+
+def _inject_context(
+    question: str,
+    history: list[dict],
+    model: str,
+    user_id: str,
+    *,
+    auto_rag_point_ids: set[str] | None = None,
+) -> list[dict]:
     """Retrieve session memory / graph snippets, annotate corpus, trim history."""
     from datetime import datetime
     from datetime import timezone
 
+    from services.auto_rag import retrieve_document_context
     from services.memory import retrieve_context
 
     def _resolved_session_origin(hit_scope: str, session_sid: str) -> ResolvedOrigin:
@@ -281,8 +307,10 @@ def _inject_context(question: str, history: list[dict], model: str, user_id: str
         {
             "system": 0.10,
             "session_context": 0.075,
-            "plugin_context": 0.05,
-            "history": 0.65,
+            "entities": 0.05,
+            "plugin_context": 0.02,
+            "history": 0.58,
+            "documents": 0.05,
             "response": 0.125,
         },
     )
@@ -299,7 +327,42 @@ def _inject_context(question: str, history: list[dict], model: str, user_id: str
 
     n_session = len(fragments_plain)
 
-    hooks.fire(Event.CONTEXT_BUILDING, query=question, context_fragments=fragments_plain)
+    est_window = budget
+    doc_fraction = 0.05
+    documents_slot_tokens = min(
+        config.get_auto_rag_max_tokens(),
+        int(doc_fraction * est_window),
+    )
+    doc_hits = retrieve_document_context(
+        question, user_id, max_tokens=documents_slot_tokens
+    )
+    for hit in doc_hits:
+        stripped = hit.chunk_text.strip()
+        if not stripped:
+            continue
+        if auto_rag_point_ids is not None and hit.point_id:
+            auto_rag_point_ids.add(hit.point_id)
+        fragments_plain.append(stripped)
+        origin_hints.append(_resolved_document_origin(hit))
+
+    n_doc = len(fragments_plain) - n_session
+
+    documents_budget = budget_plan.get("documents")
+    if n_doc > 0 and documents_budget > 0:
+        per_line = max(8, documents_budget // n_doc)
+        for i in range(n_session, n_session + n_doc):
+            fragments_plain[i] = truncate_text(fragments_plain[i], per_line)
+
+    # Core ↔ KG default: never cap HTTP /context below the configured entity budget
+    # (bounded by ContextRequest.max_fragments le=20).
+    _max_ctx_fragments = min(config.get_context_entity_budget(), 20)
+
+    hooks.fire(
+        Event.CONTEXT_BUILDING,
+        query=question,
+        context_fragments=fragments_plain,
+        user_id=user_id,
+    )
 
     while len(origin_hints) < len(fragments_plain):
         origin_hints.append(None)
@@ -320,23 +383,28 @@ def _inject_context(question: str, history: list[dict], model: str, user_id: str
             graph_fragments = get_context_sync(
                 query=question,
                 user_id=user_id,
-                max_fragments=3,
+                max_fragments=_max_ctx_fragments,
             )
             for frag_line in graph_fragments:
                 fragments_plain.append(frag_line)
                 origin_hints.append(None)
 
     session_budget = budget_plan.get("session_context")
-    plugin_budget = budget_plan.get("plugin_context")
+    entities_budget = budget_plan.get("entities")
     sess_frags = fragments_plain[:n_session]
     sess_hints = origin_hints[:n_session]
-    graph_frags = fragments_plain[n_session:]
-    graph_hints = origin_hints[n_session:]
+    doc_frags = fragments_plain[n_session : n_session + n_doc]
+    doc_hints = origin_hints[n_session : n_session + n_doc]
+    graph_frags = fragments_plain[n_session + n_doc :]
+    graph_hints = origin_hints[n_session + n_doc :]
 
     sess_frags, sess_hints = _fit_plaintext_bundle(sess_frags, sess_hints, session_budget)
-    graph_frags, graph_hints = _fit_plaintext_bundle(graph_frags, graph_hints, plugin_budget)
-    fragments_plain = sess_frags + graph_frags
-    origin_hints = sess_hints + graph_hints
+    doc_frags, doc_hints = _fit_plaintext_bundle(doc_frags, doc_hints, documents_budget)
+    graph_frags, graph_hints = _fit_plaintext_bundle(
+        graph_frags, graph_hints, entities_budget
+    )
+    fragments_plain = sess_frags + doc_frags + graph_frags
+    origin_hints = sess_hints + doc_hints + graph_hints
 
     history_budget = budget_plan.get("history")
     trimmed_history = truncate_messages(history, max_tokens=history_budget)
@@ -365,7 +433,13 @@ def _inject_context(question: str, history: list[dict], model: str, user_id: str
         return [context_msg, ack_msg] + trimmed_history
 
     joined_plain = "\n\n".join(fragments_plain)
-    pooled_budget = max(96, budget_plan.get("session_context") + budget_plan.get("plugin_context"))
+    pooled_budget = max(
+        96,
+        budget_plan.get("session_context")
+        + budget_plan.get("plugin_context")
+        + budget_plan.get("entities")
+        + budget_plan.get("documents"),
+    )
     joined_plain = truncate_text(joined_plain, max_tokens=pooled_budget)
     context_msg = {
         "role": "user",
@@ -422,7 +496,10 @@ def chat_completions(body: ChatCompletionsRequest, request: Request) -> Any:
         history.append({"role": m.role, "content": text})
     use_tools = config.get_model_config(body.model).get("tools", False)
 
-    history = _inject_context(question, history, body.model, user_id)
+    auto_rag_point_ids: set[str] = set()
+    history = _inject_context(
+        question, history, body.model, user_id, auto_rag_point_ids=auto_rag_point_ids
+    )
 
     if body.stream:
         # Synchronous credential pre-flight — see plan §Modified files
@@ -436,8 +513,10 @@ def chat_completions(body: ChatCompletionsRequest, request: Request) -> Any:
         try:
             config.get_llm_provider(body.model, user_id=user_id)
         except ConnectorNotConfigured:
+            auto_rag_point_ids.clear()
             return _connector_not_configured_response(body.model)
         except CredentialUnavailable:
+            auto_rag_point_ids.clear()
             return _credential_unavailable_response(body.model)
         except Exception:
             _log.exception(
@@ -445,6 +524,7 @@ def chat_completions(body: ChatCompletionsRequest, request: Request) -> Any:
                 body.model,
                 user_id,
             )
+            auto_rag_point_ids.clear()
             return _internal_credential_error_response(body.model)
 
         events = ask_stream(
@@ -453,13 +533,21 @@ def chat_completions(body: ChatCompletionsRequest, request: Request) -> Any:
             model=body.model,
             use_tools=use_tools,
             user_id=user_id,
+            auto_rag_point_ids=auto_rag_point_ids,
         )
+
+        def _stream_body() -> Generator[str, None, None]:
+            try:
+                yield from stream_completion(
+                    events,
+                    body.model,
+                    prepend_loading_note=should_prepend_local_loading_note(body.model),
+                )
+            finally:
+                auto_rag_point_ids.clear()
+
         return StreamingResponse(
-            stream_completion(
-                events,
-                body.model,
-                prepend_loading_note=should_prepend_local_loading_note(body.model),
-            ),
+            _stream_body(),
             media_type="text/event-stream",
         )
 
@@ -470,6 +558,7 @@ def chat_completions(body: ChatCompletionsRequest, request: Request) -> Any:
             model=body.model,
             use_tools=use_tools,
             user_id=user_id,
+            auto_rag_point_ids=auto_rag_point_ids,
         )
     except ConnectorNotConfigured:
         return _connector_not_configured_response(body.model)
@@ -482,6 +571,8 @@ def chat_completions(body: ChatCompletionsRequest, request: Request) -> Any:
             user_id,
         )
         return _internal_credential_error_response(body.model)
+    finally:
+        auto_rag_point_ids.clear()
 
     return {
         "id": "chatcmpl-lumogis",

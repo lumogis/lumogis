@@ -4,8 +4,8 @@
 
 | Version | Supported |
 |---|---|
-| 0.3.x (current) | Yes |
-| < 0.3.0 | No |
+| 0.4.x (current) | Yes |
+| <= 0.3.x | No |
 
 ## Reporting a Vulnerability
 
@@ -91,7 +91,7 @@ In scope:
 - Authentication and permission boundaries
 - `clients/lumogis-web/` — Lumogis Web SPA surface
 - `docker/caddy/Caddyfile` — edge / reverse-proxy configuration we ship
-- **GitHub Actions workflows, release automation, or registry-integrity concerns** affecting this repository are **accepted** through the **same private channels** above; **hard supply-chain guarantees** mature on **LUM-227** / **LUM-228** timelines.
+- **GitHub Actions workflows, release automation, or registry-integrity concerns** affecting this repository are **accepted** through the **same private channels** above. **Published** **`ghcr.io/lumogis/lumogis-orchestrator`** and **`ghcr.io/lumogis/lumogis-web`** images built from the public **`lumogis/lumogis`** default branch or release tags carry **GitHub-hosted SLSA Level 2 build-provenance attestations** verifiable with **`gh attestation verify`** — see **`docs/capabilities.md`** (**Verifying image provenance**). **Automated regression guards** (actionlint + structural checks and post-publish **`gh attestation verify`**) live in the public repo: **[`attestation-guard.yml`](https://github.com/lumogis/lumogis/blob/main/.github/workflows/attestation-guard.yml)** and **[`attestation-verify.yml`](https://github.com/lumogis/lumogis/blob/main/.github/workflows/attestation-verify.yml)** on **`lumogis/lumogis`** (LUM-276). **CODEOWNERS / maintainer review** for workflow changes remains an **in-flight governance** track under **LUM-227** until that issue closes; attestations improve **detectability** of supply-chain tampering but do not replace review policy.
 
 Out of scope:
 

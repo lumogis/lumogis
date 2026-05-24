@@ -62,10 +62,12 @@ def semantic_search(
         for r in raw:
             candidates.append(
                 {
+                    "id": r["id"],
                     "text": r["payload"].get("text", ""),
                     "file_path": r["payload"].get("file_path", ""),
                     "score": r["score"],
                     "payload": r["payload"],
+                    "score_space": r.get("score_space", "cosine"),
                 }
             )
         reranked = reranker.rerank(query, candidates, limit)
@@ -75,6 +77,8 @@ def semantic_search(
                 score=c.get("score", 0.0),
                 chunk_text=c.get("text", ""),
                 metadata=c.get("payload", {}),
+                point_id=str(c.get("id")) if c.get("id") is not None else None,
+                rerank_score=c.get("rerank_score"),
             )
             for c in reranked
         ]
@@ -85,6 +89,8 @@ def semantic_search(
             score=r["score"],
             chunk_text=r["payload"].get("text", ""),
             metadata=r["payload"],
+            point_id=str(r["id"]) if r.get("id") is not None else None,
+            rerank_score=None,
         )
         for r in raw[:limit]
     ]

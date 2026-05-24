@@ -46,6 +46,7 @@ from datetime import datetime
 from datetime import timezone
 
 import pytest
+import uuid
 from fastapi import APIRouter
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
@@ -72,6 +73,8 @@ class _ResolutionStore:
         self.tokens: dict[str, dict] = {}
         self.audit: list[dict] = []
         self.verify_calls: int = 0
+        self.users_tv: dict[str, int] = {}
+        self.auth_sessions_rows: dict[tuple[str, str], dict] = {}
 
     def ping(self) -> bool:
         return True
@@ -120,6 +123,15 @@ class _ResolutionStore:
             (tid,) = p
             row = self.tokens.get(tid)
             return dict(row) if row else None
+        if "select token_version from users where id =" in q:
+            uid = str(p[0])
+            return {"token_version": int(self.users_tv.get(uid, 1))}
+        if "select revoked_at from auth_sessions where id =" in q and len(p) == 2:
+            sid, uid = str(p[0]), str(p[1])
+            row = self.auth_sessions_rows.get((sid, uid))
+            if row is None:
+                return None
+            return {"revoked_at": row["revoked_at"]}
         if q.startswith("insert into audit_log"):
             row_id = len(self.audit) + 1
             self.audit.append(
@@ -143,15 +155,18 @@ class _ResolutionStore:
 
 @pytest.fixture
 def store(monkeypatch):
+    import auth as auth_mod
     import config as _config
     from services import mcp_tokens
 
+    auth_mod._SID_REVOCATION_CACHE._data.clear()
     s = _ResolutionStore()
     _config._instances["metadata_store"] = s
     mcp_tokens._LAST_STAMP_CACHE.clear()
     yield s
     _config._instances.pop("metadata_store", None)
     mcp_tokens._LAST_STAMP_CACHE.clear()
+    auth_mod._SID_REVOCATION_CACHE._data.clear()
 
 
 @pytest.fixture
@@ -220,6 +235,17 @@ def _mint_jwt(user_id: str, role: str = "user") -> str:
     from auth import mint_access_token
 
     return mint_access_token(user_id=user_id, role=role)
+
+
+def _mint_jwt_with_sid(user_id: str, *, sid: str, token_version: int, role: str = "user") -> str:
+    from auth import mint_access_token
+
+    return mint_access_token(
+        user_id=user_id,
+        role=role,
+        session_id=sid,
+        token_version=token_version,
+    )
 
 
 def _mint_lmcp(user_id: str, label: str = "k") -> str:
@@ -450,3 +476,24 @@ def test_jwt_branch_wins_before_legacy_compare_in_multi_user(
     # And the lmcp_… cache MUST be empty — JWT path doesn't populate it.
     assert body["cached_user_id"] is None
     assert body["cached_token_id"] is None
+
+
+def test_mcp_bearer_jwt_revoked_sid_returns_401_when_sid_gate_enabled(
+    store,
+    auth_env,
+    mini_app,
+    monkeypatch,
+):
+    """LUM-243: MCP middleware runs ``jwt_revocation_failure_reason`` before opaque fallback."""
+    monkeypatch.setenv("LUMOGIS_REQUIRE_SID_REVOCATION_CHECK", "true")
+
+    sid = uuid.uuid4().hex
+    store.users_tv["alice"] = 1
+    store.auth_sessions_rows[(sid, "alice")] = {"revoked_at": datetime.now(timezone.utc)}
+
+    token = _mint_jwt_with_sid("alice", sid=sid, token_version=1)
+    monkeypatch.setenv("MCP_AUTH_TOKEN", token)
+
+    client = TestClient(mini_app)
+    resp = client.get("/mcp/probe", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 401

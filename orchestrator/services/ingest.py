@@ -11,6 +11,8 @@ import logging
 import os
 import re
 import time
+import unicodedata
+from collections.abc import Callable
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
@@ -25,6 +27,7 @@ from models.ingest import IngestStats
 from services.injection_sanitiser import sanitise_at_ingest
 from services.injection_sanitiser import sanitize_attribute_source_token
 from services.point_ids import document_chunk_point_id
+from services.point_ids import external_document_chunk_point_id
 from visibility import visible_filter
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
@@ -142,6 +145,171 @@ def chunk_text(text: str) -> list[str]:
     return chunks
 
 
+def _ingest_chunked_text(
+    *,
+    user_id: str,
+    logical_path: str,
+    file_type: str,
+    text: str,
+    chunks: list[str],
+    point_id_for_chunk: Callable[[int], str],
+) -> tuple[int, int]:
+    """Sanitise, embed, and upsert chunks. Returns (chunk_count_written, drops_blocked_high)."""
+    embedder = config.get_embedder()
+    vs = config.get_vector_store()
+    scanner = config.get_injection_scanner()
+
+    section_headers_all = _extract_section_headers(text, chunks)
+    sanitized_rows: list[tuple[int, str, dict]] = []
+    drops_blocked_high = 0
+
+    for i, chunk in enumerate(chunks):
+        outcome = sanitise_at_ingest(chunk, scanner=scanner, skip_if_empty=True)
+        if outcome["blocked_high"]:
+            drops_blocked_high += 1
+            doc_id = point_id_for_chunk(i)
+            try:
+                vs.delete(collection="documents", id=doc_id)
+            except Exception:
+                _log.warning(
+                    "ingest_blocked_high_delete_failed doc_id=%r file_path=%r user=%r",
+                    doc_id,
+                    logical_path,
+                    user_id,
+                    exc_info=True,
+                )
+            _log.warning(
+                (
+                    "ingest_blocked_high user_id=%s file_path=%s chunk_index=%s "
+                    "pattern_hits=%s severity=%s"
+                ),
+                user_id,
+                logical_path,
+                i,
+                outcome["pattern_hits"],
+                outcome["max_severity"],
+            )
+            hooks.fire_background(
+                Event.INJECTION_FLAGGED,
+                user_id=user_id,
+                source="ingest_pipeline",
+                file_path=logical_path,
+                chunk_index=i,
+                severity=outcome["max_severity"],
+                action=os.environ.get("INJECTION_ACTION", "wrap"),
+                pattern_hits=outcome["pattern_hits"],
+                sanitised_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                stage="ingest",
+            )
+            continue
+
+        if outcome["injection_flagged"]:
+            severity = outcome["max_severity"]
+            if severity == "high":
+                lvl = logging.WARNING
+            else:
+                lvl = logging.INFO
+            _log.log(
+                lvl,
+                "inject_flag_at_ingest user_id=%s file_path=%s chunk_index=%s pattern_hits=%s",
+                user_id,
+                logical_path,
+                i,
+                outcome["pattern_hits"],
+            )
+            hooks.fire_background(
+                Event.INJECTION_FLAGGED,
+                user_id=user_id,
+                source="ingest_pipeline",
+                file_path=logical_path,
+                chunk_index=i,
+                severity=severity,
+                action=os.environ.get("INJECTION_ACTION", "wrap"),
+                pattern_hits=outcome["pattern_hits"],
+                sanitised_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                stage="ingest",
+            )
+
+        sanitized_text = outcome["text"]
+        iso_ingested = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        safe_source = sanitize_attribute_source_token(str(logical_path))
+
+        payload_origin: dict = {
+            "trusted": False,
+            "scope": "personal",
+            "source": safe_source,
+            "ingested": iso_ingested,
+            "pattern_hits": list(outcome["pattern_hits"]),
+            "injection_flagged": bool(outcome["injection_flagged"]),
+            "pre_wrapped": False,
+        }
+
+        sanitized_rows.append((i, sanitized_text, payload_origin))
+
+    if sanitized_rows:
+        vectors = embedder.embed_batch([t for _, t, __ in sanitized_rows])
+    else:
+        vectors = []
+
+    chunk_count_written = 0
+    for (idx, sanitized_text, origin_meta), vec in zip(sanitized_rows, vectors):
+        doc_id = point_id_for_chunk(idx)
+        payload: dict = {
+            "file_path": logical_path,
+            "chunk_index": idx,
+            "text": sanitized_text,
+            "file_type": file_type,
+            "user_id": user_id,
+            "scope": "personal",
+        }
+        if config.is_injection_sanitiser_enabled():
+            payload["origin"] = origin_meta
+        sec = section_headers_all[idx]
+        if sec:
+            payload["section_header"] = sec
+        vs.upsert(
+            collection="documents",
+            id=doc_id,
+            vector=vec,
+            payload=payload,
+        )
+        chunk_count_written += 1
+
+    return chunk_count_written, drops_blocked_high
+
+
+def _emit_document_ingested_and_entities(
+    *,
+    logical_path: str,
+    chunk_count_written: int,
+    user_id: str,
+    text: str,
+    ingestion_source_kind: str = "filesystem",
+) -> None:
+    hooks.fire_background(
+        Event.DOCUMENT_INGESTED,
+        file_path=logical_path,
+        chunk_count=chunk_count_written,
+        user_id=user_id,
+        ingestion_source_kind=ingestion_source_kind,
+    )
+    try:
+        from services.entities import extract_entities
+        from services.entities import store_entities
+
+        entities = extract_entities(text, user_id=user_id)
+        if entities:
+            store_entities(
+                entities,
+                evidence_id=logical_path,
+                evidence_type="DOCUMENT",
+                user_id=user_id,
+            )
+            _log.info("Stored %d entities from document %s", len(entities), logical_path)
+    except Exception:
+        _log.exception("Entity extraction failed for document %s", logical_path)
+
+
 def ingest_file(file_path: str, *, user_id: str) -> IngestResult:
     """Ingest one file and attribute every artifact to ``user_id``.
 
@@ -183,126 +351,14 @@ def ingest_file(file_path: str, *, user_id: str) -> IngestResult:
         _log.info("No text extracted from %s", file_path)
         return IngestResult(file_path=file_path, chunk_count=0, skipped=True)
 
-    embedder = config.get_embedder()
-    vs = config.get_vector_store()
-    scanner = config.get_injection_scanner()
-
-    section_headers_all = _extract_section_headers(text, chunks)
-    sanitized_rows: list[tuple[int, str, dict]] = []
-    drops_blocked_high = 0
-
-    for i, chunk in enumerate(chunks):
-        outcome = sanitise_at_ingest(chunk, scanner=scanner, skip_if_empty=True)
-        if outcome["blocked_high"]:
-            drops_blocked_high += 1
-            doc_id = document_chunk_point_id(user_id, file_path, i)
-            try:
-                vs.delete(collection="documents", id=doc_id)
-            except Exception:
-                _log.warning(
-                    "ingest_blocked_high_delete_failed doc_id=%r file_path=%r user=%r",
-                    doc_id,
-                    file_path,
-                    user_id,
-                    exc_info=True,
-                )
-            _log.warning(
-                (
-                    "ingest_blocked_high user_id=%s file_path=%s chunk_index=%s "
-                    "pattern_hits=%s severity=%s"
-                ),
-                user_id,
-                file_path,
-                i,
-                outcome["pattern_hits"],
-                outcome["max_severity"],
-            )
-            hooks.fire_background(
-                Event.INJECTION_FLAGGED,
-                user_id=user_id,
-                source="ingest_pipeline",
-                file_path=file_path,
-                chunk_index=i,
-                severity=outcome["max_severity"],
-                action=os.environ.get("INJECTION_ACTION", "wrap"),
-                pattern_hits=outcome["pattern_hits"],
-                sanitised_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                stage="ingest",
-            )
-            continue
-
-        if outcome["injection_flagged"]:
-            severity = outcome["max_severity"]
-            if severity == "high":
-                lvl = logging.WARNING
-            else:
-                lvl = logging.INFO
-            _log.log(
-                lvl,
-                "inject_flag_at_ingest user_id=%s file_path=%s chunk_index=%s pattern_hits=%s",
-                user_id,
-                file_path,
-                i,
-                outcome["pattern_hits"],
-            )
-            hooks.fire_background(
-                Event.INJECTION_FLAGGED,
-                user_id=user_id,
-                source="ingest_pipeline",
-                file_path=file_path,
-                chunk_index=i,
-                severity=severity,
-                action=os.environ.get("INJECTION_ACTION", "wrap"),
-                pattern_hits=outcome["pattern_hits"],
-                sanitised_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                stage="ingest",
-            )
-
-        sanitized_text = outcome["text"]
-        sec = section_headers_all[i]
-        iso_ingested = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        safe_source = sanitize_attribute_source_token(str(file_path))
-
-        payload_origin: dict = {
-            "trusted": False,
-            "scope": "personal",
-            "source": safe_source,
-            "ingested": iso_ingested,
-            "pattern_hits": list(outcome["pattern_hits"]),
-            "injection_flagged": bool(outcome["injection_flagged"]),
-            "pre_wrapped": False,
-        }
-
-        sanitized_rows.append((i, sanitized_text, payload_origin))
-
-    if sanitized_rows:
-        vectors = embedder.embed_batch([t for _, t, __ in sanitized_rows])
-    else:
-        vectors = []
-
-    chunk_count_written = 0
-    for (idx, sanitized_text, origin_meta), vec in zip(sanitized_rows, vectors):
-        doc_id = document_chunk_point_id(user_id, file_path, idx)
-        payload: dict = {
-            "file_path": file_path,
-            "chunk_index": idx,
-            "text": sanitized_text,
-            "file_type": ext,
-            "user_id": user_id,
-            "scope": "personal",
-        }
-        if config.is_injection_sanitiser_enabled():
-            payload["origin"] = origin_meta
-        sec = section_headers_all[idx]
-        if sec:
-            payload["section_header"] = sec
-        vs.upsert(
-            collection="documents",
-            id=doc_id,
-            vector=vec,
-            payload=payload,
-        )
-        chunk_count_written += 1
+    chunk_count_written, drops_blocked_high = _ingest_chunked_text(
+        user_id=user_id,
+        logical_path=file_path,
+        file_type=ext,
+        text=text,
+        chunks=chunks,
+        point_id_for_chunk=lambda i: document_chunk_point_id(user_id, file_path, i),
+    )
 
     has_index_row = existing is not None
     file_index_chunk_count_arg = chunk_count_written
@@ -341,27 +397,13 @@ def ingest_file(file_path: str, *, user_id: str) -> IngestResult:
             len(chunks),
             drops_blocked_high,
         )
-        hooks.fire_background(
-            Event.DOCUMENT_INGESTED,
-            file_path=file_path,
-            chunk_count=chunk_count_written,
+        _emit_document_ingested_and_entities(
+            logical_path=file_path,
+            chunk_count_written=chunk_count_written,
             user_id=user_id,
+            text=text,
+            ingestion_source_kind="filesystem",
         )
-        try:
-            from services.entities import extract_entities
-            from services.entities import store_entities
-
-            entities = extract_entities(text, user_id=user_id)
-            if entities:
-                store_entities(
-                    entities,
-                    evidence_id=file_path,
-                    evidence_type="DOCUMENT",
-                    user_id=user_id,
-                )
-                _log.info("Stored %d entities from document %s", len(entities), file_path)
-        except Exception:
-            _log.exception("Entity extraction failed for document %s", file_path)
         return IngestResult(file_path=file_path, chunk_count=chunk_count_written)
 
     meta.execute(
@@ -381,30 +423,209 @@ def ingest_file(file_path: str, *, user_id: str) -> IngestResult:
         len(chunks),
         drops_blocked_high,
     )
-    hooks.fire_background(
-        Event.DOCUMENT_INGESTED,
-        file_path=file_path,
-        chunk_count=chunk_count_written,
+    _emit_document_ingested_and_entities(
+        logical_path=file_path,
+        chunk_count_written=chunk_count_written,
         user_id=user_id,
+        text=text,
+        ingestion_source_kind="filesystem",
     )
 
-    try:
-        from services.entities import extract_entities
-        from services.entities import store_entities
-
-        entities = extract_entities(text, user_id=user_id)
-        if entities:
-            store_entities(
-                entities,
-                evidence_id=file_path,
-                evidence_type="DOCUMENT",
-                user_id=user_id,
-            )
-            _log.info("Stored %d entities from document %s", len(entities), file_path)
-    except Exception:
-        _log.exception("Entity extraction failed for document %s", file_path)
-
     return IngestResult(file_path=file_path, chunk_count=chunk_count_written)
+
+
+def ingest_external_document(
+    *,
+    user_id: str,
+    source_id: str,
+    external_kind: str,
+    external_document_id: str,
+    content: str,
+    poll_watermark: str,
+    stored_source_poll_cursor: str | None,
+) -> IngestResult:
+    """Ingest OCR text from an external REST source (paperless-ngx v0.1).
+
+    ``poll_watermark`` is the paperless ``added`` ISO timestamp for this row.
+    ``stored_source_poll_cursor`` is the current ``sources.poll_cursor`` watermark
+    (``None`` when unset). Documents with ``poll_watermark`` strictly before the
+    stored cursor are skipped (clock-skew guard).
+    """
+    if not isinstance(user_id, str) or not user_id:
+        raise TypeError("ingest_external_document: user_id is required")
+    logical_path = f"paperless://{source_id}/documents/{external_document_id}"
+    norm = unicodedata.normalize("NFC", content)
+    new_hash = hashlib.sha256(norm.encode("utf-8")).hexdigest()
+
+    if stored_source_poll_cursor and poll_watermark < stored_source_poll_cursor:
+        _log.warning(
+            "external_ingest_skew_skip logical_path=%s poll_watermark=%r stored=%r",
+            logical_path,
+            poll_watermark,
+            stored_source_poll_cursor,
+        )
+        return IngestResult(file_path=logical_path, chunk_count=0, skipped=True)
+
+    meta = config.get_metadata_store()
+    # SCOPE-EXEMPT: ``external_documents`` is per-user ingest bookkeeping
+    # (same isolation model as ``file_index``); ``user_id`` is always the
+    # ``sources`` row owner passed in by the poller.
+    existing = meta.fetch_one(
+        (
+            "SELECT content_hash, chunk_count FROM external_documents "
+            "WHERE user_id = %s AND source_id = %s::uuid AND external_kind = %s "
+            "AND external_id = %s"
+        ),
+        (user_id, source_id, external_kind, external_document_id),
+    )
+    if existing and existing.get("content_hash") == new_hash:
+        _log.info("Skipping unchanged external document: %s", logical_path)
+        with meta.transaction():
+            meta.execute(
+                (
+                    "UPDATE sources SET poll_cursor = %s WHERE id = %s::uuid "
+                    "AND (poll_cursor IS NULL OR poll_cursor < %s)"
+                ),
+                (poll_watermark, source_id, poll_watermark),
+            )
+        return IngestResult(
+            file_path=logical_path,
+            chunk_count=0,
+            skipped=True,
+            advance_external_poll_cursor=True,
+        )
+
+    old_chunk_count = int(existing["chunk_count"]) if existing else 0
+
+    chunks = chunk_text(content)
+    if not chunks:
+        _log.info("No chunks for external document %s", logical_path)
+        with meta.transaction():
+            meta.execute(
+                (
+                    "UPDATE sources SET poll_cursor = %s WHERE id = %s::uuid "
+                    "AND (poll_cursor IS NULL OR poll_cursor < %s)"
+                ),
+                (poll_watermark, source_id, poll_watermark),
+            )
+        return IngestResult(
+            file_path=logical_path,
+            chunk_count=0,
+            skipped=True,
+            advance_external_poll_cursor=True,
+        )
+
+    vs = config.get_vector_store()
+    new_n = len(chunks)
+    if old_chunk_count > new_n:
+        for j in range(new_n, old_chunk_count):
+            pid = external_document_chunk_point_id(
+                user_id, source_id, external_kind, external_document_id, j
+            )
+            try:
+                vs.delete(collection="documents", id=pid)
+            except Exception:
+                _log.warning("external_ingest_orphan_delete_failed point_id=%r", pid, exc_info=True)
+
+    chunk_count_written, drops_blocked_high = _ingest_chunked_text(
+        user_id=user_id,
+        logical_path=logical_path,
+        file_type=".paperless",
+        text=content,
+        chunks=chunks,
+        point_id_for_chunk=lambda i: external_document_chunk_point_id(
+            user_id, source_id, external_kind, external_document_id, i
+        ),
+    )
+
+    has_row = existing is not None
+
+    if drops_blocked_high > 0:
+        if has_row:
+            # SCOPE-EXEMPT: same table contract as the SELECT above.
+            meta.execute(
+                (
+                    "UPDATE external_documents SET chunk_count = %s, "
+                    "logical_path = %s, updated_at = NOW() "
+                    "WHERE user_id = %s AND source_id = %s::uuid AND external_kind = %s "
+                    "AND external_id = %s"
+                ),
+                (
+                    chunk_count_written,
+                    logical_path,
+                    user_id,
+                    source_id,
+                    external_kind,
+                    external_document_id,
+                ),
+            )
+            _log.warning(
+                "external_ingest_blocked_high_no_hash_advance logical_path=%s drops=%s",
+                logical_path,
+                drops_blocked_high,
+            )
+        else:
+            _log.warning(
+                "external_ingest_blocked_high_before_row logical_path=%s",
+                logical_path,
+            )
+        _emit_document_ingested_and_entities(
+            logical_path=logical_path,
+            chunk_count_written=chunk_count_written,
+            user_id=user_id,
+            text=content,
+            ingestion_source_kind="external",
+        )
+        return IngestResult(file_path=logical_path, chunk_count=chunk_count_written)
+
+    with meta.transaction():
+        meta.execute(
+            (
+                "INSERT INTO external_documents "
+                "(user_id, source_id, external_kind, external_id, content_hash, chunk_count, logical_path) "
+                "VALUES (%s, %s::uuid, %s, %s, %s, %s, %s) "
+                "ON CONFLICT (user_id, source_id, external_kind, external_id) DO UPDATE SET "
+                "content_hash = EXCLUDED.content_hash, "
+                "chunk_count = EXCLUDED.chunk_count, "
+                "logical_path = EXCLUDED.logical_path, "
+                "updated_at = NOW()"
+            ),
+            (
+                user_id,
+                source_id,
+                external_kind,
+                external_document_id,
+                new_hash,
+                chunk_count_written,
+                logical_path,
+            ),
+        )
+        meta.execute(
+            (
+                "UPDATE sources SET poll_cursor = %s WHERE id = %s::uuid "
+                "AND (poll_cursor IS NULL OR poll_cursor < %s)"
+            ),
+            (poll_watermark, source_id, poll_watermark),
+        )
+
+    _log.info(
+        "Ingested external %s: %d chunks (blocked_high_skips=%d)",
+        logical_path,
+        chunk_count_written,
+        drops_blocked_high,
+    )
+    _emit_document_ingested_and_entities(
+        logical_path=logical_path,
+        chunk_count_written=chunk_count_written,
+        user_id=user_id,
+        text=content,
+        ingestion_source_kind="external",
+    )
+    return IngestResult(
+        file_path=logical_path,
+        chunk_count=chunk_count_written,
+        advance_external_poll_cursor=True,
+    )
 
 
 class _PerformanceGuard:

@@ -85,6 +85,19 @@ def token_version_cache_ttl_seconds() -> int:
         return 30
 
 
+def require_sid_revocation_check() -> bool:
+    raw = os.environ.get("LUMOGIS_REQUIRE_SID_REVOCATION_CHECK", "false").strip().lower()
+    return raw in ("true", "1", "yes")
+
+
+def sid_revocation_cache_ttl_seconds() -> int:
+    raw = os.environ.get("LUMOGIS_SID_REVOCATION_CACHE_TTL_SECONDS", "30")
+    try:
+        return min(3600, max(0, int(raw)))
+    except ValueError:
+        return 30
+
+
 # ---------------------------------------------------------------------------
 # Per-user ``token_version`` cache (LUM-29) — bounded LRU + TTL, single-process.
 # ---------------------------------------------------------------------------
@@ -130,9 +143,89 @@ class _TTLVersionLRU:
 _TOKEN_VER_CACHE = _TTLVersionLRU(maxsize=_TOKEN_VER_CACHE_MAX)
 
 
+# ---------------------------------------------------------------------------
+# Per-session ``sid`` revocation cache (LUM-243) — same LRU/TTL shape as tv cache.
+#
+# Keys are ``auth_sessions.id`` (JWT ``sid`` claim). Composite ownership is still
+# enforced in SQL via ``(id, user_id=sub)`` — never trust cache alone across users.
+# ---------------------------------------------------------------------------
+
+
+class _TTLSidLRU:
+    """Maps ``sid`` → ``(deny: bool, monotonic_timestamp)``."""
+
+    def __init__(self, maxsize: int) -> None:
+        self._maxsize = maxsize
+        self._data: "OrderedDict[str, tuple[bool, float]]" = OrderedDict()
+        self._lock = threading.Lock()
+
+    def get_fresh(self, sid: str, ttl_s: int) -> bool | None:
+        if ttl_s <= 0:
+            return None
+        now = time.monotonic()
+        with self._lock:
+            item = self._data.get(sid)
+            if item is None:
+                return None
+            deny, ts = item
+            if (now - ts) > float(ttl_s):
+                del self._data[sid]
+                return None
+            self._data.move_to_end(sid)
+            return deny
+
+    def put(self, sid: str, deny: bool) -> None:
+        with self._lock:
+            self._data[sid] = (deny, time.monotonic())
+            self._data.move_to_end(sid)
+            while len(self._data) > self._maxsize:
+                self._data.popitem(last=False)
+
+    def invalidate(self, sid: str) -> None:
+        with self._lock:
+            self._data.pop(sid, None)
+
+
+_SID_REVOCATION_CACHE = _TTLSidLRU(maxsize=_TOKEN_VER_CACHE_MAX)
+
+
 def invalidate_token_version_cache(user_id: str) -> None:
     """Drop cached ``token_version`` for ``user_id`` (post-commit callers only)."""
     _TOKEN_VER_CACHE.invalidate(user_id)
+
+
+def invalidate_sid_cache(sid: str) -> None:
+    """Drop cached revocation verdict for ``sid`` (post-commit callers only)."""
+    _SID_REVOCATION_CACHE.invalidate(sid)
+
+
+def _sid_must_deny_access(sub: str, sid: str) -> bool:
+    """Return True when access must be denied (revoked row, missing row, or DB failure).
+
+    Fail-closed when ``require_sid_revocation_check()`` is active: exceptions do not
+    ``put`` into the LRU (next request retries the database).
+    """
+    ttl_s = sid_revocation_cache_ttl_seconds()
+    if ttl_s > 0:
+        cached = _SID_REVOCATION_CACHE.get_fresh(sid, ttl_s)
+        if cached is not None:
+            return cached
+    try:
+        from services import auth_sessions as _auth_sessions
+
+        deny = _auth_sessions.is_session_revoked(sid, sub)
+    except Exception as exc:
+        suf = sid[-4:] if len(sid) >= 4 else sid
+        _log.warning(
+            "sid revocation check failed sid_suffix=%s exc_type=%s",
+            suf,
+            type(exc).__name__,
+            exc_info=False,
+        )
+        return True
+    if ttl_s > 0:
+        _SID_REVOCATION_CACHE.put(sid, deny)
+    return deny
 
 
 def resolve_current_token_version(user_id: str) -> int:
@@ -169,15 +262,24 @@ def jwt_revocation_failure_reason(payload: dict) -> str | None:
     if tv_raw is None:
         if require_tv:
             return "invalid token"
+    else:
+        try:
+            tv_claim = int(tv_raw)
+        except (TypeError, ValueError):
+            return "invalid token"
+
+        current = resolve_current_token_version(sub)
+        if tv_claim != current:
+            return "invalid token"
+
+    if not require_sid_revocation_check():
         return None
 
-    try:
-        tv_claim = int(tv_raw)
-    except (TypeError, ValueError):
-        return "invalid token"
+    sid_raw = payload.get("sid")
+    if not isinstance(sid_raw, str):
+        return None
 
-    current = resolve_current_token_version(sub)
-    if tv_claim != current:
+    if _sid_must_deny_access(sub, sid_raw):
         return "invalid token"
     return None
 

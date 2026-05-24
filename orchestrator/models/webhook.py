@@ -30,6 +30,7 @@ from datetime import datetime
 from datetime import timezone
 from enum import Enum
 from typing import Annotated
+from typing import Literal
 
 from pydantic import AfterValidator
 from pydantic import BaseModel
@@ -56,6 +57,7 @@ class DocumentIngestedPayload(BaseModel):
     file_path: str
     chunk_count: int
     user_id: str
+    ingestion_source_kind: Literal["filesystem", "external"] = "filesystem"
 
 
 class EntityCreatedPayload(BaseModel):
@@ -130,6 +132,7 @@ class ContextRequest(BaseModel):
 
     query: str
     user_id: str = "default"
+    # Default matches historical clients; Core uses min(entity_budget, 20).
     max_fragments: int = Field(default=3, ge=1, le=20)
 
 

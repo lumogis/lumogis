@@ -41,6 +41,7 @@ import { AdminMcpTokensView } from "./features/admin/AdminMcpTokensView";
 import { AdminAuditView } from "./features/admin/AdminAuditView";
 import { AdminDiagnosticsView } from "./features/admin/AdminDiagnosticsView";
 import { QuickCapturePage } from "./features/capture/QuickCapturePage";
+import { OnboardingGate } from "./features/onboarding/OnboardingGate";
 
 function pathToNavKey(pathname: string): string {
   if (pathname.startsWith("/search")) return "search";
@@ -100,6 +101,7 @@ function ShellRoutes(): JSX.Element {
 
   return (
     <>
+      <OnboardingGate />
       <RouteFlash />
       <AppShell activeKey={activeKey} onNavigate={handleNavigate} navItems={navItems}>
         <Routes>

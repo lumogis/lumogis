@@ -163,9 +163,9 @@ CREATE INDEX IF NOT EXISTS action_log_user_scope_idx ON action_log (user_id, sco
 -- Signal infrastructure
 -- ==========================================================================
 
--- Source registry: RSS feeds, monitored pages, CalDAV calendars.
--- source_type: rss | page | playwright | caldav
--- extraction_method: feedparser | trafilatura | playwright | caldav
+-- Source registry: RSS feeds, monitored pages, CalDAV calendars, paperless-ngx.
+-- source_type: rss | page | playwright | caldav | paperless
+-- extraction_method: feedparser | trafilatura | playwright | caldav | paperless_http
 CREATE TABLE IF NOT EXISTS sources (
     id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id                 TEXT NOT NULL DEFAULT 'default',
@@ -177,11 +177,29 @@ CREATE TABLE IF NOT EXISTS sources (
     poll_interval           INTEGER NOT NULL DEFAULT 3600,  -- seconds
     extraction_method       TEXT NOT NULL DEFAULT 'feedparser',
     css_selector_override   TEXT,
+    poll_cursor             TEXT,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_polled_at          TIMESTAMPTZ,
     last_signal_at          TIMESTAMPTZ,
     UNIQUE(user_id, url)
 );
+
+-- LUM-281 — dedup bookkeeping for REST-backed document ingest (paperless, …).
+CREATE TABLE IF NOT EXISTS external_documents (
+    id                  BIGSERIAL PRIMARY KEY,
+    user_id             TEXT NOT NULL,
+    source_id           UUID NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    external_kind       TEXT NOT NULL,
+    external_id         TEXT NOT NULL,
+    content_hash        TEXT NOT NULL,
+    chunk_count         INTEGER NOT NULL DEFAULT 0,
+    logical_path        TEXT NOT NULL,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (user_id, source_id, external_kind, external_id)
+);
+CREATE INDEX IF NOT EXISTS external_documents_user_source_idx
+    ON external_documents (user_id, source_id);
 
 -- Processed signals: structured + queryable. Postgres is the source of truth.
 -- Qdrant signals collection holds embedded summaries for semantic dedup only.

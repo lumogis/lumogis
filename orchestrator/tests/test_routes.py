@@ -19,7 +19,7 @@ def test_ask_returns_200(mock_ask):
     assert data["answer"] == "mock answer"
 
 
-@patch("routes.chat._inject_context", side_effect=lambda q, h, m, u: h)
+@patch("routes.chat._inject_context", side_effect=lambda q, h, m, u, **kw: h)
 @patch("routes.chat.config.get_model_config", return_value={"tools": True})
 @patch("routes.chat.config.is_model_enabled", return_value=True)
 @patch("routes.chat.ask", return_value="mock chat")
@@ -42,7 +42,7 @@ def _mock_stream(*args, **kwargs):
     yield StreamEvent(type="text", content="streamed")
 
 
-@patch("routes.chat._inject_context", side_effect=lambda q, h, m, u: h)
+@patch("routes.chat._inject_context", side_effect=lambda q, h, m, u, **kw: h)
 @patch("routes.chat.config.get_model_config", return_value={"tools": True})
 @patch("routes.chat.config.is_model_enabled", return_value=True)
 @patch("routes.chat.config.get_llm_provider", return_value=None)
@@ -62,7 +62,7 @@ def test_chat_completions_stream(mock_stream, mock_provider, mock_enabled, mock_
     assert "streamed" in resp.text
 
 
-@patch("routes.chat._inject_context", side_effect=lambda q, h, m, u: h)
+@patch("routes.chat._inject_context", side_effect=lambda q, h, m, u, **kw: h)
 @patch(
     "routes.chat.config.get_model_config",
     return_value={"tools": False, "base_url": "http://ollama:11434/v1"},

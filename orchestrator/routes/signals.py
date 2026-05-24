@@ -15,6 +15,7 @@ POST /feedback      — Record explicit or implicit feedback
 import json
 import logging
 import uuid
+from typing import Literal
 from typing import Optional
 
 from auth import UserContext
@@ -26,6 +27,7 @@ from fastapi import HTTPException
 from fastapi import Query
 from models.signals import SourceConfig
 from pydantic import BaseModel
+from services.outbound_http_url import validate_outbound_connector_base_url
 from services.signal_source_detection import detect_signal_source
 from visibility import visible_filter
 
@@ -47,6 +49,7 @@ class SourceRequest(BaseModel):
     name: Optional[str] = None
     category: Optional[str] = "general"
     poll_interval: Optional[int] = 3600
+    source_type: Literal["paperless"] | None = None
 
 
 class ProfileRequest(BaseModel):
@@ -78,6 +81,77 @@ def add_or_preview_source(
     confirm=false → detect + preview (no DB write).
     confirm=true  → detect + save + schedule polling.
     """
+    if body.source_type == "paperless":
+        try:
+            feed_url = _normalize_paperless_base_url(body.url)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        if not body.confirm:
+            return {
+                "source_type": "paperless",
+                "url": feed_url,
+                "preview_items": [],
+            }
+
+        source_id = str(uuid.uuid4())
+        source_name = body.name or _infer_name(feed_url)
+        source_type = "paperless"
+        extraction_method = "paperless_http"
+
+        try:
+            ms = config.get_metadata_store()
+            ms.execute(
+                "INSERT INTO sources "
+                "(id, user_id, name, source_type, url, category, active, poll_interval, "
+                "extraction_method, css_selector_override) "
+                "VALUES (%s, %s, %s, %s, %s, %s, TRUE, %s, %s, NULL)",
+                (
+                    source_id,
+                    user.user_id,
+                    source_name,
+                    source_type,
+                    feed_url,
+                    body.category or "general",
+                    body.poll_interval or 3600,
+                    extraction_method,
+                ),
+            )
+        except Exception as exc:
+            _log.error("Failed to save paperless source %s: %s", body.url, exc)
+            raise HTTPException(status_code=500, detail=f"Could not save source: {exc}") from exc
+
+        source = SourceConfig(
+            id=source_id,
+            name=source_name,
+            source_type=source_type,
+            url=feed_url,
+            category=body.category or "general",
+            active=True,
+            poll_interval=body.poll_interval or 3600,
+            extraction_method=extraction_method,
+            css_selector_override=None,
+            last_polled_at=None,
+            last_signal_at=None,
+            poll_cursor=None,
+            user_id=user.user_id,
+        )
+
+        try:
+            from signals.feed_monitor import schedule_source
+
+            schedule_source(source)
+        except Exception as exc:
+            _log.warning("Could not schedule poll job for %s: %s", source_id, exc)
+
+        return {
+            "status": "created",
+            "source_id": source_id,
+            "source_type": source_type,
+            "url": feed_url,
+            "preview_items": [],
+        }
+
     detection = _detect_source(body.url)
 
     if not body.confirm:
@@ -128,6 +202,7 @@ def add_or_preview_source(
         css_selector_override=None,
         last_polled_at=None,
         last_signal_at=None,
+        poll_cursor=None,
         user_id=user.user_id,
     )
 
@@ -440,6 +515,15 @@ def record_feedback(
 # ---------------------------------------------------------------------------
 # Source detection helper
 # ---------------------------------------------------------------------------
+
+
+def _normalize_paperless_base_url(url: str) -> str:
+    """Trim whitespace/slash and validate outbound policy (LUM-281)."""
+    u = (url or "").strip().rstrip("/")
+    if not u:
+        raise ValueError("paperless base URL is empty")
+    validate_outbound_connector_base_url(u)
+    return u
 
 
 def _detect_source(url: str) -> dict:

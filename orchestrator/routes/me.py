@@ -29,6 +29,8 @@ from __future__ import annotations
 
 import io
 import logging
+from datetime import datetime
+from datetime import timezone
 
 from auth import auth_enabled
 from auth import get_user
@@ -38,10 +40,13 @@ from fastapi import APIRouter
 from fastapi import Depends
 from fastapi import HTTPException
 from fastapi import Request
+from fastapi import Response
 from fastapi import status
 from fastapi.responses import StreamingResponse
 from models.api_v1 import MeLlmProvidersResponse
 from models.api_v1 import MeNotificationsResponse
+from models.api_v1 import MeOnboardingPatchRequest
+from models.api_v1 import MeOnboardingResponse
 from models.api_v1 import MeToolsResponse
 from models.auth import AckOk
 from models.auth import MePasswordChangeRequest
@@ -227,3 +232,86 @@ def change_my_password(body: MePasswordChangeRequest, request: Request) -> AckOk
 
     _log.info("me: password changed user_id=%s", caller.user_id)
     return AckOk()
+
+
+def _onboarding_no_store(response: Response) -> None:
+    response.headers["Cache-Control"] = "no-store"
+
+
+@router.get(
+    "/onboarding",
+    response_model=MeOnboardingResponse,
+    summary="First-run onboarding completion state",
+)
+def get_my_onboarding(request: Request, response: Response) -> MeOnboardingResponse:
+    """Return whether the caller has completed first-run onboarding (LUM-165).
+
+    ``AUTH_ENABLED=false`` always returns a synthetic ``completed_at`` (UTC now)
+    so single-user dev never shows the modal. ``Cache-Control: no-store`` on
+    both auth modes for this route family.
+    """
+    _onboarding_no_store(response)
+    if not auth_enabled():
+        return MeOnboardingResponse(completed_at=datetime.now(timezone.utc))
+    caller = get_user(request)
+    try:
+        if users_service.get_user_by_id(caller.user_id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="user not found",
+            ) from None
+        completed_at = users_service.get_onboarding_completed_at(caller.user_id)
+    except HTTPException:
+        raise
+    except Exception:
+        _log.exception("me/onboarding GET failed user_id=%s", caller.user_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="database_unavailable",
+        ) from None
+    return MeOnboardingResponse(completed_at=completed_at)
+
+
+@router.patch(
+    "/onboarding",
+    response_model=MeOnboardingResponse,
+    summary="Mark first-run onboarding complete",
+    dependencies=[Depends(require_same_origin)],
+)
+def patch_my_onboarding(
+    body: MeOnboardingPatchRequest,
+    request: Request,
+    response: Response,
+) -> MeOnboardingResponse:
+    """Idempotently record onboarding completion (LUM-165).
+
+    ``AUTH_ENABLED=false`` returns a synthetic ``completed_at`` without touching
+    Postgres. When auth is on, the persisted column is set at most once.
+    """
+    _ = body  # ``completed: true`` is the only legal shape in v1.
+    _ = request
+    _onboarding_no_store(response)
+    if not auth_enabled():
+        return MeOnboardingResponse(completed_at=datetime.now(timezone.utc))
+    caller = get_user(request)
+    try:
+        if users_service.get_user_by_id(caller.user_id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="user not found",
+            ) from None
+        completed_at = users_service.set_onboarding_completed(caller.user_id)
+    except HTTPException:
+        raise
+    except LookupError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="user not found",
+        ) from None
+    except Exception:
+        _log.exception("me/onboarding PATCH failed user_id=%s", caller.user_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="database_unavailable",
+        ) from None
+    return MeOnboardingResponse(completed_at=completed_at)

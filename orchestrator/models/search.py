@@ -13,3 +13,5 @@ class SearchResult(BaseModel):
     score: float
     chunk_text: str
     metadata: dict = {}
+    point_id: str | None = None
+    rerank_score: float | None = None

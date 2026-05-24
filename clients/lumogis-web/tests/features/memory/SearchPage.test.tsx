@@ -171,14 +171,14 @@ describe("SearchPage", () => {
     // Auth settles synchronously with skipRefreshOnMount=false but refresh
     // returns immediately from the mock
     await waitFor(() => {
-      expect(screen.getByRole("searchbox")).toBeInTheDocument();
+      expect(screen.getByRole("textbox", { name: /search query/i })).toBeInTheDocument();
     });
   });
 
   it("shows empty state with no query", async () => {
     mountSearchPage();
     await waitFor(() => {
-      expect(screen.getByRole("searchbox")).toBeInTheDocument();
+      expect(screen.getByRole("textbox", { name: /search query/i })).toBeInTheDocument();
     });
     expect(screen.getAllByText(/type to search/i).length).toBeGreaterThanOrEqual(1);
   });
@@ -186,10 +186,10 @@ describe("SearchPage", () => {
   it("triggers search after debounce and shows memory hits", async () => {
     mountSearchPage();
     await waitFor(() => {
-      expect(screen.getByRole("searchbox")).toBeInTheDocument();
+      expect(screen.getByRole("textbox", { name: /search query/i })).toBeInTheDocument();
     });
 
-    await user.type(screen.getByRole("searchbox"), "lumogis");
+    await user.type(screen.getByRole("textbox", { name: /search query/i }), "lumogis");
     // Advance past 300ms debounce
     await act(async () => {
       vi.advanceTimersByTime(400);
@@ -204,10 +204,10 @@ describe("SearchPage", () => {
   it("shows entity hits from KG search", async () => {
     mountSearchPage();
     await waitFor(() => {
-      expect(screen.getByRole("searchbox")).toBeInTheDocument();
+      expect(screen.getByRole("textbox", { name: /search query/i })).toBeInTheDocument();
     });
 
-    await user.type(screen.getByRole("searchbox"), "lumogis");
+    await user.type(screen.getByRole("textbox", { name: /search query/i }), "lumogis");
     await act(async () => {
       vi.advanceTimersByTime(400);
     });
@@ -227,10 +227,10 @@ describe("SearchPage", () => {
         }),
     });
     await waitFor(() => {
-      expect(screen.getByRole("searchbox")).toBeInTheDocument();
+      expect(screen.getByRole("textbox", { name: /search query/i })).toBeInTheDocument();
     });
 
-    await user.type(screen.getByRole("searchbox"), "test");
+    await user.type(screen.getByRole("textbox", { name: /search query/i }), "test");
     await act(async () => {
       vi.advanceTimersByTime(400);
     });
@@ -243,10 +243,10 @@ describe("SearchPage", () => {
   it("shows entity card panel when an entity is selected", async () => {
     mountSearchPage();
     await waitFor(() => {
-      expect(screen.getByRole("searchbox")).toBeInTheDocument();
+      expect(screen.getByRole("textbox", { name: /search query/i })).toBeInTheDocument();
     });
 
-    await user.type(screen.getByRole("searchbox"), "lumogis");
+    await user.type(screen.getByRole("textbox", { name: /search query/i }), "lumogis");
     await act(async () => {
       vi.advanceTimersByTime(400);
     });
@@ -270,10 +270,10 @@ describe("SearchPage", () => {
   it("hides entity card when same entity is clicked again (toggle)", async () => {
     mountSearchPage();
     await waitFor(() => {
-      expect(screen.getByRole("searchbox")).toBeInTheDocument();
+      expect(screen.getByRole("textbox", { name: /search query/i })).toBeInTheDocument();
     });
 
-    await user.type(screen.getByRole("searchbox"), "lumogis");
+    await user.type(screen.getByRole("textbox", { name: /search query/i }), "lumogis");
     await act(async () => {
       vi.advanceTimersByTime(400);
     });
@@ -302,10 +302,10 @@ describe("SearchPage", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByRole("searchbox")).toBeInTheDocument();
+      expect(screen.getByRole("textbox", { name: /search query/i })).toBeInTheDocument();
     });
 
-    await user.type(screen.getByRole("searchbox"), "xyz");
+    await user.type(screen.getByRole("textbox", { name: /search query/i }), "xyz");
     await act(async () => {
       vi.advanceTimersByTime(400);
     });

@@ -6,31 +6,13 @@
 
 import { test, expect } from "@playwright/test";
 
-const email = process.env.LUMOGIS_WEB_SMOKE_EMAIL ?? "";
-const password = process.env.LUMOGIS_WEB_SMOKE_PASSWORD ?? "";
-const hasCreds = Boolean(email && password.length >= 12);
-const requireCreds = process.env.E2E_REQUIRE_CREDS === "1";
-
-if (requireCreds && !hasCreds) {
-  throw new Error(
-    "E2E_REQUIRE_CREDS=1 requires LUMOGIS_WEB_SMOKE_EMAIL and LUMOGIS_WEB_SMOKE_PASSWORD (≥12 chars).",
-  );
-}
+import { hasSmokeCreds, loginWithSmokeCredentials, smokeCredsSkipMessage } from "./smoke-auth";
 
 test.describe("Lumogis Web me / admin shell", () => {
-  test.skip(
-    !hasCreds,
-    "Set LUMOGIS_WEB_SMOKE_EMAIL and LUMOGIS_WEB_SMOKE_PASSWORD (≥12 chars) for e2e.",
-  );
+  test.skip(!hasSmokeCreds, smokeCredsSkipMessage);
 
   test("me: Settings nav and Profile sub-route", async ({ page }) => {
-    await page.goto("/");
-    await expect(page.getByLabel("Email")).toBeVisible();
-    await page.getByLabel("Email").fill(email);
-    await page.getByLabel("Password", { exact: true }).fill(password);
-    await page.getByRole("button", { name: /^sign in$/i }).click();
-    await expect(page).toHaveURL(/\/chat$/, { timeout: 60_000 });
-    await expect(page.getByTestId("lumogis-shell")).toBeVisible({ timeout: 60_000 });
+    await loginWithSmokeCredentials(page);
 
     await page.goto("/me");
     await expect(page).toHaveURL(/\/me\/profile/);
@@ -39,12 +21,7 @@ test.describe("Lumogis Web me / admin shell", () => {
   });
 
   test("admin: /admin either shows Users (admin) or leaves admin shell (user)", async ({ page }) => {
-    await page.goto("/");
-    await expect(page.getByLabel("Email")).toBeVisible();
-    await page.getByLabel("Email").fill(email);
-    await page.getByLabel("Password", { exact: true }).fill(password);
-    await page.getByRole("button", { name: /^sign in$/i }).click();
-    await expect(page).toHaveURL(/\/chat$/, { timeout: 60_000 });
+    await loginWithSmokeCredentials(page);
     await page.goto("/admin");
     if (page.url().includes("/admin")) {
       await expect(page.getByRole("heading", { name: "Users" })).toBeVisible();
@@ -57,12 +34,8 @@ test.describe("Lumogis Web me / admin shell", () => {
 if (process.env.LUMOGIS_E2E_EXPECT_ADMIN === "1") {
   test.describe("smoke is admin (opt-in)", () => {
     test("admin area shows Users for LUMOGIS_E2E_EXPECT_ADMIN=1", async ({ page }) => {
-      test.skip(!hasCreds, "creds");
-      await page.goto("/");
-      await page.getByLabel("Email").fill(email);
-      await page.getByLabel("Password", { exact: true }).fill(password);
-      await page.getByRole("button", { name: /^sign in$/i }).click();
-      await expect(page).toHaveURL(/\/chat$/, { timeout: 60_000 });
+      test.skip(!hasSmokeCreds, "creds");
+      await loginWithSmokeCredentials(page);
       await page.goto("/admin");
       await expect(page).toHaveURL(/\/admin/);
       await expect(page.getByRole("heading", { name: "Users" })).toBeVisible();

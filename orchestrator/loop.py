@@ -78,11 +78,12 @@ def dispatch_tool_under_cap(
     *,
     user_id: str,
     budget: ToolChainBudget | None,
+    auto_rag_point_ids: set[str] | None = None,
 ) -> str:
     """Increment pessimistic budget before ``run_tool``; return stub JSON when tripped."""
 
     if budget is None or budget.cap <= 0:
-        return run_tool(tool_name, arguments, user_id=user_id)
+        return run_tool(tool_name, arguments, user_id=user_id, auto_rag_point_ids=auto_rag_point_ids)
 
     if budget.observed >= budget.cap:
         if not budget.tripped_event:
@@ -96,7 +97,7 @@ def dispatch_tool_under_cap(
         return _lumogis_blocked_payload(tool_name, budget)
 
     budget.observed += 1
-    return run_tool(tool_name, arguments, user_id=user_id)
+    return run_tool(tool_name, arguments, user_id=user_id, auto_rag_point_ids=auto_rag_point_ids)
 
 
 def _system_prompt(use_tools: bool) -> str:
@@ -110,6 +111,7 @@ def ask(
     use_tools: bool = True,
     *,
     user_id: str,
+    auto_rag_point_ids: set[str] | None = None,
 ) -> str:
     """Synchronous tool-loop. ``user_id`` is keyword-only and required.
 
@@ -161,7 +163,11 @@ def ask(
 
             for tc in response.tool_calls:
                 result = dispatch_tool_under_cap(
-                    tc.name, tc.arguments, user_id=user_id, budget=chain_budget
+                    tc.name,
+                    tc.arguments,
+                    user_id=user_id,
+                    budget=chain_budget,
+                    auto_rag_point_ids=auto_rag_point_ids,
                 )
                 messages.append(
                     {
@@ -186,6 +192,7 @@ def ask_stream(
     use_tools: bool = True,
     *,
     user_id: str,
+    auto_rag_point_ids: set[str] | None = None,
 ) -> Generator[StreamEvent, None, None]:
     """Stream responses token-by-token. ``user_id`` is keyword-only and required."""
     if not isinstance(user_id, str) or not user_id:
@@ -215,7 +222,13 @@ def ask_stream(
             messages.append({"role": "user", "content": question})
 
             yield from _stream_loop(
-                provider, messages, tools, system, user_id=user_id, chain_budget=chain_budget
+                provider,
+                messages,
+                tools,
+                system,
+                user_id=user_id,
+                chain_budget=chain_budget,
+                auto_rag_point_ids=auto_rag_point_ids,
             )
         except Exception as exc:
             _log.exception("ask_stream failed for model=%s", model)
@@ -245,6 +258,7 @@ def _stream_loop(
     *,
     user_id: str,
     chain_budget: ToolChainBudget | None = None,
+    auto_rag_point_ids: set[str] | None = None,
 ) -> Generator[StreamEvent, None, None]:
     """Inner streaming loop with tool-call handling. ``user_id`` is required."""
     for _round in range(MAX_TOOL_ROUNDS + 1):
@@ -281,7 +295,11 @@ def _stream_loop(
 
         for tc in tool_calls:
             result = dispatch_tool_under_cap(
-                tc["name"], tc["arguments"], user_id=user_id, budget=chain_budget
+                tc["name"],
+                tc["arguments"],
+                user_id=user_id,
+                budget=chain_budget,
+                auto_rag_point_ids=auto_rag_point_ids,
             )
             messages.append(
                 {

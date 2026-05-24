@@ -195,4 +195,67 @@ if [[ "$secret_hit" -ne 0 ]]; then
   die "possible secrets matched in export tree (see output above)"
 fi
 
+# --- Required presence (LUM-303) ---
+# Canonical OpenAPI CI export contract paths (keep in sync with
+# orchestrator/tests/test_check_public_export_script.py and CONTRIBUTING.md):
+#   1.  .github/workflows/ci.yml
+#   2.  .github/scripts/openapi-check-paths.sh
+#   3.  .github/scripts/openapi-breaking-check.sh
+#   4.  Makefile
+#   5.  orchestrator/scripts/dump_openapi.py
+#   6.  clients/lumogis-web/openapi.snapshot.json
+#   7.  clients/lumogis-web/scripts/codegen.mjs
+#   8.  clients/lumogis-web/package.json
+#   9.  clients/lumogis-web/package-lock.json
+#   10. scripts/fixtures/openapi-breaking-check/base.json
+#   11. scripts/fixtures/openapi-breaking-check/after-compatible.json
+#   12. scripts/fixtures/openapi-breaking-check/after-breaking.json
+assert_openapi_ci_export_contract() {
+  local root="$1"
+  local listf="$SCRIPT_DIR/public-export-strip-list.txt"
+  local -a lum303_paths=(
+    ".github/workflows/ci.yml"
+    ".github/scripts/openapi-check-paths.sh"
+    ".github/scripts/openapi-breaking-check.sh"
+    "Makefile"
+    "orchestrator/scripts/dump_openapi.py"
+    "clients/lumogis-web/openapi.snapshot.json"
+    "clients/lumogis-web/scripts/codegen.mjs"
+    "clients/lumogis-web/package.json"
+    "clients/lumogis-web/package-lock.json"
+    "scripts/fixtures/openapi-breaking-check/base.json"
+    "scripts/fixtures/openapi-breaking-check/after-compatible.json"
+    "scripts/fixtures/openapi-breaking-check/after-breaking.json"
+  )
+
+  [[ -f "$listf" ]] || die "openapi-ci-export-contract (LUM-303): missing strip list: $listf"
+  while IFS= read -r raw_line || [[ -n "${raw_line}" ]]; do
+    local line="${raw_line%%#*}"
+    line="$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    [[ -z "$line" ]] && continue
+    local p
+    for p in "${lum303_paths[@]}"; do
+      if [[ "$line" == "$p" ]]; then
+        echo "openapi-ci-export-contract LUM-303: strip list entry intersects required OpenAPI CI path: $line" >&2
+        die "openapi-ci-export-contract (LUM-303): strip list intersects openapi-ci export contract paths"
+      fi
+    done
+  done <"$listf"
+
+  for p in "${lum303_paths[@]}"; do
+    if [[ ! -f "$root/$p" ]]; then
+      echo "openapi-ci-export-contract LUM-303: missing required path in export tree: $p" >&2
+      die "openapi-ci-export-contract (LUM-303): missing file $p"
+    fi
+  done
+
+  local ciyml="$root/.github/workflows/ci.yml"
+  if ! grep -qE '^  openapi-check:[[:space:]]*$' "$ciyml"; then
+    echo "openapi-ci-export-contract LUM-303: .github/workflows/ci.yml must contain top-level job line '  openapi-check:'" >&2
+    die "openapi-ci-export-contract (LUM-303): missing openapi-check job key in ci.yml"
+  fi
+}
+
+assert_openapi_ci_export_contract "$TARGET"
+
 echo "check-public-export.sh: OK ($TARGET)"

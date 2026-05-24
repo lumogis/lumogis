@@ -862,6 +862,108 @@ def get_graph_min_mention_count() -> int:
         return 2
 
 
+def _safe_int_env(var: str, default: int, *, minimum: int | None = None) -> int:
+    raw = os.environ.get(var)
+    if raw is None or str(raw).strip() == "":
+        v = default
+    else:
+        try:
+            v = int(str(raw).strip())
+        except (ValueError, TypeError):
+            _log.warning("Invalid int for %s=%r — using default %s", var, raw, default)
+            v = default
+    if minimum is not None:
+        v = max(minimum, v)
+    return v
+
+
+def _safe_float_env(var: str, default: float) -> float:
+    raw = os.environ.get(var)
+    if raw is None or str(raw).strip() == "":
+        return default
+    try:
+        return float(str(raw).strip())
+    except (ValueError, TypeError):
+        _log.warning("Invalid float for %s=%r — using default %s", var, raw, default)
+        return default
+
+
+def _env_bool(var: str, default: bool) -> bool:
+    raw = os.environ.get(var)
+    if raw is None or str(raw).strip() == "":
+        return default
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+
+def get_context_entity_budget() -> int:
+    """Max entities considered for CONTEXT_BUILDING after ranking (default 5)."""
+    return _safe_int_env("LUMOGIS_CONTEXT_ENTITY_BUDGET", 5, minimum=1)
+
+
+def get_context_entity_semantic_enabled() -> bool:
+    """When true, run optional Qdrant semantic top-up for CONTEXT_BUILDING."""
+    return _env_bool("LUMOGIS_CONTEXT_BUILDER_SEMANTIC", False)
+
+
+def get_context_entity_semantic_topk() -> int:
+    return _safe_int_env("LUMOGIS_CONTEXT_BUILDER_SEMANTIC_TOPK", 5, minimum=1)
+
+
+def get_context_entity_semantic_threshold() -> float:
+    return _safe_float_env("LUMOGIS_CONTEXT_BUILDER_SEMANTIC_THRESHOLD", 0.75)
+
+
+def get_context_entity_rank_alpha() -> float:
+    return _safe_float_env("LUMOGIS_CONTEXT_ENTITY_RANK_ALPHA", 1.0)
+
+
+def get_context_entity_rank_beta() -> float:
+    return _safe_float_env("LUMOGIS_CONTEXT_ENTITY_RANK_BETA", 0.5)
+
+
+def get_context_entity_rank_gamma() -> float:
+    return _safe_float_env("LUMOGIS_CONTEXT_ENTITY_RANK_GAMMA", 0.0)
+
+
+def get_context_entity_rank_delta() -> float:
+    return _safe_float_env("LUMOGIS_CONTEXT_ENTITY_RANK_DELTA", 0.0)
+
+
+def get_context_entity_explicit_bonus() -> float:
+    return _safe_float_env("LUMOGIS_CONTEXT_ENTITY_EXPLICIT_BONUS", 1.0)
+
+
+def get_auto_rag_enabled() -> bool:
+    """When true, chat may inject document chunks before the LLM (LUM-308)."""
+    return _env_bool("LUMOGIS_AUTO_RAG_ENABLED", False)
+
+
+def get_auto_rag_top_k_pre() -> int:
+    return _safe_int_env("LUMOGIS_AUTO_RAG_TOP_K_PRE", 20, minimum=1)
+
+
+def get_auto_rag_top_k_post() -> int:
+    return _safe_int_env("LUMOGIS_AUTO_RAG_TOP_K_POST", 3, minimum=1)
+
+
+def get_auto_rag_min_rerank_score() -> float:
+    return _safe_float_env("LUMOGIS_AUTO_RAG_MIN_RERANK_SCORE", 0.0)
+
+
+def get_auto_rag_min_bi_encoder_score() -> float:
+    """Dense cosine floor when reranker is off; ignored for RRF / hybrid scores."""
+    return _safe_float_env("LUMOGIS_AUTO_RAG_MIN_BI_ENCODER_SCORE", 0.55)
+
+
+def get_auto_rag_max_tokens() -> int:
+    return _safe_int_env("LUMOGIS_AUTO_RAG_MAX_TOKENS", 512, minimum=1)
+
+
+def get_context_max_edges() -> int:
+    """Max RELATES_TO neighbours listed per entity in CONTEXT_BUILDING (default 5)."""
+    return _safe_int_env("LUMOGIS_CONTEXT_MAX_EDGES", 5, minimum=1)
+
+
 def get_graph_max_cooccurrence_pairs() -> int:
     """Maximum RELATES_TO edge writes per ingestion event (write amplification cap).
 

@@ -182,7 +182,7 @@ services:
     image: caddy:2-alpine
     restart: unless-stopped
     ports:
-      - "80:80"
+      - "80:80"  # LAN access only by default; see docs/deployment/remote-access.md for off-LAN/mobile setup
       - "443:443"
       - "443:443/udp"
     environment:

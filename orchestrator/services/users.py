@@ -34,11 +34,16 @@ from __future__ import annotations
 import logging
 import os
 import uuid
+from datetime import datetime
+from datetime import timezone
 
 from argon2 import PasswordHasher
 from argon2.exceptions import VerificationError
 from models.auth import InternalUser
 from models.auth import Role
+from pydantic import EmailStr
+from pydantic import TypeAdapter
+from pydantic import ValidationError
 
 import config
 
@@ -47,6 +52,8 @@ _log = logging.getLogger(__name__)
 _ph = PasswordHasher()
 
 MIN_PASSWORD_LENGTH = 12
+
+_email_adapter = TypeAdapter(EmailStr)
 
 
 class PasswordPolicyViolationError(Exception):
@@ -68,6 +75,20 @@ def validate_password_policy(password: str) -> None:
         raise PasswordPolicyViolationError(
             f"password must be at least {MIN_PASSWORD_LENGTH} characters"
         )
+
+
+def validate_user_email(email: str) -> str:
+    """Return a normalised email that satisfies :class:`LoginRequest` / ``EmailStr`` rules."""
+    raw = (email or "").strip()
+    if not raw:
+        raise ValueError("email must be non-empty")
+    try:
+        return str(_email_adapter.validate_python(raw))
+    except ValidationError as exc:
+        raise ValueError(
+            "email must satisfy Lumogis auth validation (use a deliverability-valid "
+            "domain such as example.com — reserved/special-use TLDs like .test are rejected)"
+        ) from exc
 
 
 # Used by ``verify_credentials`` on the unknown-email path so the call still
@@ -103,6 +124,7 @@ def create_user(
     role: Role = "user",
 ) -> InternalUser:
     """Insert a new user. Raises ``ValueError`` on duplicate email."""
+    email = validate_user_email(email)
     validate_password_policy(password)
     user_id = uuid.uuid4().hex
     pw_hash = hash_password(password)
@@ -178,6 +200,7 @@ def set_disabled(
         # Local imports — keep ``services.users`` boot light and avoid the
         # ``services.users`` ↔ ``services.mcp_tokens`` ↔ ``auth`` import cycles
         # at module load.
+        from auth import invalidate_sid_cache
         from auth import invalidate_token_version_cache
 
         from services import auth_sessions as _auth_sess
@@ -216,6 +239,8 @@ def set_disabled(
             acting_user_id=actor_id,
             revoked_rows=revoked_sess,
         )
+        for r in revoked_sess:
+            invalidate_sid_cache(r["id"])
         invalidate_token_version_cache(user_id)
         # Per-user connector-permission cache hygiene
         # (plan ``per_user_connector_permissions`` D5 / cache-clear-placement
@@ -259,6 +284,12 @@ def delete_user(user_id: str) -> bool:
     from permissions import clear_cache_for_user
 
     clear_cache_for_user(user_id)
+    from auth import invalidate_sid_cache
+
+    # SCOPE-EXEMPT: auth_sessions has no memory scope — reads are owner-scoped by user_id (sid LRU hygiene).
+    sess_rows = ms.fetch_all("SELECT id FROM auth_sessions WHERE user_id = %s", (user_id,))
+    for row in sess_rows:
+        invalidate_sid_cache(row["id"])
     # SCOPE-EXEMPT: auth_sessions rows are keyed by user_id only (purge on user delete).
     ms.execute("DELETE FROM auth_sessions WHERE user_id = %s", (user_id,))
     ms.execute("DELETE FROM users WHERE id = %s", (user_id,))
@@ -327,6 +358,7 @@ def _apply_new_password(user_id: str, new_password: str) -> None:
     Callers must enforce authz. Post-commit: clears the in-process
     ``token_version`` cache used by access-JWT verification.
     """
+    from auth import invalidate_sid_cache
     from auth import invalidate_token_version_cache
 
     from services import auth_sessions as _auth_sess
@@ -340,6 +372,8 @@ def _apply_new_password(user_id: str, new_password: str) -> None:
             (pw_hash, user_id),
         )
         revoked = _auth_sess.revoke_all_active_in_transaction_for_user(ms, user_id)
+    for r in revoked:
+        invalidate_sid_cache(r["id"])
     invalidate_token_version_cache(user_id)
     _auth_sess.emit_session_rows_cascade_audits(
         acting_user_id=user_id,
@@ -401,6 +435,51 @@ def cli_reset_password(
     _apply_new_password(user.id, new_password)
 
 
+def get_onboarding_completed_at(user_id: str) -> datetime | None:
+    """Return stored onboarding completion instant, or ``None`` if not completed.
+
+    Caller must enforce authz. When ``AUTH_ENABLED=false`` the route layer
+    synthesises a response and does not hit this helper.
+    """
+    ms = config.get_metadata_store()
+    row = ms.fetch_one(
+        "SELECT onboarding_completed_at FROM users WHERE id = %s",
+        (user_id,),
+    )
+    if row is None:
+        return None
+    val = row.get("onboarding_completed_at")
+    if val is None:
+        return None
+    if isinstance(val, datetime):
+        if val.tzinfo is None:
+            return val.replace(tzinfo=timezone.utc)
+        return val
+    return None
+
+
+def set_onboarding_completed(user_id: str) -> datetime:
+    """Idempotently set ``onboarding_completed_at`` if unset; return persisted value.
+
+    Raises:
+        LookupError: no ``users`` row for ``user_id``.
+    """
+    ms = config.get_metadata_store()
+    row = ms.fetch_one(
+        "UPDATE users SET onboarding_completed_at = COALESCE(onboarding_completed_at, NOW()) "
+        "WHERE id = %s RETURNING onboarding_completed_at",
+        (user_id,),
+    )
+    if row is None:
+        raise LookupError("user not found")
+    val = row.get("onboarding_completed_at")
+    if not isinstance(val, datetime):
+        raise RuntimeError("set_onboarding_completed: unexpected RETURNING shape")
+    if val.tzinfo is None:
+        return val.replace(tzinfo=timezone.utc)
+    return val
+
+
 def bootstrap_if_empty() -> InternalUser | None:
     """Seed the bootstrap admin from env if the table is empty.
 
@@ -430,6 +509,14 @@ def bootstrap_if_empty() -> InternalUser | None:
             "LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD must be at least %s characters; "
             "refusing to bootstrap an admin with a short password.",
             MIN_PASSWORD_LENGTH,
+        )
+        return None
+    try:
+        email = validate_user_email(email)
+    except ValueError as exc:
+        _log.critical(
+            "LUMOGIS_BOOTSTRAP_ADMIN_EMAIL is set but invalid for auth: %s",
+            exc,
         )
         return None
     try:

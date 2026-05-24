@@ -100,7 +100,7 @@ def search_endpoint(
     results = semantic_search(
         q, limit=limit, user_id=user.user_id, scope_filter=_coerce_scope_filter(scope)
     )
-    return [r.model_dump() for r in results]
+    return [r.model_dump(exclude={"rerank_score", "point_id"}) for r in results]
 
 
 class SessionEndRequest(BaseModel):

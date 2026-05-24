@@ -106,7 +106,9 @@ COMPOSE_FILE=docker-compose.yml:docker-compose.ghcr.yml \
   docker compose up -d --pull always
 ```
 
-Images are pulled from ghcr.io/lumogis/ (public — no login required).
+Images are pulled from ghcr.io/lumogis/ (public — no login required). Run the commands below from the **repository root** (clone first if needed — **`docs/deployment/quickstart.md`** step 1).
+
+When services are healthy, open **http://localhost/** (Lumogis Web via Caddy) or the orchestrator at **http://localhost:8000** (Swagger at **`/docs`**).
 
 To pin to a specific release (omit the leading v):
 
@@ -115,25 +117,30 @@ IMAGE_TAG=1.2.3 COMPOSE_FILE=docker-compose.yml:docker-compose.ghcr.yml \
   docker compose up -d --pull always
 ```
 
+**Full walkthrough:** [`docs/deployment/quickstart.md`](docs/deployment/quickstart.md) — numbered steps, first-boot waits, Ollama/Postgres behaviour, **`curl`** smoke checks, and common errors.
+
 > **First-time setup note:** GHCR packages must be set to Public after the first workflow push. Go to the repository Packages page, open each package (lumogis-orchestrator, lumogis-web), and set visibility to Public under Package settings.
 
 ### For contributors (build from source)
 
-**Linux / macOS**
+See **[`CONTRIBUTING.md`](CONTRIBUTING.md)** for the full developer workflow (venv, linters, **`make test`**, compose-based checks). From a clone, a typical local stack is **`cp .env.example .env`** then **`docker compose up -d`** (builds images from this tree — no GHCR overlay).
 
-```bash
-git clone https://github.com/lumogis/lumogis.git ~/lumogis
-cd ~/lumogis && cp .env.example .env && docker compose up -d
-```
+**Published GHCR images:** use **[`docs/deployment/quickstart.md`](docs/deployment/quickstart.md)** as the long-form operator guide (aligned with the block above).
 
-**Windows (PowerShell)**
+**Windows (PowerShell)** — clone, env file, compose up:
 
 ```powershell
 git clone https://github.com/lumogis/lumogis.git $HOME\lumogis
 cd "$HOME\lumogis"; Copy-Item .env.example .env; docker compose up -d
 ```
 
-Open **http://localhost/** after health checks settle. Inspect **`.env.example`** for `COMPOSE_PROFILES`, model pulls (`OLLAMA_EXTRA_MODELS`), and auth knobs.
+Open **http://localhost/** (Lumogis Web via Caddy) after health checks settle; orchestrator Swagger/API directly at **http://localhost:8000**. Inspect **`.env.example`** for `COMPOSE_PROFILES`, model pulls (`OLLAMA_EXTRA_MODELS`), and auth knobs.
+
+---
+
+## Remote access
+
+Lumogis is reachable on your local network by default (**http://localhost/** or your LAN IP). For phones and laptops when someone is away from home, **Tailscale Serve** is the recommended path: it provides HTTPS (required for PWA install and Web Push) with no port forwarding and keeps traffic on your private tailnet rather than the public internet. See **[`docs/deployment/remote-access.md`](docs/deployment/remote-access.md)** for step-by-step setup; **Cloudflare Tunnel** is documented there as an alternative.
 
 ---
 
@@ -191,7 +198,7 @@ See **[CONTRIBUTING.md](CONTRIBUTING.md)** — code boundaries (“services neve
 
 **Production-ready?** Solid self-hosted/developer preview—not a turnkey consumer appliance; run it, tighten auth, observe logs.
 
-More depth: **`docs/guides/troubleshooting.md`**, **`docs/LUMOGIS_REFERENCE_MANUAL.md`**.
+More depth: **`docs/guides/troubleshooting.md`**, **`docs/LUMOGIS_REFERENCE_MANUAL.md`**. One-shot stack diagnostics: **`make doctor`** (read-only; JSON via **`make doctor ARGS="--json"`** — see **`scripts/doctor/README.md`**).
 
 ---
 

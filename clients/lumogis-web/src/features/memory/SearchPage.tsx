@@ -136,7 +136,7 @@ export function SearchPage(): JSX.Element {
         <h1 className="lumogis-search__title">Search</h1>
         <div className="lumogis-search__input-wrap">
           <input
-            type="search"
+            type="text"
             className="lumogis-search__input"
             placeholder="Search memories and entities…"
             value={rawQuery}

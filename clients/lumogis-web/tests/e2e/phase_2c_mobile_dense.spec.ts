@@ -5,25 +5,7 @@
 
 import { test, expect } from "@playwright/test";
 
-const email = process.env.LUMOGIS_WEB_SMOKE_EMAIL ?? "";
-const password = process.env.LUMOGIS_WEB_SMOKE_PASSWORD ?? "";
-const hasCreds = Boolean(email && password.length >= 12);
-const requireCreds = process.env.E2E_REQUIRE_CREDS === "1";
-
-if (requireCreds && !hasCreds) {
-  throw new Error(
-    "E2E_REQUIRE_CREDS=1 requires LUMOGIS_WEB_SMOKE_EMAIL and LUMOGIS_WEB_SMOKE_PASSWORD (≥12 chars).",
-  );
-}
-
-async function login(page: import("@playwright/test").Page): Promise<void> {
-  await page.goto("/");
-  await expect(page.getByLabel("Email")).toBeVisible();
-  await page.getByLabel("Email").fill(email);
-  await page.getByLabel("Password", { exact: true }).fill(password);
-  await page.getByRole("button", { name: /^sign in$/i }).click();
-  await expect(page).toHaveURL(/\/chat$/, { timeout: 60_000 });
-}
+import { hasSmokeCreds, loginWithSmokeCredentials, smokeCredsSkipMessage } from "./smoke-auth";
 
 async function expectNoPageHorizontalOverflow(page: import("@playwright/test").Page): Promise<void> {
   const { scrollW, clientW } = await page.evaluate(() => ({
@@ -36,10 +18,10 @@ async function expectNoPageHorizontalOverflow(page: import("@playwright/test").P
 test.describe("Phase 2C mobile dense tables (/admin/users, /me/llm-providers)", () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
-  test.skip(!hasCreds, "Set LUMOGIS_WEB_SMOKE_EMAIL and LUMOGIS_WEB_SMOKE_PASSWORD (≥12 chars) for e2e.");
+  test.skip(!hasSmokeCreds, smokeCredsSkipMessage);
 
   test("main content visible; no document-level horizontal overflow", async ({ page }) => {
-    await login(page);
+    await loginWithSmokeCredentials(page);
 
     await page.goto("/admin/users");
     await page.waitForURL(/\/admin\/|\/chat/, { timeout: 60_000 });

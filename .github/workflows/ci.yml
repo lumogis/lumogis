@@ -15,6 +15,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: LUM-190 — security-audit path gate contract tests
+        run: bash .github/scripts/test-security-audit-paths.sh
+
+      - name: LUM-60 — web-e2e path script syntax
+        run: bash -n .github/scripts/web-e2e-paths.sh
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -112,3 +118,261 @@ jobs:
         if: steps.paths.outputs.should_build != 'true'
         run: |
           echo 'SKIP_WEB_DOCKER_BUILD: no paths matched contract'
+
+  openapi-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: openapi-check-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate OpenAPI check script syntax
+        run: |
+          bash -n .github/scripts/openapi-check-paths.sh
+          bash -n .github/scripts/openapi-breaking-check.sh
+
+      - name: Determine if OpenAPI codegen check is needed
+        id: paths
+        shell: bash
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
+        run: bash -euo pipefail .github/scripts/openapi-check-paths.sh
+
+      - uses: actions/setup-python@v5
+        if: steps.paths.outputs.should_run == 'true'
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        if: steps.paths.outputs.should_run == 'true'
+        with:
+          node-version: "20"
+
+      - name: Install web deps and run OpenAPI check
+        if: steps.paths.outputs.should_run == 'true'
+        run: |
+          cd clients/lumogis-web && npm ci
+          cd "$GITHUB_WORKSPACE" && make openapi-check
+
+      - uses: actions/setup-go@v5
+        if: steps.paths.outputs.should_run == 'true'
+        with:
+          go-version: "1.26.x"
+          cache: true
+
+      - name: Install oasdiff (OpenAPI breaking gate, LUM-302)
+        if: steps.paths.outputs.should_run == 'true'
+        run: |
+          go install github.com/oasdiff/oasdiff@v1.15.2
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          oasdiff --version
+
+      - name: OpenAPI breaking-check fixtures + gate
+        if: steps.paths.outputs.should_run == 'true'
+        shell: bash
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
+          OPENAPI_BREAKING_FAIL_ON: ERR
+        run: |
+          set -euo pipefail
+          FIXDIR="scripts/fixtures/openapi-breaking-check"
+          oasdiff breaking "$FIXDIR/base.json" "$FIXDIR/after-compatible.json" --format githubactions --fail-on ERR
+          set +e
+          oasdiff breaking "$FIXDIR/base.json" "$FIXDIR/after-breaking.json" --format githubactions --fail-on ERR
+          brc=$?
+          set -e
+          if [[ "$brc" -ne 1 ]]; then
+            echo "openapi-breaking fixture: expected oasdiff exit 1 on breaking pair, got ${brc}" >&2
+            exit 1
+          fi
+          set +e
+          out=$(OPENAPI_BREAKING_FAIL_ON=off bash .github/scripts/openapi-breaking-check.sh 2>&1)
+          off_rc=$?
+          set -e
+          if [[ "$off_rc" -ne 0 ]]; then
+            echo "openapi-breaking-check: OPENAPI_BREAKING_FAIL_ON=off expected exit 0, got ${off_rc}" >&2
+            echo "$out" >&2
+            exit 1
+          fi
+          echo "$out" | grep -Fq "::warning::OpenAPI breaking gate bypassed (OPENAPI_BREAKING_FAIL_ON=off)" || {
+            echo "openapi-breaking-check: missing audit line for OPENAPI_BREAKING_FAIL_ON=off" >&2
+            echo "$out" >&2
+            exit 1
+          }
+          make openapi-breaking-check
+
+      - name: Skip OpenAPI check (path contract)
+        if: steps.paths.outputs.should_run != 'true'
+        run: |
+          echo 'SKIP_OPENAPI_CHECK: no paths matched contract'
+          exit 0
+
+  doctor-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: doctor-integration-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate doctor integration path script syntax
+        run: bash -n .github/scripts/doctor-integration-paths.sh
+
+      - name: Determine if doctor integration is needed
+        id: paths
+        shell: bash
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
+        run: bash -euo pipefail .github/scripts/doctor-integration-paths.sh
+
+      - name: Ensure jq is available
+        if: steps.paths.outputs.should_run == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v jq >/dev/null 2>&1; then
+            jq --version
+            exit 0
+          fi
+          sudo apt-get update
+          sudo apt-get install -y jq
+          command -v jq >/dev/null 2>&1 || { echo "doctor-integration: jq missing after apt install" >&2; exit 1; }
+          jq --version
+
+      - name: Run compose-test-doctor (live stack + doctor JSON)
+        if: steps.paths.outputs.should_run == 'true'
+        run: make compose-test-doctor
+
+      - name: Upload doctor.json (debug)
+        if: always() && steps.paths.outputs.should_run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: doctor-json
+          path: doctor.json
+          if-no-files-found: ignore
+
+      - name: Compose diagnostics (bounded)
+        if: always() && steps.paths.outputs.should_run == 'true'
+        shell: bash
+        env:
+          COMPOSE_PROJECT_NAME: lumogis-test
+          COMPOSE_FILE: docker-compose.yml:docker-compose.test.yml
+        run: |
+          set +e
+          cd "$GITHUB_WORKSPACE"
+          docker compose --env-file config/test.env.example ps -a
+          docker compose --env-file config/test.env.example logs --tail=200
+
+      - name: Skip doctor integration (path contract)
+        if: steps.paths.outputs.should_run != 'true'
+        run: |
+          echo 'SKIP_DOCTOR_INTEGRATION: no paths matched contract'
+          exit 0
+
+  security-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    concurrency:
+      group: security-audit-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate path-detection script syntax
+        run: bash -n .github/scripts/security-audit-paths.sh
+
+      - name: Determine if security audit is needed
+        id: paths
+        shell: bash
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
+        run: bash -euo pipefail .github/scripts/security-audit-paths.sh
+
+      - uses: actions/setup-python@v5
+        if: steps.paths.outputs.should_run == 'true'
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: scripts/requirements-security-audit.txt
+
+      - uses: actions/setup-node@v4
+        if: steps.paths.outputs.should_run == 'true'
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: clients/lumogis-web/package-lock.json
+
+      - name: Install tools and run dependency audit (blocking)
+        if: steps.paths.outputs.should_run == 'true'
+        run: |
+          set -euo pipefail
+          pip install -r scripts/requirements-security-audit.txt
+          cd clients/lumogis-web && npm ci
+          cd "$GITHUB_WORKSPACE"
+          make audit-local || (echo "retry: make audit-local" && sleep 5 && make audit-local)
+
+      - name: Bandit orchestrator (advisory)
+        if: steps.paths.outputs.should_run == 'true'
+        run: |
+          set +e
+          bandit -r orchestrator/ -ll -ii 2>&1 | tee bandit-orchestrator.log
+          ec=$?
+          {
+            echo "### Bandit (orchestrator)"
+            echo "Exit code: ${ec}"
+            echo ""
+            echo '```'
+            tail -c 100000 bandit-orchestrator.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
+      - name: Bandit lumogis-graph (advisory, private checkouts only)
+        if: steps.paths.outputs.should_run == 'true'
+        run: |
+          if [[ ! -d services/lumogis-graph ]]; then
+            echo "lumogis-graph not in checkout; skipping second Bandit pass"
+            exit 0
+          fi
+          set +e
+          bandit -r services/lumogis-graph/ -ll -ii 2>&1 | tee bandit-graph.log
+          ec=$?
+          {
+            echo "### Bandit (services/lumogis-graph)"
+            echo "Exit code: ${ec}"
+            echo ""
+            echo '```'
+            tail -c 100000 bandit-graph.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
+      - name: Upload Bandit orchestrator log
+        if: steps.paths.outputs.should_run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bandit-orchestrator
+          path: bandit-orchestrator.log
+
+      - name: Skip security audit (path contract)
+        if: steps.paths.outputs.should_run != 'true'
+        run: |
+          echo 'SKIP_SECURITY_AUDIT: no paths matched contract'
+          exit 0

@@ -30,13 +30,13 @@ Local dev requires the orchestrator running at `http://localhost:8000`
 `/api`, `/events`, `/v1`, and `/mcp` to it so the SPA stays same-origin.
 
 ```bash
-npm install
+npm ci               # lockfile-pinned; from repo root: make web-install
 npm run dev          # http://localhost:5173
 npm run lint
 npm run build        # static bundle in dist/
 npm run codegen      # regenerate src/api/generated/openapi.d.ts from committed snapshot
-npm run codegen -- --live   # generate from live orchestrator /openapi.json
-# Drift check vs *live* API (orchestrator must be up; LUMOGIS_OPENAPI_URL overrides host, default :8000):
+npm run codegen -- --live   # optional: generate from live orchestrator /openapi.json (LUMOGIS_OPENAPI_URL)
+# Drift check: offline dump_openapi vs committed snapshot (repo root: make web-codegen-check / make openapi-check)
 npm run codegen:check
 ```
 
@@ -80,6 +80,18 @@ make web-e2e-prove           # fails if creds missing — use in CI or release c
 ```
 
 Optional: `PLAYWRIGHT_BASE_URL=https://your.host` if not testing on port 80.
+
+**Onboarding e2e (LUM-315):** `tests/e2e/onboarding_dismiss_persists.spec.ts` asserts that
+Skip and Done both persist onboarding dismissal across reload. Before each test it resets
+`users.onboarding_completed_at` to `NULL` for the smoke user via Postgres
+(`docker compose exec -T postgres psql …` from the repo root, or host `psql` when
+`POSTGRES_*` is reachable). Requires the stack up with migration **025** applied. Run:
+
+```bash
+docker compose up -d   # repo root
+export LUMOGIS_WEB_SMOKE_EMAIL=... LUMOGIS_WEB_SMOKE_PASSWORD='...'
+cd clients/lumogis-web && npx playwright test tests/e2e/onboarding_dismiss_persists.spec.ts
+```
 
 **Caddy security headers (repo root):** `make web-caddy-headers` with the stack up, or `make web-caddy-headers-prove` when the check must fail if Caddy is down.
 
@@ -148,8 +160,7 @@ cd orchestrator && python -m scripts.dump_openapi --pretty --sort-keys \
 
 (Run from **repo root** so `cd orchestrator` and the `--out ../clients/...` path resolve; this matches `orchestrator/tests/test_api_v1_openapi_snapshot.py` and `orchestrator/scripts/dump_openapi.py`.)
 
-`npm run codegen:check` (repo root: `make web-codegen-check`) fetches the live
-`/openapi.json` and fails if the committed snapshot would change — requires a
-**running** orchestrator at `LUMOGIS_OPENAPI_URL` (default
-`http://localhost:8000/openapi.json`). Offline CI for this check remains a
-future improvement (`openapi_check_offline_or_mock` in platform remediation docs).
+`npm run codegen:check` (repo root: **`make web-codegen-check`** or **`make openapi-check`**) runs
+`python -m scripts.dump_openapi` and fails if the output differs from the committed
+**`openapi.snapshot.json`** — **no HTTP server**. Optional **`npm run codegen -- --live`** compares against a
+**running** orchestrator using **`LUMOGIS_OPENAPI_URL`** (default `http://localhost:8000/openapi.json`).

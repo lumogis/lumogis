@@ -33,6 +33,7 @@ Any break in the chain shows up here as a cross-user leak.
 from __future__ import annotations
 
 import os
+import uuid
 from contextlib import contextmanager
 from datetime import datetime
 from datetime import timezone
@@ -86,6 +87,9 @@ class _IsolationStore:
         self.routine_do: dict[tuple[str, str, str], dict] = {}
         self.app_settings: dict[str, str] = {}
         self.auth_sessions: dict[str, dict] = {}
+        # Per-user paperless sources + external_documents (LUM-304 / LUM-281).
+        self.sources: dict[str, dict] = {}
+        self.external_documents: dict[tuple[str, str, str, str], dict] = {}
 
     def ping(self) -> bool:
         return True
@@ -279,6 +283,83 @@ class _IsolationStore:
                 row["chunk_count"] = chunk_count
             return
 
+        if q.startswith("insert into sources"):
+            (
+                sid,
+                uid,
+                name,
+                source_type,
+                url,
+                category,
+                poll_interval,
+                extraction_method,
+            ) = p[:8]
+            now = datetime.now(timezone.utc)
+            self.sources[str(sid)] = {
+                "id": str(sid),
+                "user_id": uid,
+                "name": name,
+                "source_type": source_type,
+                "url": url,
+                "category": category,
+                "active": True,
+                "poll_interval": poll_interval,
+                "extraction_method": extraction_method,
+                "css_selector_override": None,
+                "last_polled_at": None,
+                "last_signal_at": None,
+                "poll_cursor": None,
+                "created_at": now,
+            }
+            return
+        if "update sources set poll_cursor = %s where id = %s::uuid" in q:
+            poll_watermark, source_id, _cmp = p
+            row = self.sources.get(str(source_id))
+            if row is not None:
+                cur = row.get("poll_cursor")
+                if cur is None or cur == "" or poll_watermark > cur:
+                    row["poll_cursor"] = poll_watermark
+            return
+        if q.startswith("update sources set last_polled_at = %s where id = %s"):
+            polled_at, source_id = p
+            row = self.sources.get(str(source_id))
+            if row is not None:
+                row["last_polled_at"] = polled_at
+            return
+
+        if q.startswith("insert into external_documents"):
+            uid, source_id, external_kind, external_id, content_hash, chunk_count, logical_path = p
+            key = (uid, str(source_id), external_kind, external_id)
+            now = datetime.now(timezone.utc)
+            existing = self.external_documents.get(key)
+            if existing is None:
+                self.external_documents[key] = {
+                    "user_id": uid,
+                    "source_id": str(source_id),
+                    "external_kind": external_kind,
+                    "external_id": external_id,
+                    "content_hash": content_hash,
+                    "chunk_count": chunk_count,
+                    "logical_path": logical_path,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            else:
+                existing["content_hash"] = content_hash
+                existing["chunk_count"] = chunk_count
+                existing["logical_path"] = logical_path
+                existing["updated_at"] = now
+            return
+        if q.startswith("update external_documents set chunk_count = %s"):
+            chunk_count, logical_path, uid, source_id, external_kind, external_id = p
+            key = (uid, str(source_id), external_kind, external_id)
+            row = self.external_documents.get(key)
+            if row is not None:
+                row["chunk_count"] = chunk_count
+                row["logical_path"] = logical_path
+                row["updated_at"] = datetime.now(timezone.utc)
+            return
+
     def fetch_one(self, query: str, params: tuple | None = None) -> dict | None:
         q = " ".join(query.split()).lower()
         p = params or ()
@@ -346,6 +427,29 @@ class _IsolationStore:
             file_path, user_id = p
             row = self.file_index.get((user_id, file_path))
             return {"file_hash": row["file_hash"]} if row else None
+
+        if q.startswith("select poll_cursor from sources where id = %s"):
+            (source_id,) = p
+            row = self.sources.get(str(source_id))
+            if row is None:
+                return None
+            pc = row.get("poll_cursor")
+            return {"poll_cursor": pc} if pc is not None else {"poll_cursor": None}
+
+        if (
+            q.startswith("select content_hash, chunk_count from external_documents")
+            and "where user_id = %s and source_id = %s::uuid" in q
+        ):
+            user_id, source_id, external_kind, external_id = p
+            row = self.external_documents.get(
+                (user_id, str(source_id), external_kind, external_id)
+            )
+            if row is None:
+                return None
+            return {
+                "content_hash": row["content_hash"],
+                "chunk_count": row["chunk_count"],
+            }
 
         # --- user_connector_credentials (plan caldav_connector_credentials) ---
         if q.startswith("select ciphertext from user_connector_credentials"):
@@ -1223,6 +1327,260 @@ def test_two_users_have_independent_caldav_credentials(
         # Alice's resolution still works after Bob's row is gone.
         alice_conn_after = load_connection(alice_id)
         assert alice_conn_after.password == "alice-secret"
+
+
+# ---------------------------------------------------------------------------
+# LUM-304 / LUM-281 — paperless-ngx poll/ingest cross-user isolation.
+#
+# Pins (poll path via ``feed_monitor._poll_paperless_source``):
+#   * Alice and Bob each have paperless credentials + an active source.
+#   * ``external_documents`` rows never attribute another user's user_id.
+#   * Qdrant ``external_document_chunk_point_id`` values never collide
+#     across users (same external document id on both sides).
+#
+# Fixture: ``sources`` + ``external_documents`` on ``_IsolationStore``
+# (same option (a) pattern as CalDAV credentials above).
+# ---------------------------------------------------------------------------
+
+
+def _insert_paperless_source(store: _IsolationStore, *, source_id: str, user_id: str, url: str) -> None:
+    store.execute(
+        (
+            "INSERT INTO sources "
+            "(id, user_id, name, source_type, url, category, active, poll_interval, "
+            "extraction_method, css_selector_override) "
+            "VALUES (%s, %s, %s, %s, %s, %s, TRUE, %s, %s, NULL)"
+        ),
+        (
+            source_id,
+            user_id,
+            "paperless-test",
+            "paperless",
+            url,
+            "general",
+            3600,
+            "paperless_http",
+        ),
+    )
+
+
+def test_two_users_have_independent_paperless_ingest(
+    isolation_env,
+    isolation_store,
+    monkeypatch,
+):
+    """Alice's and Bob's paperless poll/ingest never cross-contaminate."""
+    import jwt
+
+    from adapters.paperless_source import PaperlessDocument
+    from adapters.paperless_source import PaperlessPoller
+    from models.signals import SourceConfig
+    from services import connector_credentials as ccs
+    from services.paperless_credentials import load_connection
+    from services.point_ids import external_document_chunk_point_id
+    from signals.feed_monitor import _poll_paperless_source
+
+    monkeypatch.setenv(
+        "LUMOGIS_CREDENTIAL_KEY",
+        "OlGLYckGIbBSt54y8XVmgb441LgKJWvvYoHnpQ_cv9A=",
+    )
+    monkeypatch.delenv("LUMOGIS_CREDENTIAL_KEYS", raising=False)
+    monkeypatch.delenv("LUMOGIS_PUBLIC_ORIGIN", raising=False)
+    monkeypatch.setenv("PAPERLESS_BASE_URL", "https://leak-detector.example/")
+    monkeypatch.setenv("PAPERLESS_TOKEN", "leak-detector-token")
+
+    ccs.reset_for_tests()
+
+    alice_id = _create_user("alice@home.lan", "user")
+    bob_id = _create_user("bob@home.lan", "user")
+
+    alice_base = "https://alice.example"
+    bob_base = "https://bob.example"
+    alice_payload = {"base_url": alice_base, "token": "alice-paperless-token"}
+    bob_payload = {"base_url": bob_base, "token": "bob-paperless-token"}
+
+    alice_source_id = str(uuid.uuid4())
+    bob_source_id = str(uuid.uuid4())
+
+    _docs_by_base = {
+        alice_base: [
+            PaperlessDocument(
+                id=101,
+                content="ALICE-PAPERLESS-SENTINEL — only Alice should see this.",
+                added="2026-05-01T10:00:00Z",
+            ),
+        ],
+        bob_base: [
+            PaperlessDocument(
+                id=101,
+                content="BOB-PAPERLESS-SENTINEL — only Bob should see this.",
+                added="2026-05-01T10:00:00Z",
+            ),
+        ],
+    }
+
+    def _mock_fetch_documents_page(
+        self: PaperlessPoller,
+        *,
+        since_cursor: str | None,
+        page: int,
+    ) -> tuple[list[PaperlessDocument], bool]:
+        base = self._conn.base_url.rstrip("/")
+        if page > 1:
+            return [], False
+        return list(_docs_by_base.get(base, [])), False
+
+    monkeypatch.setattr(PaperlessPoller, "fetch_documents_page", _mock_fetch_documents_page)
+
+    def _bearer(user_id: str) -> dict:
+        token = jwt.encode(
+            {
+                "sub": user_id,
+                "role": "user",
+                "iat": int(datetime.now(timezone.utc).timestamp()),
+                "exp": int(datetime.now(timezone.utc).timestamp()) + 600,
+            },
+            os.environ["AUTH_SECRET"],
+            algorithm="HS256",
+        )
+        return {"Authorization": f"Bearer {token}"}
+
+    with _booted_client() as client:
+        a_put = client.put(
+            "/api/v1/me/connector-credentials/paperless",
+            headers=_bearer(alice_id),
+            json={"payload": alice_payload},
+        )
+        b_put = client.put(
+            "/api/v1/me/connector-credentials/paperless",
+            headers=_bearer(bob_id),
+            json={"payload": bob_payload},
+        )
+        assert a_put.status_code == 200, a_put.text
+        assert b_put.status_code == 200, b_put.text
+
+        _insert_paperless_source(
+            isolation_store,
+            source_id=alice_source_id,
+            user_id=alice_id,
+            url=alice_base,
+        )
+        _insert_paperless_source(
+            isolation_store,
+            source_id=bob_source_id,
+            user_id=bob_id,
+            url=bob_base,
+        )
+
+        alice_conn = load_connection(alice_id)
+        bob_conn = load_connection(bob_id)
+        assert alice_conn.base_url == alice_base
+        assert bob_conn.base_url == bob_base
+        assert alice_conn.token == "alice-paperless-token"
+        assert bob_conn.token == "bob-paperless-token"
+
+        alice_source = SourceConfig(
+            id=alice_source_id,
+            name="Alice paperless",
+            source_type="paperless",
+            url=alice_base,
+            category="general",
+            active=True,
+            poll_interval=3600,
+            extraction_method="paperless_http",
+            css_selector_override=None,
+            last_polled_at=None,
+            last_signal_at=None,
+            poll_cursor=None,
+            user_id=alice_id,
+        )
+        bob_source = SourceConfig(
+            id=bob_source_id,
+            name="Bob paperless",
+            source_type="paperless",
+            url=bob_base,
+            category="general",
+            active=True,
+            poll_interval=3600,
+            extraction_method="paperless_http",
+            css_selector_override=None,
+            last_polled_at=None,
+            last_signal_at=None,
+            poll_cursor=None,
+            user_id=bob_id,
+        )
+
+        _poll_paperless_source(alice_source)
+        _poll_paperless_source(bob_source)
+
+        import config as _config
+
+        vs = _config.get_vector_store()
+        documents = list(vs._collections.get("documents", []))
+
+    # --- Postgres ``external_documents`` bookkeeping ---
+    alice_rows = [
+        r for r in isolation_store.external_documents.values() if r["user_id"] == alice_id
+    ]
+    bob_rows = [r for r in isolation_store.external_documents.values() if r["user_id"] == bob_id]
+    assert len(alice_rows) == 1, f"Alice external_documents rows: {alice_rows!r}"
+    assert len(bob_rows) == 1, f"Bob external_documents rows: {bob_rows!r}"
+    assert all(r["user_id"] == alice_id for r in alice_rows), (
+        f"DATA LEAK: external_documents row attributed wrong user_id: {alice_rows!r}"
+    )
+    assert all(r["user_id"] == bob_id for r in bob_rows), (
+        f"DATA LEAK: external_documents row attributed wrong user_id: {bob_rows!r}"
+    )
+    assert alice_rows[0]["source_id"] == alice_source_id
+    assert bob_rows[0]["source_id"] == bob_source_id
+    assert alice_rows[0]["external_id"] == "101"
+    assert bob_rows[0]["external_id"] == "101"
+    assert alice_rows[0]["logical_path"] == f"paperless://{alice_source_id}/documents/101"
+    assert bob_rows[0]["logical_path"] == f"paperless://{bob_source_id}/documents/101"
+
+    # --- Qdrant ``documents`` chunks (namespaced point ids) ---
+    alice_chunks = [
+        d
+        for d in documents
+        if d["payload"].get("user_id") == alice_id
+        and str(d["payload"].get("file_path", "")).startswith("paperless://")
+    ]
+    bob_chunks = [
+        d
+        for d in documents
+        if d["payload"].get("user_id") == bob_id
+        and str(d["payload"].get("file_path", "")).startswith("paperless://")
+    ]
+    assert alice_chunks, "Alice's paperless Qdrant chunks missing"
+    assert bob_chunks, "Bob's paperless Qdrant chunks missing"
+
+    alice_ids = {d["id"] for d in alice_chunks}
+    bob_ids = {d["id"] for d in bob_chunks}
+    assert alice_ids.isdisjoint(bob_ids), (
+        f"DATA LEAK: Alice and Bob share paperless Qdrant point ids: "
+        f"{alice_ids & bob_ids!r}"
+    )
+
+    expected_alice_pid = external_document_chunk_point_id(
+        alice_id, alice_source_id, "paperless", "101", 0
+    )
+    expected_bob_pid = external_document_chunk_point_id(
+        bob_id, bob_source_id, "paperless", "101", 0
+    )
+    assert expected_alice_pid in alice_ids
+    assert expected_bob_pid in bob_ids
+    assert expected_alice_pid != expected_bob_pid
+
+    alice_text = " ".join(d["payload"].get("text", "") for d in alice_chunks)
+    bob_text = " ".join(d["payload"].get("text", "") for d in bob_chunks)
+    assert "ALICE-PAPERLESS-SENTINEL" in alice_text, f"Alice chunk text missing: {alice_text!r}"
+    assert "BOB-PAPERLESS-SENTINEL" not in alice_text, (
+        f"DATA LEAK: Alice's paperless chunks contain Bob's content: {alice_text!r}"
+    )
+    assert "BOB-PAPERLESS-SENTINEL" in bob_text, f"Bob chunk text missing: {bob_text!r}"
+    assert "ALICE-PAPERLESS-SENTINEL" not in bob_text, (
+        f"DATA LEAK: Bob's paperless chunks contain Alice's content: {bob_text!r}"
+    )
 
 
 # ---------------------------------------------------------------------------

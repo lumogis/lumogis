@@ -716,6 +716,26 @@ class MeNotificationsResponse(BaseModel):
     summary: MeNotificationsSummary
 
 
+# ── Me / onboarding (LUM-165) ─────────────────────────────────────────
+
+
+class MeOnboardingResponse(BaseModel):
+    """First-run onboarding completion state for the authenticated user."""
+
+    model_config = _RES
+    completed_at: Optional[datetime] = Field(
+        default=None,
+        description="UTC instant when onboarding was completed; null means show the gate.",
+    )
+
+
+class MeOnboardingPatchRequest(BaseModel):
+    """Body for ``PATCH /api/v1/me/onboarding`` — v1 only records completion."""
+
+    model_config = _REQ
+    completed: Literal[True]
+
+
 # ── Admin / diagnostics (read-only façade) ───────────────────────────
 
 

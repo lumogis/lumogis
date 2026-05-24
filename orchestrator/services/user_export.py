@@ -107,6 +107,7 @@ _USER_EXPORT_TABLES: tuple[str, ...] = (
     # Tables WITHOUT a `scope` column → user_id-only filter.
     "entity_relations",
     "sources",
+    "external_documents",
     "relevance_profiles",
     "review_decisions",
     "known_distinct_entity_pairs",

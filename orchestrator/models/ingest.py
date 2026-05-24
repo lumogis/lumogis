@@ -8,6 +8,8 @@ class IngestResult(BaseModel):
     chunk_count: int
     ocr_used: bool = False
     skipped: bool = False
+    # LUM-281: paperless poller advances ``sources.poll_cursor`` only when True.
+    advance_external_poll_cursor: bool = False
 
 
 class IngestStats(BaseModel):

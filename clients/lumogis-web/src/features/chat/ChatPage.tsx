@@ -49,6 +49,7 @@ import {
   type ChatMessage,
   type ChatThread,
 } from "./threadStore";
+import { EmptyState } from "../_shared/EmptyState";
 
 const DEFAULT_MODEL = "claude";
 
@@ -71,6 +72,7 @@ export function ChatPage(): JSX.Element {
   }, [active, models, setModel]);
 
   const [input, setInput] = useState("");
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const [streaming, setStreaming] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -380,7 +382,20 @@ export function ChatPage(): JSX.Element {
           aria-label="Conversation transcript"
         >
           {active === null || active.messages.length === 0 ? (
-            <EmptyState />
+            <EmptyState
+              className="lumogis-chat__empty"
+              title="Start your first message"
+              helperText="Lumogis chats are ephemeral and live only in this browser tab. Closing the tab discards them — use Capture or Search when you want durable notes."
+              actions={[
+                {
+                  label: "Focus message box",
+                  primary: true,
+                  onClick: () => {
+                    composerRef.current?.focus();
+                  },
+                },
+              ]}
+            />
           ) : (
             active.messages.map((m) => <MessageBubble key={m.id} message={m} />)
           )}
@@ -397,6 +412,7 @@ export function ChatPage(): JSX.Element {
             Message
           </label>
           <textarea
+            ref={composerRef}
             id="lumogis-chat-input"
             value={input}
             onChange={(e) => {
@@ -561,14 +577,6 @@ function MessageBubble({ message }: { message: ChatMessage }): JSX.Element {
         </p>
       )}
     </article>
-  );
-}
-
-function EmptyState(): JSX.Element {
-  return (
-    <div className="lumogis-chat__empty">
-      <p>Start a conversation. Lumogis chats are ephemeral and live in this browser tab only.</p>
-    </div>
   );
 }
 

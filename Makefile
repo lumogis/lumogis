@@ -7,20 +7,25 @@
 # hosts with no `python` shim). After `source .venv/bin/activate`, either form
 # works; override: `make test PYTHON=python`.
 PYTHON ?= python3
+# Optional args for doctor (LUM-199), e.g. `make doctor ARGS="--json"` (portable) or `make doctor -- --json`.
+ARGS ?=
 
-.PHONY: dev build test test-integration test-integration-full lint ingest health logs \
-        audit-local web-audit-fix \
+# LUM-319 / POSIX: recipes use `set -o pipefail` (e.g. `compose-test-doctor`); Ubuntu `/bin/sh` is dash — use bash.
+SHELL := /bin/bash
+
+.PHONY: dev build test check-pytest test-integration test-integration-full lint ingest health logs doctor \
+        audit-local bandit-check web-audit-fix \
         compose-policy-check \
         graph-relates-to-merge-policy-check \
         verify-public-rc verify-public-rc-full \
-        compose-lint compose-test compose-test-stack-control compose-test-integration \
+        compose-lint compose-test compose-test-stack-control compose-test-doctor compose-test-integration \
         compose-policy-check compose-policy-check-baseline compose-policy-check-adversarial \
         compose-policy-check-adversarial-envfile \
         mock-capability-test \
         sync-vendored test-kg test-kg-image compose-test-kg \
         test-graph-parity \
         demo-seed demo-test demo-ready \
-        web-install web-codegen web-codegen-check web-dockerfile-check web-docker-build web-test web-lint web-build web-dev web-e2e \
+        web-install web-codegen web-codegen-check openapi-check openapi-breaking-check web-dockerfile-check web-docker-build web-test web-lint web-build web-dev web-e2e \
         test-web-e2e \
         web-e2e-prove web-caddy-headers web-caddy-headers-prove \
         m1-compat-with-retry \
@@ -38,6 +43,31 @@ health:
 
 logs:
 	docker compose logs orchestrator -f --tail 50
+
+# LUM-199 — read-only operator health CLI (see scripts/doctor/README.md).
+doctor:
+	@bash "$(CURDIR)/scripts/doctor/run.sh" $(ARGS)
+
+# LUM-319 — CI parity: disposable lumogis-test (docker-compose.yml + docker-compose.test.yml only),
+# then `make doctor ARGS="--json"` + jq shape check. Overwrites ./.env from config/test.env.example;
+# backs up locally if needed. See scripts/doctor/README.md and .cursor/plans/LUM-319-doctor-ci-integration.plan.md.
+compose-test-doctor:
+	@REPO="$(CURDIR)"; \
+	set -euo pipefail; \
+	cleanup() { \
+	  (cd "$$REPO" && export COMPOSE_PROJECT_NAME=lumogis-test COMPOSE_FILE=docker-compose.yml:docker-compose.test.yml && docker compose --env-file config/test.env.example down -v) || true; \
+	}; \
+	trap cleanup EXIT INT TERM; \
+	cp -f "$$REPO/config/test.env.example" "$$REPO/.env"; \
+	export COMPOSE_PROJECT_NAME=lumogis-test; \
+	export COMPOSE_FILE=docker-compose.yml:docker-compose.test.yml; \
+	cd "$$REPO"; \
+	docker compose --env-file config/test.env.example up -d --wait --wait-timeout 180; \
+	$(MAKE) --no-print-directory doctor ARGS="--json" > "$$REPO/doctor.json"; \
+	jq -e '.version == 1 and (.checks | type == "array")' < "$$REPO/doctor.json"; \
+	rm -f "$$REPO/doctor.json"; \
+	trap - EXIT INT TERM; \
+	cleanup
 
 ingest:
 	curl -s -X POST http://localhost:8000/ingest \
@@ -115,7 +145,7 @@ compose-policy-check:
 graph-relates-to-merge-policy-check: ## LUM-208 — AST-aware scan for invalid RELATES_TO MERGE shapes
 	$(PYTHON) scripts/check_graph_relates_to_merge_policy.py
 
-m1-compat-with-retry: ## Live FalkorDB compat gate (requires FALKORDB_URL + RUN_M1_COMPAT=1); one retry on flake
+m1-compat-with-retry: ## Live FalkorDB compat gate — e.g. FALKORDB_URL=redis://127.0.0.1:6380 RUN_M1_COMPAT=1 (optional FALKORDB_HOST_PORT if not 6380); one retry on flake
 	cd orchestrator && (RUN_M1_COMPAT=1 $(PYTHON) -m pytest tests/premium/test_graph_writer.py::TestFalkorDBCompatGate -q || (sleep 2 && RUN_M1_COMPAT=1 $(PYTHON) -m pytest tests/premium/test_graph_writer.py::TestFalkorDBCompatGate -q))
 
 # NOTE: Must run on an export-shaped RC branch (after
@@ -222,6 +252,15 @@ mock-capability-test:
 audit-local:
 	bash scripts/audit_local.sh
 
+# LUM-190 — advisory Bandit on orchestrator/ (same flags as CI). Uses a local venv (PEP 668–safe).
+# OWASP ZAP baseline (operator, one-shot): mount a writable dir as /zap/wrk, then e.g.
+#   docker run --rm -v "$PWD/tmp-zap-wrk:/zap/wrk:rw" ghcr.io/zaproxy/zaproxy:stable \
+#     zap-baseline.py -t "https://<rc-base-url>/" -J zap-baseline-2026.json -I
+# Do not use deprecated Docker Hub owasp/zap2docker-stable; pin ghcr.io/zaproxy/zaproxy by digest for reproducibility.
+bandit-check:
+	@test -x "$(CURDIR)/.venv-bandit-check/bin/bandit" || ( $(PYTHON) -m venv "$(CURDIR)/.venv-bandit-check" && "$(CURDIR)/.venv-bandit-check/bin/pip" install -q -r scripts/requirements-security-audit.txt )
+	-@"$(CURDIR)/.venv-bandit-check/bin/bandit" -r orchestrator/ -ll -ii
+
 # npm audit fix must run under clients/lumogis-web (package-lock.json lives there; repo root has none).
 web-audit-fix:
 	cd clients/lumogis-web && npm audit fix
@@ -232,11 +271,15 @@ lint:
 	ruff format --check orchestrator/
 	@$(PYTHON) scripts/check_refresh_token_jti_guard.py
 
+# LUM-321 — fail fast when pytest is missing from $(PYTHON)'s environment.
+check-pytest:
+	@$(PYTHON) -c "import pytest" 2>/dev/null || (echo "make test: pytest not available for $(PYTHON). See CONTRIBUTING.md — Running tests (local venv)." >&2; exit 2)
+
 # Requires local venv — see CONTRIBUTING.md (orchestrator + stack-control requirements-dev.txt).
 # Orchestrator route tests use unauthenticated TestClient with the synthetic `default`
 # user when `require_user` no-ops — that requires AUTH_ENABLED=false unless every test
 # supplies a bearer token. Host shells often export AUTH_ENABLED=true from compose.
-test:
+test: check-pytest
 	cd orchestrator && AUTH_ENABLED=false $(PYTHON) -m pytest -x -q
 	cd stack-control && $(PYTHON) -m pytest test_main.py -q
 
@@ -316,8 +359,9 @@ test-graph-parity:
 # Phase 1 Pass 1.1 introduced the React + TypeScript SPA. These targets run
 # everything locally (npm + node ≥ 20). CI mirrors them in clients/lumogis-web/.
 
+# LUM-252 — lockfile-pinned install (parity with lumogis-web Dockerfile / CI npm ci).
 web-install:
-	cd clients/lumogis-web && npm install
+	cd clients/lumogis-web && npm ci
 
 web-codegen:
 	cd clients/lumogis-web && npm run codegen
@@ -330,6 +374,17 @@ web-codegen-check:
 	@test -d "$(CURDIR)/.venv" || $(PYTHON) -m venv "$(CURDIR)/.venv"
 	"$(CURDIR)/.venv/bin/pip" install -q -r orchestrator/requirements.txt
 	cd clients/lumogis-web && npm run codegen:check
+
+# LUM-94 — plain alias for discoverability / CI job name (same as web-codegen-check).
+openapi-check: web-codegen-check
+
+# LUM-302 — semantic breaking-change diff on the committed OpenAPI snapshot (oasdiff CLI).
+# Requires Go 1.26+ on PATH (oasdiff v1.15.2 module constraint) plus:
+#   go install github.com/oasdiff/oasdiff@v1.15.2
+# (pin must match the go install line in .github/workflows/ci.yml openapi-check job).
+openapi-breaking-check:
+	@command -v oasdiff >/dev/null 2>&1 || (echo "openapi-breaking-check: oasdiff not on PATH. Install Go 1.26+ then: go install github.com/oasdiff/oasdiff@v1.15.2" >&2; exit 2)
+	bash .github/scripts/openapi-breaking-check.sh
 
 # LUM-224 — fail if Dockerfile drops lockfile COPY or npm ci (supply-chain regression guard).
 web-dockerfile-check:

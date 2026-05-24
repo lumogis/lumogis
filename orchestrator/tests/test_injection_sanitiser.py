@@ -136,7 +136,8 @@ def test_tool_chain_cap_parallel_round(monkeypatch):
 
     calls: list[str] = []
 
-    def capture(name, args, *, user_id):
+    def capture(name, args, *, user_id, auto_rag_point_ids=None):
+        # VERIFY-PLAN: updated to match implementation (LUM-308 run_tool kwarg)
         calls.append(name)
         return json.dumps({"ok": name})
 
@@ -173,7 +174,8 @@ def test_tool_chain_cap_triggers_background_hook(monkeypatch):
 
     calls: list[str] = []
 
-    def capture(name, args, *, user_id):
+    def capture(name, args, *, user_id, auto_rag_point_ids=None):
+        # VERIFY-PLAN: updated to match implementation (LUM-308 run_tool kwarg)
         calls.append(name)
         return json.dumps({"ok": name})
 
@@ -216,7 +218,8 @@ def test_tool_chain_cap_sequential_multi_round(monkeypatch):
 
     calls: list[str] = []
 
-    def capture(name, args, *, user_id):
+    def capture(name, args, *, user_id, auto_rag_point_ids=None):
+        # VERIFY-PLAN: updated to match implementation (LUM-308 run_tool kwarg)
         calls.append(name)
         return json.dumps({"tool": name})
 
@@ -259,7 +262,8 @@ def test_tool_chain_cap_streaming_loop(monkeypatch):
 
     calls: list[str] = []
 
-    def capture(name, args, *, user_id):
+    def capture(name, args, *, user_id, auto_rag_point_ids=None):
+        # VERIFY-PLAN: updated to match implementation (LUM-308 run_tool kwarg)
         calls.append(name)
         return json.dumps({"t": name})
 

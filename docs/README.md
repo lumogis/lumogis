@@ -1,7 +1,9 @@
 # Documentation Index
 
-Last reviewed: 2026-05-14
-Verified against commit: 6c9828f
+> Status: Active
+> Last reviewed: 2026-05-24
+> Verified against commit: 50f43b8
+> Owner: Docs Librarian
 
 ## Canonical docs
 
@@ -14,6 +16,7 @@ Verified against commit: 6c9828f
 
 | Directory | Contents |
 |-----------|----------|
+| `deployment/` | First-run quickstart (published GHCR images): [`deployment/quickstart.md`](deployment/quickstart.md); remote access (Tailscale / Cloudflare Tunnel) — **`deployment/remote-access.md`** planned under **LUM-158** |
 | `guides/` | Operational guides for self-hosters |
 | `extending/` | Guides for contributors and plugin authors |
 | `architecture/` | Implementation architecture notes |
@@ -41,6 +44,7 @@ Verified against commit: 6c9828f
 
 ## Operations
 
+- [`deployment/quickstart.md`](deployment/quickstart.md) — first run from published **GHCR** images
 - [`guides/troubleshooting.md`](guides/troubleshooting.md)
 - [`guides/gpu-setup.md`](guides/gpu-setup.md)
 - [`guides/connector-credentials.md`](guides/connector-credentials.md)

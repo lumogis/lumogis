@@ -12,6 +12,28 @@ For Lumogis work, read [AGENTS.md](AGENTS.md) and [docs/LUMOGIS_CONTEXT_PACK.md]
 
 For ChatGPT or Claude outside the repository, add **`docs/LUMOGIS_CONTEXT_PACK.md`** to the relevant Project Knowledge or project files and use it as the first context source for Lumogis work.
 
+## Public CI parity (OpenAPI)
+
+The public AGPL tree is produced by export (`scripts/create-upstream-export-tree.sh`); it must keep the same **`.github/workflows/ci.yml`** surface as private development, including the **`openapi-check`** job and the offline scripts, Makefile target, web client snapshot/codegen inputs, and breaking-check fixtures that job relies on.
+
+**Do not** add any of the paths asserted by **`scripts/check-public-export.sh`** (search for `Required presence (LUM-303)` and the numbered path comment block) to **`scripts/public-export-strip-list.txt`** without updating that assertion, **`orchestrator/tests/test_check_public_export_script.py`**, and this section in the **same** change — otherwise **`make verify-public-rc`** / **`scripts/check-public-export.sh`** will fail on purpose.
+
+Architecture context: **`docs/decisions/037-ghcr-publish-public-repo-only.md`** (export and public CI); **`docs/decisions/053-lum-94-ci-openapi-codegen-check-without-live-orchestrator.md`** (OpenAPI gate); **[ADR 061 — LUM-303](docs/decisions/061-lum-303-public-ci-parity-openapi-check-via-export.md)** (export presence contract).
+
+## Optional CI — web Playwright (LUM-60)
+
+The workflow **`.github/workflows/web-e2e.yml`** starts a **slim** Compose project (PostgreSQL, Qdrant, orchestrator, Lumogis Web, Caddy, stack-control — **no Ollama**) and runs **`make web-e2e-prove`** with Playwright on the runner host.
+
+| Topic | Detail |
+| --- | --- |
+| **Triggers** | **`workflow_dispatch`**, nightly **`schedule`** (workflow file is read from the default branch; the job checks out **`dev`** explicitly before compose), and **`pull_request`** to **`main`** / **`master`** with types **`opened`**, **`synchronize`**, **`reopened`**, **`labeled`**, **`unlabeled`** so toggling the label re-runs the job. |
+| **Path gate** | On pull requests, **`.github/scripts/web-e2e-paths.sh`** must see a diff hit on the web, Caddy, compose, Makefile, or workflow surfaces listed in that script — otherwise the job logs **`SKIP_WEB_E2E_PATHS`** and exits successfully without starting Docker. |
+| **Label (pull requests only)** | Add the repository label **`ci:run-web-e2e`** so cred-gated steps run on same-repo PRs. Path-matched PRs **without** the label **skip** Playwright (they do not fail solely for missing secrets). |
+| **Fork PRs** | When **`github.event.pull_request.head.repo.full_name`** differs from the base repository, the workflow logs **`SKIP_FORK_PR`** and skips cred-gated steps. |
+| **Secrets** | **`LUMOGIS_WEB_SMOKE_EMAIL`** and **`LUMOGIS_WEB_SMOKE_PASSWORD`** (password at least **12** characters). They must match the bootstrap admin injected for the disposable stack (**`LUMOGIS_BOOTSTRAP_ADMIN_EMAIL`** / **`LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD`** — the workflow sets both pairs from the same secrets). Configure them as **repository secrets** under the same trust model as your other CI secrets. |
+
+This job does **not** replace **`make verify-public-rc`** or **`make verify-public-rc-full`**; do not use it as a reason to set **`VERIFY_PUBLIC_RC_SKIP_WEB_E2E`**.
+
 ---
 
 ## Contributor Licence Agreement (CLA)
@@ -85,6 +107,14 @@ The [Makefile](Makefile) sets `PYTHON ?= python3` for local test targets so `mak
 
 ### Running tests (local venv)
 
+If `make test` reports that pytest is missing, install CI-equivalent dev deps into your activated venv:
+
+```bash
+python -m pip install -r orchestrator/requirements.txt && python -m pip install -r orchestrator/requirements-dev.txt && python -m pip install -r stack-control/requirements-dev.txt
+```
+
+Then:
+
 ```bash
 make test       # orchestrator + stack-control unit tests — no Docker needed
 make lint       # ruff check + format check
@@ -111,10 +141,70 @@ docker compose run --rm -w /project/orchestrator orchestrator sh -c \
 
 Other compose targets: `make compose-lint`, `make compose-test-integration` (see `Makefile`).
 
-### Lumogis Web / OpenAPI
+### OpenAPI snapshot / Lumogis Web typed client
 
-- `npm run codegen` (or `make web-codegen`) regenerates client types from the **committed** `openapi.snapshot.json` in `clients/lumogis-web/`.
-- `npm run codegen:check` / `make web-codegen-check` fetches the **live** orchestrator OpenAPI from `LUMOGIS_OPENAPI_URL` (default `http://localhost:8000/openapi.json`) and fails on drift — the stack must be up. See `clients/lumogis-web/README.md`.
+When you add or rename **`/api/v1/*`** routes, refresh the committed snapshot in the **same PR** as the route change (CI and `make openapi-check` fail on drift):
+
+```bash
+cd orchestrator && python -m scripts.dump_openapi --pretty --sort-keys \
+  --out ../clients/lumogis-web/openapi.snapshot.json
+```
+
+(`orchestrator/scripts/dump_openapi.py` loads the FastAPI app with test-only env hatches — **no** running orchestrator.)
+
+- `npm run codegen` (or `make web-codegen`) regenerates `clients/lumogis-web/src/api/generated/openapi.d.ts` from the **committed** `openapi.snapshot.json`.
+- **`npm run codegen:check`**, **`make web-codegen-check`**, and **`make openapi-check`** (alias) compare that snapshot to a fresh `dump_openapi` run — **offline**; they do **not** use `LUMOGIS_OPENAPI_URL` or a live stack. For an optional **live** `/openapi.json` pull, use **`npm run codegen -- --live`** (see `clients/lumogis-web/README.md`). Rare: override which Python runs `dump_openapi` via **`LUMOGIS_OPENAPI_PYTHON`** (see `clients/lumogis-web/scripts/codegen.mjs`).
+
+#### OpenAPI breaking-change contract (LUM-302)
+
+CI runs **[oasdiff](https://github.com/oasdiff/oasdiff)** (`oasdiff breaking`) on the **committed** `clients/lumogis-web/openapi.snapshot.json` after `make openapi-check` succeeds: **base** = snapshot at the PR **merge-base** (or `HEAD~1` on `push`), **revision** = working tree at `HEAD`. This is **semantic** classification on top of the LUM-94 binary snapshot/codegen gate — see [ADR 053](docs/decisions/053-lum-94-ci-openapi-codegen-check-without-live-orchestrator.md) and [ADR 060 — LUM-302](docs/decisions/060-lum-302-openapi-breaking-change-classifier.md).
+
+**`OPENAPI_BREAKING_FAIL_ON`** (passed to oasdiff `--fail-on`): **`ERR`** (default in CI) exits **1** only on definite breaking changes; **`WARN`** is **stricter** (fails on ERR **or** WARN); **`INFO`** is strictest. **`off`** skips oasdiff entirely and prints a `::warning::OpenAPI breaking gate bypassed (OPENAPI_BREAKING_FAIL_ON=off)` audit line — use only with maintainer intent.
+
+**Local run:** use **Go 1.26+** (the oasdiff v1.15.2 module requires it — CI uses `setup-go` **1.26.x**), then install the pinned CLI (`go install github.com/oasdiff/oasdiff@v1.15.2` — same pin as `.github/workflows/ci.yml`), then `make openapi-breaking-check`. Optional **`OPENAPI_BREAKING_BASE_REF`** (e.g. `origin/main`) selects the base revision explicitly; otherwise the script uses **`HEAD~1`** locally (merge-base is used automatically on `pull_request` in Actions).
+
+**Ignore files** (`--warn-ignore` / `--err-ignore`): do **not** commit an ignore rules file without **explicit reviewer approval** in the PR (link the Linear issue or an ADR note). If OpenAPI 3.x / oasdiff behaviour becomes a recurring problem, revisit tool choice per the LUM-302 ADR “revisit conditions”.
+
+---
+
+## Changelog
+
+We follow [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) in [CHANGELOG.md](CHANGELOG.md).
+
+### When you must update the changelog
+
+If your pull request changes **product-facing paths** tracked in [`.github/workflows/changelog.yml`](.github/workflows/changelog.yml), **`CHANGELOG.md` must appear in the PR diff** (typically under **`[Unreleased]`** with **Added** / **Changed** / **Fixed** / **Removed** as appropriate). The same path list lives in [scripts/changelog-gate-paths.txt](scripts/changelog-gate-paths.txt) for local checks—**keep these in sync** when globs change.
+
+PRs that touch only paths outside that filter (for example **`docs/**`** alone or **`.github/`** alone) **do not** run this workflow and have **no** changelog obligation from that gate.
+
+### Bypasses (maintainers)
+
+- GitHub label **`Skip-Changelog`** (see `skipLabels` in the workflow).
+- The literal **`[skip changelog]`** anywhere in the **PR description/body** (case-insensitive), matching CI.
+
+Third-party outages or misconfiguration may block the check until fixed; the same bypasses are the supported escape hatches—document in the PR when you use them.
+
+### Branch protection / required checks
+
+If this workflow is marked **required** in branch protection while it uses **workflow-level `paths:`** filters, **docs-only** (or otherwise filtered) PRs may show **no status** from this job and appear stuck (“waiting for status”). **Do not** mark the changelog check **required** until you add a job-level path filter with an always-reporting success job, or your process explicitly handles that case.
+
+### Fork pull requests
+
+Workflows on forks may show **Expected — Waiting for status** until a maintainer approves the first run on that PR. That is normal GitHub behaviour, not a bug in this gate.
+
+### Public vs private enforcement
+
+The **published** GitHub workflow ships with this repository and may also appear in the **public** export tree, but **identical enforcement on `lumogis/lumogis`** may lag until maintainer work (see Linear **LUM-227** / children of **LUM-193**). Outside contributors should still follow this document; parity is tracked separately.
+
+### Local check (optional)
+
+Before pushing:
+
+```bash
+make changelog-check
+```
+
+Uses [scripts/check-changelog-touched.sh](scripts/check-changelog-touched.sh) (diff vs `origin/dev`, then `origin/main`, then `HEAD~1`). To mimic the **PR-body** skip locally, set **`CHANGELOG_GATE_PR_BODY`** to a string containing **`[skip changelog]`**.
 
 ---
 
@@ -402,8 +492,6 @@ No code changes to lumogis are required. The PR modifies only `COMMUNITY-PLUGINS
 ## Governance
 
 Maintainers review PRs. We aim for a first response within **48 hours**.
-
-All changes to `.github/workflows/` require **maintainer review**, enforced via [`.github/CODEOWNERS`](.github/CODEOWNERS). Branch protection on `main` requires approvals and review from code owners. **Do not merge workflow changes without explicit maintainer approval.**
 
 **Pushing to the public GitHub repo:** follow **`docs/release/public-agpl-release-workflow.md`** so only the export-shaped tree is published.
 

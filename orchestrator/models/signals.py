@@ -34,15 +34,16 @@ class Signal:
 class SourceConfig:
     id: str
     name: str
-    source_type: str  # rss | page | playwright | caldav
+    source_type: str  # rss | page | playwright | caldav | paperless
     url: str
     category: str
     active: bool
     poll_interval: int  # seconds
-    extraction_method: str  # feedparser | trafilatura | playwright | caldav
+    extraction_method: str  # feedparser | trafilatura | playwright | caldav | paperless_http
     css_selector_override: Optional[str]
     last_polled_at: Optional[datetime]
     last_signal_at: Optional[datetime]
+    poll_cursor: Optional[str] = None  # paperless ``added`` watermark (ISO); NULL in DB only
     user_id: str = "default"
 
 

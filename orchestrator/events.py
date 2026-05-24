@@ -12,6 +12,16 @@ class Event:
     ENTITY_CREATED = "on_entity_created"
     SESSION_ENDED = "on_session_ended"
     TOOL_REGISTERED = "on_tool_registered"
+    # CONTEXT_BUILDING — synchronous hook from chat `_inject_context`.
+    # Kwargs contract (normative):
+    #   query: str — user question
+    #   context_fragments: list[str] — mutated in place; subscribers append plaintext
+    #   user_id: str — visibility scope for graph/entity paths (default "default")
+    #
+    # LUM-308: when auto-RAG is enabled, Core appends document-derived plaintext
+    # lines before this hook fires; in-process graph subscribers may then append
+    # `[Graph]` lines. Service-mode graph fragments are appended after the hook in
+    # `routes/chat.py`.
     CONTEXT_BUILDING = "on_context_building"
 
     NOTE_CAPTURED = "on_note_captured"

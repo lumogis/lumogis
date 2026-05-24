@@ -20,9 +20,10 @@ class BGEReranker:
             return []
         pairs = [(query, c.get("text", c.get("payload", {}).get("text", ""))) for c in candidates]
         scores = self._model.predict(pairs)
-        scored = list(zip(candidates, scores))
-        scored.sort(key=lambda x: float(x[1]), reverse=True)
-        return [c for c, _ in scored[:limit]]
+        for c, s in zip(candidates, scores):
+            c["rerank_score"] = float(s)
+        scored = sorted(candidates, key=lambda c: float(c["rerank_score"]), reverse=True)
+        return scored[:limit]
 
     def warmup(self) -> None:
         """Force model load and dummy rerank to catch errors at startup."""

@@ -49,7 +49,7 @@ def chat_client():
 # ---------------------------------------------------------------------------
 
 
-@patch("routes.chat._inject_context", side_effect=lambda q, h, m, u: h)
+@patch("routes.chat._inject_context", side_effect=lambda q, h, m, u, **kw: h)
 @patch(
     "routes.chat.config.get_model_config",
     return_value={"tools": False, "api_key_env": "OPENAI_API_KEY"},
@@ -72,7 +72,7 @@ def test_chat_completions_424_on_missing_credential(_ask, _enabled, _cfg, _ctx, 
     assert isinstance(body["error"]["message"], str) and body["error"]["message"]
 
 
-@patch("routes.chat._inject_context", side_effect=lambda q, h, m, u: h)
+@patch("routes.chat._inject_context", side_effect=lambda q, h, m, u, **kw: h)
 @patch(
     "routes.chat.config.get_model_config",
     return_value={"tools": False, "api_key_env": "OPENAI_API_KEY"},
@@ -101,7 +101,7 @@ def _raise_not_configured(*a, **kw):
     raise ConnectorNotConfigured("no row for alice/llm_openai")
 
 
-@patch("routes.chat._inject_context", side_effect=lambda q, h, m, u: h)
+@patch("routes.chat._inject_context", side_effect=lambda q, h, m, u, **kw: h)
 @patch(
     "routes.chat.config.get_model_config",
     return_value={"tools": False, "api_key_env": "OPENAI_API_KEY"},

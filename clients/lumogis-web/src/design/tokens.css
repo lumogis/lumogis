@@ -110,6 +110,8 @@ body,
   margin: 0;
   padding: 0;
   height: 100%;
+  max-width: 100%;
+  overflow-x: clip;
   background: var(--lumogis-bg);
   color: var(--lumogis-fg);
   font-family: var(--lumogis-font-sans);
@@ -142,6 +144,9 @@ input:focus-visible,
   display: grid;
   grid-template-rows: auto 1fr auto;
   min-height: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: clip;
   /* iPhone / notched safe areas — no extra padding at 0 inset on desktop. */
   padding-left: env(safe-area-inset-left, 0px);
   padding-right: env(safe-area-inset-right, 0px);
@@ -152,6 +157,9 @@ input:focus-visible,
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 .lumogis-shell__header {
@@ -166,6 +174,9 @@ input:focus-visible,
   border-bottom: 1px solid var(--lumogis-border);
   font-weight: 600;
   min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
+  box-sizing: border-box;
 }
 
 /* Phase 3E — limited offline notice (status only; not a modal). */
@@ -223,11 +234,17 @@ input:focus-visible,
   display: grid;
   grid-template-columns: 1fr;
   min-height: 0;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 .lumogis-shell__main {
   padding: var(--lumogis-space-4);
   overflow: auto;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .lumogis-shell__sidebar {
@@ -238,6 +255,10 @@ input:focus-visible,
   display: flex;
   align-items: center;
   box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
   min-height: calc(var(--lumogis-shell-bottomnav-h) + env(safe-area-inset-bottom, 0px));
   padding-bottom: env(safe-area-inset-bottom, 0px);
   border-top: 1px solid var(--lumogis-border);
@@ -269,6 +290,7 @@ input:focus-visible,
   align-items: center;
   justify-content: center;
   flex: 1;
+  min-width: 0;
   min-height: var(--lumogis-tap-target-min);
   padding: var(--lumogis-space-2) var(--lumogis-space-3);
   background: transparent;
@@ -277,6 +299,12 @@ input:focus-visible,
   text-decoration: none;
   cursor: pointer;
   font: inherit;
+}
+
+.lumogis-bottomnav__item {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .lumogis-sidebarnav__item {
@@ -350,6 +378,8 @@ input:focus-visible,
   .lumogis-settings-nav {
     flex-direction: row;
     flex-wrap: nowrap;
+    width: 100%;
+    max-width: 100%;
     overflow-x: auto;
     overflow-y: hidden;
     gap: var(--lumogis-space-2);

@@ -35,6 +35,22 @@ def session_conversation_point_id(user_id: str, session_id: str) -> str:
     return str(uuid.uuid5(_NS, f"session::{user_id}::{session_id}"))
 
 
+def external_document_chunk_point_id(
+    user_id: str,
+    source_id: str,
+    external_kind: str,
+    external_document_id: str,
+    chunk_index: int,
+) -> str:
+    """Deterministic point id for an external document chunk in ``documents``."""
+    return str(
+        uuid.uuid5(
+            _NS,
+            f"{user_id}::{source_id}::{external_kind}::{external_document_id}::chunk-{chunk_index}",
+        )
+    )
+
+
 def caldav_signal_id(user_id: str, caldav_uid: str) -> str:
     """Deterministic ``signal_id`` for a CalDAV event.
 

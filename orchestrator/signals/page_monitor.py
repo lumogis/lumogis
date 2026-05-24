@@ -130,6 +130,9 @@ def _check_page(source: SourceConfig) -> None:
 
 
 def _row_to_source(row: dict) -> SourceConfig:
+    pc = row.get("poll_cursor")
+    if pc == "":
+        pc = None
     return SourceConfig(
         id=str(row["id"]),
         name=row["name"],
@@ -142,5 +145,6 @@ def _row_to_source(row: dict) -> SourceConfig:
         css_selector_override=row.get("css_selector_override"),
         last_polled_at=row.get("last_polled_at"),
         last_signal_at=row.get("last_signal_at"),
+        poll_cursor=pc,
         user_id=row.get("user_id", "default"),
     )

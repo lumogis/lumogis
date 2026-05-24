@@ -27,6 +27,7 @@ from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
 
+import jwt
 import pytest
 from fastapi.testclient import TestClient
 
@@ -50,6 +51,7 @@ class FakeUsersStore:
         self.auth_sessions: dict[str, dict] = {}
         self.settings: dict[str, str] = {}
         self.exec_log: list[tuple[str, tuple]] = []
+        self.sid_revoked_lookup_calls = 0
 
     def ping(self) -> bool:
         return True
@@ -223,6 +225,18 @@ class FakeUsersStore:
                 return None
             return dict(srow)
 
+        if (
+            "select revoked_at from auth_sessions where id =" in q
+            and "user_id =" in q
+            and len(p) == 2
+        ):
+            self.sid_revoked_lookup_calls += 1
+            sid, uid = str(p[0]), str(p[1])
+            srow = self.auth_sessions.get(sid)
+            if not srow or srow["user_id"] != uid:
+                return None
+            return {"revoked_at": srow["revoked_at"]}
+
         return None
 
     def fetch_all(self, query: str, params: tuple | None = None) -> list[dict]:
@@ -244,6 +258,10 @@ class FakeUsersStore:
             ]
             rows.sort(key=lambda r: r["created_at"], reverse=True)
             return rows[:100]
+
+        if q.startswith("select id from auth_sessions where user_id ="):
+            uid = str(p[0])
+            return [{"id": sid} for sid, srow in self.auth_sessions.items() if srow["user_id"] == uid]
 
         now = datetime.now(timezone.utc)
         if "update auth_sessions set revoked_at" in q and "where user_id" in q and "returning" in q:
@@ -541,6 +559,30 @@ def test_bootstrap_if_empty_refuses_short_password(users_store, monkeypatch):
     assert users_svc.count_users() == 0
 
 
+def test_bootstrap_if_empty_refuses_reserved_tld_email(users_store, monkeypatch):
+    import services.users as users_svc
+
+    monkeypatch.setenv(
+        "LUMOGIS_BOOTSTRAP_ADMIN_EMAIL",
+        "ci-web-e2e-smoke@github-actions.lumogis.test",
+    )
+    monkeypatch.setenv("LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD", "verylongpassword12")
+    assert users_svc.bootstrap_if_empty() is None
+    assert users_svc.count_users() == 0
+
+
+def test_create_user_rejects_reserved_tld_email(users_store):
+    import services.users as users_svc
+
+    with pytest.raises(ValueError, match="email must satisfy Lumogis auth validation"):
+        users_svc.create_user(
+            "ci-web-e2e-smoke@github-actions.lumogis.test",
+            "verylongpassword12",
+            "admin",
+        )
+    assert users_svc.count_users() == 0
+
+
 # ---------------------------------------------------------------------------
 # Unit: lifespan refusal gates
 # ---------------------------------------------------------------------------
@@ -753,6 +795,16 @@ def test_skip_consistency_env_var_bypasses_gate(users_store, auth_env, monkeypat
     import main
 
     main._enforce_auth_consistency()
+
+
+@pytest.fixture(autouse=True)
+def clear_sid_revocation_lru_between_tests():
+    """LUM-243: bounded LRU is module-global — wipe between tests."""
+    import auth as auth_mod
+
+    auth_mod._SID_REVOCATION_CACHE._data.clear()
+    yield
+    auth_mod._SID_REVOCATION_CACHE._data.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -1033,3 +1085,261 @@ def test_second_login_keeps_prior_device_refresh(users_store, auth_env):
             headers=_csrf_origin_headers(),
         )
         assert refresh_second.status_code == 200, refresh_second.text
+
+
+# ---------------------------------------------------------------------------
+# LUM-243 — per-request sid revocation lookup (TTL LRU + invalidate hooks)
+# ---------------------------------------------------------------------------
+
+
+def test_require_sid_revocation_revokes_single_session_keeps_other_device(
+    users_store, auth_env, monkeypatch
+):
+    monkeypatch.setenv("LUMOGIS_REQUIRE_SID_REVOCATION_CHECK", "true")
+    import auth as auth_mod
+
+    from services import auth_sessions as asn_svc
+
+    with _client_with_admin(users_store) as client:
+        r1 = client.post(
+            "/api/v1/auth/login",
+            json={"email": "alice@home.lan", "password": "verylongpassword12"},
+        )
+        r2 = client.post(
+            "/api/v1/auth/login",
+            json={"email": "alice@home.lan", "password": "verylongpassword12"},
+        )
+        assert r1.status_code == 200 and r2.status_code == 200
+        tok1 = r1.json()["access_token"]
+        tok2 = r2.json()["access_token"]
+        p1 = auth_mod.verify_token(tok1)
+        p2 = auth_mod.verify_token(tok2)
+        assert p1 and p2
+        uid = str(p1["sub"])
+        sid1 = str(p1["sid"])
+        asn_svc.revoke_session_for_user(session_id=sid1, user_id=uid)
+
+        denied = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {tok1}"})
+        ok_other = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {tok2}"})
+    assert denied.status_code == 401
+    assert ok_other.status_code == 200
+
+
+def test_sid_revocation_flag_off_revoked_session_access_still_ok(users_store, auth_env, monkeypatch):
+    monkeypatch.setenv("LUMOGIS_REQUIRE_SID_REVOCATION_CHECK", "false")
+    import auth as auth_mod
+
+    from services import auth_sessions as asn_svc
+
+    with _client_with_admin(users_store) as client:
+        r1 = client.post(
+            "/api/v1/auth/login",
+            json={"email": "alice@home.lan", "password": "verylongpassword12"},
+        )
+        assert r1.status_code == 200
+        tok1 = r1.json()["access_token"]
+        p1 = auth_mod.verify_token(tok1)
+        assert p1
+        asn_svc.revoke_session_for_user(session_id=str(p1["sid"]), user_id=str(p1["sub"]))
+        still = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {tok1}"})
+    assert still.status_code == 200
+
+
+def test_sid_gate_skips_legacy_access_token_without_sid_claim(users_store, auth_env, monkeypatch):
+    monkeypatch.setenv("LUMOGIS_REQUIRE_SID_REVOCATION_CHECK", "true")
+    import auth as auth_mod
+
+    users_store.rows["legacy-user"] = {
+        "id": "legacy-user",
+        "email": "legacy@home.lan",
+        "password_hash": "x",
+        "role": "admin",
+        "disabled": False,
+        "created_at": datetime.now(timezone.utc),
+        "last_login_at": None,
+        "token_version": 3,
+    }
+    tok = auth_mod.mint_access_token("legacy-user", "admin")
+    payload = auth_mod.verify_token(tok)
+    assert payload is not None
+    assert auth_mod.jwt_revocation_failure_reason(payload) is None
+
+
+def test_sid_revocation_db_flake_fail_closed_then_retries(users_store, auth_env, monkeypatch):
+    monkeypatch.setenv("LUMOGIS_REQUIRE_SID_REVOCATION_CHECK", "true")
+    import auth as auth_mod
+
+    calls = {"n": 0}
+    orig_fetch = users_store.fetch_one
+
+    def flaky_fetch(query: str, params: tuple | None = None):
+        qlow = query.lower()
+        if "select revoked_at from auth_sessions" in qlow:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("simulated db flake")
+        return orig_fetch(query, params)
+
+    monkeypatch.setattr(users_store, "fetch_one", flaky_fetch)
+
+    with _client_with_admin(users_store) as client:
+        login = client.post(
+            "/api/v1/auth/login",
+            json={"email": "alice@home.lan", "password": "verylongpassword12"},
+        )
+        payload = auth_mod.verify_token(login.json()["access_token"])
+        assert payload is not None
+        assert auth_mod.jwt_revocation_failure_reason(payload) == "invalid token"
+        assert auth_mod.jwt_revocation_failure_reason(payload) is None
+
+
+def test_rotate_refresh_invalidates_prior_sid_under_sid_gate(users_store, auth_env, monkeypatch):
+    monkeypatch.setenv("LUMOGIS_REQUIRE_SID_REVOCATION_CHECK", "true")
+
+    with _client_with_admin(users_store) as client:
+        login = client.post(
+            "/api/v1/auth/login",
+            json={"email": "alice@home.lan", "password": "verylongpassword12"},
+        )
+        assert login.status_code == 200
+        first_access = login.json()["access_token"]
+        cookie = login.cookies.get("lumogis_refresh")
+        assert cookie
+
+        client.cookies.clear()
+        rotated = client.post(
+            "/api/v1/auth/refresh",
+            cookies={"lumogis_refresh": cookie},
+            headers=_csrf_origin_headers(),
+        )
+        assert rotated.status_code == 200, rotated.text
+        second_access = rotated.json()["access_token"]
+
+        old_denied = client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {first_access}"},
+        )
+        new_ok = client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {second_access}"},
+        )
+        assert old_denied.status_code == 401
+        assert new_ok.status_code == 200
+
+
+def test_sid_revocation_ttl_zero_hits_db_each_time(users_store, auth_env, monkeypatch):
+    monkeypatch.setenv("LUMOGIS_REQUIRE_SID_REVOCATION_CHECK", "true")
+    monkeypatch.setenv("LUMOGIS_SID_REVOCATION_CACHE_TTL_SECONDS", "0")
+    import auth as auth_mod
+
+    with _client_with_admin(users_store) as client:
+        login = client.post(
+            "/api/v1/auth/login",
+            json={"email": "alice@home.lan", "password": "verylongpassword12"},
+        )
+        payload = auth_mod.verify_token(login.json()["access_token"])
+        assert payload is not None
+
+        users_store.sid_revoked_lookup_calls = 0
+        auth_mod.jwt_revocation_failure_reason(payload)
+        auth_mod.jwt_revocation_failure_reason(payload)
+        assert users_store.sid_revoked_lookup_calls == 2
+
+
+def test_sid_claim_wrong_user_sub_denied_under_sid_gate(users_store, auth_env, monkeypatch):
+    monkeypatch.setenv("LUMOGIS_REQUIRE_SID_REVOCATION_CHECK", "true")
+    import auth as auth_mod
+
+    with _client_with_admin(users_store) as client:
+        login = client.post(
+            "/api/v1/auth/login",
+            json={"email": "alice@home.lan", "password": "verylongpassword12"},
+        )
+        payload_ok = auth_mod.verify_token(login.json()["access_token"])
+        assert payload_ok is not None
+        sid_alice = str(payload_ok["sid"])
+
+        secret = os.environ["AUTH_SECRET"]
+        now = int(time.time())
+        crossed = jwt.encode(
+            {
+                "sub": "not-alices-row",
+                "role": "admin",
+                "sid": sid_alice,
+                "tv": 0,
+                "iat": now,
+                "exp": now + auth_mod.access_token_ttl_seconds(),
+            },
+            secret,
+            algorithm="HS256",
+        )
+        crossed_payload = auth_mod.verify_token(crossed)
+        assert crossed_payload is not None
+        assert auth_mod.jwt_revocation_failure_reason(crossed_payload) == "invalid token"
+
+
+def test_revoke_session_admin_invalidates_sid_same_as_user_revoke(users_store, auth_env, monkeypatch):
+    monkeypatch.setenv("LUMOGIS_REQUIRE_SID_REVOCATION_CHECK", "true")
+    import auth as auth_mod
+
+    from services import auth_sessions as asn_svc
+
+    with _client_with_admin(users_store) as client:
+        first = client.post(
+            "/api/v1/auth/login",
+            json={"email": "alice@home.lan", "password": "verylongpassword12"},
+        )
+        second = client.post(
+            "/api/v1/auth/login",
+            json={"email": "alice@home.lan", "password": "verylongpassword12"},
+        )
+        tok2 = second.json()["access_token"]
+        p2 = auth_mod.verify_token(tok2)
+        assert p2 is not None
+        uid = str(p2["sub"])
+        sid2 = str(p2["sid"])
+
+        asn_svc.revoke_session_admin(
+            target_user_id=uid,
+            session_id=sid2,
+            admin_user_id=uid,
+        )
+
+        denied = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {tok2}"})
+        ok_first = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {first.json()['access_token']}"})
+        assert denied.status_code == 401
+        assert ok_first.status_code == 200
+
+
+def test_delete_user_invalidates_sid_lru_entry(users_store, auth_env):
+    import auth as auth_mod
+    import services.auth_sessions as asn_svc
+    import services.users as users_svc
+
+    u = users_svc.create_user("delme@home.lan", "verylongpassword12", "admin")
+
+    asn_svc.ensure_instance_salt()
+    session_id = uuid.uuid4().hex
+    jwt_rf = auth_mod.mint_refresh_token(u.id, session_id)
+    asn_svc.insert_login_session(
+        session_id=session_id,
+        user_id=u.id,
+        refresh_jwt=jwt_rf,
+        expires_at=datetime.now(timezone.utc) + timedelta(seconds=3600),
+        device_label="Test · delme",
+        ip_hash="2" * 64,
+        ua_hash="3" * 64,
+    )
+
+    auth_mod._SID_REVOCATION_CACHE.put(session_id, False)
+    users_svc.delete_user(u.id)
+    assert auth_mod._SID_REVOCATION_CACHE.get_fresh(session_id, 3600) is None
+
+
+def test_auth_enabled_false_sid_gate_is_inert(users_store, monkeypatch):
+    monkeypatch.setenv("AUTH_ENABLED", "false")
+    monkeypatch.setenv("LUMOGIS_REQUIRE_SID_REVOCATION_CHECK", "true")
+    import auth as auth_mod
+
+    payload = {"sub": "any", "sid": "sess", "tv": 1}
+    assert auth_mod.jwt_revocation_failure_reason(payload) is None

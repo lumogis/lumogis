@@ -1,0 +1,52 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--lumogis-space-2, 0.5rem);
+  text-align: center;
+  color: var(--lumogis-fg-muted, #999);
+}
+
+.title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--lumogis-fg, #eee);
+}
+
+.helper {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.45;
+  max-width: 42ch;
+}
+
+.icon {
+  font-size: 1.5rem;
+  line-height: 1;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--lumogis-space-2, 0.5rem);
+  justify-content: center;
+  margin-top: var(--lumogis-space-2, 0.5rem);
+}
+
+.btn {
+  font: inherit;
+  cursor: pointer;
+  padding: 0.4rem 0.75rem;
+  border-radius: var(--lumogis-radius-sm, 4px);
+  border: 1px solid var(--lumogis-border, #444);
+  background: var(--lumogis-surface-alt, #222);
+  color: var(--lumogis-fg, #eee);
+  text-decoration: none;
+  display: inline-block;
+}
+
+.btnPrimary {
+  border-color: var(--lumogis-accent, #4a6fff);
+  background: var(--lumogis-accent-muted, rgba(74, 111, 255, 0.15));
+}

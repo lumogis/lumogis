@@ -34,6 +34,18 @@ def test_document_ingested_roundtrip():
     p = DocumentIngestedPayload(file_path="/data/x.md", chunk_count=5, user_id="u1")
     restored = DocumentIngestedPayload.model_validate_json(p.model_dump_json())
     assert restored == p
+    assert restored.ingestion_source_kind == "filesystem"
+
+
+def test_document_ingested_external_roundtrip():
+    p = DocumentIngestedPayload(
+        file_path="paperless://src/documents/1",
+        chunk_count=2,
+        user_id="u1",
+        ingestion_source_kind="external",
+    )
+    restored = DocumentIngestedPayload.model_validate_json(p.model_dump_json())
+    assert restored.ingestion_source_kind == "external"
 
 
 def test_entity_created_defaults_is_staged_false():

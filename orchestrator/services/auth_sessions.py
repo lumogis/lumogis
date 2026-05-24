@@ -202,6 +202,18 @@ def insert_login_session(
     return session_id
 
 
+def is_session_revoked(session_id: str, user_id: str) -> bool:
+    """Return True when the session row is missing or ``revoked_at`` is set."""
+    ms = config.get_metadata_store()
+    row = ms.fetch_one(
+        "SELECT revoked_at FROM auth_sessions WHERE id = %s AND user_id = %s",
+        (session_id, user_id),
+    )
+    if row is None:
+        return True
+    return row.get("revoked_at") is not None
+
+
 class RefreshError(Exception):
     """Invalid refresh presentation (caller maps to HTTP 401)."""
 
@@ -291,6 +303,9 @@ def rotate_refresh(
             (jti,),
         )
 
+    from auth import invalidate_sid_cache
+
+    invalidate_sid_cache(jti)
     return new_id, new_refresh, token_version
 
 
@@ -308,6 +323,11 @@ def _handle_reuse(ms, sess: AuthSessionRow) -> None:
             (fam,),
         )
         revoked_rows = list(rows)
+
+    from auth import invalidate_sid_cache
+
+    for r in revoked_rows:
+        invalidate_sid_cache(r["id"])
 
     _log.warning(
         "session reuse detected user_id=%s family_id=%s presented_jti=%s",
@@ -358,6 +378,9 @@ def revoke_session_for_user(*, session_id: str, user_id: str) -> AuthSessionRow 
         "UPDATE auth_sessions SET revoked_at = NOW() WHERE id = %s AND revoked_at IS NULL",
         (session_id,),
     )
+    from auth import invalidate_sid_cache
+
+    invalidate_sid_cache(session_id)
     row2 = ms.fetch_one("SELECT * FROM auth_sessions WHERE id = %s", (session_id,))
     if row2 is None:
         return None
@@ -402,6 +425,11 @@ def bump_token_version_and_revoke_all_sessions(
             "WHERE user_id = %s AND revoked_at IS NULL RETURNING *",
             (user_id,),
         )
+
+    from auth import invalidate_sid_cache
+
+    for r in revoked_rows:
+        invalidate_sid_cache(r["id"])
 
     for r in revoked_rows:
         sid = r["id"]
@@ -455,6 +483,9 @@ def revoke_session_admin(
         "UPDATE auth_sessions SET revoked_at = NOW() WHERE id = %s AND revoked_at IS NULL",
         (session_id,),
     )
+    from auth import invalidate_sid_cache
+
+    invalidate_sid_cache(session_id)
     row2 = ms.fetch_one("SELECT * FROM auth_sessions WHERE id = %s", (session_id,))
     if row2 is None:
         return None

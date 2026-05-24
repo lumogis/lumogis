@@ -20,6 +20,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import Distance
 from qdrant_client.models import FieldCondition
 from qdrant_client.models import Filter
+from qdrant_client.models import MatchAny
 from qdrant_client.models import Fusion
 from qdrant_client.models import FusionQuery
 from qdrant_client.models import MatchValue
@@ -238,7 +239,12 @@ class QdrantStore:
                         with_payload=True,
                     )
                     return [
-                        {"id": str(r.id), "score": r.score, "payload": r.payload}
+                        {
+                            "id": str(r.id),
+                            "score": r.score,
+                            "payload": r.payload,
+                            "score_space": "rrf",
+                        }
                         for r in results.points
                     ]
                 except Exception:
@@ -255,7 +261,10 @@ class QdrantStore:
             score_threshold=threshold,
             query_filter=query_filter,
         )
-        return [{"id": str(r.id), "score": r.score, "payload": r.payload} for r in results.points]
+        return [
+            {"id": str(r.id), "score": r.score, "payload": r.payload, "score_space": "cosine"}
+            for r in results.points
+        ]
 
     def delete(self, collection: str, id: str) -> None:
         self._client.delete(
@@ -307,17 +316,45 @@ class QdrantStore:
         return points
 
     @staticmethod
-    def _build_filter(filter_dict: dict) -> Filter:
-        """Translate portable filter dict to Qdrant Filter objects.
+    def _field_condition_from_clause(clause: dict) -> FieldCondition:
+        """Map one portable ``{"key": ..., "match": ...}`` clause to Qdrant."""
+        key = clause["key"]
+        match = clause["match"]
+        if "value" in match:
+            return FieldCondition(key=key, match=MatchValue(value=match["value"]))
+        if "any" in match:
+            return FieldCondition(key=key, match=MatchAny(any=list(match["any"])))
+        raise ValueError(f"Unsupported Qdrant match dict keys: {set(match)!r}")
 
-        Expected format: {"must": [{"key": "field", "match": {"value": "x"}}]}
+    @staticmethod
+    def _should_branch_to_filter(branch: dict) -> Filter:
+        """One arm of a top-level ``should`` list (nested ``must`` or flat clause)."""
+        if "must" in branch:
+            inner = [
+                QdrantStore._field_condition_from_clause(c) for c in branch["must"]
+            ]
+            return Filter(must=inner)
+        return Filter(must=[QdrantStore._field_condition_from_clause(branch)])
+
+    @staticmethod
+    def _build_filter(filter_dict: dict) -> Filter:
+        """Translate portable filter dict to Qdrant :class:`Filter`.
+
+        Supports the shapes emitted by :func:`visibility.visible_qdrant_filter`:
+
+        * Top-level ``must`` — AND of field clauses (``match.value`` or ``match.any``).
+        * Top-level ``should`` — OR of branches; each branch is either a nested
+          ``{"must": [ ...clauses ]}`` or a single field clause dict.
+
+        The default household-union visibility filter uses only ``should``; the
+        previous implementation ignored that key and built ``Filter(must=[])``,
+        which applied **no** payload restriction in Qdrant (critical isolation bug).
         """
-        conditions = []
-        for clause in filter_dict.get("must", []):
-            conditions.append(
-                FieldCondition(
-                    key=clause["key"],
-                    match=MatchValue(value=clause["match"]["value"]),
-                )
-            )
+        if "should" in filter_dict:
+            branches = filter_dict["should"]
+            should_filters = [QdrantStore._should_branch_to_filter(b) for b in branches]
+            return Filter(should=should_filters)
+        conditions = [
+            QdrantStore._field_condition_from_clause(c) for c in filter_dict.get("must", [])
+        ]
         return Filter(must=conditions)

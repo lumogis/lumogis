@@ -41,7 +41,8 @@ Lumogis ships a **permanent, layered** automated test setup. **Where** you run t
 ## CI vs local
 
 - **CI today:** `ruff check` / `ruff format --check` on `orchestrator/`, `pytest` on `orchestrator/tests/`, `pytest` on `stack-control/test_main.py`.
-- **Not in default CI:** Docker integration, Playwright, KG image tests, and parity — not because they are optional forever, but because they need heavier runners; contributors on **`dev`** still run the **relevant** subset when touching those surfaces. **Maintainers** run the **full** `make verify-public-rc-full` on the **release line** before treating `main` as publish-ready.
+- **Optional path/label-gated Playwright:** **`.github/workflows/web-e2e.yml`** (LUM-60) runs **`make web-e2e-prove`** against a slim Compose stack when a maintainer adds **`ci:run-web-e2e`** on same-repo PRs that touch the gated paths, on **`workflow_dispatch`**, or on the nightly schedule (see [CONTRIBUTING.md](../../CONTRIBUTING.md) § *Optional CI — web Playwright*). It does **not** replace **`make verify-public-rc`** / **`verify-public-rc-full`**.
+- **Not in default CI:** Docker integration, Playwright (except the optional LUM-60 workflow above), KG image tests, and parity — not because they are optional forever, but because they need heavier runners; contributors on **`dev`** still run the **relevant** subset when touching those surfaces. **Maintainers** run the **full** `make verify-public-rc-full` on the **release line** before treating `main` as publish-ready.
 
 ## Release gates (LUM-225)
 
@@ -49,10 +50,10 @@ These Makefile targets are for **maintainers on `main`** (or a `promote/clean-ma
 
 | Layer | Command | Prerequisites |
 | --- | --- | --- |
-| **RC smoke gate** | `make verify-public-rc` | Docker; `.env` from `.env.example`; no running Core required for unit layers |
+| **RC smoke gate** | `make verify-public-rc` | Docker; `.env` from `.env.example`; no running Core required for unit layers (including **`web-codegen-check`** / **`openapi-check`**, which use offline `dump_openapi` — not a live stack) |
 | **RC full gate** | `make verify-public-rc-full` | As above + `LUMOGIS_WEB_SMOKE_EMAIL` / `LUMOGIS_WEB_SMOKE_PASSWORD` for Playwright |
 
-`verify-public-rc` chains (in order): `scripts/check-main-hygiene.sh` → `compose-policy-check` → `compose-test` → `web-codegen-check` (skippable via `VERIFY_PUBLIC_RC_SKIP_WEB_CODEGEN_CHECK=1`) → `web-lint` → `web-test` → `web-build` → `scripts/integration-public-rc.sh full-cycle` → `scripts/create-upstream-export-tree.sh` → `scripts/check-public-export.sh`.
+`verify-public-rc` chains (in order): `scripts/check-main-hygiene.sh` → `compose-policy-check` → `compose-test` → `web-codegen-check` (offline `dump_openapi` vs committed snapshot — **no** live orchestrator; skippable via `VERIFY_PUBLIC_RC_SKIP_WEB_CODEGEN_CHECK=1`) → `web-lint` → `web-test` → `web-build` → `scripts/integration-public-rc.sh full-cycle` → `scripts/create-upstream-export-tree.sh` → `scripts/check-public-export.sh`.
 
 `verify-public-rc-full` runs the full smoke chain first, then adds `web-e2e-prove` (skippable via `VERIFY_PUBLIC_RC_SKIP_WEB_E2E=1`) and optional `test-graph-parity` (opt-in via `LUMOGIS_RC_GRAPH_PARITY=1`).
 

@@ -32,7 +32,7 @@ See `.cursor/explorations/LUM-225-publish-image-public-verified-main.md`:
 ## Consequences
 
 - **Self-hosters:** `docker pull ghcr.io/lumogis/lumogis-orchestrator:latest` reflects a tree that passed the full public verification gate — not an intermediate private-main state.
-- **Maintainers:** Must run `make verify-public-rc` before `/publish-private-main-to-public`; `web-codegen-check` needs `LUMOGIS_OPENAPI_URL` or `VERIFY_PUBLIC_RC_SKIP_WEB_CODEGEN_CHECK=1` escape.
+- **Maintainers:** Must run `make verify-public-rc` before `/publish-private-main-to-public`; `web-codegen-check` (same as `make openapi-check`) runs **offline** via `dump_openapi` vs the committed snapshot — **no** `LUMOGIS_OPENAPI_URL`. Use **`VERIFY_PUBLIC_RC_SKIP_WEB_CODEGEN_CHECK=1`** only when the Makefile documents skipping that step; optional **live** codegen remains **`npm run codegen -- --live`**.
 - **Dual-publisher window closed:** deletion of `publish-image.yml` from `lumogis-app` (disable → delete sequence) ensures no racing `latest` from two repos.
 - **Supply chain:** Immutable SHA pins on all Actions in the public workflow.
 
@@ -56,7 +56,12 @@ ADR 036 answers: "which registry, which images, how is the compose overlay struc
 ADR 037 (this ADR) answers: "from which source repo must those images be built?"  
 Both are required for the full trusted-publish story.
 
+## Relationship to ADR 061 (LUM-303)
+
+**[ADR 061 — LUM-303](061-lum-303-public-ci-parity-openapi-check-via-export.md)** adds an export-time **presence** contract so the public tree keeps the same **`.github/workflows/ci.yml`** `openapi-check` job surface and its offline inputs (Makefile, `dump_openapi.py`, web snapshot/codegen inputs, breaking-check fixtures) — enforced by **`scripts/check-public-export.sh`** during **`verify-public-rc`**, consistent with this ADR’s export-mediated public CI story (no second workflow source).
+
 ## Status history
 
 - 2026-05-12: Draft created by `/explore` LUM-225 (`.cursor/adrs/lum_225_publish_image_public_verified_main.md`)
 - 2026-05-13: Finalised by `/verify-plan` — implementation confirmed decision; `check-public-export.sh` Makefile fix recorded as deviation (unambiguous correction, not a plan deviation).
+- 2026-05-23: Cross-reference added by `/verify-plan --headless` LUM-303 — **ADR 061** documents the OpenAPI CI export presence contract enforced in `check-public-export.sh` (see **Relationship to ADR 061**).

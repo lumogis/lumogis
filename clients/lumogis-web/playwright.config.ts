@@ -30,6 +30,7 @@ export default defineConfig({
         "**/me_admin_mobile_shell.spec.ts",
         "**/phase_2b_mobile_surfaces.spec.ts",
         "**/phase_2c_mobile_dense.spec.ts",
+        "**/onboarding_dismiss_persists.spec.ts",
       ],
     },
     {
@@ -38,6 +39,7 @@ export default defineConfig({
         "**/me_admin_mobile_shell.spec.ts",
         "**/phase_2b_mobile_surfaces.spec.ts",
         "**/phase_2c_mobile_dense.spec.ts",
+        "**/onboarding_dismiss_persists.spec.ts",
       ],
       fullyParallel: false,
       workers: 1,

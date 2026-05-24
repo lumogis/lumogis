@@ -43,10 +43,12 @@ The context pack is the canonical repo-evidence onboarding summary for Cursor, C
 | Need branch topology, push plan, or cleanup | `/cleanup-and-audit-branches` |
 | Need to review Cursor-created branches | `/review-cursor-branches` |
 | Need to explore unclear scope | `/explore` |
+| Assess an option, tool, or integration against Lumogis constraints (go/no-go before full `/explore`) | `/evaluate` |
 | Planned implementation | `/create-plan` → `/review-plan` → implement → `/verify-plan` |
 | Need drift check before closure | `/navigator drift` |
 | Need Linear comment/status update | `/linear-update` |
 | Useful work shipped without plan | `/record-retro` |
+| Merge verified agent branch or worktree into `dev` after `run-workflow` or isolated implement | `/merge-workflow` |
 | Promote scoped work from `dev` to private `main` | `/prepare-private-release-from-dev` |
 | Publish private `main` to public AGPL | `/publish-private-main-to-public` |
 | Refresh AI / bootstrap context summary (`docs/LUMOGIS_CONTEXT_PACK.md`) | `/update-context-pack` |
