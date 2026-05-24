@@ -167,12 +167,12 @@ def test_jwt_sid_revocation_gate_observes_revoked_auth_session_row(isolated_sche
     monkeypatch.setenv("AUTH_SECRET", "jwt-sid-int-test-secret-do-not-use-prod-value!!")
     monkeypatch.setenv("LUMOGIS_REQUIRE_SID_REVOCATION_CHECK", "true")
 
-    import config as cfg
-
     from auth import invalidate_sid_cache
     from auth import jwt_revocation_failure_reason
     from auth import mint_access_token
     from auth import verify_token
+
+    import config as cfg
 
     store = _IsolationMetadataStore(conn, schema)
     prev = cfg._instances.pop("metadata_store", None)

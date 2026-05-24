@@ -52,9 +52,9 @@ from urllib.parse import urlparse
 
 from auth import auth_enabled
 from connectors.registry import CALDAV
+from services.outbound_http_url import validate_outbound_connector_base_url
 
 from services import connector_credentials as ccs
-from services.outbound_http_url import validate_outbound_connector_base_url
 
 _PAYLOAD_KEYS: tuple[str, str, str] = ("base_url", "username", "password")
 """Wire contract for the encrypted CalDAV payload (v1).

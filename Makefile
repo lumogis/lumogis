@@ -48,19 +48,20 @@ logs:
 doctor:
 	@bash "$(CURDIR)/scripts/doctor/run.sh" $(ARGS)
 
-# LUM-319 — CI parity: disposable lumogis-test (docker-compose.yml + docker-compose.test.yml only),
+# LUM-319 — CI parity: disposable lumogis-test (docker-compose.yml + docker-compose.test-doctor.yml;
+# avoids docker-compose.test.yml include chain — GHA "orchestrator conflicts with imported resource"),
 # then `make doctor ARGS="--json"` + jq shape check. Overwrites ./.env from config/test.env.example;
 # backs up locally if needed. See scripts/doctor/README.md and .cursor/plans/LUM-319-doctor-ci-integration.plan.md.
 compose-test-doctor:
 	@REPO="$(CURDIR)"; \
 	set -euo pipefail; \
 	cleanup() { \
-	  (cd "$$REPO" && export COMPOSE_PROJECT_NAME=lumogis-test COMPOSE_FILE=docker-compose.yml:docker-compose.test.yml && docker compose --env-file config/test.env.example down -v) || true; \
+	  (cd "$$REPO" && export COMPOSE_PROJECT_NAME=lumogis-test COMPOSE_FILE=docker-compose.yml:docker-compose.test-doctor.yml && docker compose --env-file config/test.env.example down -v) || true; \
 	}; \
 	trap cleanup EXIT INT TERM; \
 	cp -f "$$REPO/config/test.env.example" "$$REPO/.env"; \
 	export COMPOSE_PROJECT_NAME=lumogis-test; \
-	export COMPOSE_FILE=docker-compose.yml:docker-compose.test.yml; \
+	export COMPOSE_FILE=docker-compose.yml:docker-compose.test-doctor.yml; \
 	cd "$$REPO"; \
 	docker compose --env-file config/test.env.example up -d --wait --wait-timeout 180; \
 	$(MAKE) --no-print-directory doctor ARGS="--json" > "$$REPO/doctor.json"; \

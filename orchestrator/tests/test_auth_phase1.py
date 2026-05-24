@@ -261,7 +261,11 @@ class FakeUsersStore:
 
         if q.startswith("select id from auth_sessions where user_id ="):
             uid = str(p[0])
-            return [{"id": sid} for sid, srow in self.auth_sessions.items() if srow["user_id"] == uid]
+            return [
+                {"id": sid}
+                for sid, srow in self.auth_sessions.items()
+                if srow["user_id"] == uid
+            ]
 
         now = datetime.now(timezone.utc)
         if "update auth_sessions set revoked_at" in q and "where user_id" in q and "returning" in q:
@@ -1125,7 +1129,9 @@ def test_require_sid_revocation_revokes_single_session_keeps_other_device(
     assert ok_other.status_code == 200
 
 
-def test_sid_revocation_flag_off_revoked_session_access_still_ok(users_store, auth_env, monkeypatch):
+def test_sid_revocation_flag_off_revoked_session_access_still_ok(
+    users_store, auth_env, monkeypatch
+):
     monkeypatch.setenv("LUMOGIS_REQUIRE_SID_REVOCATION_CHECK", "false")
     import auth as auth_mod
 
@@ -1278,7 +1284,9 @@ def test_sid_claim_wrong_user_sub_denied_under_sid_gate(users_store, auth_env, m
         assert auth_mod.jwt_revocation_failure_reason(crossed_payload) == "invalid token"
 
 
-def test_revoke_session_admin_invalidates_sid_same_as_user_revoke(users_store, auth_env, monkeypatch):
+def test_revoke_session_admin_invalidates_sid_same_as_user_revoke(
+    users_store, auth_env, monkeypatch
+):
     monkeypatch.setenv("LUMOGIS_REQUIRE_SID_REVOCATION_CHECK", "true")
     import auth as auth_mod
 
@@ -1306,7 +1314,11 @@ def test_revoke_session_admin_invalidates_sid_same_as_user_revoke(users_store, a
         )
 
         denied = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {tok2}"})
-        ok_first = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {first.json()['access_token']}"})
+        first_tok = first.json()["access_token"]
+        ok_first = client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {first_tok}"},
+        )
         assert denied.status_code == 401
         assert ok_first.status_code == 200
 

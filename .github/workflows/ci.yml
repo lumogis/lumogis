@@ -269,7 +269,7 @@ jobs:
         shell: bash
         env:
           COMPOSE_PROJECT_NAME: lumogis-test
-          COMPOSE_FILE: docker-compose.yml:docker-compose.test.yml
+          COMPOSE_FILE: docker-compose.yml:docker-compose.test-doctor.yml
         run: |
           set +e
           cd "$GITHUB_WORKSPACE"

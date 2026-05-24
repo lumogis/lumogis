@@ -42,11 +42,11 @@ exercised end-to-end.
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 from datetime import timezone
 
 import pytest
-import uuid
 from fastapi import APIRouter
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
@@ -156,6 +156,7 @@ class _ResolutionStore:
 @pytest.fixture
 def store(monkeypatch):
     import auth as auth_mod
+
     import config as _config
     from services import mcp_tokens
 

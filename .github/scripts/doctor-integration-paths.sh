@@ -5,7 +5,7 @@
 #   - scripts/doctor/**
 #   - Makefile
 #   - docker-compose.yml
-#   - docker-compose.test.yml
+#   - docker-compose.test-doctor.yml
 #   - config/test.env.example
 #   - .github/workflows/ci.yml
 #   - .github/scripts/doctor-integration-paths.sh
@@ -45,7 +45,7 @@ while IFS= read -r file || [[ -n "${file:-}" ]]; do
   if [[ "$file" == scripts/doctor/* ]] \
     || [[ "$file" == "Makefile" ]] \
     || [[ "$file" == "docker-compose.yml" ]] \
-    || [[ "$file" == "docker-compose.test.yml" ]] \
+    || [[ "$file" == "docker-compose.test-doctor.yml" ]] \
     || [[ "$file" == "config/test.env.example" ]] \
     || [[ "$file" == ".github/workflows/ci.yml" ]] \
     || [[ "$file" == ".github/scripts/doctor-integration-paths.sh" ]]; then

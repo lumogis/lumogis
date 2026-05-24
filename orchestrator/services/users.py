@@ -286,7 +286,8 @@ def delete_user(user_id: str) -> bool:
     clear_cache_for_user(user_id)
     from auth import invalidate_sid_cache
 
-    # SCOPE-EXEMPT: auth_sessions has no memory scope — reads are owner-scoped by user_id (sid LRU hygiene).
+    # SCOPE-EXEMPT: auth_sessions has no memory scope — owner-scoped by user_id
+    # (sid LRU hygiene).
     sess_rows = ms.fetch_all("SELECT id FROM auth_sessions WHERE user_id = %s", (user_id,))
     for row in sess_rows:
         invalidate_sid_cache(row["id"])

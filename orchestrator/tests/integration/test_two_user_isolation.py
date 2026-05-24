@@ -1343,7 +1343,9 @@ def test_two_users_have_independent_caldav_credentials(
 # ---------------------------------------------------------------------------
 
 
-def _insert_paperless_source(store: _IsolationStore, *, source_id: str, user_id: str, url: str) -> None:
+def _insert_paperless_source(
+    store: _IsolationStore, *, source_id: str, user_id: str, url: str
+) -> None:
     store.execute(
         (
             "INSERT INTO sources "
@@ -1371,14 +1373,14 @@ def test_two_users_have_independent_paperless_ingest(
 ):
     """Alice's and Bob's paperless poll/ingest never cross-contaminate."""
     import jwt
-
     from adapters.paperless_source import PaperlessDocument
     from adapters.paperless_source import PaperlessPoller
     from models.signals import SourceConfig
-    from services import connector_credentials as ccs
     from services.paperless_credentials import load_connection
     from services.point_ids import external_document_chunk_point_id
     from signals.feed_monitor import _poll_paperless_source
+
+    from services import connector_credentials as ccs
 
     monkeypatch.setenv(
         "LUMOGIS_CREDENTIAL_KEY",

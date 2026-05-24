@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import pytest
+from adapters.paperless_source import PaperlessPoller
 from connectors.registry import CONNECTORS
 from connectors.registry import PAPERLESS
 from services.injection_sanitiser import sanitize_attribute_source_token
@@ -12,7 +13,6 @@ from services.outbound_http_url import validate_outbound_connector_base_url
 from services.paperless_credentials import PaperlessConnection
 from services.paperless_credentials import _validate_payload
 from services.point_ids import external_document_chunk_point_id
-from adapters.paperless_source import PaperlessPoller
 
 
 def test_paperless_registered_in_connector_registry():

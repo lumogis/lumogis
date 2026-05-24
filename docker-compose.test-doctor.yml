@@ -1,0 +1,9 @@
+# LUM-319 — doctor CI overlay: pin orchestrator env without docker-compose.test.yml
+# `include:` chain (GHA Compose: "services.orchestrator conflicts with imported resource").
+#
+# Merge: docker compose -f docker-compose.yml -f docker-compose.test-doctor.yml
+# See docker-compose.web-e2e-ci.yml (LUM-60) for the same base + overlay pattern.
+services:
+  orchestrator:
+    env_file:
+      - config/test.env.example

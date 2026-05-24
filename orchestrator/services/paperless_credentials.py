@@ -17,9 +17,9 @@ from typing import Any
 
 from auth import auth_enabled
 from connectors.registry import PAPERLESS
+from services.outbound_http_url import validate_outbound_connector_base_url
 
 from services import connector_credentials as ccs
-from services.outbound_http_url import validate_outbound_connector_base_url
 
 _PAYLOAD_KEYS: tuple[str, str] = ("base_url", "token")
 

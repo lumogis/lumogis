@@ -9,13 +9,12 @@ filter in Qdrant — a cross-tenant isolation failure for semantic search / CONT
 
 from __future__ import annotations
 
+from adapters.qdrant_store import QdrantStore
+from auth import UserContext
 from qdrant_client.models import FieldCondition
 from qdrant_client.models import Filter
 from qdrant_client.models import MatchAny
 from qdrant_client.models import MatchValue
-
-from adapters.qdrant_store import QdrantStore
-from auth import UserContext
 from visibility import visible_qdrant_filter
 
 

@@ -6,10 +6,9 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import main
 import pytest
 from fastapi.testclient import TestClient
-
-import main
 from models.memory import DocumentContextHit
 from services.injection_sanitiser import sanitize_attribute_source_token
 
@@ -76,8 +75,9 @@ def test_chat_injects_document_context_when_enabled(monkeypatch, alice) -> None:
 
 def test_chat_streaming_search_files_dedupe(monkeypatch, alice) -> None:
     """Streaming path must thread auto_rag_point_ids into the tool loop."""
-    import config as cfg
     from models.stream import StreamEvent
+
+    import config as cfg
 
     hit = DocumentContextHit(
         point_id="dup-id",

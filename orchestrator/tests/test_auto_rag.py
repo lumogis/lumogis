@@ -9,9 +9,10 @@ from unittest.mock import MagicMock
 
 from auth import UserContext
 from models.search import SearchResult
-from services import tools as tools_mod
 from services.auto_rag import retrieve_document_context
 from visibility import visible_qdrant_filter
+
+from services import tools as tools_mod
 
 
 def test_auto_rag_disabled_returns_empty(monkeypatch) -> None:

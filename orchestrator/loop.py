@@ -83,7 +83,12 @@ def dispatch_tool_under_cap(
     """Increment pessimistic budget before ``run_tool``; return stub JSON when tripped."""
 
     if budget is None or budget.cap <= 0:
-        return run_tool(tool_name, arguments, user_id=user_id, auto_rag_point_ids=auto_rag_point_ids)
+        return run_tool(
+            tool_name,
+            arguments,
+            user_id=user_id,
+            auto_rag_point_ids=auto_rag_point_ids,
+        )
 
     if budget.observed >= budget.cap:
         if not budget.tripped_event:

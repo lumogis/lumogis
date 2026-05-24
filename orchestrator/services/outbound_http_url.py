@@ -113,7 +113,9 @@ def validate_outbound_connector_base_url(
     # Bracketed IPv6 / IPv4 literals — parse directly without DNS.
     try:
         addr = ipaddress.ip_address(host)
-        viol = _ip_policy_violation(addr, hostname=host, allow_private=allow_private, allowlist=allowlist)
+        viol = _ip_policy_violation(
+            addr, hostname=host, allow_private=allow_private, allowlist=allowlist
+        )
         if viol:
             raise ValueError(viol)
         return
@@ -139,6 +141,8 @@ def validate_outbound_connector_base_url(
 
     for ip_s in ips:
         ip = ipaddress.ip_address(ip_s)
-        viol = _ip_policy_violation(ip, hostname=host, allow_private=allow_private, allowlist=allowlist)
+        viol = _ip_policy_violation(
+            ip, hostname=host, allow_private=allow_private, allowlist=allowlist
+        )
         if viol:
             raise ValueError(viol)

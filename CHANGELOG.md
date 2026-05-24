@@ -11,6 +11,15 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.5.1] — 2026-05-24
+
+### Fixed
+
+- **Public CI lint:** orchestrator import ordering and line-length violations that blocked the **`lint-and-test`** job on published **`main`**.
+- **Public CI doctor integration:** **`doctor-integration`** job compose chain no longer merges **`docker-compose.test.yml`**’s **`include:`** overlay with the base file (avoids **“services.orchestrator conflicts with imported resource”** on GitHub Actions); uses **`docker-compose.test-doctor.yml`** instead.
+
+---
+
 ## [0.5.0] — 2026-05-24
 
 ### Added

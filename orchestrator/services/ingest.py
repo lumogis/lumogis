@@ -582,7 +582,8 @@ def ingest_external_document(
         meta.execute(
             (
                 "INSERT INTO external_documents "
-                "(user_id, source_id, external_kind, external_id, content_hash, chunk_count, logical_path) "
+                "(user_id, source_id, external_kind, external_id, "
+                "content_hash, chunk_count, logical_path) "
                 "VALUES (%s, %s::uuid, %s, %s, %s, %s, %s) "
                 "ON CONFLICT (user_id, source_id, external_kind, external_id) DO UPDATE SET "
                 "content_hash = EXCLUDED.content_hash, "

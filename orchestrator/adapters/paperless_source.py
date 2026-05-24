@@ -15,7 +15,6 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
-
 from services.paperless_credentials import PaperlessConnection
 
 _log = logging.getLogger(__name__)

@@ -40,7 +40,10 @@ class _OnboardingFakeStore(FakeUsersStore):
             if row is None:
                 return None
             return {"onboarding_completed_at": row.get("onboarding_completed_at")}
-        if "update users set onboarding_completed_at" in q and "returning onboarding_completed_at" in q:
+        if (
+            "update users set onboarding_completed_at" in q
+            and "returning onboarding_completed_at" in q
+        ):
             uid = str(p[0])
             row = self.rows.get(uid)
             if row is None:

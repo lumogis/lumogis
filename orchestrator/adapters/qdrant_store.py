@@ -20,9 +20,9 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import Distance
 from qdrant_client.models import FieldCondition
 from qdrant_client.models import Filter
-from qdrant_client.models import MatchAny
 from qdrant_client.models import Fusion
 from qdrant_client.models import FusionQuery
+from qdrant_client.models import MatchAny
 from qdrant_client.models import MatchValue
 from qdrant_client.models import Modifier
 from qdrant_client.models import PayloadSchemaType
