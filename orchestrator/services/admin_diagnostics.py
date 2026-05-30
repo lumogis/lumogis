@@ -318,6 +318,17 @@ def build_admin_diagnostics_response(
     others_ok = all(s.status in ("ok", "not_configured") for s in stores[1:])
     overall = "ok" if critical_ok and others_ok else "degraded"
 
+    from models.api_v1 import AdminDiagnosticsInbox
+    from services.ingest import inbox_operator_status
+
+    inbox_raw = inbox_operator_status()
+    inbox = AdminDiagnosticsInbox(
+        inbox_mode=inbox_raw.get("inbox_mode", "off"),
+        inbox_watcher=inbox_raw.get("inbox_watcher", "disabled"),
+        inbox_path=inbox_raw.get("inbox_path", ""),
+        inbox_poll_last_scan=inbox_raw.get("inbox_poll_last_scan"),
+    )
+
     return AdminDiagnosticsResponse(
         status=overall,
         generated_at=generated_at,
@@ -328,4 +339,5 @@ def build_admin_diagnostics_response(
         foundation_signals=foundation_signals,
         warnings=warnings,
         speech_to_text=_speech_to_text_block(),
+        inbox=inbox,
     )

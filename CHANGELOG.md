@@ -11,65 +11,37 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [0.5.2] — 2026-05-24
-
-### Fixed
-
-- **Public CI lint:** orchestrator **`ruff format`** pass so the published **`lint-and-test`** job’s format check exits cleanly on GitHub Actions (no runtime behaviour change).
-
----
-
-## [0.5.1] — 2026-05-24
-
-### Fixed
-
-- **Public CI lint:** orchestrator import ordering and line-length violations that blocked the **`lint-and-test`** job on published **`main`**.
-- **Public CI doctor integration:** **`doctor-integration`** job compose chain no longer merges **`docker-compose.test.yml`**’s **`include:`** overlay with the base file (avoids **“services.orchestrator conflicts with imported resource”** on GitHub Actions); uses **`docker-compose.test-doctor.yml`** instead.
-
----
-
-## [0.5.0] — 2026-05-24
+## [0.6.0] — 2026-05-30
 
 ### Added
 
-- **`make doctor`:** read-only operator health CLI — Compose **`ps`/`config`**, config grammar checks on **`.env`** (no **`source`**), optional **`/healthz`** probes, optional **`--json`** v1 contract (**`scripts/doctor/schema.v1.json`**), security category opt-in (**`--security`** / **`LUMOGIS_DOCTOR_RUN_SECURITY=1`**). See **`scripts/doctor/README.md`**.
-- **First-run onboarding:** skippable Lumogis Web orientation modal (per-user `users.onboarding_completed_at`, `GET`/`PATCH /api/v1/me/onboarding`) plus a shared empty-state component for the chat zero-state.
-- **First-run quickstart:** operator guide **[`docs/deployment/quickstart.md`](docs/deployment/quickstart.md)** for the published **GHCR** image path (`COMPOSE_FILE=docker-compose.yml:docker-compose.ghcr.yml`, first-boot **Ollama** / **Postgres** behaviour, **`curl`** health smoke vs **`make health`**, and common errors); **`README.md`** and **`docs/README.md`** cross-link for discoverability.
-- **Remote access guide:** **[`docs/deployment/remote-access.md`](docs/deployment/remote-access.md)** documents off-LAN household access patterns (Tailscale-first).
-- **paperless-ngx ingest (Docker / self-hosted):** read-only REST polling into the normal chunk → embed → Qdrant path; per-user encrypted credentials (`paperless` connector); `POST /api/v1/sources` with `source_type: "paperless"`; `sources.poll_cursor` + `external_documents` dedup; operator env `PAPERLESS_*`, `PAPERLESS_POLL_PAGE_SIZE`, and outbound URL policy knobs `LUMOGIS_ALLOW_PRIVATE_OUTBOUND_URLS` / `LUMOGIS_OUTBOUND_PRIVATE_HOST_ALLOWLIST` (see reference manual).
-- **Hybrid context building:** word-boundary explicit entity matches plus optional Qdrant semantic top-up (`LUMOGIS_CONTEXT_BUILDER_SEMANTIC`), configurable entity budget and ranking env vars, dedicated **`entities`** token slice in chat context allocation, and visibility filters mirrored into graph service queries when premium graph modules are present.
-- **GHCR image attestations:** published **`ghcr.io/lumogis/lumogis-orchestrator`** and **`ghcr.io/lumogis/lumogis-web`** images carry GitHub-hosted SLSA Level 2 build-provenance attestations verifiable with **`gh attestation verify`** (see **`docs/capabilities.md`** — **Verifying image provenance**).
-- **Chat auto-RAG:** optional per-turn injection of top **`documents`** chunks into **`POST /v1/chat/completions`** context (`LUMOGIS_AUTO_RAG_*` env knobs; default **off**); hybrid/RRF vs dense gating, BGE reranker floor when configured, and **`search_files`** dedupe against injected point ids.
-- **Public CI:** path-gated **`openapi-check`**, **`doctor-integration`**, and **`security-audit`** jobs in **`.github/workflows/ci.yml`**; offline OpenAPI snapshot/codegen drift checks via **`make openapi-check`**; semantic breaking-change gate via **`make openapi-breaking-check`** (requires **oasdiff**).
+- **Inbox folder-watch hardening (LUM-330):** configurable `LUMOGIS_INBOX_PATH` / `LUMOGIS_INBOX_MODE` (`event` | `poll` | `off`), write-stability before ingest, `enqueue_inbox_file` seam, poll-mode mtime fast-path, quarantine on terminal failures under `ai-workspace/quarantine/`, `/healthz` inbox liveness fields (no absolute paths), and auth-gated inbox block on `GET /api/v1/admin/diagnostics`.
+- **Desktop memory overlay (LUM-329):** Tauri 2 app under **`clients/lumogis-desktop/`** — global hotkey (default **Ctrl+Shift+L** / **⌃⇧L**), frameless overlay, **`GET /api/v1/memory/search`** (5 hits), OS keychain for bearer JWT, library-root sandbox for native open/reveal; **`make desktop-dev`** / **`make desktop-build`**; CI workflow **`.github/workflows/desktop-build.yml`**. Proprietary tree — excluded from public export via **`scripts/public-export-strip-list.txt`**.
+- **Client-only overlay distribution (LUM-398):** Persona B household-member profile — CI artefacts **`lumogis-overlay-*`**, **`tauri.client-only.conf.json`**, in-webview first-run onboarding (server URL → **`/healthz`** → auth → search with optional empty library roots), **`overlay.json` schema v2** with **`onboardingComplete`**; **`make desktop-build-client-only`** for local parity.
+- **`make doctor` (LUM-199):** read-only operator health CLI — Compose **`ps`/`config`**, config grammar checks on **`.env`** (no **`source`**), optional **`/healthz`** probes, optional **`--json`** v1 contract (**`scripts/doctor/schema.v1.json`**), security category opt-in (**`--security`** / **`LUMOGIS_DOCTOR_RUN_SECURITY=1`**). See **`scripts/doctor/README.md`**.
+- **First-run onboarding (LUM-165):** skippable Lumogis Web orientation modal (per-user `users.onboarding_completed_at`, `GET`/`PATCH /api/v1/me/onboarding`) plus a shared `EmptyState` for the chat zero-state.
+- **First-run quickstart (LUM-184):** operator guide **[`docs/deployment/quickstart.md`](docs/deployment/quickstart.md)** for the published **GHCR** image path (`COMPOSE_FILE=docker-compose.yml:docker-compose.ghcr.yml`, first-boot **Ollama** / **Postgres** behaviour, **`curl`** health smoke vs **`make health`**, and common errors); **`README.md`** and **`docs/README.md`** cross-link for discoverability.
+- **paperless-ngx ingest (LUM-281, Docker / self-hosted):** read-only REST polling into the normal chunk → embed → Qdrant path; per-user encrypted credentials (`paperless` connector); `POST /api/v1/sources` with `source_type: "paperless"`; `sources.poll_cursor` + `external_documents` dedup; operator env `PAPERLESS_*`, `PAPERLESS_POLL_PAGE_SIZE`, and outbound URL policy knobs `LUMOGIS_ALLOW_PRIVATE_OUTBOUND_URLS` / `LUMOGIS_OUTBOUND_PRIVATE_HOST_ALLOWLIST` (see reference manual).
+- **CONTEXT_BUILDING (LUM-210):** hybrid entity selection — word-boundary explicit matches plus optional Qdrant semantic top-up (`LUMOGIS_CONTEXT_BUILDER_SEMANTIC`), configurable entity budget and ranking env vars (mirrored in Core + `lumogis-graph` config), `user_id` threaded through the hook and KG `POST /context`, dedicated **`entities`** token slice in chat `allocate()`, and `visible_qdrant_filter` mirrored into **`services/lumogis-graph/visibility.py`** for the semantic path.
+- **GHCR images** (`ghcr.io/lumogis/lumogis-orchestrator`, `ghcr.io/lumogis/lumogis-web`): GitHub-hosted SLSA Level 2 build-provenance attestations from the public **`lumogis/lumogis`** publish workflow; verify with **`gh attestation verify`** (see **`docs/capabilities.md`** — **Verifying image provenance**).
+- **CHANGELOG CI gate** on pull requests that touch product paths: GitHub Actions enforces a `CHANGELOG.md` update unless `Skip-Changelog` or `[skip changelog]` in the PR body; see `CONTRIBUTING.md`, `.github/workflows/changelog.yml`, and local `make changelog-check`.
+- **Chat auto-RAG (LUM-308):** optional per-turn injection of top **`documents`** chunks into **`POST /v1/chat/completions`** context (`LUMOGIS_AUTO_RAG_*` env knobs; default **off**); hybrid/RRF vs dense gating, BGE reranker floor when configured, and **`search_files`** dedupe against injected point ids.
 
 ### Security
 
-- **Pre-launch security audit:** structured findings under **`docs/security-audit/pre-launch-audit-2026.md`** plus committed **`docs/security-audit/zap-baseline-2026.json`** (OWASP ZAP baseline, auth **`none`**); path-gated CI job **`security-audit`** runs **`make audit-local`** (blocking) and advisory **Bandit** on `orchestrator/` (+ `services/lumogis-graph/` when present). **`stack-control/requirements.txt`** bumps **FastAPI** to **0.136.1**; **`clients/lumogis-web`** lockfile refreshed for clean **`npm audit`**.
-- **Qdrant household-union filters:** vector search now honours top-level **`should`** (OR) and **`match.any`** clauses in visibility filters, fixing a cross-tenant isolation failure for semantic search on **`documents`** / **`entities`** and for semantic context-building top-up when enabled.
-- **Graph statistics privacy:** canonical regression coverage for operator graph statistics visibility lives in the knowledge-graph service test suite; redundant Core-side test scaffolding removed from the default layout.
+- **Pre-launch hybrid audit (LUM-190):** structured findings under **`docs/security-audit/pre-launch-audit-2026.md`** (path differs from plan text `docs/security/` when a root-owned `docs/security` mount exists — see doc header) + committed **`docs/security-audit/zap-baseline-2026.json`** (OWASP ZAP baseline against `https://example.com`, pinned `ghcr.io/zaproxy/zaproxy` digest, auth **`none`**); path-gated CI job **`security-audit`** runs **`make audit-local`** (blocking) and advisory **Bandit** on `orchestrator/` (+ `services/lumogis-graph/` when present); **`scripts/requirements-security-audit.txt`** pins Bandit; **`make bandit-check`** for local parity; **`.github/scripts/security-audit-paths.sh`** + contract tests in **`.github/scripts/test-security-audit-paths.sh`**. Also: **`stack-control/requirements.txt`** bumps **FastAPI** to **0.136.1** (Starlette **1.0.1** for pip-audit); **`clients/lumogis-web`** lockfile via **`npm audit fix`** for a clean **`npm audit`**.
+- **Qdrant household-union filters:** `adapters/qdrant_store.py::_build_filter` now implements top-level `should` (OR of branches) and `match.any` clauses, matching `visibility.visible_qdrant_filter`’s default shape. Previously only flat `must` lists were translated; the default filter had no top-level `must`, so Qdrant received an empty `must` constraint and could return **unscoped** points — a cross-tenant isolation failure for semantic search on `documents` / `entities` and for CONTEXT_BUILDING Phase B when semantic top-up is enabled.
+- **LUM-23 / FP-042 — graph stats privacy evidence:** removed the long-skipped Core `orchestrator/tests/premium/test_graph_viz_routes.py` module; canonical regression coverage for `GET /graph/stats` visibility binding lives in **`services/lumogis-graph/tests/test_graph_stats_privacy.py`** (records Cypher/SQL + params; see **`docs/decisions/DEBT.md`** Resolved row).
 
 ### Changed
 
-- **Public webhook `DOCUMENT_INGESTED` payload** (Core → graph service when `GRAPH_MODE=service`): additive field **`ingestion_source_kind`** (`"filesystem"` \| `"external"`; default **`"filesystem"`**). When **`"external"`**, **`file_path`** may be a stable logical URI such as **`paperless://{source-uuid}/documents/{id}`** instead of a filesystem path.
-- **OpenAPI contract checks** use offline snapshot/codegen drift checks (`dump_openapi`, not a live orchestrator). **`openapi.snapshot.json`** refreshed to match current schema emission.
+- **Admin settings ingest paths (LUM-397, C1):** breaking `GET /settings` rename — `filesystem_root` and `pending_filesystem_root` removed; `ingest_paths`, `pending_ingest_paths`, `restart_required`, and `paperless_configured` added. Multi-path env round-trip via `INGEST_PATHS_HOST` and `INGEST_PATHS` on PUT/restart.
+- **Push ingest upload (LUM-397, C4):** `POST /api/v1/ingest/upload` — multipart `file`, `require_user`, `202` with `file_id`; persistent store under workspace `uploads/`; batch `ingest_upload` handler.
+- **LUM-322:** ADR-061 revisit conditions now document deferral of a parallel **`orchestrator.doctor`** CLI in favour of **`GET /admin/health`** until explicit gates fire; **`scripts/doctor/README.md`** cross-links when to use shell **`make doctor`** vs authenticated admin health.
+- **Public webhook `DOCUMENT_INGESTED` payload** (Core → `lumogis-graph` when `GRAPH_MODE=service`): additive field **`ingestion_source_kind`** (`"filesystem"` \| `"external"`; default **`"filesystem"`**). When **`"external"`**, **`file_path`** may be a stable logical URI such as **`paperless://{source-uuid}/documents/{id}`** instead of a filesystem path.
+- **LUM-94:** CI adds a path-gated **`openapi-check`** job (alongside existing **`lint-and-test`**) plus **`make openapi-check`** as an alias of **`make web-codegen-check`**; contributor docs now describe offline OpenAPI snapshot / codegen drift checks (`dump_openapi`, not a live orchestrator). **`openapi.snapshot.json`** refreshed to match current **`dump_openapi`** output (schema emission deltas).
 - **`GRAPH_MODE` default is now `disabled`.** Fresh installs omit graph wiring until operators set `GRAPH_MODE=inprocess` (premium in-process plugin) or `GRAPH_MODE=service` (premium KG service overlay). Requests for `service`/`inprocess` degrade to `disabled` with a single structured WARNING when premium modules are absent (AGPL export / partial trees).
-- **`LUMOGIS_TOOL_CATALOG_ENABLED`** defaults to **on** when unset: operators running capability services no longer need to set this flag for the LLM to merge eligible tools. Operators who want the previous behaviour (**no** merged capability tools / out-of-process dispatch) must set **`LUMOGIS_TOOL_CATALOG_ENABLED=false`** explicitly.
-
----
-
-## [0.4.1] — 2026-05-16
-
-### Added
-
-- **PR changelog gate** on pull requests that touch product paths: GitHub Actions enforces a `CHANGELOG.md` update unless `Skip-Changelog` or `[skip changelog]` appears in the PR body; see `CONTRIBUTING.md`, `.github/workflows/changelog.yml`, and local `make changelog-check`.
-
-### Security
-
-- **Graph statistics visibility:** regression coverage for operator graph statistics is consolidated into the knowledge-graph service test suite with explicit query capture; redundant Core-side test scaffolding is removed from the default layout.
-
-### Fixed
-
-- **Release verification (Compose):** the overlay used for `make verify-public-rc` replaces the orchestrator `env_file` list so the disposable `lumogis-test` stack uses **`config/test.env.example` only** and does not inherit stray variables from a developer root `.env` via Compose merge semantics. The RC integration helper starts Qdrant before dependent services and verifies it is on the project bridge network, avoiding intermittent “vector store unreachable” failures when another Compose stack runs on the same host.
+- **`LUMOGIS_TOOL_CATALOG_ENABLED`** defaults to **on** when unset: operators running capability services no longer need to set this flag for the LLM to merge eligible tools. Operators who want the previous behaviour (**no** merged capability tools / OOP dispatch) must set **`LUMOGIS_TOOL_CATALOG_ENABLED=false`** explicitly.
 
 ---
 

@@ -97,23 +97,25 @@ def semantic_search(
 
 
 def fuzzy_filename_search(query: str, limit: int = 10) -> list[dict]:
-    root_path = Path(os.environ.get("FILESYSTEM_ROOT", str(Path.home())))
-    results = []
-    if not root_path.is_dir():
-        return results
+    """Walk ingest roots in order; earlier roots fill the limit first."""
+    results: list[dict] = []
     q = query.lower()
-    for root, dirs, files in os.walk(root_path):
-        dirs[:] = [d for d in dirs if not d.startswith(".")]
-        for name in files:
-            if q in name.lower():
-                full = Path(root) / name
-                try:
-                    size_kb = round(full.stat().st_size / 1024)
-                except OSError:
-                    size_kb = 0
-                results.append({"path": str(full), "name": name, "size_kb": size_kb})
-                if len(results) >= limit:
-                    return results
+    for root_str in config.get_effective_ingest_paths():
+        root_path = Path(root_str)
+        if not root_path.is_dir():
+            continue
+        for root, dirs, files in os.walk(root_path):
+            dirs[:] = [d for d in dirs if not d.startswith(".")]
+            for name in files:
+                if q in name.lower():
+                    full = Path(root) / name
+                    try:
+                        size_kb = round(full.stat().st_size / 1024)
+                    except OSError:
+                        size_kb = 0
+                    results.append({"path": str(full), "name": name, "size_kb": size_kb})
+                    if len(results) >= limit:
+                        return results
     return results
 
 

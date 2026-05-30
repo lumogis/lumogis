@@ -94,7 +94,13 @@ def test_healthz_unauthenticated(dev_env):
     with TestClient(main.app) as client:
         resp = client.get("/healthz")
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok"}
+    body = resp.json()
+    assert body["status"] == "ok"
+    for key, value in body.items():
+        if isinstance(value, str):
+            assert "/workspace" not in value
+            if "path" in key.lower():
+                assert not value.startswith("/")
 
 
 def test_web_root_redirects_to_trailing_slash(dev_env):

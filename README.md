@@ -95,46 +95,11 @@ First-party SPA: **[`clients/lumogis-web/`](clients/lumogis-web/)**, served behi
 
 ## Getting started
 
-### Quickstart from published images (recommended)
+**Prerequisites:** Docker with Compose v2, Git, and at least 8 GB RAM.
 
-Prerequisites: Docker Desktop 4.x+ or Docker Engine with Compose v2.x (required for docker-compose.ghcr.yml overlay support).
+Clone the repo, copy **`.env.example`** to **`.env`**, run **`docker compose up -d`**, then open **http://localhost/**. The full first-run guide — Ollama model pulls, migration checks, smoke test, and common errors — is in **[`docs/deployment/quickstart.md`](docs/deployment/quickstart.md)**.
 
-```bash
-cp .env.example .env
-# Edit .env — set LUMOGIS_PUBLIC_ORIGIN and any required secrets
-COMPOSE_FILE=docker-compose.yml:docker-compose.ghcr.yml \
-  docker compose up -d --pull always
-```
-
-Images are pulled from ghcr.io/lumogis/ (public — no login required). Run the commands below from the **repository root** (clone first if needed — **`docs/deployment/quickstart.md`** step 1).
-
-When services are healthy, open **http://localhost/** (Lumogis Web via Caddy) or the orchestrator at **http://localhost:8000** (Swagger at **`/docs`**).
-
-To pin to a specific release (omit the leading v):
-
-```bash
-IMAGE_TAG=1.2.3 COMPOSE_FILE=docker-compose.yml:docker-compose.ghcr.yml \
-  docker compose up -d --pull always
-```
-
-**Full walkthrough:** [`docs/deployment/quickstart.md`](docs/deployment/quickstart.md) — numbered steps, first-boot waits, Ollama/Postgres behaviour, **`curl`** smoke checks, and common errors.
-
-> **First-time setup note:** GHCR packages must be set to Public after the first workflow push. Go to the repository Packages page, open each package (lumogis-orchestrator, lumogis-web), and set visibility to Public under Package settings.
-
-### For contributors (build from source)
-
-See **[`CONTRIBUTING.md`](CONTRIBUTING.md)** for the full developer workflow (venv, linters, **`make test`**, compose-based checks). From a clone, a typical local stack is **`cp .env.example .env`** then **`docker compose up -d`** (builds images from this tree — no GHCR overlay).
-
-**Published GHCR images:** use **[`docs/deployment/quickstart.md`](docs/deployment/quickstart.md)** as the long-form operator guide (aligned with the block above).
-
-**Windows (PowerShell)** — clone, env file, compose up:
-
-```powershell
-git clone https://github.com/lumogis/lumogis.git $HOME\lumogis
-cd "$HOME\lumogis"; Copy-Item .env.example .env; docker compose up -d
-```
-
-Open **http://localhost/** (Lumogis Web via Caddy) after health checks settle; orchestrator Swagger/API directly at **http://localhost:8000**. Inspect **`.env.example`** for `COMPOSE_PROFILES`, model pulls (`OLLAMA_EXTRA_MODELS`), and auth knobs.
+**Pre-built images (optional):** set **`COMPOSE_FILE=docker-compose.yml:docker-compose.ghcr.yml`** in `.env` and use **`docker compose up -d --pull always`** to run from **`ghcr.io/lumogis/`** without a local build (see the quickstart doc and **`.env.example`** comments).
 
 ---
 
@@ -194,11 +159,11 @@ See **[CONTRIBUTING.md](CONTRIBUTING.md)** — code boundaries (“services neve
 
 **Cloud models mandatory?** No—omit API keys and run locally via **Ollama**.
 
-**Where is data?** Host volumes mapped in Compose (**`docker-compose.yml`**) plus your indexed folder (`FILESYSTEM_ROOT`).
+**Where is data?** Host volumes mapped in Compose (**`docker-compose.yml`**) plus your indexed folder (`FILESYSTEM_ROOT`). **Multiple ingest roots** (admin **`ingest_paths`** with 2+ entries) can auto-generate **`docker-compose.override.yml`** bind mounts and chain **`COMPOSE_FILE`** — see **`.env.example`** comments and **`docs/LUMOGIS_REFERENCE_MANUAL.md`** (restart required after path changes).
 
 **Production-ready?** Solid self-hosted/developer preview—not a turnkey consumer appliance; run it, tighten auth, observe logs.
 
-More depth: **`docs/guides/troubleshooting.md`**, **`docs/LUMOGIS_REFERENCE_MANUAL.md`**. One-shot stack diagnostics: **`make doctor`** (read-only; JSON via **`make doctor ARGS="--json"`** — see **`scripts/doctor/README.md`**).
+More depth: **`docs/guides/troubleshooting.md`**, **`docs/LUMOGIS_REFERENCE_MANUAL.md`**.
 
 ---
 

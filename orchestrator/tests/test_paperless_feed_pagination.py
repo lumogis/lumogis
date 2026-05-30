@@ -85,3 +85,84 @@ def test_paperless_poll_freezes_since_cursor_across_pages(
         "since_cursor must stay fixed for every page in one poll tick; "
         f"got sequence={cursors_seen!r}"
     )
+
+
+def test_paperless_poll_stalls_tick_when_external_ingest_blocked_high(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If ``ingest_external_document`` hits blocked-high chunks it does not advance
+    ``poll_cursor``. Continuing the same tick would let a later document advance the
+    cursor past this row's ``added`` while the row was never reconciled; strict
+    ``added__gt`` would then omit it permanently.
+    """
+    from signals import feed_monitor
+
+    from services import ingest as ingest_mod
+    from services import paperless_credentials as pwc
+
+    ingest_calls: list[str] = []
+
+    def fake_fetch(
+        self: PaperlessPoller,
+        *,
+        since_cursor: str | None,
+        page: int,
+    ) -> tuple[list[PaperlessDocument], bool]:
+        same = "2024-01-01T00:00:00Z"
+        if page == 1:
+            return [
+                PaperlessDocument(1, "first", same),
+                PaperlessDocument(2, "second blocked high", same),
+                PaperlessDocument(3, "third must not ingest", same),
+            ], False
+        return [], False
+
+    def fake_ingest(
+        *,
+        external_document_id: str,
+        **kwargs: object,
+    ) -> IngestResult:
+        ingest_calls.append(external_document_id)
+        if external_document_id == "1":
+            return IngestResult(
+                file_path="paperless://550e8400-e29b-41d4-a716-446655440001/documents/1",
+                chunk_count=1,
+                advance_external_poll_cursor=True,
+            )
+        if external_document_id == "2":
+            return IngestResult(
+                file_path="paperless://550e8400-e29b-41d4-a716-446655440001/documents/2",
+                chunk_count=0,
+                advance_external_poll_cursor=False,
+                skipped=False,
+            )
+        raise AssertionError(f"unexpected ingest for doc {external_document_id!r}")
+
+    monkeypatch.setattr(feed_monitor, "_fetch_poll_cursor", lambda _sid: None)
+    monkeypatch.setattr(feed_monitor, "_update_poll_timestamp", lambda _source: None)
+
+    def _conn(_uid: str) -> MagicMock:
+        return MagicMock(base_url="http://paperless:8000", token="t")
+
+    monkeypatch.setattr(pwc, "load_connection", _conn)
+    monkeypatch.setattr(PaperlessPoller, "fetch_documents_page", fake_fetch)
+    monkeypatch.setattr(ingest_mod, "ingest_external_document", fake_ingest)
+
+    src = SourceConfig(
+        id="550e8400-e29b-41d4-a716-446655440001",
+        name="p",
+        source_type="paperless",
+        url="http://paperless:8000",
+        category="",
+        active=True,
+        poll_interval=60,
+        extraction_method="paperless_http",
+        css_selector_override=None,
+        last_polled_at=None,
+        last_signal_at=None,
+        poll_cursor=None,
+        user_id="u1",
+    )
+    feed_monitor._poll_paperless_source(src)
+
+    assert ingest_calls == ["1", "2"]

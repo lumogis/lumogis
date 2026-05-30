@@ -293,23 +293,23 @@ def _fallback_search(query: str) -> str:
 
 def _read_file(input_: dict, *, user_id: str) -> str:
     # `user_id` is accepted for signature uniformity (run_tool always passes it)
-    # so the FILESYSTEM_ROOT-scoped tool participates in the same audit /
-    # propagation contract as its peers, even though access is currently
-    # gated by FILESYSTEM_ROOT alone — when per-user filesystem roots land
-    # this hook is the single point that has to learn about them.
+    # so the ingest-root-scoped tool participates in the same audit /
+    # propagation contract as its peers; per-user filesystem roots would hook here.
     del user_id
-    import os
     from pathlib import Path
 
+    from services.path_containment import _resolved_path_under_any_root
+
+    import config
+
     path = input_.get("path", "")
-    fs_root = os.environ.get("FILESYSTEM_ROOT", "")
-    if fs_root:
-        resolved = str(Path(path).resolve())
-        allowed = str(Path(fs_root).resolve())
-        if not resolved.startswith(allowed + "/") and resolved != allowed:
+    roots = config.get_effective_ingest_paths()
+    if roots:
+        resolved = Path(path).resolve()
+        if not _resolved_path_under_any_root(resolved, roots):
             return json.dumps(
                 {
-                    "error": f"Access denied: path is outside FILESYSTEM_ROOT ({allowed})",
+                    "error": "Access denied: path is outside ingest roots",
                     "path": path,
                 }
             )

@@ -7,13 +7,15 @@
 # hosts with no `python` shim). After `source .venv/bin/activate`, either form
 # works; override: `make test PYTHON=python`.
 PYTHON ?= python3
-# Optional args for doctor (LUM-199), e.g. `make doctor ARGS="--json"` (portable) or `make doctor -- --json`.
+# Optional args for doctor (LUM-199 / LUM-320), e.g. `make doctor ARGS="--json"` (portable) or
+# `make doctor ARGS="--fix --dry-run"` (repair dry-run; JSON v2 with `ARGS="--json --fix"`).
 ARGS ?=
 
 # LUM-319 / POSIX: recipes use `set -o pipefail` (e.g. `compose-test-doctor`); Ubuntu `/bin/sh` is dash — use bash.
 SHELL := /bin/bash
 
-.PHONY: dev build test check-pytest test-integration test-integration-full lint ingest health logs doctor \
+.PHONY: dev build test check-pytest test-integration test-integration-full e2e-ingest-restart lint ingest health logs doctor \
+        desktop-dev desktop-build desktop-build-client-only \
         audit-local bandit-check web-audit-fix \
         compose-policy-check \
         graph-relates-to-merge-policy-check \
@@ -44,7 +46,7 @@ health:
 logs:
 	docker compose logs orchestrator -f --tail 50
 
-# LUM-199 — read-only operator health CLI (see scripts/doctor/README.md).
+# LUM-199 / LUM-320 — operator health CLI + optional --fix (see scripts/doctor/README.md).
 doctor:
 	@bash "$(CURDIR)/scripts/doctor/run.sh" $(ARGS)
 
@@ -267,7 +269,7 @@ web-audit-fix:
 	cd clients/lumogis-web && npm audit fix
 
 # Requires local venv (contributors only)
-lint:
+lint: check-pytest
 	ruff check orchestrator/
 	ruff format --check orchestrator/
 	@$(PYTHON) scripts/check_refresh_token_jti_guard.py
@@ -285,12 +287,23 @@ test: check-pytest
 	cd stack-control && $(PYTHON) -m pytest test_main.py -q
 
 # Requires local venv (contributors only). Uses orchestrator venv/deps.
-test-integration:
+test-integration: check-pytest
 	cd orchestrator && $(PYTHON) -m pytest ../tests/integration -v --tb=short -m "integration and not slow"
 
 # Includes slow cases (e.g. wait for signal poll).
 test-integration-full:
 	cd orchestrator && $(PYTHON) -m pytest ../tests/integration -v --tb=short -m integration
+
+# LUM-400 — disruptive live-stack proof: ingest_paths change + POST /settings/restart.
+# Requires Docker and scripts/integration-public-rc.sh RC stack (~3–5 min). Not part of
+# default test-integration or verify-public-rc.
+# OLLAMA_SKIP_WAIT=true keeps every orchestrator --force-recreate fast and deterministic
+# (no on-boot Ollama wait/model pull); the proof is file_index_count, not embeddings.
+e2e-ingest-restart: export OLLAMA_SKIP_WAIT = true
+e2e-ingest-restart:
+	scripts/integration-public-rc.sh gate-start
+	scripts/integration-public-rc.sh restart-e2e-pytest
+	scripts/integration-public-rc.sh gate-end
 
 dev:
 	docker compose -f docker-compose.yml -f docker-compose.gpu.yml -f docker-compose.dev.yml up --build --pull always
@@ -409,6 +422,18 @@ web-build:
 
 web-dev:
 	cd clients/lumogis-web && npm run dev
+
+# LUM-329 — Tauri 2 memory overlay (`clients/lumogis-desktop/`). Requires Node 20+, Rust stable,
+# Linux: webkit2gtk-4.1-dev + build tools; macOS: Xcode CLT; Windows: MSVC + WebView2.
+# Installs `@tauri-apps/cli` via npm; first run: `cd clients/lumogis-desktop && npm ci`.
+desktop-dev:
+	cd clients/lumogis-desktop && npm ci && npm run build && npm run tauri:dev
+
+desktop-build:
+	cd clients/lumogis-desktop && npm ci && npm run build && npm run tauri:build
+
+desktop-build-client-only:
+	cd clients/lumogis-desktop && npm ci && npm run build && npm run tauri build -- --config src-tauri/tauri.client-only.conf.json
 
 # Playwright e2e (Phase 1 Pass 1.5; FP-046 me/admin shell spec included). Requires stack
 # + Caddy on PLAYWRIGHT_BASE_URL (default http://127.0.0.1) and

@@ -260,6 +260,45 @@
         "title": "AdminDiagnosticsFoundationToolCatalog",
         "type": "object"
       },
+      "AdminDiagnosticsInbox": {
+        "description": "Inbox watcher/poll operator slice (LUM-330).",
+        "properties": {
+          "inbox_mode": {
+            "description": "``event`` | ``poll`` | ``off``",
+            "title": "Inbox Mode",
+            "type": "string"
+          },
+          "inbox_path": {
+            "description": "Resolved absolute inbox directory.",
+            "title": "Inbox Path",
+            "type": "string"
+          },
+          "inbox_poll_last_scan": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "ISO-8601 UTC last poll scan (poll mode only).",
+            "title": "Inbox Poll Last Scan"
+          },
+          "inbox_watcher": {
+            "description": "``ok`` | ``degraded`` | ``disabled``",
+            "title": "Inbox Watcher",
+            "type": "string"
+          }
+        },
+        "required": [
+          "inbox_mode",
+          "inbox_watcher",
+          "inbox_path"
+        ],
+        "title": "AdminDiagnosticsInbox",
+        "type": "object"
+      },
       "AdminDiagnosticsResponse": {
         "description": "Response for ``GET /api/v1/admin/diagnostics`` — curated operator diagnostics.",
         "properties": {
@@ -278,6 +317,9 @@
             "format": "date-time",
             "title": "Generated At",
             "type": "string"
+          },
+          "inbox": {
+            "$ref": "#/components/schemas/AdminDiagnosticsInbox"
           },
           "speech_to_text": {
             "$ref": "#/components/schemas/AdminDiagnosticsSpeechToText"
@@ -318,7 +360,8 @@
           "tools",
           "foundation_signals",
           "warnings",
-          "speech_to_text"
+          "speech_to_text",
+          "inbox"
         ],
         "title": "AdminDiagnosticsResponse",
         "type": "object"
@@ -741,6 +784,20 @@
           "file"
         ],
         "title": "Body_upload_attachment_api_v1_captures__capture_id__attachments_post",
+        "type": "object"
+      },
+      "Body_upload_ingest_file_api_v1_ingest_upload_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_ingest_file_api_v1_ingest_upload_post",
         "type": "object"
       },
       "CaptureAttachmentSummary": {
@@ -2423,6 +2480,26 @@
           }
         },
         "title": "IngestRequest",
+        "type": "object"
+      },
+      "IngestUploadQueuedResponse": {
+        "description": "``POST /api/v1/ingest/upload`` — queued push ingest (opaque ``file_id``).",
+        "properties": {
+          "file_id": {
+            "title": "File Id",
+            "type": "string"
+          },
+          "status": {
+            "const": "queued",
+            "default": "queued",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file_id"
+        ],
+        "title": "IngestUploadQueuedResponse",
         "type": "object"
       },
       "InstanceSystemConnectorCredentialList": {
@@ -4119,16 +4196,19 @@
             ],
             "title": "Default Model"
           },
-          "filesystem_root": {
+          "ingest_paths": {
             "anyOf": [
               {
-                "type": "string"
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Filesystem Root"
+            "title": "Ingest Paths"
           },
           "optional_models": {
             "anyOf": [
@@ -7554,6 +7634,54 @@
         ]
       }
     },
+    "/api/v1/ingest/upload": {
+      "post": {
+        "description": "Stream upload to persistent storage and enqueue ``ingest_upload`` batch work.",
+        "operationId": "upload_ingest_file_api_v1_ingest_upload_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_ingest_file_api_v1_ingest_upload_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestUploadQueuedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "413": {
+            "description": "Payload too large"
+          },
+          "415": {
+            "description": "Unsupported extension"
+          },
+          "422": {
+            "description": "Missing file"
+          },
+          "500": {
+            "description": "Enqueue failure"
+          }
+        },
+        "summary": "Upload a document for queued ingest",
+        "tags": [
+          "v1",
+          "v1-ingest"
+        ]
+      }
+    },
     "/api/v1/kg/entities/{entity_id}": {
       "get": {
         "operationId": "get_entity_api_v1_kg_entities__entity_id__get",
@@ -10493,7 +10621,7 @@
     },
     "/settings": {
       "get": {
-        "description": "Return current settings for the dashboard (root path, API key status, models).",
+        "description": "Return current settings for the dashboard (ingest paths, API key status, models).",
         "operationId": "get_settings_settings_get",
         "responses": {
           "200": {

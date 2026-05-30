@@ -2,7 +2,7 @@
 
 **Status:** Finalised
 **Created:** 2026-05-23
-**Last updated:** 2026-05-23
+**Last updated:** 2026-05-30
 **Decided by:** /explore (Composer); confirmed by /verify-plan
 
 ## Context
@@ -32,18 +32,24 @@ Full comparison: `.cursor/explorations/archived/LUM-321-make-test-pytest-preflig
 
 **Harder / unchanged**
 - `requirements-test.txt` lighter-install confusion remains unless a future ticket addresses it.
-- `lint` / `test-integration` still lack pytest preflight unless extended later.
 
 **Future chunks must know**
-- Host test entrypoint assumes **`check-pytest`** guard on **`test:`**; do not remove without ADR update.
+- Host test entrypoint assumes **`check-pytest`** guard on **`test:`**, **`lint:`**, and **`test-integration:`**; do not remove without ADR update.
+- Preflight now extends to **`lint`** and **`test-integration`** (**LUM-327**, 2026-05-30).
 - CI is unchanged — preflight is host-contributor UX only.
 
 ## Revisit conditions
 
 - If Lumogis adopts a **`make setup-dev`** or **`uv sync`** standard that subsumes manual pip lines, revisit CONTRIBUTING one-liner and whether preflight should move to a shared **`check-dev-env`** target.
-- If **`test-integration`** preflight is added, extend **`check-pytest`** reuse rather than duplicating inline checks.
+
+## LUM-327 amendment (2026-05-30)
+
+**Child issue:** **LUM-327** — extend **`check-pytest`** reach without changing the guard implementation.
+
+**As-shipped:** **`lint:`** and **`test-integration:`** depend on **`check-pytest`** (mirror **`test:`**). Recorded by **`/record-retro`**; exploration **`.cursor/explorations/lum_327_check_pytest_preflight_lint_test_integration_retro.md`**.
 
 ## Status history
 
 - 2026-05-23: Draft created by /explore
 - 2026-05-23: Finalised by /verify-plan — implementation confirmed decision
+- 2026-05-30: **LUM-327** — amended consequences; **`lint`** / **`test-integration`** preflight added (`/record-retro`)

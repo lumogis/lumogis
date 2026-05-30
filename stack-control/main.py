@@ -46,9 +46,8 @@ _verify_docker_socket()
 
 app = FastAPI(title="Lumogis stack-control", docs_url=None, redoc_url=None)
 
-# COMPOSE_FILE and PROJECT are stable across restarts; read once.
-_COMPOSE_FILE = os.environ.get("COMPOSE_FILE", "docker-compose.yml")
 _COMPOSE_PROJECT = os.environ.get("COMPOSE_PROJECT_NAME", "")
+_DEFAULT_COMPOSE_FILE = os.environ.get("COMPOSE_FILE", "docker-compose.yml")
 
 # RESTART_SECRET is read from /project/.env at request time so it stays in sync
 # after the orchestrator regenerates secrets on first boot and is then recreated.
@@ -69,6 +68,22 @@ def _current_restart_secret() -> str:
             pass
     return _RESTART_SECRET_ENV
 
+
+def _current_compose_file() -> str:
+    """Return live COMPOSE_FILE from /project/.env (D10), else container env default."""
+    if _PROJECT_ENV_FILE.exists():
+        try:
+            for line in _PROJECT_ENV_FILE.read_text().splitlines():
+                line = line.strip()
+                if line.startswith("COMPOSE_FILE="):
+                    value = line[len("COMPOSE_FILE=") :].strip()
+                    if value:
+                        return value
+        except Exception:
+            pass
+    return _DEFAULT_COMPOSE_FILE
+
+
 # Only these services may be individually restarted.
 _ALLOWED_SERVICES: set[str] = {
     "orchestrator",
@@ -83,9 +98,12 @@ _ALLOWED_SERVICES: set[str] = {
 def _compose_cmd(args: list[str]) -> list[str]:
     """Build a `docker compose` command with optional project flags."""
     cmd = ["docker", "compose"]
-    if _COMPOSE_FILE:
-        for f in _COMPOSE_FILE.split(":"):
-            cmd += ["-f", f]
+    compose_file = _current_compose_file()
+    if compose_file:
+        for f in compose_file.split(":"):
+            f = f.strip()
+            if f:
+                cmd += ["-f", f]
     if _COMPOSE_PROJECT:
         cmd += ["-p", _COMPOSE_PROJECT]
     return cmd + args
@@ -105,7 +123,14 @@ class RestartRequest(BaseModel):
     recreate: bool = False
 
 
-_PROJECT_DIR = "/project"
+# `docker compose` resolves RELATIVE bind-mount sources in the compose files against this
+# working directory and sends them to the host daemon as HOST paths. Inside this container
+# that path is /project, which does not exist on the host — so a stack-control-driven
+# --force-recreate mounts empty dirs over /app, /data, etc. (orchestrator then crashes with
+# "Could not import module main"). When HOST_PROJECT_DIR is set (RC gates bind-mount the repo
+# at that same absolute host path), compose runs from there and relative sources resolve to
+# real host paths. Unset (production default) preserves the historical /project behaviour.
+_PROJECT_DIR = os.environ.get("HOST_PROJECT_DIR", "").strip() or "/project"
 
 
 @app.post("/restart")

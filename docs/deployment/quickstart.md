@@ -1,151 +1,126 @@
-# First-run quickstart (published images)
+# First-run quickstart
 
-This guide is the canonical **≤5-step** path for a new self-hoster using **pre-built images** from GitHub Container Registry (GHCR). It mirrors the commands in the root **[`README.md`](../../README.md)** §Getting started so the two stay aligned.
-
----
-
-## Goal
-
-Run Lumogis on your machine with **Docker Compose**, using **`docker-compose.yml`** plus **`docker-compose.ghcr.yml`**, then open the web UI and confirm the stack is healthy.
-
-**What “complete” means here:** the **Lumogis Web** UI is reachable at **`http://localhost/`** (Caddy front door), and optionally you confirm **`GET /health`** on the orchestrator at **`http://localhost:8000/health`**.
+Self-contained path for a new self-hoster: clone, configure, start with Docker Compose, pull default models, and confirm the stack is healthy.
 
 ---
 
 ## Prerequisites
 
-- **Docker Desktop 4.x+** or **Docker Engine** with **Compose v2.x** (required for the GHCR overlay that uses `build: !reset null` — see comments in **`docker-compose.ghcr.yml`**).
-- **Git** (to clone the official repo).
-- **Rough sizing:** allow **several minutes** on first start for image pulls and the default **Ollama** models; plan for **at least ~8 GB RAM** for the default embedder + small chat model.
-- **Disk:** images and model layers need **several GB** of free space; if pulls fail, check free disk and Docker’s data root.
-
-Obtain Compose and env files only from the **official Lumogis repository** (`https://github.com/lumogis/lumogis`) or a **trusted fork** you audit yourself. Do **not** paste real API keys into chat logs, tickets, or git commits; keep secrets in **`.env`** (gitignored).
+- Docker and Docker Compose installed (Docker Engine + Compose v2, or Docker Desktop)
+- 8 GB RAM minimum (default Ollama embedder + chat model)
+- Git
 
 ---
 
-## Steps
+## Quick start (5 steps)
 
-### 1. Clone the repository
+1. **Clone the repo**
 
-```bash
-git clone https://github.com/lumogis/lumogis.git
-cd lumogis
-```
+   ```bash
+   git clone https://github.com/lumogis/lumogis
+   ```
 
-### 2. Create your environment file
+2. **Enter the directory**
 
-```bash
-cp .env.example .env
-```
+   ```bash
+   cd lumogis
+   ```
 
-Edit **`.env`** as needed:
+3. **Create `.env`**
 
-- Set **`LUMOGIS_PUBLIC_ORIGIN`** to the URL family members use in the browser (see **`.env.example`** comments), especially when **`AUTH_ENABLED=true`**.
-- Leave **`AUTH_ENABLED=false`** for a simple LAN trial unless you intentionally want login flows — see **Auth and credential keys** below.
+   ```bash
+   cp .env.example .env
+   ```
 
-Never commit **`.env`**.
+   No edits are required for a default LAN trial (`AUTH_ENABLED` stays off). To use **pre-built images** from GHCR instead of a local build, set **`COMPOSE_FILE=docker-compose.yml:docker-compose.ghcr.yml`** in `.env` (see comments at the top of `.env.example`).
 
-### 3. Start the stack (GHCR images)
+4. **Start the stack**
 
-```bash
-COMPOSE_FILE=docker-compose.yml:docker-compose.ghcr.yml \
-  docker compose up -d --pull always
-```
+   ```bash
+   docker compose up -d
+   ```
 
-Images are pulled from **`ghcr.io/lumogis/`** (public packages — no registry login required when package visibility is **Public**).
+   First boot can take several minutes (image build or pull, Postgres init, Ollama model downloads).
 
-Optional: pin a release (omit a leading **`v`** on the tag):
+5. **Open the UI**
 
-```bash
-IMAGE_TAG=1.2.3 COMPOSE_FILE=docker-compose.yml:docker-compose.ghcr.yml \
-  docker compose up -d --pull always
-```
+   Open **http://localhost/** (Caddy → Lumogis Web) and complete first-run setup in the browser.
 
-> **GHCR visibility:** after the first workflow publish, each new package may default to private. If **`docker pull`** returns **403** or **not found**, open the repository **Packages** page, open **lumogis-orchestrator** / **lumogis-web**, and set visibility to **Public** (same wording as **`README.md`**).
+   Orchestrator API/Swagger is also available at **http://localhost:8000/docs** if you need it.
 
-### 4. Wait for first boot
+---
 
-The first **`docker compose up`** can take **several minutes**: image layers, Postgres init, and **Ollama** model pulls (see next section). Watch progress:
+## Pull the default Ollama model
+
+On first start, the orchestrator entrypoint (`orchestrator/docker-entrypoint.sh`) waits for Ollama and pulls:
+
+- **`nomic-embed-text`** — embedding model (`EMBEDDING_MODEL` in `.env.example`)
+- **`llama3.2:3b`** — default chat model (`OLLAMA_EXTRA_MODELS` in `.env.example`)
+
+Watch progress:
 
 ```bash
 docker compose logs -f orchestrator
 ```
 
-When logs settle, continue.
-
-### 5. Open the UI and run a smoke check
-
-- **Web UI (recommended):** **`http://localhost/`** — Lumogis Web behind Caddy (same-origin for cookies and API routes).
-- **Orchestrator directly:** **`http://localhost:8000`** — Swagger at **`/docs`**.
-- **Health check (fail-fast `curl`):**
+If a pull fails (entrypoint logs a WARNING and continues in degraded mode), pull manually:
 
 ```bash
-curl -fsS http://localhost:8000/health | python3 -m json.tool
+docker compose exec ollama ollama pull nomic-embed-text
+docker compose exec ollama ollama pull llama3.2:3b
 ```
 
-**`-fsS`** makes **`curl`** exit non-zero on HTTP errors, which is useful in scripts. From a dev checkout with **GNU Make**, you can instead run **`make health`**, which uses **`curl -s`** (no **`-f`**) and pretty-prints JSON — behaviour differs slightly if the endpoint returns an error status.
-
-**Verify the full stack (read-only):** from the repo root, **`make doctor`** runs host-side Compose + HTTP probes (orchestrator **`/healthz`**, optional Caddy edge) without importing the orchestrator. Machine-readable JSON (stable v1 schema for dashboards / evidence bundles): **`make doctor ARGS="--json"`** (requires **`jq`**). Security audits (**`npm audit` / `pip-audit` / Bandit**) are **opt-in**: **`make doctor ARGS="--security"`** — expect network traffic and long cold-cache runs; see **`scripts/doctor/README.md`**.
+Or use **Settings → Models** in the web UI.
 
 ---
 
-## Ollama models on first start
+## Verify Postgres migrations ran
 
-The orchestrator **`docker-entrypoint.sh`** (see **`orchestrator/docker-entrypoint.sh`** in the repo):
+Fresh Postgres volumes are bootstrapped from **`postgres/init.sql`**. Further schema changes are applied **automatically** on orchestrator startup by **`python3 /app/db_migrations.py`** (idempotent; tracks applied files in `schema_migrations`).
 
-1. Waits for **Ollama** at **`OLLAMA_URL`** (default **`http://ollama:11434`**).
-2. Ensures **`EMBEDDING_MODEL`** is present (default **`nomic-embed-text`** in **`.env.example`**), pulling it if missing.
-3. Pulls each name in **`OLLAMA_EXTRA_MODELS`** **after** the embedder. Names are **comma-separated** only (the entrypoint splits on **`,`**; spaces as separators between multiple models are **not** supported). The default in **`.env.example`** is **`llama3.2:3b`**. Set **`OLLAMA_EXTRA_MODELS=`** (empty) to skip extra pulls.
+Confirm in logs:
 
-If a pull fails, the entrypoint logs a **WARNING** and **continues** — the orchestrator may start **degraded** (e.g. chat or ingest unavailable until you fix models). Recover with **`docker compose exec ollama ollama pull <name>`** or **Settings → Models** in the web UI.
+```bash
+docker compose logs orchestrator | grep -i migration
+```
 
----
-
-## Postgres schema migrations
-
-Schema changes after the initial **`postgres/init.sql`** run are applied on **orchestrator** startup by **`python3 /app/db_migrations.py`** (idempotent; tracks applied files).
-
-If the migration runner exits **non-zero**, the entrypoint logs a **WARNING** and **continues** — the service may be **degraded**. Check orchestrator logs, fix SQL/DB state, and restart; do **not** assume migrations silently succeeded.
+You should see `[entrypoint] Running Postgres migrations...` without a fatal error. If the migration runner exits non-zero, the entrypoint logs a WARNING and the service may be degraded — fix the DB state and restart; no separate manual migration step is needed on a clean first install.
 
 ---
 
-## Auth and credential keys
+## Smoke test
 
-When **`AUTH_ENABLED=true`**, the entrypoint **refuses to start** if **`AUTH_SECRET`** or **`LUMOGIS_CREDENTIAL_KEY`** / **`LUMOGIS_CREDENTIAL_KEYS`** are missing or still set to placeholders from **`.env.example`** (see **`orchestrator/docker-entrypoint.sh`** fatal messages). Generate a Fernet key with the **`python3 -c "from cryptography.fernet import Fernet; ..."`** one-liner shown in the entrypoint log and in **`.env.example`** comments.
+From the repo root (requires GNU Make):
+
+```bash
+make health
+```
+
+This calls **`GET http://localhost:8000/health`** and pretty-prints JSON.
+
+Without Make:
+
+```bash
+docker compose ps
+curl -fsS http://localhost:8000/health
+```
+
+All core services should show **healthy** (or **running** for short-lived helpers). **`curl`** should return HTTP 200.
 
 ---
 
-## LibreChat profile
+## Common errors
 
-If **`.env`** sets **`COMPOSE_PROFILES`** to include **`librechat`**, the legacy LibreChat UI is typically at **`http://localhost:3080`** (see root **`README.md`**). The primary path above remains **Lumogis Web** at **`http://localhost/`**.
-
----
-
-## Common errors and fixes
-
-| Symptom | What to check |
+| Symptom | What to do |
 | --- | --- |
-| **Port already in use** | Another service owns **80**, **8000**, **5432**, **11434**, etc. Run **`docker compose ps`**, stop conflicting stacks, or override host ports via **`.env`** / Compose (see **`docker-compose.yml`** comments and general Compose docs). |
-| **Very slow first start / OOM** | First **Ollama** pulls are large; RAM below ~8 GB with defaults may thrash. Reduce models or add swap; wait for pulls to finish. |
-| **GHCR pull 403 / manifest unknown** | Package visibility still **Private**, wrong **`IMAGE_TAG`**, or transient registry issue — see the GHCR note in step 3. |
-| **`curl` health check fails** | Orchestrator not ready, wrong port, or TLS/proxy in front of **8000**. Inspect **`docker compose logs orchestrator`**. |
-| **Docker daemon errors** | Run **`docker info`** from the same shell; ensure the daemon is running and your user can access it. |
-| **Disk full during pull** | Free space on Docker’s storage driver volume; remove unused images **`docker system prune`** (careful — removes unused data). |
+| **Port already in use** | Another process owns **80**, **8000**, **5432**, or **11434**. Run `docker compose ps`, stop conflicting stacks, or change host port mappings in `.env` / `docker-compose.yml` comments. |
+| **Insufficient RAM / Ollama OOM** | Default models need ~8 GB RAM. Reduce `OLLAMA_EXTRA_MODELS`, disable optional reranker (`RERANKER_BACKEND=none` is the default), add swap, or wait for first pulls to finish before load-testing chat. |
+| **Ollama not running / model not pulled** | Check `docker compose ps ollama` and `docker compose logs ollama orchestrator`. Pull models manually (see **Pull the default Ollama model** above) or restart after Ollama is healthy. |
 
-For deeper operational issues, see **[`docs/guides/troubleshooting.md`](../guides/troubleshooting.md)**.
-
----
-
-## Platform notes
-
-- **Ubuntu 22.04 / 24.04 LTS** (**x86_64** or **aarch64**): the bash snippets above are copy-pasteable.
-- **macOS (Apple Silicon)**: same commands; Docker Desktop must be running.
-- **macOS (Intel)**: best-effort — same Compose pattern; if something breaks, compare with Docker Desktop release notes for your chip.
-- **Windows (PowerShell)**: the GHCR **`COMPOSE_FILE=... docker compose ...`** line is the same env assignment pattern as in **`README.md`**’s Windows contributor clone snippet; use **`;`** between statements when pasting into PowerShell, e.g. **`cd $HOME\lumogis; $env:COMPOSE_FILE='docker-compose.yml:docker-compose.ghcr.yml'; docker compose up -d --pull always`**. For full Windows contributor flows, follow **`README.md`** and **`CONTRIBUTING.md`**.
+For more issues, see **`docs/guides/troubleshooting.md`**.
 
 ---
 
 ## Next steps
 
-- **Remote access** (Tailscale, Cloudflare Tunnel, hardening for exposure beyond the LAN): planned doc path **`docs/deployment/remote-access.md`** — tracked as **LUM-158** (not shipped yet in this tree; do not assume the file exists until that issue closes).
-- **Build from source / CI-style checks:** **[`CONTRIBUTING.md`](../../CONTRIBUTING.md)**.
+For HTTPS and access from phones or laptops off your LAN (Tailscale Serve, Cloudflare Tunnel), see **[Remote access](remote-access.md)**.

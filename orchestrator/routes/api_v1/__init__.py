@@ -24,6 +24,7 @@ from .audit import router as audit_router
 from .captures import router as captures_router
 from .chat import router as chat_router
 from .events import router as events_router
+from .ingest import router as ingest_router
 from .kg import router as kg_router
 from .memory import router as memory_router
 from .notifications import router as notifications_router
@@ -40,5 +41,6 @@ router.include_router(captures_router)
 router.include_router(notifications_router)
 router.include_router(voice_router)
 router.include_router(events_router)
+router.include_router(ingest_router)
 
 __all__ = ["router"]

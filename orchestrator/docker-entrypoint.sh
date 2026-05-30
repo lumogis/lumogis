@@ -133,6 +133,15 @@ if [ -f "/app/db_default_user_remap.py" ]; then
     fi
 fi
 
+# OLLAMA_SKIP_WAIT=true makes the orchestrator bind immediately in degraded mode,
+# skipping the up-to-120s readiness wait and the (potentially multi-minute) embedding
+# model pull. Intended for environments that do not need on-boot embeddings — e.g. the
+# restart_e2e RC gate, where a fast, deterministic --force-recreate matters and the proof
+# (file_index_count) does not depend on Ollama. Models can still be pulled later via the
+# dashboard. Unset/any-other value preserves the default wait-and-pull behaviour.
+if [ "${OLLAMA_SKIP_WAIT:-}" = "true" ]; then
+    echo "[entrypoint] OLLAMA_SKIP_WAIT=true — skipping Ollama readiness wait and model pulls; starting in degraded mode."
+else
 echo "[entrypoint] Waiting for Ollama at $OLLAMA_URL ..."
 for i in $(seq 1 60); do
     if curl -sf "$OLLAMA_URL/api/tags" > /dev/null 2>&1; then
@@ -195,5 +204,6 @@ if [ -n "$OLLAMA_EXTRA_MODELS" ]; then
     done
     IFS="$_old_ifs"
 fi
+fi  # end OLLAMA_SKIP_WAIT guard
 
 exec "$@"

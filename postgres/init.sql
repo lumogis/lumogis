@@ -57,7 +57,12 @@ CREATE TABLE IF NOT EXISTS entities (
     -- Memory-scopes (migration 013): see plan personal_shared_system_memory_scopes.
     scope              TEXT NOT NULL DEFAULT 'personal'
                        CHECK (scope IN ('personal','shared','system')),
-    published_from     UUID REFERENCES entities(entity_id) ON DELETE CASCADE
+    published_from     UUID REFERENCES entities(entity_id) ON DELETE CASCADE,
+    -- LUM-124: optional memory classification + verification (see migration 026).
+    memory_type        TEXT
+                       CHECK (memory_type IS NULL OR memory_type IN (
+                           'user_preference', 'correction', 'relationship')),
+    last_verified_at   TIMESTAMPTZ
 );
 CREATE UNIQUE INDEX IF NOT EXISTS entities_published_from_scope_uniq
     ON entities (published_from, scope) WHERE published_from IS NOT NULL;
@@ -90,6 +95,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS entity_relations_evidence_uniq
 
 -- Partial index: fast lookup of staged entities per user (reconcile + promotion queries).
 CREATE INDEX IF NOT EXISTS idx_entities_staged ON entities (user_id, is_staged) WHERE is_staged = TRUE;
+CREATE INDEX IF NOT EXISTS idx_entities_user_memory_correction
+    ON entities (user_id, memory_type) WHERE memory_type = 'correction';
 
 -- Ambiguous entity merge candidates flagged for manual review.
 -- Inspect and resolve via GET /review-queue.
@@ -348,7 +355,7 @@ CREATE TABLE IF NOT EXISTS routines (
     UNIQUE(name, user_id)
 );
 
--- Dashboard settings overrides (filesystem_root, API key env vars, default_model)
+-- Dashboard settings overrides (ingest_paths JSON array, API key env vars, default_model)
 CREATE TABLE IF NOT EXISTS app_settings (
     key         TEXT PRIMARY KEY,
     value       TEXT NOT NULL,

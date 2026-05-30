@@ -91,9 +91,14 @@ Production images install only each service’s `requirements.txt`. For **local*
 | **Orchestrator** | `python -m pip install -r orchestrator/requirements.txt` | `python -m pip install -r orchestrator/requirements-dev.txt` |
 | **stack-control** | `python -m pip install -r stack-control/requirements.txt` | `python -m pip install -r stack-control/requirements-dev.txt` |
 
-**CI** (`.github/workflows/ci.yml`) installs full `orchestrator/requirements.txt` plus `orchestrator/requirements-dev.txt` — same as a full local dev venv, not the lighter file below.
+#### Which install?
 
-**Optional lighter install** for orchestrator unit tests only: `orchestrator/requirements-test.txt` trims heavy adapters; see comments in that file. It is **not** CI-equivalent.
+| Goal | Command | Notes |
+| --- | --- | --- |
+| **Orchestrator unit tests only** | `python -m pip install -r orchestrator/requirements-test.txt` | Lighter deps — heavy runtime adapters are mocked in tests (see comments in that file). Does **not** match CI; does **not** cover stack-control or `make lint`. |
+| **Full local dev** (`make test`, `make lint`, feature work) | Chained install below (same as the one-liner in § *Running tests (local venv)*) | **CI-equivalent** — `.github/workflows/ci.yml` installs `orchestrator/requirements.txt`, `orchestrator/requirements-dev.txt`, and `stack-control/requirements-dev.txt`. |
+
+If in doubt, use the **full dev** install.
 
 For a full local dev venv that runs `make test` and `make lint`:
 
@@ -132,6 +137,12 @@ Integration tests run against the live stack. See [Integration tests](#integrati
 
 The orchestrator **runtime** image does not include pytest. Use **`make compose-test`**: it runs `pip install -q -r orchestrator/requirements-dev.txt` inside the container, then `python -m pytest` against the mounted repo (see `Makefile`). Do **not** use `docker compose run orchestrator pytest` — pytest may be missing.
 
+```bash
+make compose-test-stack-control   # stack-control unit tests via Compose — Docker only
+```
+
+Stack-control unit tests are included in **`make test`** when you have a host venv. Use **`make compose-test-stack-control`** when you lack local pytest or after changes to **`stack-control/`** or its Compose volume mount (no running stack required).
+
 For ad hoc single files in the container, use the same pattern the Makefile uses:
 
 ```bash
@@ -139,7 +150,7 @@ docker compose run --rm -w /project/orchestrator orchestrator sh -c \
   "pip install -q -r requirements-dev.txt && python -m pytest tests/path/to/test_foo.py -q"
 ```
 
-Other compose targets: `make compose-lint`, `make compose-test-integration` (see `Makefile`).
+Other compose targets: `make compose-lint`, `make compose-test-stack-control`, `make compose-test-integration` (see `Makefile`).
 
 ### OpenAPI snapshot / Lumogis Web typed client
 
@@ -195,6 +206,47 @@ Workflows on forks may show **Expected — Waiting for status** until a maintain
 ### CI on `main` / `master`
 
 [`.github/workflows/changelog.yml`](.github/workflows/changelog.yml) runs on pull requests targeting **`main`** or **`master`** (and on pushes that change that workflow file). For gated product paths, CI requires **`CHANGELOG.md`** updates under **`[Unreleased]`** before merge; merged PRs carry those entries onto the default branch. See bypasses above if you need an exception.
+
+### Local check (optional)
+
+Before pushing:
+
+```bash
+make changelog-check
+```
+
+Uses [scripts/check-changelog-touched.sh](scripts/check-changelog-touched.sh) (diff vs `origin/dev`, then `origin/main`, then `HEAD~1`). To mimic the **PR-body** skip locally, set **`CHANGELOG_GATE_PR_BODY`** to a string containing **`[skip changelog]`**.
+
+---
+
+## Changelog
+
+We follow [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) in [CHANGELOG.md](CHANGELOG.md).
+
+### When you must update the changelog
+
+If your pull request changes **product-facing paths** tracked in [`.github/workflows/changelog.yml`](.github/workflows/changelog.yml), **`CHANGELOG.md` must appear in the PR diff** (typically under **`[Unreleased]`** with **Added** / **Changed** / **Fixed** / **Removed** as appropriate). The same path list lives in [scripts/changelog-gate-paths.txt](scripts/changelog-gate-paths.txt) for local checks—**keep these in sync** when globs change.
+
+PRs that touch only paths outside that filter (for example **`docs/**`** alone or **`.github/`** alone) **do not** run this workflow and have **no** changelog obligation from that gate.
+
+### Bypasses (maintainers)
+
+- GitHub label **`Skip-Changelog`** (see `skipLabels` in the workflow).
+- The literal **`[skip changelog]`** anywhere in the **PR description/body** (case-insensitive), matching CI.
+
+Third-party outages or misconfiguration may block the check until fixed; the same bypasses are the supported escape hatches—document in the PR when you use them.
+
+### Branch protection / required checks
+
+If this workflow is marked **required** in branch protection while it uses **workflow-level `paths:`** filters, **docs-only** (or otherwise filtered) PRs may show **no status** from this job and appear stuck (“waiting for status”). **Do not** mark the changelog check **required** until you add a job-level path filter with an always-reporting success job, or your process explicitly handles that case.
+
+### Fork pull requests
+
+Workflows on forks may show **Expected — Waiting for status** until a maintainer approves the first run on that PR. That is normal GitHub behaviour, not a bug in this gate.
+
+### Public vs private enforcement
+
+The **published** GitHub workflow ships with this repository and may also appear in the **public** export tree, but **identical enforcement on `lumogis/lumogis`** may lag until maintainer work (see Linear **LUM-227** / children of **LUM-193**). Outside contributors should still follow this document; parity is tracked separately.
 
 ### Local check (optional)
 

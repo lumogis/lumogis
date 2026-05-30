@@ -883,6 +883,19 @@ class AdminDiagnosticsSpeechToText(BaseModel):
     endpoint: str = Field(default="/api/v1/voice/transcribe")
 
 
+class AdminDiagnosticsInbox(BaseModel):
+    """Inbox watcher/poll operator slice (LUM-330)."""
+
+    model_config = _RES
+    inbox_mode: str = Field(description="``event`` | ``poll`` | ``off``")
+    inbox_watcher: str = Field(description="``ok`` | ``degraded`` | ``disabled``")
+    inbox_path: str = Field(description="Resolved absolute inbox directory.")
+    inbox_poll_last_scan: Optional[str] = Field(
+        default=None,
+        description="ISO-8601 UTC last poll scan (poll mode only).",
+    )
+
+
 # ── Voice / transcription (public HTTP + port result types) ──────────
 
 
@@ -936,6 +949,18 @@ class AdminDiagnosticsResponse(BaseModel):
     )
     warnings: List[AdminDiagnosticsWarning]
     speech_to_text: AdminDiagnosticsSpeechToText
+    inbox: AdminDiagnosticsInbox
+
+
+# ── Ingest ───────────────────────────────────────────────────────────
+
+
+class IngestUploadQueuedResponse(BaseModel):
+    """``POST /api/v1/ingest/upload`` — queued push ingest (opaque ``file_id``)."""
+
+    model_config = _RES
+    status: Literal["queued"] = "queued"
+    file_id: str
 
 
 # ── Errors ───────────────────────────────────────────────────────────
@@ -1007,9 +1032,11 @@ __all__ = [
     "AdminDiagnosticsFoundationSignals",
     "AdminDiagnosticsWarning",
     "AdminDiagnosticsSpeechToText",
+    "AdminDiagnosticsInbox",
     "TranscriptionSegment",
     "TranscriptionResult",
     "VoiceTranscribeResponse",
     "AdminDiagnosticsResponse",
+    "IngestUploadQueuedResponse",
     "ErrorResponse",
 ]

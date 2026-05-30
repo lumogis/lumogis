@@ -11,6 +11,9 @@ venv/
 .venv-audit/
 .venv-bandit-check/
 
+# LUM-320 — doctor --fix audit NDJSON (operator host; may contain paths)
+scripts/doctor/.audit/
+
 # Cursor IDE — local workspace (plans, skills, rules); not part of public
 # release trees. See docs/release/public-agpl-release-workflow.md.
 .cursor/
@@ -71,3 +74,4 @@ docker-compose.test-policy-*.local.yml
 lumogis-data/
 .venv-pytest-run/
 .verify-venv/
+.merge-venv/

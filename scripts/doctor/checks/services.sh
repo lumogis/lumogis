@@ -39,6 +39,24 @@ def row(category: str, name: str, status: str, message: str, remediation: str) -
     print(f"{category}\t{name}\t{status}\t{clean(message)}\t{clean(remediation)}")
 
 
+def row7(
+    category: str,
+    name: str,
+    status: str,
+    message: str,
+    remediation: str,
+    fix_kind: str,
+    fix_target: dict,
+) -> None:
+    def clean(s: str) -> str:
+        return s.replace("\t", " ").replace("\n", " ").replace("\r", " ")
+
+    tgt = json.dumps(fix_target, separators=(",", ":"), ensure_ascii=False)
+    if "\t" in tgt:
+        tgt = json.dumps(fix_target, ensure_ascii=True)
+    print(f"{category}\t{name}\t{status}\t{clean(message)}\t{clean(remediation)}\t{fix_kind}\t{tgt}")
+
+
 def read_dotenv(path: Path) -> dict[str, str]:
     if not path.is_file():
         return {}
@@ -193,13 +211,24 @@ def main() -> int:
         health = ent.get("Health") or ent.get("health")
         health_s = "" if health is None else str(health).lower()
         if state != "running":
-            row(
-                "services",
-                svc,
-                "warn",
-                f"service state is {state}",
-                f"docker compose up -d {svc}",
-            )
+            if state in ("exited", "created"):
+                row7(
+                    "services",
+                    svc,
+                    "warn",
+                    f"service state is {state}",
+                    f"docker compose up -d {svc}",
+                    "compose_up_service",
+                    {"service": svc},
+                )
+            else:
+                row(
+                    "services",
+                    svc,
+                    "warn",
+                    f"service state is {state}",
+                    f"Inspect docker compose logs {svc} (auto compose up is not offered for this state).",
+                )
             continue
         if health_s in ("", "none"):
             row("services", svc, "ok", "running (no compose health field in ps json)", "")

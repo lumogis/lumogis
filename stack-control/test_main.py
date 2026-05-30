@@ -145,3 +145,21 @@ class TestRestart:
         assert resp.status_code == 200
         assert resp.json()["status"] == "restarted"
         mock_run.assert_called_once()
+
+    def test_compose_cmd_uses_compose_file_from_project_env(self, client, tmp_path):
+        env_file = tmp_path / ".env"
+        env_file.write_text(
+            "COMPOSE_FILE=docker-compose.yml:docker-compose.override.yml\n"
+        )
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = ""
+        mock_result.stderr = ""
+        with patch("main._PROJECT_ENV_FILE", env_file):
+            with patch("main.subprocess.run", return_value=mock_result) as mock_run:
+                resp = client.post("/restart", headers=_auth_headers())
+        assert resp.status_code == 200
+        cmd = mock_run.call_args[0][0]
+        assert cmd.count("-f") == 2
+        assert "docker-compose.yml" in cmd
+        assert "docker-compose.override.yml" in cmd

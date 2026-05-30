@@ -6,16 +6,21 @@ Includes performance guardrails (rate limiting, CPU monitoring) and a
 filesystem watcher for real-time ingestion of files dropped into the inbox.
 """
 
+import errno
 import hashlib
+import json
 import logging
 import os
 import re
+import shutil
 import time
+import traceback
 import unicodedata
 from collections.abc import Callable
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
+from typing import Literal
 
 import hooks
 import psutil
@@ -576,7 +581,11 @@ def ingest_external_document(
             text=content,
             ingestion_source_kind="external",
         )
-        return IngestResult(file_path=logical_path, chunk_count=chunk_count_written)
+        return IngestResult(
+            file_path=logical_path,
+            chunk_count=chunk_count_written,
+            advance_external_poll_cursor=False,
+        )
 
     with meta.transaction():
         meta.execute(
@@ -677,15 +686,359 @@ class _PerformanceGuard:
             self._cpu_high_since = None
 
 
-class _InboxHandler(FileSystemEventHandler):
-    """Watches ai-workspace/inbox/ and triggers ingest on new files.
+_INBOX_IGNORE_SUFFIXES = (".tmp", ".part", ".crdownload")
+_inbox_poll_last_scan: str = "never"
+_poll_stability_failures: dict[str, int] = {}
+_inbox_containment_violations: int = 0
 
-    Phase 3: every watcher-ingested file is attributed to the
-    operator-configured ``INBOX_OWNER_USER_ID`` (resolved at watcher
-    start). Files dropped into the shared inbox have no inherent
-    "owner", so the operator must opt one in explicitly — there is no
-    safe default.
-    """
+_observer: Observer | None = None
+_ingest_paths_observer: Observer | None = None
+_ingest_paths_scheduled_roots: int = 0
+_INBOX_POLL_JOB_ID = "inbox_poll"
+
+
+def _should_ignore_inbox_basename(name: str) -> bool:
+    if name.startswith("."):
+        return True
+    lower = name.lower()
+    return any(lower.endswith(sfx) for sfx in _INBOX_IGNORE_SUFFIXES)
+
+
+def _is_transient_ingest_error(exc: BaseException) -> bool:
+    if isinstance(exc, (ConnectionError, TimeoutError)):
+        return True
+    if isinstance(exc, OSError) and exc.errno in (
+        errno.ECONNREFUSED,
+        errno.ETIMEDOUT,
+        errno.EHOSTUNREACH,
+        errno.ENETUNREACH,
+        errno.ECONNRESET,
+        errno.ENETDOWN,
+    ):
+        return True
+    return False
+
+
+def wait_for_stable_file(path: Path, *, budget_ms: int, poll_ms: int = 100) -> bool:
+    """Return True when two consecutive (size, mtime_ns) samples match within budget."""
+    deadline = time.monotonic() + (budget_ms / 1000.0)
+    prev: tuple[int, int] | None = None
+    while time.monotonic() < deadline:
+        try:
+            st = path.stat()
+        except FileNotFoundError:
+            return False
+        sample = (st.st_size, st.st_mtime_ns)
+        if prev is not None and sample == prev:
+            return True
+        prev = sample
+        time.sleep(poll_ms / 1000.0)
+    return False
+
+
+def inbox_poll_should_ingest(path: Path, *, user_id: str) -> bool:
+    """Poll-mode fast path: skip unchanged indexed files (mtime vs ``file_index.updated_at``)."""
+    try:
+        st = path.stat()
+    except FileNotFoundError:
+        return False
+
+    file_path = str(path)
+    meta = config.get_metadata_store()
+    where_clause, where_params = visible_filter(
+        UserContext(user_id=user_id), scope_filter="personal"
+    )
+    existing = meta.fetch_one(
+        f"SELECT updated_at FROM file_index WHERE file_path = %s AND {where_clause}",
+        (file_path, *where_params),
+    )
+    if not existing:
+        return True
+    updated_at = existing.get("updated_at")
+    if updated_at is None:
+        return True
+    if hasattr(updated_at, "timestamp"):
+        db_ts = updated_at.timestamp()
+    else:
+        return True
+    return st.st_mtime > db_ts + 1.0
+
+
+def _validate_inbox_containment(resolved: Path) -> bool:
+    global _inbox_containment_violations
+    inbox_root = config.get_inbox_path().resolve(strict=False)
+    try:
+        if resolved.is_relative_to(inbox_root):
+            return True
+    except ValueError:
+        pass
+    _log.error(
+        "Inbox path containment violation: %s is not under %s",
+        resolved,
+        inbox_root,
+    )
+    _inbox_containment_violations += 1
+    return False
+
+
+def _truncate_text(value: str, max_bytes: int) -> str:
+    encoded = value.encode("utf-8", errors="replace")
+    if len(encoded) <= max_bytes:
+        return value
+    trimmed = encoded[: max_bytes - 3].decode("utf-8", errors="ignore")
+    return trimmed + "…"
+
+
+def _quarantine_inbox_file(
+    src: Path,
+    *,
+    user_id: str,
+    source: str,
+    reason: str,
+    exc: BaseException | None = None,
+) -> None:
+    safe_basename = src.name
+    if "/" in safe_basename or "\\" in safe_basename:
+        _log.error("Quarantine rejected unsafe basename: %r", safe_basename)
+        return
+
+    quarantine_dir = config.get_quarantine_path()
+    try:
+        quarantine_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc_mk:
+        _log.error("Cannot create quarantine directory %s: %s", quarantine_dir, exc_mk)
+        return
+
+    ts_ns = time.time_ns()
+    dest_name = f"{ts_ns}-{safe_basename}"
+    dest = quarantine_dir / dest_name
+    sidecar_final = quarantine_dir / f"{dest_name}.error.json"
+    sidecar_tmp = src.parent / f"{safe_basename}.error.json.tmp"
+
+    tb_summary = ""
+    if exc is not None:
+        tb_summary = _truncate_text(
+            "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
+            2048,
+        )
+
+    sidecar = {
+        "error": _truncate_text(reason, 512),
+        "traceback_summary": tb_summary,
+        "ext": src.suffix.lower(),
+        "size_bytes": src.stat().st_size if src.exists() else 0,
+        "user_id": user_id,
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "source": source,
+    }
+    try:
+        sidecar_tmp.write_text(json.dumps(sidecar, indent=2), encoding="utf-8")
+        if src.exists():
+            shutil.move(str(src), str(dest))
+        sidecar_tmp.rename(sidecar_final)
+        _log.warning("Quarantined inbox file %s → %s (%s)", src, dest, reason)
+    except OSError as move_exc:
+        _log.error("Quarantine move failed for %s: %s — file left in inbox", src, move_exc)
+        if sidecar_tmp.exists():
+            try:
+                sidecar_tmp.unlink()
+            except OSError:
+                pass
+
+
+def enqueue_inbox_file(
+    path: str | Path,
+    *,
+    user_id: str,
+    source: Literal["watcher", "poll"],
+) -> None:
+    """Single seam from watcher/poll into ``ingest_file`` (LUM-330)."""
+    resolved = Path(path).resolve(strict=False)
+    if not resolved.exists():
+        _log.debug("enqueue_inbox_file: path gone before ingest: %s", resolved)
+        return
+    if not _validate_inbox_containment(resolved):
+        return
+
+    try:
+        size = resolved.stat().st_size
+    except OSError:
+        _log.debug("enqueue_inbox_file: cannot stat %s", resolved)
+        return
+
+    max_bytes = config.get_inbox_max_file_bytes()
+    if size > max_bytes:
+        _log.warning(
+            "Skipping oversized inbox file %s (%d bytes > %d)",
+            resolved,
+            size,
+            max_bytes,
+        )
+        return
+
+    budget_ms = config.get_inbox_stability_delay_ms()
+    path_key = str(resolved)
+    if not wait_for_stable_file(resolved, budget_ms=budget_ms):
+        if source == "poll":
+            failures = _poll_stability_failures.get(path_key, 0) + 1
+            _poll_stability_failures[path_key] = failures
+            if failures >= 3:
+                _quarantine_inbox_file(
+                    resolved,
+                    user_id=user_id,
+                    source=source,
+                    reason="stability_timeout",
+                )
+                _poll_stability_failures.pop(path_key, None)
+            else:
+                _log.warning(
+                    "Inbox file not stable after %dms (poll attempt %d/3): %s",
+                    budget_ms,
+                    failures,
+                    resolved,
+                )
+        else:
+            _log.warning("Inbox file not stable after %dms: %s", budget_ms, resolved)
+        return
+
+    _poll_stability_failures.pop(path_key, None)
+
+    try:
+        ingest_file(str(resolved), user_id=user_id)
+    except Exception as exc:
+        if _is_transient_ingest_error(exc):
+            _log.error(
+                "Transient inbox ingest failure for %s (%s) — leaving in inbox",
+                resolved,
+                type(exc).__name__,
+            )
+            return
+        _log.exception("Terminal inbox ingest failure for %s", resolved)
+        _quarantine_inbox_file(
+            resolved,
+            user_id=user_id,
+            source=source,
+            reason=f"{type(exc).__name__}: {exc}",
+            exc=exc,
+        )
+
+
+def watcher_status() -> dict[str, str]:
+    """Public liveness subset for ``GET /healthz`` (no absolute paths)."""
+    mode = config.get_inbox_mode()
+    owner = config.get_inbox_owner_user_id()
+    inbox_path = config.get_inbox_path()
+    status: dict[str, str] = {
+        "inbox_mode": mode,
+        "inbox_watcher": "disabled",
+        "ingest_paths_watch": "off",
+        "ingest_paths_watch_roots": "0",
+    }
+    if mode == "poll":
+        status["inbox_poll_last_scan"] = _inbox_poll_last_scan
+    if not owner or mode == "off":
+        pass
+    elif not inbox_path.exists():
+        status["inbox_watcher"] = "degraded"
+    elif mode == "event":
+        if _observer is not None and _observer.is_alive():
+            status["inbox_watcher"] = "ok"
+        else:
+            status["inbox_watcher"] = "degraded"
+    elif mode == "poll":
+        try:
+            job = config.get_scheduler().get_job(_INBOX_POLL_JOB_ID)
+            status["inbox_watcher"] = "ok" if job is not None else "degraded"
+        except Exception:
+            status["inbox_watcher"] = "degraded"
+
+    ingest_watch_mode = config.get_ingest_paths_watch_mode()
+    ingest_owner = config.get_ingest_paths_owner_user_id()
+    status["ingest_paths_watch_roots"] = str(_ingest_paths_scheduled_roots)
+    if not ingest_owner or ingest_watch_mode == "off":
+        status["ingest_paths_watch"] = "off"
+    elif ingest_watch_mode == "event":
+        existing_roots = sum(1 for p in config.get_effective_ingest_paths() if Path(p).is_dir())
+        if existing_roots == 0:
+            status["ingest_paths_watch"] = "degraded"
+        elif (
+            _ingest_paths_observer is not None
+            and _ingest_paths_observer.is_alive()
+            and _ingest_paths_scheduled_roots > 0
+        ):
+            status["ingest_paths_watch"] = "ok"
+        else:
+            status["ingest_paths_watch"] = "degraded"
+    return status
+
+
+def inbox_operator_status() -> dict[str, str]:
+    """Auth-gated superset including resolved ``inbox_path``."""
+    out = dict(watcher_status())
+    out["inbox_path"] = str(config.get_inbox_path().resolve(strict=False))
+    return out
+
+
+def _run_inbox_poll() -> None:
+    global _inbox_poll_last_scan
+    owner = config.get_inbox_owner_user_id()
+    if not owner:
+        return
+    inbox = config.get_inbox_path()
+    if not inbox.is_dir():
+        return
+    extractors = config.get_extractors()
+    for entry in os.scandir(inbox):
+        if not entry.is_file():
+            continue
+        if _should_ignore_inbox_basename(entry.name):
+            continue
+        if Path(entry.name).suffix.lower() not in extractors:
+            continue
+        path = Path(entry.path)
+        if not inbox_poll_should_ingest(path, user_id=owner):
+            continue
+        enqueue_inbox_file(path, user_id=owner, source="poll")
+    _inbox_poll_last_scan = datetime.now(timezone.utc).isoformat()
+
+
+def schedule_inbox_poll() -> None:
+    """Register APScheduler inbox poll job (``poll`` mode only)."""
+    if config.get_inbox_mode() != "poll":
+        return
+    if not config.get_inbox_owner_user_id():
+        _log.warning("INBOX_OWNER_USER_ID unset — inbox poll job not scheduled")
+        return
+    scheduler = config.get_scheduler()
+    if not scheduler.running:
+        _log.info("inbox_poll: scheduler not running yet, skipping")
+        return
+    interval = config.get_inbox_poll_interval_s()
+    scheduler.add_job(
+        _run_inbox_poll,
+        trigger="interval",
+        seconds=interval,
+        id=_INBOX_POLL_JOB_ID,
+        name="Inbox filesystem poll",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    _log.info("Scheduled inbox poll job every %ds", interval)
+
+
+def unschedule_inbox_poll() -> None:
+    try:
+        job = config.get_scheduler().get_job(_INBOX_POLL_JOB_ID)
+        if job is not None:
+            job.remove()
+            _log.info("inbox_poll job removed")
+    except Exception as exc:
+        _log.warning("inbox_poll unschedule error: %s", exc)
+
+
+class _InboxHandler(FileSystemEventHandler):
+    """Watches inbox directory and routes drops through ``enqueue_inbox_file``."""
 
     def __init__(self, owner_user_id: str) -> None:
         super().__init__()
@@ -693,54 +1046,58 @@ class _InboxHandler(FileSystemEventHandler):
             raise TypeError("_InboxHandler: owner_user_id is required (set INBOX_OWNER_USER_ID)")
         self._owner_user_id = owner_user_id
 
+    def _handle_path(self, path: str) -> None:
+        if _should_ignore_inbox_basename(Path(path).name):
+            return
+        ext = Path(path).suffix.lower()
+        if ext not in config.get_extractors():
+            return
+        _log.info("Watcher detected file: %s (owner=%s)", path, self._owner_user_id)
+        enqueue_inbox_file(path, user_id=self._owner_user_id, source="watcher")
+
     def on_created(self, event):
         if event.is_directory:
             return
-        path = event.src_path
-        ext = Path(path).suffix.lower()
-        extractors = config.get_extractors()
-        if ext not in extractors:
+        self._handle_path(event.src_path)
+
+    def on_moved(self, event):
+        if event.is_directory:
             return
-        time.sleep(2)
-        _log.info("Watcher detected new file: %s (owner=%s)", path, self._owner_user_id)
-        try:
-            ingest_file(path, user_id=self._owner_user_id)
-        except Exception:
-            _log.exception("Watcher failed to ingest %s", path)
+        dest = getattr(event, "dest_path", None)
+        if not dest:
+            return
+        self._handle_path(dest)
 
 
-_observer: Observer | None = None
-
-
-def start_watcher(inbox_path: str = "/workspace/inbox") -> None:
-    """Start watching inbox_path for new files. Call once at startup.
-
-    Reads ``INBOX_OWNER_USER_ID`` from the environment and refuses to
-    start if it is unset — better to drop ingest than to silently
-    pollute another user's index.
-    """
+def start_watcher(*, inbox_path: str | None = None) -> None:
+    """Start filesystem observer for ``event`` inbox mode."""
     global _observer
-    if not os.path.isdir(inbox_path):
-        _log.warning("Inbox path %s does not exist, watcher not started", inbox_path)
+    mode = config.get_inbox_mode()
+    if mode != "event":
         return
 
-    owner = os.environ.get("INBOX_OWNER_USER_ID", "").strip()
+    resolved = str(inbox_path if inbox_path is not None else config.get_inbox_path())
+    if not os.path.isdir(resolved):
+        _log.warning("Inbox path %s does not exist, watcher not started", resolved)
+        return
+
+    owner = config.get_inbox_owner_user_id()
     if not owner:
         _log.warning(
             "INBOX_OWNER_USER_ID is not set — inbox watcher will NOT start. "
             "Set it to the user_id that owns files dropped into %s.",
-            inbox_path,
+            resolved,
         )
         return
 
     _observer = Observer()
-    _observer.schedule(_InboxHandler(owner_user_id=owner), inbox_path, recursive=True)
+    _observer.schedule(_InboxHandler(owner_user_id=owner), resolved, recursive=True)
     _observer.daemon = True
     _observer.start()
-    _log.info("Filesystem watcher started on %s (owner_user_id=%s)", inbox_path, owner)
+    _log.info("Filesystem watcher started on %s (owner_user_id=%s)", resolved, owner)
 
 
-def stop_watcher():
+def stop_watcher() -> None:
     """Stop the filesystem watcher. Call during shutdown."""
     global _observer
     if _observer is not None:
@@ -748,6 +1105,154 @@ def stop_watcher():
         _observer.join(timeout=5)
         _observer = None
         _log.info("Filesystem watcher stopped")
+
+
+def enqueue_ingest_watch_file(
+    path: str | Path,
+    *,
+    user_id: str,
+) -> None:
+    """Stable-file gate then batch ``ingest_watch_file`` (LUM-397 ingest paths)."""
+    resolved = Path(path).resolve(strict=False)
+    if not resolved.is_file():
+        _log.debug("enqueue_ingest_watch_file: not a file: %s", resolved)
+        return
+
+    budget_ms = config.get_inbox_stability_delay_ms()
+    if not wait_for_stable_file(resolved, budget_ms=budget_ms):
+        _log.warning("Ingest path file not stable after %dms: %s", budget_ms, resolved)
+        return
+
+    from services.batch_queue import enqueue
+
+    from services import batch_handlers as _batch_handlers_registered  # noqa: F401
+
+    enqueue(
+        user_id=user_id,
+        kind="ingest_watch_file",
+        payload={"path": str(resolved)},
+    )
+
+
+class _IngestPathHandler(FileSystemEventHandler):
+    """Watches one ingest root; routes stable files through ``enqueue_ingest_watch_file``."""
+
+    def __init__(self, owner_user_id: str, root: Path) -> None:
+        super().__init__()
+        if not isinstance(owner_user_id, str) or not owner_user_id:
+            raise TypeError(
+                "_IngestPathHandler: owner_user_id is required (set INGEST_PATHS_OWNER_USER_ID)"
+            )
+        self._owner_user_id = owner_user_id
+        self._root = root.expanduser().resolve(strict=False)
+
+    def _handle_path(self, path: str) -> None:
+        from services.path_containment import _resolved_path_under_root
+
+        if _should_ignore_inbox_basename(Path(path).name):
+            return
+        ext = Path(path).suffix.lower()
+        if ext not in config.get_extractors():
+            return
+        resolved = Path(path).resolve(strict=False)
+        if not _resolved_path_under_root(resolved, self._root):
+            _log.error(
+                "Ingest path containment violation: %s is not under %s",
+                resolved,
+                self._root,
+            )
+            return
+        _log.info(
+            "Ingest path watcher detected file: %s (owner=%s)",
+            resolved,
+            self._owner_user_id,
+        )
+        enqueue_ingest_watch_file(resolved, user_id=self._owner_user_id)
+
+    def on_created(self, event):
+        if event.is_directory:
+            return
+        self._handle_path(event.src_path)
+
+    def on_moved(self, event):
+        if event.is_directory:
+            return
+        dest = getattr(event, "dest_path", None)
+        if not dest:
+            return
+        self._handle_path(dest)
+
+
+def start_ingest_path_watchers() -> None:
+    """Start per-root ingest path observers and enqueue initial folder scans."""
+    global _ingest_paths_observer, _ingest_paths_scheduled_roots
+
+    if not config.get_ingest_paths_watch_enabled():
+        return
+    if config.get_ingest_paths_watch_mode() != "event":
+        return
+
+    owner = config.get_ingest_paths_owner_user_id()
+    if not owner:
+        _log.warning(
+            "INGEST_PATHS_OWNER_USER_ID / INBOX_OWNER_USER_ID unset — "
+            "ingest path watchers not started"
+        )
+        return
+
+    roots = config.get_effective_ingest_paths()
+    scheduled = 0
+    _ingest_paths_observer = Observer()
+    for root_str in roots:
+        root = Path(root_str)
+        if not root.is_dir():
+            _log.warning("Ingest path %s does not exist, watcher not scheduled", root)
+            continue
+        resolved = str(root.expanduser().resolve(strict=False))
+        _ingest_paths_observer.schedule(
+            _IngestPathHandler(owner_user_id=owner, root=root),
+            resolved,
+            recursive=True,
+        )
+        scheduled += 1
+
+    _ingest_paths_scheduled_roots = scheduled
+    if scheduled == 0:
+        _ingest_paths_observer = None
+        return
+
+    _ingest_paths_observer.daemon = True
+    _ingest_paths_observer.start()
+    _log.info(
+        "Ingest path watchers started on %d root(s) (owner_user_id=%s)",
+        scheduled,
+        owner,
+    )
+
+    from services.batch_queue import enqueue
+
+    from services import batch_handlers as _batch_handlers_registered  # noqa: F401
+
+    for root_str in roots:
+        root = Path(root_str)
+        if not root.is_dir():
+            continue
+        enqueue(
+            user_id=owner,
+            kind="ingest_folder",
+            payload={"path": str(root.expanduser().resolve(strict=False))},
+        )
+
+
+def stop_ingest_path_watchers() -> None:
+    """Stop ingest-path filesystem observers. Call during shutdown."""
+    global _ingest_paths_observer, _ingest_paths_scheduled_roots
+    if _ingest_paths_observer is not None:
+        _ingest_paths_observer.stop()
+        _ingest_paths_observer.join(timeout=5)
+        _ingest_paths_observer = None
+        _ingest_paths_scheduled_roots = 0
+        _log.info("Ingest path watchers stopped")
 
 
 def ingest_folder(folder_path: str, *, user_id: str) -> IngestStats:

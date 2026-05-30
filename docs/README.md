@@ -1,8 +1,8 @@
 # Documentation Index
 
 > Status: Active
-> Last reviewed: 2026-05-24
-> Verified against commit: 50f43b8
+> Last reviewed: 2026-05-27
+> Verified against commit: 110e8cc
 > Owner: Docs Librarian
 
 ## Canonical docs
@@ -16,7 +16,7 @@
 
 | Directory | Contents |
 |-----------|----------|
-| `deployment/` | First-run quickstart (published GHCR images): [`deployment/quickstart.md`](deployment/quickstart.md); remote access (Tailscale / Cloudflare Tunnel) — **`deployment/remote-access.md`** planned under **LUM-158** |
+| `deployment/` | First-run quickstart (published GHCR images): [`deployment/quickstart.md`](deployment/quickstart.md); remote access (Tailscale / Cloudflare Tunnel): [`deployment/remote-access.md`](deployment/remote-access.md) |
 | `guides/` | Operational guides for self-hosters |
 | `extending/` | Guides for contributors and plugin authors |
 | `architecture/` | Implementation architecture notes |
@@ -45,6 +45,7 @@
 ## Operations
 
 - [`deployment/quickstart.md`](deployment/quickstart.md) — first run from published **GHCR** images
+- [`deployment/remote-access.md`](deployment/remote-access.md) — Tailscale Serve / Cloudflare Tunnel for secure off-LAN access
 - [`guides/troubleshooting.md`](guides/troubleshooting.md)
 - [`guides/gpu-setup.md`](guides/gpu-setup.md)
 - [`guides/connector-credentials.md`](guides/connector-credentials.md)

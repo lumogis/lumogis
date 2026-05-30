@@ -311,7 +311,7 @@ def _run_weekly_review(*, user_id: str) -> str:
 
 def _run_inbox_digest(*, user_id: str) -> str:
     """List new inbox files with metadata → JSON in outbox."""
-    inbox = _WORKSPACE / "inbox"
+    inbox = config.get_inbox_path()
     if not inbox.exists():
         return "Inbox directory not found"
 

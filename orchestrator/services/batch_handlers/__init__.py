@@ -4,4 +4,6 @@
 
 from . import entities_extract as _entities_extract  # noqa: F401
 from . import ingest_folder as _ingest_folder  # noqa: F401
+from . import ingest_upload as _ingest_upload  # noqa: F401
+from . import ingest_watch_file as _ingest_watch_file  # noqa: F401
 from . import session_end as _session_end  # noqa: F401

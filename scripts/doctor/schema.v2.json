@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lumogis.local/schemas/doctor-report-v2.json",
+  "title": "Lumogis doctor CLI report v2 (--json --fix)",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "version",
+    "apply_requested",
+    "any_applied",
+    "dry_run",
+    "generated_at",
+    "summary",
+    "checks",
+    "meta",
+    "repairs"
+  ],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 2
+    },
+    "apply_requested": {
+      "type": "boolean",
+      "description": "True when argv requested apply (and not overridden by --dry-run winning or refusal gates)."
+    },
+    "any_applied": {
+      "type": "boolean",
+      "description": "True when at least one repair row has outcome applied."
+    },
+    "dry_run": {
+      "type": "boolean",
+      "description": "Slice 1: equals !apply_requested (operator intent). Do not infer zero mutations from dry_run alone — use any_applied."
+    },
+    "generated_at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["errors", "warnings", "ok", "skipped"],
+      "properties": {
+        "errors": { "type": "integer", "minimum": 0 },
+        "warnings": { "type": "integer", "minimum": 0 },
+        "ok": { "type": "integer", "minimum": 0 },
+        "skipped": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["category", "name", "status", "message", "remediation"],
+        "properties": {
+          "category": {
+            "type": "string",
+            "enum": ["services", "models", "config", "security", "storage", "network"]
+          },
+          "name": { "type": "string", "minLength": 1 },
+          "status": {
+            "type": "string",
+            "enum": ["ok", "warn", "error", "skipped"]
+          },
+          "message": { "type": "string" },
+          "remediation": { "type": "string" }
+        }
+      }
+    },
+    "repairs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["kind", "target", "outcome"],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": ["compose_up_service", "ollama_pull_model", "mkdir_backup_dir"]
+          },
+          "target": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": ["service"],
+                "properties": {
+                  "service": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9][a-z0-9._-]{0,62}$"
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "required": ["model"],
+                "properties": {
+                  "model": { "type": "string", "minLength": 1 }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "required": ["path"],
+                "properties": {
+                  "path": { "type": "string", "minLength": 1 }
+                },
+                "additionalProperties": false
+              }
+            ]
+          },
+          "outcome": {
+            "type": "string",
+            "enum": ["dry_run", "applied", "skipped", "failed", "error"]
+          },
+          "message": { "type": "string" },
+          "command_argv": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "command_display": { "type": "string" }
+        }
+      }
+    }
+  }
+}

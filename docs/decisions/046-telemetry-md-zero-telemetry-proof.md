@@ -1,9 +1,9 @@
 # ADR 046: TELEMETRY.md zero-telemetry proof and Makefile guard
 
 > Status: Active (numbering conflict)
-> Last reviewed: 2026-05-24
-> Verified against commit: 50f43b8
-> Notes: **`046-lum-35-fp017-per-user-backup-followups.md`** also claims **ADR 046** in its title. Resolve by renumbering one document and sweeping references. Filename prefixes **053–064** are already taken (several duplicate clusters, including **061** / **063** / **064**). Pick a **non-colliding** new slug (for example **`065-*.md`**) when renumbering—coordinate with any **`034-linear-evidence-index.md`** rename in the same pass—see `docs/_librarian/docs-inventory.md` and `docs/_librarian/2026-05-24-docs-librarian-report.md`.
+> Last reviewed: 2026-05-27
+> Verified against commit: 110e8cc
+> Notes: **`046-lum-35-fp017-per-user-backup-followups.md`** also claims **ADR 046** in its title. Resolve by renumbering one document and sweeping references. Filename prefixes **053–069** are already taken (several duplicate clusters, including **061** / **063** / **064**, plus **`065-lum-320-doctor-v2-shell-fix-remediation.md`** through **`069-lum-329-tauri-search-overlay.md`**). Pick a **non-colliding** new slug (for example **`070-*.md`**) when renumbering—coordinate with any **`034-linear-evidence-index.md`** rename in the same pass—see `docs/_librarian/docs-inventory.md` and `docs/_librarian/2026-05-24-docs-librarian-report.md`.
 
 **Status:** Finalised
 **Created:** 2026-05-16

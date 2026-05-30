@@ -8,9 +8,9 @@ Concise onboarding for AI assistants (**Cursor**, **ChatGPT**, **Claude**). Summ
 
 | Field | Value |
 | --- | --- |
-| **Date/time** | **2026-05-22** (`/update-context-pack`; repo + devtools evidence; Linear export **`2026-05-22T22:13:05.679Z`** via **`/navigator sync`** same session) |
-| **lumogis-app** | branch **`dev`**, tip **`a22b18f49`** — **`origin/dev`** (**ahead 7**, not pushed at refresh); includes **LUM-190** pre-launch hybrid audit CI + artefacts (**ADR 060-lum-190**), **LUM-165** first-run onboarding (**ADR 059-lum-165**), **LUM-308** auto-RAG (**ADR 059-lum-308**), **LUM-184** quickstart (**ADR 059-lum-184**), prior **LUM-305**/**LUM-306**/**LUM-281**/**LUM-94**/**LUM-209** chunks, **[Unreleased]** ahead of next tagged release |
-| **lumogis-devtools** | branch **`main`**, tip **`ca56527`** — **`origin/main`** (**ahead 6**, not pushed at refresh); **LUM-190** / **LUM-165** / **LUM-308** / **LUM-184** verify-plan + merge-workflow artefacts archived; export/dashboard refresh local (**gitignored** / uncommitted HTML+JSON from sync) |
+| **Date/time** | **2026-05-27** (`/update-context-pack`; repo + devtools evidence; Linear export **`2026-05-27T14:28:01.419Z`**) |
+| **lumogis-app** | branch **`dev`**, tip **`05995625b`** — **`origin/dev`** (in sync); includes **LUM-329** Tauri desktop overlay (**ADR 069-lum-329**), **LUM-124** memory-as-hint (**ADR 066-lum-124**), **LUM-320** doctor v2 **`--fix`** slice 1 (**ADR 065**), **LUM-322** doctor deferral (**ADR 061** gates), cursor-branch merges (librarian **2026-05-25–27**, e2e spawn-no-shell **ADR 068**, paperless blocked-high poll stall **ADR 067**), prior **LUM-184**/**LUM-165**/**LUM-308**/**LUM-190** chunks, **[Unreleased]** ahead of next tagged release |
+| **lumogis-devtools** | branch **`main`**, tip **`4beca33`** — **`origin/main`** (in sync); **LUM-329**/**LUM-124** verify + merge-workflow archives; **record-retro** index for ADRs **067**/**068** |
 | **Public / upstream** | **0.4.0** per **`docs/release/public-release-log.md`** (public **`lumogis/lumogis`** tip **`cdcc574…`**); **`dev`** **[Unreleased]** ahead of next tagged release |
 
 **Evidence sources consulted:**
@@ -18,18 +18,20 @@ Concise onboarding for AI assistants (**Cursor**, **ChatGPT**, **Claude**). Summ
 - `AGENTS.md` (lumogis-app) — verify-public-rc environment, Product OS routing
 - `README.md`, `ARCHITECTURE.md`, `CHANGELOG.md`, `docs/capabilities.md`, `docs/LUMOGIS_REFERENCE_MANUAL.md`, `TELEMETRY.md`, `SECURITY.md` (lumogis-app)
 - `docs/README.md`, `docs/architecture/*.md`, `docs/release/public-release-log.md`
-- `docs/decisions/*.md` on **`dev`** through **060** (**LUM-190** pre-launch audit — **ADR 060-lum-190**; **LUM-302** OpenAPI classifier — **ADR 060-lum-302**; **LUM-165** onboarding — **ADR 059-lum-165**; **LUM-308** auto-RAG — **ADR 059-lum-308**; **LUM-184** quickstart — **ADR 059-lum-184**; **LUM-209** sessions index — **ADR 055**; **LUM-281**/**LUM-237**/**LUM-94** — **054**/**053-lum-237**/**053-lum-94**; **LUM-305**/**LUM-306** — **057**/**058**); note **two `034-*.md`**, **two `046-*.md`**, **two `053-*.md`**, **two `059-*.md`**, and **two `060-*.md`** numbering collisions — see `docs/README.md` / librarian inventory
-- `Makefile` — **`compose-policy-check`**, **`make changelog-check`**, RC gates
-- **`cursor/reports/linear-issues-export.json`** — **314** issues, **`exportedAt`:** **`2026-05-22T22:13:05.679Z`** (gitignored locally; refresh with `node scripts/linear/linear_import.mjs --export-issues` in **lumogis-devtools**)
+- `docs/decisions/*.md` on **`dev`** through **069** (**LUM-329** desktop — **069-lum-329**; **LUM-124** memory-as-hint — **066-lum-124**; **LUM-320** doctor **`--fix`** — **065**; **LUM-322**/**LUM-319**/**LUM-321** — **063**/**064**; **LUM-281** paperless follow-ups — **062**, **067**; **LUM-60** e2e hardening — **068**; prior **055**–**061**); note **two `034-*.md`**, **two `046-*.md`**, **two `053-*.md`**, **two `059-*.md`**, **two `060-*.md`**, **two `061-*.md`**, **two `063-*.md`**, and **two `064-*.md`** numbering collisions — see `docs/README.md` / librarian inventory
+- `Makefile` — **`compose-policy-check`**, **`make changelog-check`**, **`make doctor`**, **`make desktop-dev`** / **`make desktop-build`**, RC gates
+- **`cursor/reports/linear-issues-export.json`** — **384** issues, **`exportedAt`:** **`2026-05-27T14:28:01.419Z`** (gitignored locally; refresh with `node scripts/linear/linear_import.mjs --export-issues` in **lumogis-devtools**)
 - `cursor/reports/linear-roadmap-priority-dashboard-2026-05-03.md` (§5–§6 regenerated on export)
 - `cursor/reports/linear-id-map-2026-05-03.csv`, `cursor/backlog/linear-operating-model.md`, `cursor/topics.md`
 - `orchestrator/config.py` — **`LUMOGIS_TOOL_CATALOG_ENABLED`** default **on** when unset; **`GRAPH_MODE`** default **`disabled`** when unset
-- `node scripts/linear/drift_check.mjs` (**default scope** — **1** ERROR: **EXPLORATION_LINKAGE_DRIFT**; **55** WARNs)
+- `node scripts/linear/drift_check.mjs` (**default scope** — **2** ERRORs: **EXPLORATION_LINKAGE_DRIFT**, **PLAN_LINKAGE_DRIFT**; **57** WARNs: **MARKDOWN_ACTION_WITHOUT_LINEAR_OUTCOME** in skills/plans)
 
 **Freshness / uncertainty:**
 
 - **`linear-issues-export.json`** is **`.gitignore`d** — teammates should use the same **`exportedAt`** after running **`--export-issues`**.
-- **LUM-183 / LUM-255:** Export shows **Done**; **P1** operator evidence (GitHub **Private vulnerability reporting** on public repo, mailbox monitoring) may still be open in Linear — verify in UI, not from this pack.
+- **LUM-329** / **LUM-124:** Merged to **`dev`** with **`VERIFY_RESULT` incomplete** gaps (see topics index) — verify Linear workflow state in UI, not from this pack alone.
+- **LUM-183 / LUM-255:** Export may show **Done**; **P1** operator evidence (GitHub **Private vulnerability reporting** on public repo, mailbox monitoring) may still be open in Linear — verify in UI.
+- **v0.1 product gaps:** Core remaining explorations include **LUM-330** (folder watch inbox hardening — plan active) and shipped **LUM-329** (Tauri overlay); launch/docs cluster **LUM-180**/**LUM-181**/**LUM-190**/**LUM-184** — reconcile export for terminal state.
 - **Roadmap dashboard** §1–§4 / §7–§8 narrative is **curated** — reconcile with §5–§6 + JSON for ordering.
 
 ---
@@ -38,6 +40,7 @@ Concise onboarding for AI assistants (**Cursor**, **ChatGPT**, **Claude**). Summ
 
 - **Self-hosted, local-first, privacy-first** household / personal AI: data and indexes stay on hardware you control (Docker Compose, **AGPL-3.0-only** per **README** / **ADR 032**).
 - **Core** = **FastAPI orchestrator**; **Lumogis Web** = first-party SPA behind **Caddy** (same-origin); **LibreChat** = optional legacy profile, not the primary surface (**ADR 012**).
+- **Lumogis Desktop** (**LUM-329**, proprietary tree under **`clients/lumogis-desktop/`**) = Tauri 2 global-hotkey memory search overlay — excluded from public AGPL export.
 - **Ask / Do** safety model for actions/tools; auditability and connector/credential boundaries are first-class (**ADR 006**, credential ADRs **018**, **027**, **029**, etc.).
 - **Not** Lumogis-operated SaaS — positioning is **family/household LAN** and operator-controlled deployment.
 - **Public vs private**: the **public** tree is an **export snapshot**, not a byte mirror of private history (**`AGENTS.md`**). **GHCR images** (`lumogis-orchestrator`, `lumogis-web`) are published **only** from `lumogis/lumogis` (public repo) `main` — not from private `lumogis-app` (**ADR 037**). **SLSA L2 attestations** on published images — verify with **`gh attestation verify`** (**ADR 049**, **CHANGELOG** [Unreleased]).
@@ -67,8 +70,8 @@ Concise onboarding for AI assistants (**Cursor**, **ChatGPT**, **Claude**). Summ
 - **`dev` and private `main` may diverge.** **Public** and **private** `main` **may differ by commit hash**.
 - **Scoped promotion** (`README`/docs/assets) is the default for **`dev` → private `main`** — not wholesale merge (**`/prepare-private-release-from-dev`**).
 - **`/publish-private-main-to-public`**: export via scripts; **never** raw-push private `main` to public. **Hard gates** before export: `make verify-public-rc` or `make verify-public-rc-full` on private `main`; **`CHANGELOG.md`** + **`docs/capabilities.md`** updated; ADRs and **`docs/LUMOGIS_REFERENCE_MANUAL.md`** aligned at implementation time.
-- **GHCR publish** from **`lumogis/lumogis`** `publish-image.yml` on public `main` / tags — **not** in **`lumogis-app`** (**ADR 037**). **LUM-276** added public **`attestation-guard.yml`** / **`attestation-verify.yml`** workflows (evidence on **`dev`** + topics).
-- For live branch topology: **`/cleanup-and-audit-branches`**.
+- **GHCR publish** from **`lumogis/lumogis`** `publish-image.yml` on public `main` / tags — **not** in **`lumogis-app`** (**ADR 037**).
+- For live branch topology: **`/cleanup-and-audit-branches`**. For **`origin/cursor/*`**: **`/review-cursor-branches`**.
 
 ---
 
@@ -78,21 +81,24 @@ Concise onboarding for AI assistants (**Cursor**, **ChatGPT**, **Claude**). Summ
 | --- | --- |
 | **Core** | FastAPI orchestrator — services, adapters, plugins, signals, actions, routes (**`ARCHITECTURE.md`**) |
 | **Ingest / prompt-injection hygiene** | **ADR 039** — sanitiser, scaffolding, **`TOOL_CHAIN_CAP`** |
-| **Context building** | **ADR 051** / **LUM-210** — hybrid entity selection (explicit + optional semantic), entity budget env vars; **LUM-308** — optional chat **auto-RAG** from **`documents`** (`LUMOGIS_AUTO_RAG_*`, default **off**) alongside session summaries |
+| **Context building** | **ADR 051** / **LUM-210** — hybrid entity selection; **LUM-124** — memory-as-hint entity taxonomy + chat hedging (**ADR 066-lum-124**); **LUM-308** — optional chat **auto-RAG** (`LUMOGIS_AUTO_RAG_*`, default **off**) |
 | **Lumogis Web** | Primary SPA; **LibreChat** optional (compose profile) |
+| **Lumogis Desktop** | Tauri 2 overlay — **`GET /api/v1/memory/search`**, OS keychain JWT (**LUM-329**, **ADR 069-lum-329**); proprietary; **`make desktop-dev`** / CI **`desktop-build.yml`** |
 | **Data** | **Postgres**, **Qdrant**, **Ollama**; **`QDRANT_HOST_PORT`** default host **6334** ( **`lumogis-test`** example uses **6335** ) |
-| **Graph / KG** | **FalkorDB** optional; **`GRAPH_MODE`**: `inprocess` / `service` / **`disabled`** default; `query_graph` fail-closed in `service` mode (**ADR 035**). **ADR 038** — **`RELATES_TO`** direction |
+| **Graph / KG** | **FalkorDB** optional; **`GRAPH_MODE`**: `inprocess` / `service` / **`disabled`** default; fail-closed in `service` mode (**ADR 035**). **ADR 038** — **`RELATES_TO`** direction |
 | **Capabilities / plugins** | HTTP manifests, bearer trust (**ADR 010**, **011**); **mock-capability** for contract smoke |
-| **MCP** | Core **`/mcp/`** streamable HTTP; per-user opaque bearer tokens when `AUTH_ENABLED` (**ADR 017**). Active **evaluation/exploration** cluster around **Lumogis-as-MCP-memory** for coding tools (**LUM-284+** family in export — verify in Linear) |
-| **Tool catalog** | **`LUMOGIS_TOOL_CATALOG_ENABLED`**: **`config.py`** defaults **on** when unset — set **`false`** to disable merged capability tools |
+| **MCP** | Core **`/mcp/`** streamable HTTP; per-user opaque bearer tokens when `AUTH_ENABLED` (**ADR 017**) |
+| **Tool catalog** | **`LUMOGIS_TOOL_CATALOG_ENABLED`**: **`config.py`** defaults **on** when unset |
 | **Sessions / auth** | Multi-device refresh + **`tv`** invalidation (**ADR 041**); optional per-request **`sid`** revocation lookup (**ADR 050** / **LUM-243**) |
 | **Capture / STT** | `/capture`, `/api/v1/captures`, voice transcribe when STT enabled (**ADR 031**) |
-| **External ingest** | **paperless-ngx** read-only REST polling (**LUM-281**, **ADR 054**); per-user credentials; `POST /api/v1/sources` with `source_type: "paperless"` |
+| **External ingest** | **paperless-ngx** read-only REST polling (**LUM-281**, **ADR 054**); pagination watermark (**ADR 062**); blocked-high poll stall (**ADR 067**); per-user credentials |
+| **Operator health** | **`make doctor`** read-only CLI (**LUM-199**, **ADR 061**); **`--fix`** slice 1 (**LUM-320**, **ADR 065**); in-process doctor probes deferred (**LUM-322**) |
 | **Credentials** | Per-user, household, instance-system tiers; connector Ask/Do per user (**ADR 024**, **027**, …) |
 | **Mobile / PWA / Web Push** | Phase 2–5 MVP slices shipped per ADR 030 / reference manual §17 |
 | **GHCR / supply chain** | Images from public repo only; **SLSA** attestations + regression guard workflows (**ADR 049**, **LUM-276**) |
-| **OpenAPI / web client contract** | Offline **`dump_openapi.py`** + snapshot drift; **`make openapi-check`** alias + path-gated **`openapi-check`** CI job (**ADR 053**, **LUM-94**); **LUM-302** breaking-change classifier follow-up (**ADR 060-lum-302**, **Done** in export at refresh) |
-| **Pre-launch security audit** | Hybrid manual + CI SCA/SAST: path-gated **`security-audit`** job, **`make audit-local`** (blocking), advisory **Bandit**, findings under **`docs/security-audit/`** (**ADR 060-lum-190**, **LUM-190** — **In Review** in Linear at refresh; P1: RC ZAP + evidence-index row) |
+| **OpenAPI / web client contract** | Offline **`dump_openapi.py`** + snapshot drift; **`make openapi-check`** (**ADR 053**, **LUM-94**); **LUM-302** breaking-change classifier (**ADR 060-lum-302**) |
+| **Web E2E CI** | Path-gated **`.github/workflows/web-e2e.yml`** (**LUM-60**, **ADR 064**); host Postgres helper uses **`spawnSync` argv** — no shell (**ADR 068**) |
+| **Pre-launch security audit** | Hybrid manual + CI SCA/SAST (**ADR 060-lum-190**, **LUM-190**) |
 | **Telemetry proof** | **`TELEMETRY.md`** + Makefile guard (**ADR 046-telemetry** file; separate from **046-lum-35** backup ADR) |
 
 ---
@@ -105,7 +111,7 @@ Concise onboarding for AI assistants (**Cursor**, **ChatGPT**, **Claude**). Summ
 - **`/linear-update`**: only skill that **intentionally mutates** Linear issue fields beyond priorities — **one issue** at a time, explicit Thomas request.
 - **`/navigator sync`** (explicit): refresh export + percentile **priority** sync via **`linear_import.mjs`** — requires **`LINEAR_API_KEY`** in env; **not** default Navigator.
 - **Actionable follow-ups** need **Linear outcomes** (not markdown-only backlog). **P0** blocks closure; **P1** needs explicit acceptance; **P2/P3** deferred only with recorded outcomes.
-- **Drift check:** `node scripts/linear/drift_check.mjs` — this refresh: **1** ERROR (**exploration linkage**), **55** WARNs (markdown deferred-action prose in skills/plans); **`cursor/evidence/linear-evidence-index.md`** may still have **PATH_MISSING** rows (pre-existing).
+- **Drift check:** `node scripts/linear/drift_check.mjs` — this refresh: **2** ERRORs (**exploration linkage**, **plan linkage**), **57** WARNs (markdown deferred-action prose in skills/plans).
 
 ---
 
@@ -135,30 +141,15 @@ Concise onboarding for AI assistants (**Cursor**, **ChatGPT**, **Claude**). Summ
 
 ## Current roadmap / priority snapshot *(export-based; verify in Linear)*
 
-**Do not treat as live Linear.** Snapshot: **314** issues, **`exportedAt`:** **`2026-05-22T22:13:05.679Z`**. Priority bands refreshed via **`/navigator sync`** same session (**7** Linear priority mutations: **LUM-318**, **LUM-312**, **LUM-227**, **LUM-105**, **LUM-92**, **LUM-52**, **LUM-47**).
+**Do not treat as live Linear.** Snapshot: **384** issues, **`exportedAt`:** **`2026-05-27T14:28:01.419Z`**.
 
-**Per-type top band (one line each — use `/navigator next --[type]` to drill down; do not merge types into one global rank):**
+**Recently shipped on `dev` (merge + topics evidence — verify workflow state in Linear UI):** **LUM-329** (Tauri desktop overlay, **ADR 069-lum-329**); **LUM-124** (memory-as-hint, **ADR 066-lum-124**); **LUM-320** (doctor v2 **`--fix`** slice 1, **ADR 065**); **LUM-322** (doctor in-process deferral, **ADR 061** gates); **LUM-321** (pytest preflight, **ADR 064-lum-321**); **LUM-319** (doctor CI integration, **ADR 063-lum-319**); cursor-branch merges (**ADR 067** paperless blocked-high stall, **ADR 068** e2e spawn-no-shell, docs librarian **2026-05-25–27**); prior **LUM-190**/**LUM-165**/**LUM-308**/**LUM-184**/**LUM-281**/**LUM-60** — see export filter, not exhaustive.
 
-| Type group | Top non-terminal band (export) | Example identifier |
-| --- | --- | --- |
-| **bug** | *(none active)* | — |
-| **security** | High | **LUM-190** |
-| **feature** | Urgent | **LUM-194** |
-| **improvement** | Urgent | **LUM-33** |
-| **techdebt** | Urgent | **LUM-125** |
-| **evaluation** | Urgent | **LUM-170** |
-| **exploration** | Urgent | **LUM-24** |
-| **docs** | Urgent | **LUM-213** |
+**Active repo plans (devtools, non-archived):** **LUM-330** (folder watch inbox hardening), **LUM-44**, **LUM-76**, **LUM-77**, **LUM-56**, **LUM-57**, **LUM-277**, **LUM-78**, **LUM-53**. **LUM-329**, **LUM-124**, **LUM-320**, **LUM-322**, **LUM-321**, **LUM-319**, **LUM-190**, **LUM-165**, **LUM-308**, **LUM-184**, **LUM-281**, **LUM-60**, **LUM-94**, **LUM-302** plans → **`cursor/plans/archived/`**.
 
-**Recently shipped on `dev` (export + merge evidence — verify workflow state in Linear UI):** **LUM-190** (hybrid pre-launch audit CI + **`docs/security-audit/`** artefacts, **ADR 060-lum-190** — merged **`a22b18f49`**, **In Review** in Linear); **LUM-165** (first-run onboarding modal + empty states, **ADR 059-lum-165** — **Done** in export); **LUM-308** (**Done** — chat auto-RAG, **ADR 059-lum-308**); **LUM-184** (first-run **`docs/deployment/quickstart.md`**, **ADR 059-lum-184** — merged to **`dev`**, **In Review** in export); **LUM-302** (OpenAPI breaking-change classifier, **ADR 060-lum-302** — **Done** in export); **LUM-281**, **LUM-237**, **LUM-304**, **LUM-94**, **LUM-209**, **LUM-305**/**LUM-306**, and others — see export filter, not exhaustive.
+**Themes (patterns in export — not a backlog):** **Desktop overlay + folder watch (v0.1)**, **memory-as-hint / KG quality**, **agentic core**, **cross-device web**, **ingest/search + paperless**, **doctor/operator health**, **pre-launch security/docs**, **public export / attestations / OpenAPI CI parity**.
 
-**LUM-94 follow-ups:** **LUM-302** shows **Done** in export at refresh; **LUM-303** (P3 public **`lumogis/lumogis`** CI parity for **`openapi-check`**) remains open. **LUM-273** shows **Done** in export.
-
-**Active repo plans (devtools, non-archived):** **LUM-44**, **LUM-76**, **LUM-77**, **LUM-56**, **LUM-57**, **LUM-277**, **LUM-78**, **LUM-53** (FP-032 closure plan file). **LUM-190**, **LUM-165**, **LUM-308**, **LUM-184**, **LUM-281**, **LUM-237**, **LUM-94**, **LUM-302** plans → **`cursor/plans/archived/`**.
-
-**Themes (patterns in export — not a backlog):** **MCP / coding-agent memory** (**LUM-284+**), **agentic core**, **cross-device web**, **KG quality / living graph**, **ingest/search + auto-RAG follow-ups**, **pre-launch security/docs**, **public export / attestations / changelog / OpenAPI CI parity**.
-
-**Cautions:** **`type:story`** deprecated (**LUM-260** flagged in sync — route **`/triage-linear-issues`**); **`drift_check`** **exploration linkage** ERROR; evidence index **PATH_MISSING** rows; export refresh artefacts may be **local-only** until committed in **devtools**; **0** active **`bug`**-typed non-terminal issues in export (verify taxonomy if that looks wrong).
+**Cautions:** **`type:story`** deprecated; **`drift_check`** **2** linkage ERRORs; **LUM-329**/**LUM-124** verify gaps may remain open in Linear; export refresh artefacts may be **local-only** until committed in **devtools**; **066** prefix collision resolved (**LUM-124** retains **066**; **LUM-329** → **069**).
 
 ---
 
@@ -183,6 +174,8 @@ Concise onboarding for AI assistants (**Cursor**, **ChatGPT**, **Claude**). Summ
 | **Integration** | `make compose-test-integration`, `make test-integration` |
 | **Lint** | `make lint`, `make compose-lint` |
 | **Web** | `make web-test`, `web-lint`, `web-build`, `web-e2e` |
+| **Desktop** | `make desktop-dev`, `make desktop-build`; Rust tests in **`clients/lumogis-desktop/`** |
+| **Doctor** | `make doctor`, `make compose-test-doctor` |
 | **KG** | `make test-kg`, `make compose-test-kg`, `make test-graph-parity` (slow) |
 | **Compose policy** | `make compose-policy-check` (+ baseline / adversarial variants when touching policy) |
 | **Changelog gate** | `make changelog-check` (PRs touching product paths per **CONTRIBUTING.md**) |
@@ -212,7 +205,7 @@ Copy-paste:
 - `CHANGELOG.md` — **[0.4.0]** **2026-05-15** + **[Unreleased]** on **`dev`**
 - `TELEMETRY.md`, `SECURITY.md` — trust / disclosure
 - `docs/release/public-release-log.md` — **0.4.0** public export record
-- `docs/decisions/` — ADRs through **060** on **`dev`** (note **060-lum-190** / **060-lum-302** and **059-lum-165** / **059-lum-308** / **059-lum-184** collisions)
+- `docs/decisions/` — ADRs through **069** on **`dev`** (note **064**/**061**/**059**/**060** filename collision clusters)
 - `docs/architecture/`, `docs/guides/`, `docs/extending/`
 - `cursor/backlog/linear-operating-model.md` — Product OS taxonomy (**devtools**)
 - `cursor/reports/linear-issues-export.json` — Linear snapshot (**gitignored**)

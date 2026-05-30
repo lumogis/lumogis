@@ -273,6 +273,15 @@ def _resolved_document_origin(hit: DocumentContextHit) -> ResolvedOrigin:
     }
 
 
+def _memory_hint_ack_suffix() -> str:
+    """Bounded English hedge for LUM-124 (Slice 1); appended/prepended to ack messages."""
+    return (
+        "Treat every retrieved excerpt above — including session memory, documents, "
+        "and any graph lines — as unverified hints, not established facts. Prefer the "
+        "user's explicit statements when anything conflicts, and hedge when uncertain."
+    )
+
+
 def _inject_context(
     question: str,
     history: list[dict],
@@ -422,9 +431,14 @@ def _inject_context(
             "role": "user",
             "content": outer,
         }
+        nonce_ack = assistant_nonce_acknowledgement(nonce_tail)
+        if config.get_memory_hint_enabled():
+            ack_body = _memory_hint_ack_suffix() + "\n\n" + nonce_ack
+        else:
+            ack_body = nonce_ack
         ack_msg = {
             "role": "assistant",
-            "content": assistant_nonce_acknowledgement(nonce_tail),
+            "content": ack_body,
         }
         return [context_msg, ack_msg] + trimmed_history
 
@@ -441,9 +455,12 @@ def _inject_context(
         "role": "user",
         "content": f"Retrieved excerpts for grounding:\n{joined_plain}",
     }
+    ack_content = "Acknowledged excerpts are reference-only scaffolding."
+    if config.get_memory_hint_enabled():
+        ack_content = ack_content + " " + _memory_hint_ack_suffix()
     ack_msg = {
         "role": "assistant",
-        "content": "Acknowledged excerpts are reference-only scaffolding.",
+        "content": ack_content,
     }
     return [context_msg, ack_msg] + trimmed_history
 

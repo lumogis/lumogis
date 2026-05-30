@@ -22,6 +22,11 @@ class Event:
     # lines before this hook fires; in-process graph subscribers may then append
     # `[Graph]` lines. Service-mode graph fragments are appended after the hook in
     # `routes/chat.py`.
+    #
+    # LUM-124: v1 surfaces ``memory_type``, scalar ``confidence``, and staleness /
+    # ``last_verified_at`` only inside the frozen ``[Graph] … (hint: type=…; …)``
+    # plaintext suffix built in ``services/lumogis-graph/graph/query.py`` —
+    # do not add parallel structured kwargs to ``hooks.fire`` in v1.
     CONTEXT_BUILDING = "on_context_building"
 
     NOTE_CAPTURED = "on_note_captured"

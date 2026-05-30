@@ -1,9 +1,9 @@
 # ADR 034: Linear ↔ repo evidence index (maintainer register)
 
 > Status: Needs update
-> Last reviewed: 2026-05-24
-> Verified against commit: 50f43b8
-> Notes: This register remains the canonical description of the Linear evidence index, but the **ADR number collides** with `docs/decisions/034-agent-harness-foundation-terminology-and-boundaries.md`. Filename prefixes **049–064** are already in use under `docs/decisions/` (including **two `053-*.md`**, **three `059-*.md`**, **two `060-*.md`**, **two `061-*.md`**, **two `063-*.md`**, **three `064-*.md`**). A coordinated rename must use a **non-colliding** slug (for example **`065-*.md`** or **`065-lum-86-*.md`**) — **not** **053** / **061** / **063** / **064**. Coordinate with the **046** pair rename if multiple new numbers are needed in one pass—see `docs/_librarian/docs-inventory.md`. Paths under **`.cursor/`** and **`scripts/linear/`** exist when **`lumogis-app/.cursor`** is symlinked to **lumogis-devtools** per **`AGENTS.md`** (absent in product-only checkouts).
+> Last reviewed: 2026-05-27
+> Verified against commit: 110e8cc
+> Notes: This register remains the canonical description of the Linear evidence index, but the **ADR number collides** with `docs/decisions/034-agent-harness-foundation-terminology-and-boundaries.md`. Filename prefixes **049–069** are already in use under `docs/decisions/` (including **two `053-*.md`**, **three `059-*.md`**, **two `060-*.md`**, **two `061-*.md`**, **two `063-*.md`**, **three `064-*.md`**, **`065-lum-320-doctor-v2-shell-fix-remediation.md`**, **`066-lum-124-memory-as-hint.md`**, **`067-lum-281-paperless-blocked-high-poll-stall.md`**, **`068-lum-60-e2e-postgres-spawn-no-shell.md`**, and **`069-lum-329-tauri-search-overlay.md`**). A coordinated rename must use a **non-colliding** slug (for example **`070-*.md`** or **`070-lum-86-*.md`**) — **not** **053** / **061** / **063** / **064** / **065** / **066**–**069**. Coordinate with the **046** pair rename if multiple new numbers are needed in one pass—see `docs/_librarian/docs-inventory.md`. Paths under **`.cursor/`** and **`scripts/linear/`** exist when **`lumogis-app/.cursor`** is symlinked to **lumogis-devtools** per **`AGENTS.md`** (absent in product-only checkouts).
 
 **Status:** Finalised  
 **Created:** 2026-05-07  

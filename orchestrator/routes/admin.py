@@ -16,6 +16,15 @@ from auth import auth_enabled
 from auth import get_user
 from authz import require_admin
 from authz import require_user
+from compose_ingest_binds import chain_compose_file_in_env
+from compose_ingest_binds import merge_override_with_ingest_binds
+from compose_ingest_binds import override_has_managed_binds
+from compose_ingest_binds import override_path
+from compose_ingest_binds import project_env_writable
+from compose_ingest_binds import render_operator_snippet
+from compose_ingest_binds import unchain_compose_file_in_env
+from compose_ingest_binds import validate_override_structure
+from connectors.registry import PAPERLESS
 from csrf import require_same_origin
 from fastapi import APIRouter
 from fastapi import BackgroundTasks
@@ -34,6 +43,7 @@ from settings_store import get_setting
 from settings_store import put_settings
 
 import config
+from services import connector_credentials
 
 _DASHBOARD_HTML = Path(__file__).parent.parent / "dashboard" / "index.html"
 _GRAPH_MGM_HTML = Path(__file__).parent.parent / "static" / "graph_mgm.html"
@@ -106,7 +116,7 @@ class PermissionUpdate(BaseModel):
 
 
 class SettingsUpdate(BaseModel):
-    filesystem_root: str | None = None
+    ingest_paths: list[str] | None = None
     api_keys: dict[str, str] | None = None
     default_model: str | None = None
     optional_models: dict[str, bool] | None = None
@@ -810,12 +820,111 @@ def _safe_is_enabled(name: str) -> bool:
         return False
 
 
-def _get_settings_response():
+def _compose_fields_for_paths(
+    paths: list[str] | None,
+    *,
+    last_validation_ok: bool | None = None,
+    last_override_written: bool | None = None,
+) -> dict:
+    """Build ingest_compose_* response fields for settings GET/PUT."""
+    if not paths or len(paths) < 2:
+        return {
+            "ingest_compose_snippet": None,
+            "ingest_compose_override_written": False,
+            "ingest_compose_validation_ok": None,
+        }
+    snippet = render_operator_snippet(paths)
+    o_path = override_path()
+    written = last_override_written
+    if written is None:
+        written = o_path.is_file() and override_has_managed_binds(o_path.read_text())
+    validation_ok = last_validation_ok
+    return {
+        "ingest_compose_snippet": snippet,
+        "ingest_compose_override_written": bool(written),
+        "ingest_compose_validation_ok": validation_ok,
+    }
+
+
+def _apply_compose_ingest_auto_tier(stored_paths: list[str]) -> tuple[bool, bool | None]:
+    """Write override + chain COMPOSE_FILE when possible. Returns (written, validation_ok)."""
+    if len(stored_paths) < 2:
+        return False, None
+    if not project_env_writable(_PROJECT_ENV_FILE):
+        return False, None
+
+    o_path = override_path()
+    existing = o_path.read_text() if o_path.is_file() else None
+    try:
+        merged = merge_override_with_ingest_binds(existing, stored_paths)
+    except Exception as exc:
+        _log.warning("Could not merge compose override: %s", exc)
+        return False, False
+
+    expected_binds = len(stored_paths) - 1
+    ok, err = validate_override_structure(merged, expected_bind_count=expected_binds)
+    if not ok:
+        _log.warning("Compose override structural validation failed: %s", err)
+        return False, False
+
+    try:
+        o_path.write_text(merged)
+    except OSError as exc:
+        _log.warning("Could not write %s: %s", o_path, exc)
+        return False, False
+
+    if not _PROJECT_ENV_FILE.is_file():
+        return True, True
+
+    try:
+        content = _PROJECT_ENV_FILE.read_text()
+        content, _changed = chain_compose_file_in_env(content)
+        _PROJECT_ENV_FILE.write_text(content)
+    except OSError as exc:
+        _log.warning("Override written but COMPOSE_FILE chain failed: %s", exc)
+        return True, True
+
+    return True, True
+
+
+def _shrink_compose_override() -> None:
+    """D9/D15 — remove managed binds; delete empty override and unchain."""
+    o_path = override_path()
+    if not o_path.is_file():
+        return
+    existing = o_path.read_text()
+    stripped = merge_override_with_ingest_binds(existing, [])
+    if not stripped.strip():
+        try:
+            o_path.unlink(missing_ok=True)
+        except OSError as exc:
+            _log.warning("Could not remove empty override %s: %s", o_path, exc)
+        if _PROJECT_ENV_FILE.is_file():
+            try:
+                content = _PROJECT_ENV_FILE.read_text()
+                content, _ = unchain_compose_file_in_env(content)
+                _PROJECT_ENV_FILE.write_text(content)
+            except OSError as exc:
+                _log.warning("Could not unchain COMPOSE_FILE: %s", exc)
+        return
+    try:
+        o_path.write_text(stripped)
+    except OSError as exc:
+        _log.warning("Could not update override after shrink: %s", exc)
+
+
+def _get_settings_response(
+    user: UserContext,
+    *,
+    compose_validation_ok: bool | None = None,
+    compose_override_written: bool | None = None,
+):
     store = config.get_metadata_store()
     all_models = config.get_all_models_config()
     model_names = list(all_models.keys())
-    effective_root = os.environ.get("FILESYSTEM_ROOT_HOST", os.environ.get("FILESYSTEM_ROOT", ""))
-    pending_root = _safe_get_setting("filesystem_root", store)
+    effective_ingest_paths = config.get_effective_ingest_paths_host()
+    pending_ingest_paths = config.get_pending_ingest_paths(store)
+    restart_required = sorted(pending_ingest_paths or []) != sorted(effective_ingest_paths)
 
     # Resolve default_model, falling back to first enabled model if the stored
     # default is a disabled optional provider.
@@ -880,8 +989,10 @@ def _get_settings_response():
         reranker_enabled = reranker_backend.strip().lower() not in ("none", "", "off", "false", "0")
 
     response: dict = {
-        "filesystem_root": effective_root,
-        "pending_filesystem_root": pending_root,
+        "ingest_paths": effective_ingest_paths,
+        "pending_ingest_paths": pending_ingest_paths,
+        "restart_required": restart_required,
+        "paperless_configured": bool(connector_credentials.get_payload(user.user_id, PAPERLESS)),
         "models": models,
         "default_model": default_model,
         "optional_models": optional_models,
@@ -890,17 +1001,28 @@ def _get_settings_response():
     }
     if api_key_status is not None:
         response["api_key_status"] = api_key_status
+
+    display_paths = (
+        pending_ingest_paths if pending_ingest_paths is not None else effective_ingest_paths
+    )
+    response.update(
+        _compose_fields_for_paths(
+            display_paths,
+            last_validation_ok=compose_validation_ok,
+            last_override_written=compose_override_written,
+        )
+    )
     return response
 
 
 @router.get("/settings", dependencies=[Depends(require_admin)])
-def get_settings():
-    """Return current settings for the dashboard (root path, API key status, models)."""
-    return _get_settings_response()
+def get_settings(user: UserContext = Depends(get_user)):
+    """Return current settings for the dashboard (ingest paths, API key status, models)."""
+    return _get_settings_response(user)
 
 
 @router.put("/settings", dependencies=[Depends(require_admin)])
-def update_settings(body: SettingsUpdate):
+def update_settings(body: SettingsUpdate, user: UserContext = Depends(get_user)):
     """Update settings; API key changes take effect immediately; root path requires restart."""
     store = config.get_metadata_store()
     all_models = config.get_all_models_config()
@@ -911,43 +1033,32 @@ def update_settings(body: SettingsUpdate):
             known_api_keys.add(cfg["api_key_env"])
 
     updates = {}
-    if body.filesystem_root is not None:
-        new_root = body.filesystem_root.strip()
-        if new_root:
-            if " " in new_root:
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        "Indexed folder path cannot contain spaces (Docker Compose limitation). "
-                        "Move or rename the folder to a path without spaces."
-                    ),
-                )
-
-            # Translate Windows container path back to host path for .env write-back.
-            # When HOST_OS=windows, the browse API returns /host/c/Users/foo.
-            # The .env must contain C:/Users/foo for Docker Desktop to mount it correctly.
-            host_os = os.environ.get("HOST_OS", "").lower()
-            if host_os == "windows" and new_root.startswith("/host/"):
-                parts = new_root[len("/host/") :].split("/", 1)
-                drive = parts[0].upper()
-                rest = parts[1] if len(parts) > 1 else ""
-                host_path = f"{drive}:/{rest}"
-            else:
-                host_path = new_root
-
-            updates["filesystem_root"] = new_root
-
-            env_path = Path("/project/.env")
-            if env_path.is_file() and host_path:
+    compose_validation_ok: bool | None = None
+    compose_override_written: bool | None = None
+    if body.ingest_paths is not None:
+        if not body.ingest_paths:
+            pass  # empty list: ignore — do not clear store or .env by mistake
+        else:
+            stored_paths: list[str] = []
+            for idx, raw_path in enumerate(body.ingest_paths):
                 try:
-                    content = env_path.read_text()
-                    content = _rewrite_host_env_key(content, "FILESYSTEM_ROOT", host_path)
-                    env_path.write_text(content)
-                    _log.info("Updated FILESYSTEM_ROOT in /project/.env to %s", host_path)
-                except Exception as exc:
-                    _log.warning("Could not write /project/.env: %s", exc)
-        # Empty string: ignore — clients often send the root field on every save;
-        # do not clear app_settings or .env by mistake.
+                    config.validate_ingest_path_entry(raw_path, index=idx)
+                except ValueError as exc:
+                    raise HTTPException(status_code=400, detail=str(exc)) from exc
+                stored_paths.append(raw_path.strip())
+
+            updates["ingest_paths"] = json.dumps(stored_paths)
+            host_paths, container_paths = config.build_ingest_paths_env_lists(stored_paths)
+            _write_ingest_paths_env(host_paths, container_paths)
+
+            if len(stored_paths) >= 2:
+                compose_override_written, compose_validation_ok = _apply_compose_ingest_auto_tier(
+                    stored_paths
+                )
+            else:
+                _shrink_compose_override()
+                compose_override_written = False
+                compose_validation_ok = None
     if body.default_model is not None:
         if body.default_model not in model_names:
             raise HTTPException(
@@ -1007,7 +1118,43 @@ def update_settings(body: SettingsUpdate):
         config.invalidate_llm_cache()
         _sync_librechat_config()
 
-    return _get_settings_response()
+    return _get_settings_response(
+        user,
+        compose_validation_ok=compose_validation_ok,
+        compose_override_written=compose_override_written,
+    )
+
+
+def _host_path_for_env(host_path: str) -> str:
+    """Translate browse path to host path written to FILESYSTEM_ROOT in .env."""
+    host_os = os.environ.get("HOST_OS", "").lower()
+    if host_os == "windows" and host_path.startswith("/host/"):
+        parts = host_path[len("/host/") :].split("/", 1)
+        drive = parts[0].upper()
+        rest = parts[1] if len(parts) > 1 else ""
+        return f"{drive}:/{rest}"
+    return host_path
+
+
+def _write_ingest_paths_env(host_paths: list[str], container_paths: list[str]) -> None:
+    """Persist FILESYSTEM_ROOT, INGEST_PATHS_HOST, and INGEST_PATHS to /project/.env."""
+    if not host_paths or not _PROJECT_ENV_FILE.is_file():
+        return
+    try:
+        content = _PROJECT_ENV_FILE.read_text()
+        content = _rewrite_host_env_key(
+            content, "FILESYSTEM_ROOT", _host_path_for_env(host_paths[0])
+        )
+        content = _rewrite_host_env_key(content, "INGEST_PATHS_HOST", json.dumps(host_paths))
+        content = _rewrite_host_env_key(content, "INGEST_PATHS", json.dumps(container_paths))
+        _PROJECT_ENV_FILE.write_text(content)
+        _log.info(
+            "Updated ingest path env keys in /project/.env (host=%s container=%s)",
+            host_paths,
+            container_paths,
+        )
+    except Exception as exc:
+        _log.warning("Could not write ingest paths to /project/.env: %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -1057,13 +1204,15 @@ def restart_stack():
     import httpx as _httpx
 
     store = config.get_metadata_store()
-    pending_root = _safe_get_setting("filesystem_root", store)
-    current_host_root = os.environ.get("FILESYSTEM_ROOT_HOST", "")
+    pending_paths = config.get_pending_ingest_paths(store)
+    effective_host_paths = config.get_effective_ingest_paths_host()
     root_changing = bool(
-        pending_root and current_host_root and pending_root.strip() != current_host_root.strip()
+        pending_paths is not None and sorted(pending_paths) != sorted(effective_host_paths)
     )
 
-    if root_changing:
+    if root_changing and pending_paths:
+        host_paths, container_paths = config.build_ingest_paths_env_lists(pending_paths)
+        _write_ingest_paths_env(host_paths, container_paths)
         put_settings(store, {"pending_prune": "true"})
 
     # Always recreate (not `compose restart`) so env_file — e.g. RERANKER_BACKEND — is re-read.
@@ -1139,7 +1288,7 @@ def prune_index():
             (row["file_path"],),
         )
         pruned_chunks += row["chunk_count"] or 0
-    put_settings(store, {"pending_prune": "", "filesystem_root": ""})
+    put_settings(store, {"pending_prune": "", "ingest_paths": ""})
     return {"pruned_files": len(stale), "pruned_chunks": pruned_chunks}
 
 
@@ -1238,7 +1387,7 @@ def _browse_root_info() -> tuple[Path, str, str | None]:
 
     if not host_dir.is_dir():
         # No /host mount at all — fallback to the indexed data folder
-        data = Path(os.environ.get("FILESYSTEM_ROOT", "/data")).resolve()
+        data = Path(config.get_effective_ingest_paths()[0]).resolve()
         note = (
             "Folder browser is limited to your indexed root. "
             "Copy docker-compose.override.yml.<os> to docker-compose.override.yml "
@@ -1260,7 +1409,7 @@ def _browse_root_info() -> tuple[Path, str, str | None]:
         return host_dir, "/", None
 
     # /host exists but nothing useful is under it
-    data = Path(os.environ.get("FILESYSTEM_ROOT", "/data")).resolve()
+    data = Path(config.get_effective_ingest_paths()[0]).resolve()
     note = (
         "Host filesystem mount is empty. "
         "Copy docker-compose.override.yml.<os> to docker-compose.override.yml "
@@ -1487,7 +1636,7 @@ def status_page(request: Request):
     # The dashboard uses this to auto-open the Settings tab on first visit.
     no_data = docs_indexed == 0 and sessions_stored == 0 and entities_known == 0
     try:
-        api_key_status = _get_settings_response().get("api_key_status", {})
+        api_key_status = _get_settings_response(UserContext()).get("api_key_status", {})
         api_keys_set = any(v == "set" for v in api_key_status.values())
     except Exception:
         api_keys_set = False

@@ -355,14 +355,33 @@ async def lifespan(app: FastAPI):
     for plugin_router in plugin_routers:
         app.include_router(plugin_router)
 
+    import platform
+
+    from services.ingest import schedule_inbox_poll
     from services.ingest import start_watcher
 
-    start_watcher("/workspace/inbox")
+    _log.info(
+        "Inbox pipeline platform: %s",
+        " ".join(platform.uname()),
+    )
+    inbox_mode = config.get_inbox_mode()
+    inbox_owner = config.get_inbox_owner_user_id()
+    if inbox_mode != "off" and inbox_owner:
+        config.ensure_inbox_directory()
+    if inbox_mode == "event":
+        start_watcher()
+
+    from services.ingest import start_ingest_path_watchers
+
+    start_ingest_path_watchers()
 
     # APScheduler: start scheduler then load signal sources.
     scheduler = config.get_scheduler()
     scheduler.start()
     _log.info("APScheduler started")
+
+    if inbox_mode == "poll":
+        schedule_inbox_poll()
 
     from signals import start_all as start_signal_monitors
 
@@ -415,6 +434,27 @@ async def lifespan(app: FastAPI):
                 )
             except Exception:
                 _log.exception("batch_queue_stuck_sweeper failed")
+
+        # Startup crash-recovery. Any job still marked 'running' at boot was orphaned by the
+        # previous container: its worker process is gone (e.g. POST /settings/restart
+        # force-recreates this orchestrator mid-ingest). Reclaim immediately (stuck_after=0)
+        # instead of waiting up to BATCH_QUEUE_STUCK_AFTER_SECONDS (default 1800s) for the
+        # periodic sweeper — otherwise the per-user concurrency cap leaves the queue
+        # head-of-line blocked and post-restart folder re-ingestion stalls for ~30 minutes.
+        try:
+            _reclaimed = reset_stuck(
+                # safe: Lumogis runs a single orchestrator instance — no concurrent
+                # workers that could hold a legitimate 'running' lock across this boot.
+                stuck_after_seconds=0,
+                max_attempts=BATCH_QUEUE_MAX_ATTEMPTS,
+            )
+            if _reclaimed:
+                _log.info(
+                    "batch_queue: reclaimed %d orphaned 'running' job(s) at startup",
+                    _reclaimed,
+                )
+        except Exception:
+            _log.exception("batch_queue startup reclaim failed")
 
         scheduler.add_job(
             _batch_tick,
@@ -658,9 +698,13 @@ async def lifespan(app: FastAPI):
         except Exception as exc:
             _log.warning("MCP session manager shutdown error: %s", exc)
 
+    from services.ingest import stop_ingest_path_watchers
     from services.ingest import stop_watcher
+    from services.ingest import unschedule_inbox_poll
 
+    stop_ingest_path_watchers()
     stop_watcher()
+    unschedule_inbox_poll()
 
     from signals import stop_all as stop_signal_monitors
 
@@ -694,7 +738,11 @@ def healthz() -> dict[str, str]:
     Docker healthchecks cannot send a Bearer; ``/admin/health`` requires auth
     when ``AUTH_ENABLED=true``.
     """
-    return {"status": "ok"}
+    from services.ingest import watcher_status
+
+    payload: dict[str, str] = {"status": "ok"}
+    payload.update(watcher_status())
+    return payload
 
 
 # Middleware ordering (plan D4a): correlation is registered FIRST so

@@ -4,6 +4,10 @@
 # if any listed path exists in the candidate export.
 
 # Maintainer hygiene (migrated from hard-coded omit lists)
+
+# LUM-329 — proprietary Tauri desktop overlay (commercial / app-only sources)
+clients/lumogis-desktop/
+
 .cursor
 .claude
 docs/private

@@ -5,13 +5,39 @@ ROOT="${LUMOGIS_REPO_ROOT:?}"
 export ROOT BACKUP_DIR="${BACKUP_DIR:-}"
 
 exec python3 - <<'PY'
+import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(os.environ["ROOT"])
+KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def read_dotenv(path: Path) -> dict[str, str]:
+    if not path.is_file():
+        return {}
+    raw = path.read_text(encoding="utf-8", errors="replace")
+    if raw.startswith("\ufeff"):
+        raw = raw[1:]
+    out: dict[str, str] = {}
+    for line in raw.splitlines():
+        s = line.strip()
+        if not s or s.startswith("#"):
+            continue
+        if s.startswith("export "):
+            s = s[7:].lstrip()
+        if "=" not in s:
+            continue
+        k, v = s.split("=", 1)
+        k = k.strip()
+        if not KEY.match(k):
+            continue
+        out[k] = v.strip()
+    return out
 
 
 def row(category: str, name: str, status: str, message: str, remediation: str) -> None:
@@ -19,6 +45,24 @@ def row(category: str, name: str, status: str, message: str, remediation: str) -
         return s.replace("\t", " ").replace("\n", " ").replace("\r", " ")
 
     print(f"{category}\t{name}\t{status}\t{clean(message)}\t{clean(remediation)}")
+
+
+def row7(
+    category: str,
+    name: str,
+    status: str,
+    message: str,
+    remediation: str,
+    fix_kind: str,
+    fix_target: dict,
+) -> None:
+    def clean(s: str) -> str:
+        return s.replace("\t", " ").replace("\n", " ").replace("\r", " ")
+
+    tgt = json.dumps(fix_target, separators=(",", ":"), ensure_ascii=False)
+    if "\t" in tgt:
+        tgt = json.dumps(fix_target, ensure_ascii=True)
+    print(f"{category}\t{name}\t{status}\t{clean(message)}\t{clean(remediation)}\t{fix_kind}\t{tgt}")
 
 
 def main() -> int:
@@ -48,7 +92,8 @@ def main() -> int:
         except (OSError, subprocess.TimeoutExpired) as exc:
             row("storage", "docker-root", "warn", f"df error: {type(exc).__name__}", "")
 
-    backup = os.environ.get("BACKUP_DIR", "").strip()
+    dot = read_dotenv(ROOT / ".env")
+    backup = (dot.get("BACKUP_DIR") or os.environ.get("BACKUP_DIR", "") or "").strip()
     if not backup:
         row(
             "storage",
@@ -58,22 +103,36 @@ def main() -> int:
             "Set BACKUP_DIR in .env if you want backup directory freshness checked.",
         )
     else:
-        p = Path(backup)
-        if not p.is_dir():
-            row("storage", "BACKUP_DIR", "warn", "BACKUP_DIR is not a directory", "Create the directory or fix BACKUP_DIR in .env")
+        expanded = os.path.expandvars(os.path.expanduser(backup))
+        p = Path(expanded)
+        try:
+            rp = str(p.resolve())
+        except OSError as exc:
+            row("storage", "BACKUP_DIR", "warn", f"Cannot resolve BACKUP_DIR: {exc}", "")
         else:
-            try:
-                m = p.stat().st_mtime
-                age = datetime.now(timezone.utc).timestamp() - m
-                row(
+            if not p.is_dir():
+                row7(
                     "storage",
                     "BACKUP_DIR",
-                    "ok",
-                    f"BACKUP_DIR exists (mtime age seconds ~ {int(age)})",
-                    "",
+                    "warn",
+                    "BACKUP_DIR is not a directory",
+                    "Create the directory or fix BACKUP_DIR in .env",
+                    "mkdir_backup_dir",
+                    {"path": rp},
                 )
-            except OSError as exc:
-                row("storage", "BACKUP_DIR", "warn", f"Cannot stat BACKUP_DIR: {exc}", "")
+            else:
+                try:
+                    m = p.stat().st_mtime
+                    age = datetime.now(timezone.utc).timestamp() - m
+                    row(
+                        "storage",
+                        "BACKUP_DIR",
+                        "ok",
+                        f"BACKUP_DIR exists (mtime age seconds ~ {int(age)})",
+                        "",
+                    )
+                except OSError as exc:
+                    row("storage", "BACKUP_DIR", "warn", f"Cannot stat BACKUP_DIR: {exc}", "")
 
     return 0
 

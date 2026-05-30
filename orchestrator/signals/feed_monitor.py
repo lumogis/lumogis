@@ -255,6 +255,15 @@ def _poll_paperless_source(source: SourceConfig) -> None:
                 break
 
             chunks_used += int(result.chunk_count or 0)
+            # Blocked-high external ingest returns ``advance_external_poll_cursor=False``
+            # without ``skipped=True`` (see ``ingest_external_document``). If we kept
+            # polling, a later row could monotonically advance ``poll_cursor`` past this
+            # document's ``added`` while it was never reconciled — strict ``added__gt``
+            # would then drop it permanently.
+            if not result.advance_external_poll_cursor and not result.skipped:
+                hard_stop = True
+                break
+
             docs_done += 1
 
         if hard_stop:

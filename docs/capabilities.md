@@ -8,7 +8,9 @@
 - [Knowledge Graph](#knowledge-graph)
 - [Memory & Entities](#memory--entities)
 - [Capture & Voice](#capture--voice)
+- [Connectors / Sources](#connectors--sources)
 - [Lumogis Web](#lumogis-web)
+- [Desktop Overlay](#desktop-overlay)
 - [Search & Retrieval](#search--retrieval)
 - [Auth / Users / Credentials](#auth--users--credentials)
 - [MCP & Tool Catalog](#mcp--tool-catalog)
@@ -30,6 +32,9 @@ Core is the FastAPI orchestrator: HTTP APIs, business logic, optional in-process
 - Notifications include daily digest patterns via connectors such as ntfy alongside other notification paths.
 - Server-sent events are available at **`/events`** for live streams.
 - Legacy OpenAI-style **`/v1/*`** routes remain for compatible clients (for example optional LibreChat); Lumogis Web uses the versioned **`/api/v1/*`** façade.
+- **Inbox folder-watch:** operators configure **`LUMOGIS_INBOX_PATH`** and **`LUMOGIS_INBOX_MODE`** (`event`, `poll`, or `off`). Files are held until write-stable, then enqueued for ingest; terminal failures can be quarantined under **`ai-workspace/quarantine/`**. **`/healthz`** exposes inbox liveness fields without absolute paths; an auth-gated inbox summary appears on **`GET /api/v1/admin/diagnostics`**.
+- **Multi-path ingest:** host paths round-trip through **`INGEST_PATHS`** / **`INGEST_PATHS_HOST`**. **`GET /settings`** returns **`ingest_paths`**, **`pending_ingest_paths`**, **`restart_required`**, and **`paperless_configured`** (replacing the older single-root fields). **`POST /api/v1/ingest/upload`** accepts multipart uploads, returns **`202`** with a **`file_id`**, and stores files under the workspace **`uploads/`** tree for batch ingest.
+- **Chat auto-RAG (default off):** optional per-turn injection of top **`documents`** chunks into **`POST /v1/chat/completions`** via **`LUMOGIS_AUTO_RAG_*`** env knobs; hybrid/RRF vs dense gating and an optional BGE reranker floor when configured. See [Search & Retrieval](#search--retrieval) for behaviour and privacy notes.
 
 Self-hosters configure the stack via `.env` (see `.env.example`), Compose overlays for optional profiles, and Caddy for TLS and routing.
 
@@ -65,11 +70,18 @@ Surfaces for quick capture and optional speech input complement chat and ingest.
 
 - **Quick capture** uses bounded client-side staging (IndexedDB) with explicit sync steps rather than silent server writes from the queue alone.
 - **Authenticated capture ledger APIs** under **`/api/v1/captures`** create, list, update, and delete capture rows for the signed-in user; support attachments and capture-linked transcription requests; and expose indexing submission so captures can enter the ingest pipeline. Pending captures stay editable; indexed captures block destructive edits enforced by the API.
-- **paperless-ngx polling ingest (self-hosted):** operators can register read-only **paperless** poll sources that fetch new documents over REST, deduplicate via **`external_documents`**, and index through the normal chunk → embed → Qdrant path with per-user encrypted credentials.
 - **Semantic search** over captures versus ordinary **`documents`** remains uneven—treat capture-oriented discovery as still catching up to library search.
 - **Push-to-talk** transcription via **`POST /api/v1/voice/transcribe`** accepts short audio uploads and returns plain text for an editable field when speech-to-text is enabled (`STT_BACKEND`); **off** by default. A lightweight **`fake_stt`** backend supports tests and scaffolding; production-style deployments use Whisper-class STT in-process or via an optional HTTP sidecar enabled through Compose.
 
 Enable STT only when you accept extra CPU/RAM (and optional GPU) cost; use the STT Compose overlay and environment knobs from operator docs when running a sidecar.
+
+---
+
+## Connectors / Sources
+
+External document sources plug into the same chunk → embed → Qdrant pipeline as filesystem ingest.
+
+- **paperless-ngx (self-hosted):** read-only REST polling ingests new documents with per-user encrypted credentials. Register via **`POST /api/v1/sources`** with **`source_type: "paperless"`**; deduplication uses **`sources.poll_cursor`** and **`external_documents`**. Operator env includes **`PAPERLESS_*`** and **`PAPERLESS_POLL_PAGE_SIZE`**. Outbound URL policy is controlled by **`LUMOGIS_ALLOW_PRIVATE_OUTBOUND_URLS`** and **`LUMOGIS_OUTBOUND_PRIVATE_HOST_ALLOWLIST`**.
 
 ---
 
@@ -78,12 +90,21 @@ Enable STT only when you accept extra CPU/RAM (and optional GPU) cost; use the S
 The first-party SPA is the primary household UI: chat, search, approvals, and Me/Admin settings on the same origin as Core via Caddy.
 
 - **Me**: profile (including password change), connectors, connector permissions, LLM providers, MCP tokens, notifications, export, tools/capabilities overview.
-- **First-run onboarding:** a skippable orientation modal per user; completion is stored on the user record and can be dismissed without blocking core chat.
+- **First-run onboarding:** a skippable orientation modal per user (`users.onboarding_completed_at`); **`GET`** / **`PATCH /api/v1/me/onboarding`** read and update completion. Skip and Done both persist dismissal across reload; core chat is not blocked.
 - **Admin**: users (import/export, password reset), connector credentials (including household and instance-system tiers where exposed), per-user connector permissions, MCP tokens, audit, diagnostics.
 - Password change for self-service and admin-led reset are implemented; email-based forgot-password is not part of the shipped surface.
 - Older FastAPI-hosted HTML pages (dashboard, settings, graph views, backup, and similar) still exist for compatibility; full replacement by Lumogis Web is not claimed as finished.
 
 Pin **`LUMOGIS_PUBLIC_ORIGIN`** when authentication is on; align trusted proxy settings if TLS terminates in front of Caddy.
+
+---
+
+## Desktop Overlay
+
+Optional Tauri 2 desktop client for quick memory search from the keyboard. **Proprietary:** the desktop tree is excluded from the public AGPL export.
+
+- **Household overlay:** global hotkey (default **Ctrl+Shift+L** / **⌃⇧L**), frameless overlay, up to five hits from **`GET /api/v1/memory/search`**, bearer JWT in the OS keychain, and library-root sandboxing for native open/reveal. Local builds: **`make desktop-dev`** and **`make desktop-build`**.
+- **Client-only distribution:** household-member profile with in-app first-run onboarding (server URL → **`/healthz`** → sign-in → search, with optional empty library roots). State is stored in **`overlay.json`** schema v2 including **`onboardingComplete`**. Build with **`make desktop-build-client-only`**.
 
 ---
 
@@ -166,11 +187,11 @@ Pre-built multi-platform images (amd64/arm64) are published to `ghcr.io/lumogis/
 COMPOSE_FILE=docker-compose.yml:docker-compose.ghcr.yml docker compose up -d --pull always
 ```
 
-**First-run operators:** step-by-step published-image path, smoke checks, and common failures — **[`docs/deployment/quickstart.md`](deployment/quickstart.md)**.
+**First-run quickstart:** **[`docs/deployment/quickstart.md`](deployment/quickstart.md)** — published **GHCR** path (`COMPOSE_FILE=docker-compose.yml:docker-compose.ghcr.yml`), first-boot **Ollama** / **Postgres** behaviour, **`curl`** health smoke vs **`make health`**, and common errors.
 
 **Off-LAN access:** Tailscale-first remote access patterns — **[`docs/deployment/remote-access.md`](deployment/remote-access.md)**.
 
-**Health checks:** **`make doctor`** reports Compose service status, config grammar, optional HTTP probes, and an optional JSON contract for automation (**`scripts/doctor/README.md`**).
+**Health checks:** **`make doctor`** is a read-only operator CLI — Compose **`ps`** / **`config`**, **`.env`** grammar checks (no shell **`source`**), optional **`/healthz`** probes, optional **`--json`** v1 contract (**`scripts/doctor/schema.v1.json`**), and a security category opt-in (**`--security`** or **`LUMOGIS_DOCTOR_RUN_SECURITY=1`**). See **`scripts/doctor/README.md`**.
 
 ### Verifying image provenance
 

@@ -141,7 +141,7 @@ def _check_backup_age() -> list[dict]:
 
 def _check_inbox_depth() -> list[dict]:
     alerts = []
-    inbox = _WORKSPACE / "inbox"
+    inbox = config.get_inbox_path()
     try:
         if not inbox.exists():
             return []

@@ -163,6 +163,8 @@ def test_get_settings_under_auth_on_omits_api_key_status(store, auth_on_env):
     )
     assert "models" in body  # other fields unchanged
     assert "default_model" in body
+    assert "filesystem_root" not in body
+    assert "ingest_paths" in body
 
 
 def test_put_settings_with_api_keys_under_auth_on_returns_422(store, auth_on_env):

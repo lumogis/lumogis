@@ -13,6 +13,10 @@ cd "$ROOT"
 
 export COMPOSE_PROFILES=
 export COMPOSE_FILE=docker-compose.yml:docker-compose.test.yml:docker-compose.public-rc-stack.yml
+# Absolute host path to the repo. Carried into stack-control (see docker-compose.public-rc-stack.yml)
+# so its in-container `docker compose --force-recreate` resolves relative bind-mount sources to real
+# host paths instead of non-existent /project/* dirs.
+export HOST_PROJECT_DIR="$ROOT"
 ENV_FILE="${INTEGRATION_ENV_FILE:-config/test.env.example}"
 
 _host_port_in_use() {
@@ -40,11 +44,23 @@ _containers_on_host_port() {
   done < <(docker ps --format '{{.Names}}')
 }
 
+_rc_compose_project() {
+  eval "$(python3 "$ROOT/scripts/rc_test_env_defaults.py" "$ROOT/$ENV_FILE")"
+  echo "${COMPOSE_PROJECT_NAME:-lumogis-test}"
+}
+
 _free_host_port_for_rc() {
   local port=$1
-  local c seen=""
+  local c seen="" rc_project
+  rc_project="$(_rc_compose_project)"
   while IFS= read -r c; do
     [ -n "$c" ] || continue
+    case "$c" in
+      "${rc_project}"-*)
+        # Port belongs to our RC stack (e.g. orchestrator recreate); do not stop it.
+        continue
+        ;;
+    esac
     case " $seen " in *" $c "*) continue ;; esac
     seen="$seen $c"
     echo "[integration-public-rc] INFO: stopping $c to free port $port for RC stack" >&2
@@ -65,35 +81,15 @@ _wait_port_free() {
   return 1
 }
 
-# RC Qdrant host publish: avoid clashing with dev/test defaults (6334/6335).
-_pick_free_qdrant_host_port() {
-  local p
-  for p in $(seq 6400 6500); do
-    if ! _host_port_in_use "$p"; then
-      printf '%s\n' "$p"
-      return 0
-    fi
-  done
-  return 1
-}
-
-_ensure_qdrant_host_port() {
-  if [ -n "${QDRANT_HOST_PORT:-}" ]; then
-    export QDRANT_HOST_PORT
-    return 0
-  fi
-  local picked
-  if ! picked="$(_pick_free_qdrant_host_port)"; then
-    echo "[verify-public-rc] ERROR: no free host port in range 6400-6500 for Qdrant" >&2
-    exit 1
-  fi
-  export QDRANT_HOST_PORT="$picked"
-  echo "[verify-public-rc] Using QDRANT_HOST_PORT=${QDRANT_HOST_PORT}" >&2
+_rc_qdrant_host_port() {
+  eval "$(python3 "$ROOT/scripts/rc_test_env_defaults.py" "$ROOT/$ENV_FILE")"
+  echo "${QDRANT_HOST_PORT:-6335}"
 }
 
 _rc_preflight_host_ports() {
-  local p
-  for p in 6333 6334 8000; do
+  local p qdrant_port
+  qdrant_port="$(_rc_qdrant_host_port)"
+  for p in 6333 6334 8000 "$qdrant_port"; do
     if ! _host_port_in_use "$p"; then
       continue
     fi
@@ -103,7 +99,7 @@ _rc_preflight_host_ports() {
       exit 1
     fi
   done
-  for p in 6333 6334 8000; do
+  for p in 6333 6334 8000 "$qdrant_port"; do
     if _host_port_in_use "$p"; then
       echo "[integration-public-rc] ERROR: port $p still occupied after stop attempt. Free it manually and retry." >&2
       exit 1
@@ -111,58 +107,41 @@ _rc_preflight_host_ports() {
   done
 }
 
-# LUM-249: workaround for an observed race where the Qdrant container reports
-# healthy on its loopback /readyz check but is not attached to the project's
-# default bridge network. `depends_on: qdrant.service_healthy` is satisfied,
-# the orchestrator starts, then crashes with "QdrantStore unreachable" because
-# `qdrant` does not resolve via Docker DNS. Bring qdrant up first, verify the
-# network attachment, and reattach if needed before launching the rest.
-_ensure_qdrant_network_attached() {
-  local project="${COMPOSE_PROJECT_NAME:-lumogis-test}"
-  local network="${project}_default"
-  local container="${project}-qdrant-1"
-  if ! docker inspect "$container" >/dev/null 2>&1; then
-    return 0
-  fi
-  local attached
-  attached=$(docker inspect "$container" \
-    --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' 2>/dev/null || true)
-  case " $attached " in
-    *" $network "*) return 0 ;;
-  esac
-  echo "[integration-public-rc] WARN: $container not attached to $network — reconnecting (LUM-249)" >&2
-  if ! docker network connect --alias qdrant "$network" "$container" >/dev/null 2>&1; then
-    echo "[integration-public-rc] ERROR: failed to attach $container to $network" >&2
-    return 1
-  fi
-  attached=$(docker inspect "$container" \
-    --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' 2>/dev/null || true)
-  case " $attached " in
-    *" $network "*) return 0 ;;
-  esac
-  echo "[integration-public-rc] ERROR: $container still not attached to $network after reconnect" >&2
-  return 1
-}
-
 compose() {
-  if [[ "${1:-}" == "up" ]]; then
-    _rc_preflight_host_ports
-  fi
   (cd "$ROOT" && docker compose --env-file "$ENV_FILE" "$@")
 }
 
+_recreate_orchestrator_rc() {
+  compose up -d --no-deps --force-recreate orchestrator
+  compose up -d --wait --no-deps orchestrator
+}
+
+# Pre-pull the embedding model into the (persistent) ollama_data volume. OLLAMA_SKIP_WAIT
+# makes each orchestrator --force-recreate skip the on-boot model pull for a fast, deterministic
+# restart; but the restart_e2e ingest proof needs embeddings to succeed. Pulling once here means
+# every subsequent recreate finds the model already present. Best-effort: a failure only degrades
+# the ingest assertions (which then fail loudly), it does not abort the gate.
+_ensure_embedding_model_rc() {
+  local model="${EMBEDDING_MODEL:-nomic-embed-text}"
+  echo "[integration-public-rc] INFO: ensuring Ollama embedding model '${model}' is present (restart_e2e ingest needs embeddings)"
+  compose exec -T ollama ollama pull "${model}" \
+    || echo "[integration-public-rc] WARNING: could not pull '${model}'; restart_e2e ingest assertions may fail" >&2
+}
+
 cmd_up() {
-  _ensure_qdrant_host_port
   (cd "$ROOT" && test -f .env || cp config/test.env.example .env)
+  # Create the default filesystem root on the host as the invoking user *before* compose up.
+  # Otherwise the Docker daemon auto-creates the ./lumogis-data bind-mount target as root, and
+  # the restart_e2e fallback test (which writes a probe file there from the host) hits EACCES.
+  mkdir -p "$ROOT/lumogis-data"
   eval "$(python3 "$ROOT/scripts/rc_test_env_defaults.py" "$ROOT/$ENV_FILE")"
-  # LUM-249: bring qdrant up first and guard its network attachment before
-  # launching the rest. See _ensure_qdrant_network_attached for context.
-  compose up -d qdrant
-  _ensure_qdrant_network_attached
+  _rc_preflight_host_ports
   compose up -d --wait
-  _ensure_qdrant_network_attached
   if [[ "${COMPOSE_PROJECT_NAME:-}" == "lumogis-test" ]]; then
     bash "$ROOT/scripts/seed-public-rc-approvals-fixture.sh"
+    bash "$ROOT/scripts/seed-public-rc-ingest-owner.sh"
+    _ensure_embedding_model_rc
+    _recreate_orchestrator_rc
   fi
 }
 
@@ -184,22 +163,40 @@ cmd_pytest() {
   )
 }
 
+cmd_restart_e2e_pytest() {
+  if [[ ! -d "$ROOT/.venv" ]]; then
+    python3 -m venv "$ROOT/.venv"
+  fi
+  # shellcheck source=/dev/null
+  source "$ROOT/.venv/bin/activate"
+  pip install -q -r "$ROOT/orchestrator/requirements-dev.txt"
+  eval "$(python3 "$ROOT/scripts/rc_test_env_defaults.py" "$ROOT/$ENV_FILE")"
+  (
+    cd "$ROOT/orchestrator"
+    export LUMOGIS_WEB_BASE_URL=http://127.0.0.1
+    export LUMOGIS_API_URL=http://127.0.0.1:8000
+    pytest -c ../tests/integration/pytest.ini \
+      ../tests/integration -v --tb=short -p no:cacheprovider \
+      -m 'integration and restart_e2e'
+  )
+}
+
 cmd_down() {
   compose down --remove-orphans
 }
 
+cmd_print_qdrant_host_port() {
+  _rc_qdrant_host_port
+}
+
 usage() {
-  echo "usage: $0 up | pytest | down | full-cycle | gate-start | gate-end | print-qdrant-host-port" >&2
+  echo "usage: $0 up | pytest | restart-e2e-pytest | down | full-cycle | gate-start | gate-end | print-qdrant-host-port" >&2
   exit 2
 }
 
 case "${1:-}" in
   print-qdrant-host-port)
-    if [ -n "${QDRANT_HOST_PORT:-}" ]; then
-      printf '%s\n' "$QDRANT_HOST_PORT"
-      exit 0
-    fi
-    _pick_free_qdrant_host_port || exit 1
+    cmd_print_qdrant_host_port
     ;;
   up)
     cmd_up
@@ -227,6 +224,9 @@ case "${1:-}" in
     ;;
   gate-end)
     cmd_down
+    ;;
+  restart-e2e-pytest)
+    cmd_restart_e2e_pytest
     ;;
   *)
     usage

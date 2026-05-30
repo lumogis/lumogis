@@ -164,3 +164,8 @@ cd orchestrator && python -m scripts.dump_openapi --pretty --sort-keys \
 `python -m scripts.dump_openapi` and fails if the output differs from the committed
 **`openapi.snapshot.json`** — **no HTTP server**. Optional **`npm run codegen -- --live`** compares against a
 **running** orchestrator using **`LUMOGIS_OPENAPI_URL`** (default `http://localhost:8000/openapi.json`).
+
+## Desktop memory overlay (LUM-329)
+
+- **Tauri 2 overlay** at **`clients/lumogis-desktop/`** (proprietary / app-only tree) talks to the same **`GET /api/v1/memory/search`** contract as the web UI, using a **bearer JWT** stored in the **OS keychain** when **`AUTH_ENABLED=true`**. It is **not** part of the public AGPL export (see **`scripts/public-export-strip-list.txt`**).
+- **Token acquisition (v0.1):** there is no in-app “copy bearer” button in Lumogis Web yet; operators paste a JWT from an authenticated browser session (see **`clients/lumogis-desktop/README.md`** — devtools / storage, never paste tokens into public bug reports).

@@ -315,6 +315,27 @@ def _logging_reset():
     reset_for_tests()
 
 
+from services import ingest as _ingest_for_watcher_mocks  # noqa: E402
+
+_REAL_START_WATCHER = _ingest_for_watcher_mocks.start_watcher
+_REAL_STOP_WATCHER = _ingest_for_watcher_mocks.stop_watcher
+_REAL_START_INGEST_PATH_WATCHERS = _ingest_for_watcher_mocks.start_ingest_path_watchers
+_REAL_STOP_INGEST_PATH_WATCHERS = _ingest_for_watcher_mocks.stop_ingest_path_watchers
+
+
+@pytest.fixture
+def real_filesystem_watchers(monkeypatch):
+    """Re-enable real watchdog start/stop (autouse mocks disable them by default)."""
+    monkeypatch.setattr("services.ingest.start_watcher", _REAL_START_WATCHER)
+    monkeypatch.setattr("services.ingest.stop_watcher", _REAL_STOP_WATCHER)
+    monkeypatch.setattr(
+        "services.ingest.start_ingest_path_watchers", _REAL_START_INGEST_PATH_WATCHERS
+    )
+    monkeypatch.setattr(
+        "services.ingest.stop_ingest_path_watchers", _REAL_STOP_INGEST_PATH_WATCHERS
+    )
+
+
 @pytest.fixture(autouse=True)
 def _mock_watcher(monkeypatch):
     """Prevent the filesystem watcher from starting during tests.
@@ -322,5 +343,9 @@ def _mock_watcher(monkeypatch):
     start_watcher uses watchdog to monitor a real path; that path does not
     exist in the local test environment (it lives inside Docker).
     """
-    monkeypatch.setattr("services.ingest.start_watcher", lambda path: None)
+    monkeypatch.setattr("services.ingest.start_watcher", lambda *args, **kwargs: None)
     monkeypatch.setattr("services.ingest.stop_watcher", lambda: None)
+    monkeypatch.setattr("services.ingest.start_ingest_path_watchers", lambda *args, **kwargs: None)
+    monkeypatch.setattr("services.ingest.stop_ingest_path_watchers", lambda: None)
+    monkeypatch.setattr("services.ingest.schedule_inbox_poll", lambda: None)
+    monkeypatch.setattr("services.ingest.unschedule_inbox_poll", lambda: None)

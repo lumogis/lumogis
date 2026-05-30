@@ -1,9 +1,9 @@
 # ADR-046: LUM-35 FP-017 per-user backup follow-ups reconciliation
 
 > Status: Needs update
-> Last reviewed: 2026-05-24
-> Verified against commit: 50f43b8
-> Notes: **Duplicate ADR number:** `docs/decisions/046-telemetry-md-zero-telemetry-proof.md` is also **ADR 046**. Renumber this file to a **non-colliding** ADR filename (prefixes **053–064** are already used in `docs/decisions/`, including duplicate clusters on **061** / **063** / **064**) in a coordinated maintainer pass (together with any **`034-linear`** rename) and update inbound links (e.g. `docs/LUMOGIS_REFERENCE_MANUAL.md`). Example next-free integer at **2026-05-24** HEAD: **`065-*.md`** — re-verify before rename. Do not delete either decision record.
+> Last reviewed: 2026-05-27
+> Verified against commit: 110e8cc
+> Notes: **Duplicate ADR number:** `docs/decisions/046-telemetry-md-zero-telemetry-proof.md` is also **ADR 046**. Renumber this file to a **non-colliding** ADR filename (prefixes **053–069** are already used in `docs/decisions/`, including duplicate clusters on **061** / **063** / **064**, plus **`065-lum-320-*.md`** through **`069-lum-329-*.md`**) in a coordinated maintainer pass (together with any **`034-linear`** rename) and update inbound links (e.g. `docs/LUMOGIS_REFERENCE_MANUAL.md`). Example next-free integer at **2026-05-27** HEAD: **`070-*.md`** — re-verify before rename. Do not delete either decision record.
 
 **Status:** Finalised
 **Created:** 2026-05-16

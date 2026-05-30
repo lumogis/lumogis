@@ -61,3 +61,4 @@ Revisit if any of the following become true:
 
 - 2026-05-23: Draft rationale in **`.cursor/adrs/LUM-248-stack-control-pytest-host-ci.md`** (exploration).
 - 2026-05-23: **Finalised** as **ADR-063** by **`/verify-plan --headless` LUM-248** — implementation on disk matches decision; exploration **§Codebase Findings** sentence that **`CONTRIBUTING.md`** names **`make compose-test-stack-control`** was **not** carried forward (that line was inaccurate vs shipped **`CONTRIBUTING.md`**).
+- 2026-05-30: **LUM-326** closed the optional discoverability gap — **`CONTRIBUTING.md`** § *Running tests (Docker only, no local venv)* now documents **`make compose-test-stack-control`**; reference manual §15 commands table updated.

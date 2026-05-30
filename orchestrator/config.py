@@ -8,6 +8,7 @@ Call shutdown() during app teardown to close connections.
 """
 
 import ipaddress
+import json
 import logging
 import os
 import re
@@ -957,6 +958,351 @@ def get_auto_rag_min_bi_encoder_score() -> float:
 
 def get_auto_rag_max_tokens() -> int:
     return _safe_int_env("LUMOGIS_AUTO_RAG_MAX_TOKENS", 512, minimum=1)
+
+
+# ---------------------------------------------------------------------------
+# LUM-330 — inbox watch / poll / quarantine
+# ---------------------------------------------------------------------------
+
+InboxMode = Literal["event", "poll", "off"]
+
+
+def get_workspace_path() -> Path:
+    """Resolved workspace root (``WORKSPACE_PATH``, default ``/workspace``)."""
+    return Path(os.environ.get("WORKSPACE_PATH", "/workspace")).expanduser().resolve(strict=False)
+
+
+def get_inbox_path() -> Path:
+    """Pure inbox directory resolver — no mkdir (safe for ``/healthz``)."""
+    raw = os.environ.get("LUMOGIS_INBOX_PATH", "/workspace/inbox").strip()
+    candidate = Path(raw).expanduser()
+    if candidate.is_absolute():
+        return candidate.resolve(strict=False)
+    return (get_workspace_path() / candidate).resolve(strict=False)
+
+
+def get_quarantine_path() -> Path:
+    """Quarantine directory beside inbox under workspace (not inside watched tree)."""
+    return get_workspace_path() / "quarantine"
+
+
+def get_uploads_path() -> Path:
+    """Persistent push-ingest store under workspace (``uploads/`` by default)."""
+    raw = os.environ.get("LUMOGIS_UPLOADS_PATH", "").strip()
+    if raw:
+        path = Path(raw).expanduser()
+    else:
+        path = get_workspace_path() / "uploads"
+    resolved = path.resolve(strict=False)
+    resolved.mkdir(parents=True, exist_ok=True)
+    return resolved
+
+
+_FORBIDDEN_INGEST_PATHS = frozenset({"/", "/etc", "/root"})
+
+
+def _parse_json_path_list_env(name: str) -> list[str] | None:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        _log.warning("Invalid JSON in %s: %r", name, raw[:120])
+        return None
+    if not isinstance(parsed, list):
+        _log.warning("%s must be a JSON array, got %r", name, type(parsed).__name__)
+        return None
+    out: list[str] = []
+    for item in parsed:
+        s = str(item).strip()
+        if s:
+            out.append(s)
+    return out or None
+
+
+def get_ingest_paths_allowed_prefixes() -> list[str]:
+    """Comma-separated container path prefixes allowed for ingest_paths PUT validation."""
+    raw = os.environ.get("INGEST_PATHS_ALLOWED_PREFIX", "/data").strip()
+    parts = [p.strip() for p in raw.split(",") if p.strip()]
+    return parts or ["/data"]
+
+
+def get_effective_ingest_paths() -> list[str]:
+    """Container/runtime paths for search, tools, and ingest-path watchers."""
+    paths = _parse_json_path_list_env("INGEST_PATHS")
+    if paths:
+        return paths
+    fs = os.environ.get("FILESYSTEM_ROOT", "").strip()
+    if fs:
+        return [fs]
+    return [str(Path.home())]
+
+
+def get_effective_ingest_paths_host() -> list[str]:
+    """Host/operator paths shown on GET /settings (INGEST_PATHS_HOST or FILESYSTEM_ROOT_HOST)."""
+    paths = _parse_json_path_list_env("INGEST_PATHS_HOST")
+    if paths:
+        return paths
+    host = os.environ.get("FILESYSTEM_ROOT_HOST", os.environ.get("FILESYSTEM_ROOT", "")).strip()
+    if host:
+        return [host]
+    return []
+
+
+def get_ingest_paths_owner_user_id() -> str:
+    """User that owns files ingested from configured ingest paths."""
+    explicit = os.environ.get("INGEST_PATHS_OWNER_USER_ID", "").strip()
+    if explicit:
+        return explicit
+    return get_inbox_owner_user_id()
+
+
+def get_ingest_paths_watch_mode() -> str:
+    """``event`` (watchdog) or ``off`` — see ``INGEST_PATHS_WATCH_MODE``."""
+    raw = os.environ.get("INGEST_PATHS_WATCH_MODE", "event").strip().lower()
+    return raw if raw in ("event", "off") else "event"
+
+
+def get_ingest_paths_watch_enabled() -> bool:
+    """True when an owner is configured and watch mode is not ``off``."""
+    if get_ingest_paths_watch_mode() == "off":
+        return False
+    return bool(get_ingest_paths_owner_user_id())
+
+
+def migrate_filesystem_root_to_ingest_paths(store) -> None:
+    """Wrap legacy app_settings ``filesystem_root`` into ``ingest_paths`` JSON once."""
+    from settings_store import get_setting
+    from settings_store import put_settings
+
+    legacy = get_setting("filesystem_root", store)
+    if not legacy or not legacy.strip():
+        return
+    if get_setting("ingest_paths", store):
+        return
+    put_settings(
+        store,
+        {
+            "ingest_paths": json.dumps([legacy.strip()]),
+            "filesystem_root": "",
+        },
+    )
+
+
+def get_pending_ingest_paths(store) -> list[str] | None:
+    """Pending ingest path list from app_settings (runs legacy migration first)."""
+    from settings_store import get_setting
+
+    migrate_filesystem_root_to_ingest_paths(store)
+    raw = get_setting("ingest_paths", store)
+    if raw is None or not str(raw).strip():
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        _log.warning("Invalid ingest_paths JSON in app_settings: %r", raw[:120])
+        return None
+    if not isinstance(parsed, list):
+        return None
+    out = [str(p).strip() for p in parsed if str(p).strip()]
+    return out or None
+
+
+def host_ingest_allowed_prefixes() -> list[str]:
+    """Prefixes allowed for index>=1 host-picker paths inside the container."""
+    prefixes = list(get_ingest_paths_allowed_prefixes())
+    if Path("/host").exists():
+        host_root = str(Path("/host").resolve(strict=False))
+        if host_root not in prefixes:
+            prefixes.append(host_root)
+    return prefixes
+
+
+def host_ingest_path_to_container(index: int, host_path: str) -> str:
+    """Map stored ingest path to container path for INGEST_PATHS env."""
+    if index == 0:
+        return host_ingest_path_to_container_index0(host_path)
+    from compose_ingest_binds import extra_container_path
+
+    return extra_container_path(index)
+
+
+def host_ingest_path_to_container_index0(host_path: str) -> str:
+    """Map primary (host) ingest path to the container path used for allowlist checks.
+
+    Index-0 paths are host/OS paths from the overlay; validation uses the in-container
+    mount (``FILESYSTEM_ROOT``), not the raw host string.
+    """
+    _ = host_path  # browse/PUT may change host path before restart; mount stays until recreate
+    return os.environ.get("FILESYSTEM_ROOT", "/data").strip() or "/data"
+
+
+def resolved_path_under_prefix(path: str, prefixes: list[str] | None = None) -> bool:
+    """True when *path* is under any allowed prefix (safe prefix, not naive startswith)."""
+    resolved = Path(path).expanduser().resolve(strict=False)
+    resolved_str = str(resolved)
+    for prefix in prefixes or get_ingest_paths_allowed_prefixes():
+        root = Path(prefix).expanduser().resolve(strict=False)
+        root_str = str(root)
+        if resolved_str == root_str or resolved_str.startswith(root_str + os.sep):
+            return True
+    return False
+
+
+def validate_ingest_path_entry(path: str, *, index: int) -> None:
+    """Raise ValueError with a user-facing message when a path is invalid."""
+    stripped = path.strip()
+    if not stripped:
+        raise ValueError("Ingest path cannot be empty")
+    if " " in stripped:
+        raise ValueError(
+            "Indexed folder path cannot contain spaces (Docker Compose limitation). "
+            "Move or rename the folder to a path without spaces."
+        )
+    if ".." in Path(stripped).parts:
+        raise ValueError("Ingest path cannot contain '..' components")
+    if stripped in _FORBIDDEN_INGEST_PATHS:
+        raise ValueError(f"Ingest path {stripped!r} is not allowed")
+
+    if index == 0:
+        container_path = host_ingest_path_to_container_index0(stripped)
+        if not resolved_path_under_prefix(container_path):
+            raise ValueError(
+                f"Primary ingest path must resolve under allowed prefix(es) "
+                f"{get_ingest_paths_allowed_prefixes()!r} inside the container "
+                f"(got container path {container_path!r})"
+            )
+        return
+
+    allowed = host_ingest_allowed_prefixes()
+    if not resolved_path_under_prefix(stripped, allowed):
+        if stripped.startswith("/host/") and not Path("/host").exists():
+            raise ValueError(
+                "Host browse mount not available. Copy docker-compose.override.yml.<os> "
+                "to docker-compose.override.yml and restart the stack, then pick the folder again."
+            )
+        raise ValueError(
+            f"Ingest path must be under allowed prefix(es) {allowed!r} (got {stripped!r})"
+        )
+    if not Path(stripped).is_dir():
+        raise ValueError(
+            f"Ingest path {stripped!r} is not an existing directory inside the orchestrator"
+        )
+
+
+def build_ingest_paths_env_lists(stored_paths: list[str]) -> tuple[list[str], list[str]]:
+    """Return (host_paths_for_env, container_paths_for_env) from a stored ingest_paths list."""
+    if not stored_paths:
+        return [], []
+    host_paths = list(stored_paths)
+    container_paths = [host_ingest_path_to_container(i, p) for i, p in enumerate(stored_paths)]
+    return host_paths, container_paths
+
+
+def get_inbox_mode() -> InboxMode:
+    """``LUMOGIS_INBOX_MODE``: ``event`` | ``poll`` | ``off``; invalid values → ``off``."""
+    raw = os.environ.get("LUMOGIS_INBOX_MODE", "event").strip().lower()
+    if raw in ("event", "poll", "off"):
+        return raw  # type: ignore[return-value]
+    _log.error("Invalid LUMOGIS_INBOX_MODE=%r — coercing to off", raw)
+    return "off"
+
+
+def get_inbox_stability_delay_ms() -> int:
+    return _safe_int_env("LUMOGIS_INBOX_STABILITY_DELAY_MS", 1500, minimum=100)
+
+
+def get_inbox_poll_interval_s() -> int:
+    return _safe_int_env("LUMOGIS_INBOX_POLL_INTERVAL_S", 10, minimum=5)
+
+
+def get_inbox_max_file_bytes() -> int:
+    mb = _safe_int_env("LUMOGIS_INBOX_MAX_FILE_MB", 200, minimum=1)
+    return mb * 1024 * 1024
+
+
+def get_inbox_owner_user_id() -> str:
+    return os.environ.get("INBOX_OWNER_USER_ID", "").strip()
+
+
+def ensure_inbox_directory() -> bool:
+    """Create inbox directory once at startup when mode ≠ ``off`` and owner is set."""
+    path = get_inbox_path()
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        return True
+    except OSError as exc:
+        _log.warning("Could not create inbox directory %s: %s", path, exc)
+        return False
+
+
+# ---------------------------------------------------------------------------
+# LUM-124 — memory-as-hint (retrieved context framing + entity confidence)
+# ---------------------------------------------------------------------------
+
+_unknown_entity_halflife_types: set[str] = set()
+_correction_placeholder_invalid_warned: bool = False
+
+
+def get_memory_hint_enabled() -> bool:
+    """When true, chat ack messages remind the model that retrieved excerpts are hints."""
+    raw = os.environ.get("LUMOGIS_MEMORY_HINT_ENABLED")
+    if raw is None or str(raw).strip() == "":
+        return True
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+
+def get_memory_hint_confidence_threshold() -> float:
+    """Diagnostic threshold for future clause-level hedging (default 0.7)."""
+    return _safe_float_env("LUMOGIS_MEMORY_HINT_CONFIDENCE_THRESHOLD", 0.7)
+
+
+def get_memory_hint_stale_days() -> int:
+    """Stale-day horizon for optional diagnostics (default 30)."""
+    return _safe_int_env("LUMOGIS_MEMORY_HINT_STALE_DAYS", 30, minimum=1)
+
+
+def get_entity_half_life_days(entity_type: object) -> int:
+    """Half-life in days for exponential confidence decay by entity_type bucket."""
+    if entity_type is None or not isinstance(entity_type, str) or not entity_type.strip():
+        return _safe_int_env("LUMOGIS_ENTITY_HALFLIFE_CONCEPT_DAYS", 365, minimum=1)
+    et_key = entity_type.strip().lower()
+    if et_key == "person":
+        return _safe_int_env("LUMOGIS_ENTITY_HALFLIFE_PERSON_DAYS", 90, minimum=1)
+    if et_key == "project":
+        return _safe_int_env("LUMOGIS_ENTITY_HALFLIFE_PROJECT_DAYS", 14, minimum=1)
+    if et_key == "org":
+        return _safe_int_env("LUMOGIS_ENTITY_HALFLIFE_ORG_DAYS", 180, minimum=1)
+    if et_key == "concept":
+        return _safe_int_env("LUMOGIS_ENTITY_HALFLIFE_CONCEPT_DAYS", 365, minimum=1)
+    if et_key == "file":
+        return _safe_int_env("LUMOGIS_ENTITY_HALFLIFE_FILE_DAYS", 30, minimum=1)
+    if et_key not in _unknown_entity_halflife_types:
+        _log.debug(
+            "Unknown entity_type for half-life bucket: %r — using CONCEPT half-life",
+            entity_type,
+        )
+        _unknown_entity_halflife_types.add(et_key)
+    return _safe_int_env("LUMOGIS_ENTITY_HALFLIFE_CONCEPT_DAYS", 365, minimum=1)
+
+
+def get_memory_correction_placeholder_enabled() -> bool:
+    """Strict truthy for LUMOGIS_MEMORY_CORRECTION_PLACEHOLDER (1/true/yes/on only)."""
+    global _correction_placeholder_invalid_warned
+    raw = os.environ.get("LUMOGIS_MEMORY_CORRECTION_PLACEHOLDER")
+    if raw is None or str(raw).strip() == "":
+        return False
+    s = str(raw).strip().lower()
+    if s in ("1", "true", "yes", "on"):
+        return True
+    if s and not _correction_placeholder_invalid_warned:
+        _log.warning(
+            "Invalid LUMOGIS_MEMORY_CORRECTION_PLACEHOLDER=%r — treating as false",
+            raw,
+        )
+        _correction_placeholder_invalid_warned = True
+    return False
 
 
 def get_context_max_edges() -> int:

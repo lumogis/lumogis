@@ -5,6 +5,7 @@ ROOT="${LUMOGIS_REPO_ROOT:?}"
 export ROOT
 
 exec python3 - <<'PY'
+import json
 import os
 import re
 import subprocess
@@ -20,6 +21,24 @@ def row(category: str, name: str, status: str, message: str, remediation: str) -
         return s.replace("\t", " ").replace("\n", " ").replace("\r", " ")
 
     print(f"{category}\t{name}\t{status}\t{clean(message)}\t{clean(remediation)}")
+
+
+def row7(
+    category: str,
+    name: str,
+    status: str,
+    message: str,
+    remediation: str,
+    fix_kind: str,
+    fix_target: dict,
+) -> None:
+    def clean(s: str) -> str:
+        return s.replace("\t", " ").replace("\n", " ").replace("\r", " ")
+
+    tgt = json.dumps(fix_target, separators=(",", ":"), ensure_ascii=False)
+    if "\t" in tgt:
+        tgt = json.dumps(fix_target, ensure_ascii=True)
+    print(f"{category}\t{name}\t{status}\t{clean(message)}\t{clean(remediation)}\t{fix_kind}\t{tgt}")
 
 
 def read_dotenv(path: Path) -> dict[str, str]:
@@ -127,24 +146,30 @@ def main() -> int:
         if model_matches(want_embed, names):
             row("models", "EMBEDDING_MODEL", "ok", "embedding model present in ollama list", "")
         else:
-            row(
+            base = want_embed.split(":", 1)[0]
+            row7(
                 "models",
                 "EMBEDDING_MODEL",
                 "warn",
-                f"EMBEDDING_MODEL not matched in ollama list (prefix rule)",
-                f"docker compose exec -T ollama ollama pull {want_embed.split(':',1)[0]}",
+                "EMBEDDING_MODEL not matched in ollama list (prefix rule)",
+                f"docker compose exec -T ollama ollama pull {base}",
+                "ollama_pull_model",
+                {"model": base},
             )
 
     if want_llm.strip():
         if model_matches(want_llm, names):
             row("models", "LUMOGIS_DEFAULT_LLM", "ok", "default LLM present in ollama list", "")
         else:
-            row(
+            base = want_llm.split(":", 1)[0]
+            row7(
                 "models",
                 "LUMOGIS_DEFAULT_LLM",
                 "warn",
                 "LUMOGIS_DEFAULT_LLM not matched in ollama list (prefix rule)",
-                f"docker compose exec -T ollama ollama pull {want_llm.split(':',1)[0]}",
+                f"docker compose exec -T ollama ollama pull {base}",
+                "ollama_pull_model",
+                {"model": base},
             )
 
     return 0

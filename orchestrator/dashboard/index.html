@@ -743,37 +743,54 @@ async function loadSettings() {
     const d = await api('/settings');
     state.settings = d;
 
-    // ── Indexed files root ────────────────────────────────────────
-    const effectiveRoot = d.filesystem_root || '(not set)';
-    const pendingRoot = d.pending_filesystem_root;
-    const showRestart = pendingRoot != null && pendingRoot !== '' && pendingRoot !== d.filesystem_root;
+    // ── Indexed files roots (ingest_paths) ──────────────────────────
+    const effectivePaths = Array.isArray(d.ingest_paths) ? d.ingest_paths : [];
+    const pendingPaths = Array.isArray(d.pending_ingest_paths)
+      ? d.pending_ingest_paths
+      : (pendingPathsFromLegacy(d));
+    const editorPaths = pendingPaths.length ? pendingPaths : effectivePaths;
+    const showRestart = !!d.restart_required;
+    const paperlessBadge = d.paperless_configured
+      ? '<span style="color:var(--green);font-size:12px;margin-left:10px">Paperless connected ✓</span>'
+      : '<span style="color:var(--txt2);font-size:12px;margin-left:10px">Paperless not configured</span>';
+    const effectiveList = effectivePaths.length
+      ? effectivePaths.map(p => `<li class="mono" style="color:var(--txt2)">${esc(p)}</li>`).join('')
+      : '<li class="mono" style="color:var(--txt2)">(not set)</li>';
+    const pathRows = editorPaths.map((p, i) => `
+        <div class="form-row ingest-path-row" style="align-items:center;gap:8px;margin-bottom:6px">
+          <input type="text" class="ingest-path-input" value="${esc(p)}" style="max-width:380px"
+            placeholder="${i === 0 ? 'Host path (e.g. /home/user/Documents)' : 'Container path (e.g. /mnt/extra)'}">
+          <button type="button" onclick="removeIngestPathRow(this)" title="Remove path">× Remove</button>
+          ${i === 0 ? '<button type="button" onclick="openDirPicker()" title="Browse folders">&#128193; Browse…</button>' : ''}
+        </div>`).join('');
     setHtml('settingsRoot', `
-      <div class="card-header">Document source folder</div>
+      <div class="card-header">Document source folders ${paperlessBadge}</div>
       <div class="card-body" style="padding:16px">
         <p style="color:var(--txt2);font-size:13px;margin-bottom:12px">
-          The folder on your machine whose files are indexed for search and AI context.
-          Changing this path triggers a full re-index: the existing index is cleared and all files under the new path are re-ingested.
+          Folders whose files are indexed for search and AI context. Path 0 is a host path; additional paths
+          must exist inside the orchestrator container (add a bind mount, then enter the container path).
+          Changing paths requires a stack restart to apply.
         </p>
-        <div class="form-row" style="margin-bottom:12px">
-          <label style="min-width:120px">Current path</label>
-          <span class="mono" style="color:var(--txt2)">${esc(effectiveRoot)}</span>
+        <div class="form-row" style="margin-bottom:12px;flex-direction:column;align-items:flex-start">
+          <label style="min-width:120px;margin-bottom:6px">Active paths (host)</label>
+          <ul style="margin:0;padding-left:18px">${effectiveList}</ul>
         </div>
-        ${showRestart ? `<p class="flash" style="margin-bottom:12px">A new path has been set. Save &amp; restart to apply it.</p>` : ''}
-        <div class="form-row" style="align-items:center;gap:8px">
-          <input type="text" id="settingsRootInput" placeholder="e.g. /home/user/Documents" value="${esc(pendingRoot || d.filesystem_root || '')}" style="max-width:380px">
-          <button onclick="openDirPicker()" title="Browse folders">&#128193; Browse…</button>
+        ${showRestart ? `<p class="flash" style="margin-bottom:12px;background:#f39c12;color:#111">Restart required for path changes to take effect</p>` : ''}
+        <div id="ingestPathsList">${pathRows}</div>
+        <div class="form-row" style="align-items:center;gap:8px;margin-top:8px">
+          <input type="text" id="newIngestPathInput" placeholder="Add path…" style="max-width:380px">
+          <button type="button" onclick="addIngestPathFromInput()">+ Add path</button>
         </div>
         <p id="rootPreviewMsg" style="color:var(--orange,#e67e22);font-size:12px;margin-top:8px;min-height:1em"></p>
       </div>
     `);
 
-    // Debounced root-preview: show stale file count when root changes
-    const _rootInput = $('settingsRootInput');
-    if (_rootInput) {
+    const _firstIngestInput = document.querySelector('.ingest-path-input');
+    if (_firstIngestInput) {
       let _rootPreviewTimer = null;
-      _rootInput.addEventListener('input', () => {
+      _firstIngestInput.addEventListener('input', () => {
         clearTimeout(_rootPreviewTimer);
-        _rootPreviewTimer = setTimeout(() => fetchRootPreview(_rootInput.value.trim()), 600);
+        _rootPreviewTimer = setTimeout(() => fetchRootPreview(_firstIngestInput.value.trim()), 600);
       });
     }
 
@@ -962,13 +979,49 @@ async function saveSettings(payload) {
   }
 }
 
-function saveSettingsRoot() {
-  const val = $('settingsRootInput').value.trim();
-  if (!val) {
-    showToast('Enter a folder path first');
+function pendingPathsFromLegacy(d) {
+  if (d.pending_ingest_paths != null && d.pending_ingest_paths !== '') {
+    return Array.isArray(d.pending_ingest_paths) ? d.pending_ingest_paths : [String(d.pending_ingest_paths)];
+  }
+  return [];
+}
+
+function collectIngestPathsFromEditor() {
+  return Array.from(document.querySelectorAll('.ingest-path-input'))
+    .map(el => el.value.trim())
+    .filter(Boolean);
+}
+
+function addIngestPathFromInput() {
+  const input = $('newIngestPathInput');
+  if (!input || !input.value.trim()) {
+    showToast('Enter a path first');
     return;
   }
-  saveSettings({ filesystem_root: val });
+  const list = $('ingestPathsList');
+  if (!list) return;
+  const row = document.createElement('div');
+  row.className = 'form-row ingest-path-row';
+  row.style.cssText = 'align-items:center;gap:8px;margin-bottom:6px';
+  row.innerHTML = `
+    <input type="text" class="ingest-path-input" value="${esc(input.value.trim())}" style="max-width:380px" placeholder="Container path (e.g. /mnt/extra)">
+    <button type="button" onclick="removeIngestPathRow(this)" title="Remove path">× Remove</button>`;
+  list.appendChild(row);
+  input.value = '';
+}
+
+function removeIngestPathRow(btn) {
+  const row = btn && btn.closest ? btn.closest('.ingest-path-row') : null;
+  if (row) row.remove();
+}
+
+function saveSettingsIngestPaths() {
+  const paths = collectIngestPathsFromEditor();
+  if (!paths.length) {
+    showToast('Add at least one ingest path');
+    return;
+  }
+  saveSettings({ ingest_paths: paths });
 }
 
 function saveCloudKeys() {
@@ -1106,7 +1159,7 @@ function closeDirPicker() {
 }
 
 function selectDirPath() {
-  const input = $('settingsRootInput');
+  const input = document.querySelector('.ingest-path-input');
   if (input) {
     input.value = _dirPickerCurrentPath;
     fetchRootPreview(_dirPickerCurrentPath);
@@ -1550,7 +1603,8 @@ async function retryRestartHealthCheck() {
 }
 
 async function applyAndRestart() {
-  const newRoot = $('settingsRootInput')?.value.trim() ?? '';
+  const ingestPaths = collectIngestPathsFromEditor();
+  const newRoot = ingestPaths[0] ?? '';
   let staleMsg = '';
   try {
     const p = await api(`/settings/root-preview?new_root=${encodeURIComponent(newRoot)}`);
@@ -1564,11 +1618,7 @@ async function applyAndRestart() {
   if (statusEl) statusEl.textContent = 'Saving settings\u2026';
 
   const payload = {};
-  const rootInput = $('settingsRootInput');
-  if (rootInput) {
-    const rt = rootInput.value.trim();
-    if (rt) payload.filesystem_root = rt;
-  }
+  if (ingestPaths.length) payload.ingest_paths = ingestPaths;
 
   const modelSelect = $('settingsDefaultModel');
   if (modelSelect && modelSelect.value) payload.default_model = modelSelect.value;
