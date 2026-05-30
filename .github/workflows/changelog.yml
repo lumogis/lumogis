@@ -1,7 +1,8 @@
-# Changelog gate for product-path PRs (LUM-193).
+# Changelog gate for product-path pull requests.
 #
 # Security: keep `pull_request` (not `pull_request_target`) unless reviewed; fork PRs use the
-# default read-only token. Never interpolate `github.event.pull_request.body` directly in `run:`.
+# default read-only GITHUB_TOKEN (read-only). Never interpolate `github.event.pull_request.body`
+# directly in `run:`.
 #
 # Checkout: `dangoslen/changelog-enforcer` uses the GitHub API — `actions/checkout` omitted by design.
 #
@@ -10,8 +11,12 @@
 name: Changelog
 
 on:
+  push:
+    branches: [main, master]
+    paths:
+      - ".github/workflows/changelog.yml"
   pull_request:
-    branches: [dev, main, master]
+    branches: [main, master]
     types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
     paths:
       - "orchestrator/**"
@@ -28,17 +33,19 @@ on:
       - "branding/**"
       - "Makefile"
       - "pyproject.toml"
+      - ".github/workflows/changelog.yml"
 
 permissions:
   contents: read
   pull-requests: read
 
 concurrency:
-  group: changelog-${{ github.event.pull_request.number }}
+  group: changelog-${{ github.event_name }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
 jobs:
   changelog:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
