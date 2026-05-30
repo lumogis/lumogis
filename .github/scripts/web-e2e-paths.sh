@@ -2,7 +2,7 @@
 # LUM-60 — decide whether web-e2e CI should run stack + Playwright (path gate).
 #
 # On pull_request: should_run=true if any changed path matches the contract below.
-# On workflow_dispatch / schedule: should_run=true unconditionally.
+# On workflow_dispatch: should_run=true unconditionally.
 # On push / other events: exit non-zero (parity with security-audit-paths).
 #
 # Environment: GITHUB_OUTPUT (required), GITHUB_EVENT_NAME, and for pull_request:
@@ -12,7 +12,7 @@ set -euo pipefail
 : "${GITHUB_OUTPUT:?GITHUB_OUTPUT must be set}"
 event="${GITHUB_EVENT_NAME:?GITHUB_EVENT_NAME must be set}"
 
-if [[ "$event" == "workflow_dispatch" ]] || [[ "$event" == "schedule" ]]; then
+if [[ "$event" == "workflow_dispatch" ]]; then
   echo "should_run=true" >>"$GITHUB_OUTPUT"
   exit 0
 fi
