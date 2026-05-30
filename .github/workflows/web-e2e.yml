@@ -10,7 +10,7 @@ on:
     branches: [main, master]
   workflow_dispatch:
   schedule:
-    # Nightly UTC — exercises `dev` via explicit checkout (see job).
+    # Nightly UTC — private app checks out `dev`; public export has only `main` (ADR 037).
     - cron: "17 5 * * *"
 
 concurrency:
@@ -26,7 +26,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event_name == 'schedule' && 'dev' || github.sha }}
+          ref: ${{ github.event_name == 'schedule' && (github.repository == 'lumogis/lumogis-app' && 'dev' || 'main') || github.sha }}
 
       - name: Validate web-e2e path script syntax
         run: bash -n .github/scripts/web-e2e-paths.sh

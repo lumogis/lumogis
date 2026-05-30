@@ -33,6 +33,7 @@ jobs:
         && github.event.workflow_run.head_repository.full_name == github.repository
       )
     permissions:
+      actions: read
       attestations: read
       contents: read
       issues: write
@@ -61,6 +62,15 @@ jobs:
             } >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Download publish digests artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: publish-digests
+          run-id: ${{ steps.runmeta.outputs.run_id }}
+          github-token: ${{ github.token }}
+          repository: lumogis/lumogis
+          path: /tmp/publish-digests
+
       - name: List jobs and verify attestations
         env:
           GH_TOKEN: ${{ github.token }}
@@ -79,14 +89,19 @@ jobs:
           upsert_issue() {
             local title="$1"
             local body_file="$2"
-            gh label create attestation-failure --force 2>/dev/null || true
+            gh label create attestation-failure -R lumogis/lumogis --color d73a4a \
+              --description "LUM-276 attestation verify detective failure" --force 2>/dev/null || true
             local num
             num="$(iss_first)"
             if [[ -n "${num:-}" ]]; then
               gh issue comment "${num}" -R lumogis/lumogis -F "${body_file}"
-            else
-              gh issue create -R lumogis/lumogis --label attestation-failure --title "${title}" -F "${body_file}"
+              return 0
             fi
+            if gh issue create -R lumogis/lumogis --label attestation-failure --title "${title}" -F "${body_file}" 2>/dev/null; then
+              return 0
+            fi
+            echo "::warning::Issue create with label failed — creating issue without label"
+            gh issue create -R lumogis/lumogis --title "${title}" -F "${body_file}"
           }
 
           if ! gh api "repos/lumogis/lumogis/contents/.github/workflows/attestation-guard.yml?ref=main" --silent 2>/dev/null; then
@@ -105,25 +120,6 @@ jobs:
             exit 1
           fi
 
-          fetch_jobs() {
-            local attempt errf
-            errf="$(mktemp)"
-            for attempt in 1 2; do
-              if gh api "repos/lumogis/lumogis/actions/runs/${RUN_ID}/jobs" --paginate 2>"${errf}" \
-                | jq -s 'map(.jobs // []) | add // []' > /tmp/jobs_flat.json; then
-                rm -f "${errf}"
-                return 0
-              fi
-              if [[ ${attempt} -eq 1 ]]; then
-                sleep 30
-              fi
-            done
-            echo "::error::Failed to list jobs for run ${RUN_ID} after retry (infrastructure — not opening issue)"
-            cat "${errf}" >&2 || true
-            rm -f "${errf}"
-            return 1
-          }
-
           report_contract_failure() {
             local title="$1"
             local msg="$2"
@@ -140,25 +136,22 @@ jobs:
             exit 1
           }
 
-          if ! fetch_jobs; then
-            exit 1
+          DIGEST_FILE="/tmp/publish-digests/publish-digests.json"
+          if [[ ! -f "${DIGEST_FILE}" ]]; then
+            report_contract_failure "Attestation verify failed: missing publish-digests artifact @ ${HEAD_SHA:0:7}" \
+              "**Contract failure:** artifact \`publish-digests\` not found for run ${RUN_ID}. Re-run **Publish image** after \`record-publish-digests\` ships on \`main\`."
           fi
 
-          digest_for() {
-            local jname="$1"
-            jq -r --arg n "${jname}" '.[] | select(.name == $n) | .outputs.image_digest // empty' /tmp/jobs_flat.json | head -1
-          }
-
-          ORCH="$(digest_for publish-orchestrator)"
-          WEB="$(digest_for publish-lumogis-web)"
+          ORCH="$(jq -r '."publish-orchestrator" // empty' "${DIGEST_FILE}")"
+          WEB="$(jq -r '."publish-lumogis-web" // empty' "${DIGEST_FILE}")"
 
           if [[ -z "${ORCH}" ]]; then
             report_contract_failure "Attestation verify failed: missing digest for publish-orchestrator @ ${HEAD_SHA:0:7}" \
-              "**Contract failure:** no \`outputs.image_digest\` for job \`publish-orchestrator\` on run ${RUN_ID}."
+              "**Contract failure:** no \`publish-orchestrator\` digest in \`publish-digests\` artifact on run ${RUN_ID}."
           fi
           if [[ -z "${WEB}" ]]; then
             report_contract_failure "Attestation verify failed: missing digest for publish-lumogis-web @ ${HEAD_SHA:0:7}" \
-              "**Contract failure:** no \`outputs.image_digest\` for job \`publish-lumogis-web\` on run ${RUN_ID}."
+              "**Contract failure:** no \`publish-lumogis-web\` digest in \`publish-digests\` artifact on run ${RUN_ID}."
           fi
 
           validate_digest() {
