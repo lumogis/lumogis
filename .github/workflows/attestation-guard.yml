@@ -59,9 +59,11 @@ jobs:
 
   guard:
     needs: detect-workflow-paths
-    if: |
-      github.event_name != 'pull_request' ||
-      needs.detect-workflow-paths.outputs.workflows == 'true'
+    # always(): detect-workflow-paths is PR-only; without this, push/workflow_run skip guard via needs.
+    if: >-
+      always() &&
+      (github.event_name != 'pull_request' ||
+       needs.detect-workflow-paths.outputs.workflows == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -159,3 +161,16 @@ jobs:
 
           check_job publish-orchestrator
           check_job publish-lumogis-web
+
+          if [[ "$(yq e '.jobs["record-publish-digests"] == null' "$PUBLISH")" == "true" ]]; then
+            echo "::error::Expected job 'record-publish-digests' in $PUBLISH (attestation-verify downloads publish-digests artifact)"
+            exit 1
+          fi
+          if ! yq e '.jobs["record-publish-digests"].steps[].uses // ""' "$PUBLISH" | grep -q '^actions/upload-artifact@'; then
+            echo "::error::Job record-publish-digests must include actions/upload-artifact step (publish-digests artifact)"
+            exit 1
+          fi
+          if [[ "$(yq e '.jobs["record-publish-digests"].steps[] | select(.uses | test("^actions/upload-artifact@")) | .with.name // ""' "$PUBLISH" | head -1)" != "publish-digests" ]]; then
+            echo "::error::record-publish-digests upload-artifact must use with.name: publish-digests"
+            exit 1
+          fi

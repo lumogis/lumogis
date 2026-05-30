@@ -180,6 +180,7 @@ jobs:
       && needs.publish-lumogis-web.result == 'success'
     runs-on: ubuntu-latest
     permissions:
+      actions: write
       contents: read
     steps:
       - name: Write publish digests manifest
