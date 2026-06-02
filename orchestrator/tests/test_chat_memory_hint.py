@@ -5,10 +5,15 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
+
+import pytest
 
 from services.context_budget import allocate
 from services.context_budget import get_budget
 from services.context_budget import truncate_messages
+
+_LUMOGIS_GRAPH_ROOT = Path(__file__).resolve().parents[2] / "services" / "lumogis-graph"
 
 
 def _expected_trimmed(history: list[dict]) -> list[dict]:
@@ -113,11 +118,17 @@ def test_memory_hint_skipped_when_no_fragments(monkeypatch) -> None:
 
 
 def test_confidence_unknown_age_matches_point_six_contract() -> None:
+    if not _LUMOGIS_GRAPH_ROOT.is_dir():
+        pytest.skip(
+            "services/lumogis-graph not present "
+            "(omitted from some checkouts/export trees by policy)."
+        )
+
     from datetime import datetime
     from datetime import timezone
 
+    import plugins.graph  # noqa: F401 — wires lumogis-graph onto sys.path
     import graph.query as gq
-    import plugins.graph  # noqa: F401
 
     now = datetime(2026, 5, 1, tzinfo=timezone.utc)
     row = {
