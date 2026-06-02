@@ -8,7 +8,6 @@ import math
 from pathlib import Path
 
 import pytest
-
 from services.context_budget import allocate
 from services.context_budget import get_budget
 from services.context_budget import truncate_messages
@@ -127,8 +126,8 @@ def test_confidence_unknown_age_matches_point_six_contract() -> None:
     from datetime import datetime
     from datetime import timezone
 
-    import plugins.graph  # noqa: F401 — wires lumogis-graph onto sys.path
     import graph.query as gq
+    import plugins.graph  # noqa: F401 — wires lumogis-graph onto sys.path
 
     now = datetime(2026, 5, 1, tzinfo=timezone.utc)
     row = {
