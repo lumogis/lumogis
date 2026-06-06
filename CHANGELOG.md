@@ -11,6 +11,23 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.7.1] — 2026-06-06
+
+### Added
+
+- **`CONTRIBUTING-BEGINNERS.md`** in the public AGPL tree — step-by-step onboarding for first-time contributors, including a copy-paste agent prompt; root copy is produced by the export pipeline from `docs/public-export/`.
+- **Persona A distribution documentation** — Persona A/B/C matrix in the reference manual, Lumogis Search install how-to for Docker-track self-hosters, and cross-links from the root README and capabilities overview.
+
+### Changed
+
+- **`CONTRIBUTING.md` extractor how-to** — aligned with live `@extractor(".ext")` registration in Core (canonical example: `orchestrator/adapters/pdf_extractor.py`).
+
+### Fixed
+
+- **Conversation transcript sync** — `PUT /api/v1/conversations/{id}` upserts the `web_conversations` header for client-minted thread IDs so debounced message sync no longer fails silently; purged conversations stay blocked after hard delete.
+
+---
+
 ## [0.7.0] — 2026-06-06
 
 ### Added

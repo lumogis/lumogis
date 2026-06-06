@@ -47,9 +47,9 @@ from models.api_v1 import AdminDiagnosticsResponse
 from models.api_v1 import StackStatusResponse
 
 from services import admin_diagnostics as admin_diagnostics_svc
-from services import stack_status as stack_status_svc
 from services import connector_credentials as ccs
 from services import credential_tiers as cts
+from services import stack_status as stack_status_svc
 
 _log = logging.getLogger(__name__)
 

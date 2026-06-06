@@ -24,9 +24,7 @@ def _repo_has_git() -> bool:
 # lum303_paths array + comment block (LUM-303).
 # Canonical Search overlay CI export contract path — duplicate exactly
 # scripts/check-public-export.sh LUM-433 comment block.
-SEARCH_OVERLAY_CI_CANONICAL_PATHS: tuple[str, ...] = (
-    ".github/workflows/search-overlay-build.yml",
-)
+SEARCH_OVERLAY_CI_CANONICAL_PATHS: tuple[str, ...] = (".github/workflows/search-overlay-build.yml",)
 
 LUM303_CANONICAL_OPENAPI_PATHS: tuple[str, ...] = (
     ".github/workflows/ci.yml",
@@ -108,10 +106,15 @@ jobs:
 
 
 def _write_minimal_public_agent_docs(tmp_path: Path) -> None:
-    """LUM-376 stubs — must avoid forbidden maintainer patterns in check-public-export.sh."""
+    """LUM-376 / LUM-378 stubs — must avoid forbidden maintainer patterns in check-public-export.sh."""
     (tmp_path / "AGENTS.md").write_text(
         "# SPDX-License-Identifier: AGPL-3.0-only\n"
         "Public agent orientation stub for export contract tests.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "CONTRIBUTING-BEGINNERS.md").write_text(
+        "# SPDX-License-Identifier: AGPL-3.0-only\n"
+        "Beginners contributing stub for export contract tests.\n",
         encoding="utf-8",
     )
     orient = tmp_path / "docs" / "LUMOGIS_AGENT_ORIENTATION.md"
@@ -360,5 +363,37 @@ def test_export_tree_has_sanitized_public_agent_docs(tmp_path):
     contrib = (out / "CONTRIBUTING.md").read_text(encoding="utf-8")
     assert "LUMOGIS_AGENT_ORIENTATION.md" in contrib
     assert "LUMOGIS_CONTEXT_PACK.md" not in contrib
+    assert (out / "CONTRIBUTING-BEGINNERS.md").is_file()
+    beginners = (out / "CONTRIBUTING-BEGINNERS.md").read_text(encoding="utf-8")
+    beginners_lower = beginners.lower()
+    assert "lumogis-devtools" not in beginners
+    assert "LUMOGIS_CONTEXT_PACK" not in beginners
+    assert "linear.app" not in beginners_lower
+    assert "githubusercontent" not in beginners_lower
     check = _run_check(out)
     assert check.returncode == 0, check.stdout + check.stderr
+
+
+def test_check_public_export_rejects_beginners_leakage(tmp_path):
+    """LUM-378: forbidden maintainer token in exported beginners doc fails check."""
+    if not _repo_has_git():
+        pytest.skip("needs git checkout")
+    out = tmp_path / "export"
+    export_script = REPO / "scripts" / "create-upstream-export-tree.sh"
+    proc = subprocess.run(
+        ["bash", str(export_script), str(out)],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO),
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    beginners = out / "CONTRIBUTING-BEGINNERS.md"
+    assert beginners.is_file()
+    beginners.write_text(
+        beginners.read_text(encoding="utf-8") + "\nLUMOGIS_CONTEXT_PACK\n",
+        encoding="utf-8",
+    )
+    check = _run_check(out)
+    assert check.returncode != 0, check.stdout + check.stderr
+    combined = (check.stdout + check.stderr).lower()
+    assert "lum-378" in combined or "beginners" in combined

@@ -5,14 +5,12 @@
 from __future__ import annotations
 
 import time
-from unittest.mock import MagicMock
-from unittest.mock import patch
 
 import pytest
-
 from models.api_v1 import AdminDiagnosticsStoreItem
 from models.api_v1 import StackStatusServiceItem
 from models.api_v1 import StackStatusStorageItem
+
 from services import stack_status as svc
 
 

@@ -12,9 +12,9 @@ from unittest.mock import MagicMock
 from unittest.mock import patch
 
 import pytest
+from models.ingest import IngestResult
 
 import config
-from models.ingest import IngestResult
 from services import ingest as ingest_mod
 
 

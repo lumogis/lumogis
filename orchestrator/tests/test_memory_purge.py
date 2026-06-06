@@ -86,7 +86,9 @@ def test_purge_noop_graph_when_disabled(sessions_ms, mock_vector_store, monkeypa
     assert result.graph_deleted is True
 
 
-def test_purge_does_not_delete_note_conversation_points(sessions_ms, mock_vector_store, monkeypatch):
+def test_purge_does_not_delete_note_conversation_points(
+    sessions_ms, mock_vector_store, monkeypatch
+):
     monkeypatch.setitem(config._instances, "graph_store", None)
     sid = str(uuid.uuid4())
     note_pid = note_conversation_point_id("alice", str(uuid.uuid4()))

@@ -109,6 +109,12 @@ Lumogis is reachable on your local network by default (**http://localhost/** or 
 
 ---
 
+## Lumogis Search and personas
+
+**Lumogis Search** is the global-hotkey memory-search overlay for your household Core. **Persona A** (Docker Compose on the same machine → `http://localhost`) and **Persona B** (household member → operator URL) ship the **same** client-only installer; see the [persona distribution matrix](docs/LUMOGIS_REFERENCE_MANUAL.md#persona-a--b--c--distribution-matrix) and [Persona A install steps](clients/lumogis-search/README.md#persona-a--docker-track-localhost).
+
+---
+
 ## Prerequisites · hardware hints
 
 **Prerequisites:** Git + Docker Desktop (see **`.env.example`** for platform notes). End users do **not** need Python or Make.
@@ -150,6 +156,8 @@ Operational truth lives in **`.env.example`** (committed) and **`orchestrator/co
 ---
 
 ## Contributing
+
+First-time contributors: start with **[CONTRIBUTING-BEGINNERS.md](CONTRIBUTING-BEGINNERS.md)** (human steps + copy-paste agent prompt).
 
 See **[CONTRIBUTING.md](CONTRIBUTING.md)** — code boundaries (“services never import concrete adapters”), `make lint` / `make test`, and Docker-based wrappers in **`Makefile`**.
 

@@ -11,11 +11,10 @@ import threading
 import time
 from datetime import datetime
 from datetime import timezone
-from typing import Any, Literal
+from typing import Any
+from typing import Literal
 
 import httpx
-
-import config
 import ollama_client
 from models.api_v1 import AdminDiagnosticsStoreItem
 from models.api_v1 import AdminDiagnosticsWarning
@@ -26,6 +25,8 @@ from models.api_v1 import StackStatusServiceItem
 from models.api_v1 import StackStatusStorageItem
 from services.admin_diagnostics import _graph_store_row
 from services.admin_diagnostics import _store_row
+
+import config
 
 _log = logging.getLogger(__name__)
 
@@ -105,7 +106,9 @@ def _sanitize_runtime_detail(row: dict[str, Any]) -> dict[str, str | int | None]
     health = row.get("Health") or row.get("health")
     if health is not None:
         out["health"] = str(health)
-    rc = row.get("RestartCount") if row.get("RestartCount") is not None else row.get("restart_count")
+    rc = (
+        row.get("RestartCount") if row.get("RestartCount") is not None else row.get("restart_count")
+    )
     if rc is not None:
         try:
             out["restart_count"] = int(rc)
@@ -143,8 +146,10 @@ def _merge_compose_and_ping(
 
     if compose_row is None:
         if ping_status in ("unreachable", "unknown"):
-            return "down" if ping_status == "unreachable" else "unknown", runtime_detail, (
-                "Store unreachable and compose status unavailable."
+            return (
+                "down" if ping_status == "unreachable" else "unknown",
+                runtime_detail,
+                ("Store unreachable and compose status unavailable."),
             )
         if ping_status == "ok":
             return "degraded", runtime_detail, "Reachable via ping; compose status unavailable."
@@ -437,7 +442,9 @@ def _compute_overall(
     if any(s.status == "critical" for s in storage):
         return "degraded"
 
-    if any(s.state not in ("healthy", "not_configured") for s in services if s.id in _KNOWN_COMPOSE_IDS):
+    if any(
+        s.state not in ("healthy", "not_configured") for s in services if s.id in _KNOWN_COMPOSE_IDS
+    ):
         return "degraded"
 
     return "ok"

@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
-
 from models.api_v1 import StackStatusResponse
 
 
@@ -85,6 +84,7 @@ def test_stack_status_200_admin_no_secret_keys(client, monkeypatch) -> None:
 def test_stack_status_postgres_down_returns_200(client, monkeypatch) -> None:
     from models.api_v1 import StackStatusMeta
     from models.api_v1 import StackStatusServiceItem
+
     from services import stack_status as stack_status_svc
 
     monkeypatch.setattr(

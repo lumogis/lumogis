@@ -1,6 +1,6 @@
 # Lumogis agent orientation
 
-Concise onboarding for AI assistants and contributors working in this repository. Summarises **committed evidence** in the tree — not a live external backlog.
+Concise onboarding for AI assistants and contributors working in the **`lumogis/lumogis`** public tree. Summarises **committed evidence** in the checkout — not a live external backlog.
 
 ---
 
@@ -8,8 +8,9 @@ Concise onboarding for AI assistants and contributors working in this repository
 
 | Field | Value |
 | --- | --- |
-| **Date** | **2026-06-04** |
-| **Evidence consulted** | `README.md`, `ARCHITECTURE.md`, `CONTRIBUTING.md`, `Makefile`, `docs/testing/automated-test-strategy.md`, `docs/testing/README.md`, `CHANGELOG.md` [Unreleased] |
+| **Date** | **2026-06-06** |
+| **Branch / commit** | **`dev`** @ **`d5eb41031`** (maintainer product repo at refresh) |
+| **Evidence consulted** | `README.md`, `ARCHITECTURE.md`, `CONTRIBUTING.md`, `CONTRIBUTING-BEGINNERS.md` (export template), `Makefile`, `docs/testing/automated-test-strategy.md`, `docs/testing/README.md`, `CHANGELOG.md` [Unreleased], `scripts/debug/README.md` |
 
 ---
 
@@ -29,6 +30,7 @@ Published container images (`ghcr.io/lumogis/lumogis-orchestrator`, `ghcr.io/lum
 
 | Path | Role |
 | --- | --- |
+| `CONTRIBUTING-BEGINNERS.md` | First-time contributor steps + copy-paste agent prompt |
 | `orchestrator/` | Core — APIs, services, plugins, actions, signals |
 | `clients/lumogis-web/` | Lumogis Web SPA |
 | `clients/lumogis-search/` | Lumogis Search desktop overlay (Tauri 2) |
@@ -52,6 +54,7 @@ Published container images (`ghcr.io/lumogis/lumogis-orchestrator`, `ghcr.io/lum
 - **Tool catalog** read-only observation vs execution — `orchestrator/services/unified_tools.py`, **ADR 034** (agent harness terminology).
 - **MCP** = external interoperability layer — `orchestrator/mcp_server.py`, not the internal backbone.
 - **Context building** — hybrid entity selection and budgets — **ADR 051**, env vars in `config/test.env.example`.
+- **Open-core export** — premium KG and private-only trees omitted from this checkout — **ADR 042**.
 
 For operator deployment: [`docs/deployment/quickstart.md`](deployment/quickstart.md), [`README.md`](../README.md).
 
@@ -77,12 +80,13 @@ Full strategy: [`docs/testing/automated-test-strategy.md`](testing/automated-tes
 
 ## How to work as an agent here
 
-1. Read **`AGENTS.md`** (guardrails) and this file (orientation).
-2. Read **`ARCHITECTURE.md`** before structural code changes.
-3. Prefer **small, scoped** diffs; match existing style in touched modules.
-4. Run tests that match touched paths; paste summaries in PRs.
-5. For security-sensitive behaviour, read **`SECURITY.md`** and relevant ADRs before proposing changes.
-6. Use **GitHub Issues** for follow-ups.
+1. **First-time contributors:** start with **`CONTRIBUTING-BEGINNERS.md`** (human steps + fenced paste prompt).
+2. Read **`AGENTS.md`** (guardrails) and this file (orientation).
+3. Read **`ARCHITECTURE.md`** before structural code changes.
+4. Prefer **small, scoped** diffs; match existing style in touched modules.
+5. Run tests that match touched paths; paste summaries in PRs.
+6. For security-sensitive behaviour, read **`SECURITY.md`** and relevant ADRs before proposing changes.
+7. Use **GitHub Issues** for follow-ups.
 
 ---
 

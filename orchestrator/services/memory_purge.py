@@ -66,8 +66,7 @@ def is_conversation_purged(*, user_id: str, session_id: str) -> bool:
     # SCOPE-EXEMPT: purged_conversations has no scope column — tombstone rows
     # are owner-keyed (user_id, conversation_id) for purge coordination only.
     row = ms.fetch_one(
-        "SELECT 1 FROM purged_conversations "
-        "WHERE user_id = %s AND conversation_id = %s::uuid",
+        "SELECT 1 FROM purged_conversations WHERE user_id = %s AND conversation_id = %s::uuid",
         (user_id, session_id),
     )
     return row is not None
@@ -121,7 +120,8 @@ def purge_session_memory(*, user_id: str, session_id: str) -> PurgeResult:
                 (session_id,),
             )
             ms.execute(
-                "DELETE FROM sessions WHERE session_id = %s AND user_id = %s AND scope = 'personal'",
+                "DELETE FROM sessions WHERE session_id = %s AND user_id = %s "
+                "AND scope = 'personal'",
                 (session_id, user_id),
             )
 

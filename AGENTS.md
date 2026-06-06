@@ -8,11 +8,12 @@ It applies to this repository checkout.
 
 ## Read first
 
-1. **[`docs/LUMOGIS_AGENT_ORIENTATION.md`](docs/LUMOGIS_AGENT_ORIENTATION.md)** — concise architecture and repo map (key paths, common commands).
-2. **[`ARCHITECTURE.md`](ARCHITECTURE.md)** — how Core, services, plugins, and clients fit together.
-3. **[`CONTRIBUTING.md`](CONTRIBUTING.md)** — setup, tests, PR expectations, export/CI notes.
-4. **[`docs/capabilities.md`](docs/capabilities.md)** — what the platform can do at a feature level.
-5. **[`docs/decisions/`](docs/decisions/)** — finalised architecture decisions (ADRs).
+1. **[`CONTRIBUTING-BEGINNERS.md`](CONTRIBUTING-BEGINNERS.md)** — first-time contributors: human setup steps + copy-paste agent prompt.
+2. **[`docs/LUMOGIS_AGENT_ORIENTATION.md`](docs/LUMOGIS_AGENT_ORIENTATION.md)** — concise architecture and repo map (key paths, common commands).
+3. **[`ARCHITECTURE.md`](ARCHITECTURE.md)** — how Core, services, plugins, and clients fit together.
+4. **[`CONTRIBUTING.md`](CONTRIBUTING.md)** — setup, tests, PR expectations, export/CI notes.
+5. **[`docs/capabilities.md`](docs/capabilities.md)** — what the platform can do at a feature level.
+6. **[`docs/decisions/`](docs/decisions/)** — finalised architecture decisions (ADRs).
 
 Do not duplicate long prose from those files into issues or comments; link paths instead.
 
@@ -23,6 +24,10 @@ Do not duplicate long prose from those files into issues or comments; link paths
 - **Lumogis Web** = first-party SPA ([`clients/lumogis-web/`](clients/lumogis-web/)), same-origin behind Caddy.
 - **Lumogis Search** = Tauri 2 desktop memory-search overlay ([`clients/lumogis-search/`](clients/lumogis-search/)), connecting to your household server over HTTP.
 - **Default stack** = Docker Compose ([`docker-compose.yml`](docker-compose.yml)); optional profiles and overlays documented in [`README.md`](README.md).
+
+## Open-core boundary
+
+This repository is the **public AGPL export** of Lumogis Core, Lumogis Web, Lumogis Search, tests, and operator docs. **Premium Knowledge Graph implementation**, private appliance bundles, and maintainer-only paths are **not** in this tree — see [`docs/decisions/042-kg-public-private-export-boundary.md`](docs/decisions/042-kg-public-private-export-boundary.md). Do not document or depend on paths that are absent from your checkout.
 
 ## Boundaries (agents)
 

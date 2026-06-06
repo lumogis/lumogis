@@ -14,7 +14,6 @@ from datetime import timezone
 import jwt
 import pytest
 from fastapi.testclient import TestClient
-from tests.test_auth_phase1 import FakeUsersStore
 from tests.test_me_onboarding_routes import _OnboardingFakeStore
 
 
@@ -46,10 +45,7 @@ class _WowFakeStore(_OnboardingFakeStore):
             if row is None:
                 return None
             return {"wow_dismissed_at": row.get("wow_dismissed_at")}
-        if (
-            "update users set wow_dismissed_at" in q
-            and "returning wow_dismissed_at" in q
-        ):
+        if "update users set wow_dismissed_at" in q and "returning wow_dismissed_at" in q:
             uid = str(p[0])
             row = self.rows.get(uid)
             if row is None:

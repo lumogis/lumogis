@@ -33,7 +33,9 @@ def client(sessions_ms: SessionsMemoryMetadataStore):
         yield c
 
 
-def _insert_session(store: SessionsMemoryMetadataStore, *, user_id: str = "default", scope: str = "personal"):
+def _insert_session(
+    store: SessionsMemoryMetadataStore, *, user_id: str = "default", scope: str = "personal"
+):
     sid = str(uuid.uuid4())
     store.sessions[sid] = {
         "session_id": uuid.UUID(sid),
@@ -90,7 +92,10 @@ def test_delete_removes_published_from_projection_rows(client, sessions_ms, monk
         "published_from": uuid.UUID(sid),
         "updated_at": datetime.now(timezone.utc),
     }
-    with patch("services.conversations.purge_session_memory", return_value=PurgeResult(postgres_deleted=True, qdrant_deleted=True, graph_deleted=True)):
+    with patch(
+        "services.conversations.purge_session_memory",
+        return_value=PurgeResult(postgres_deleted=True, qdrant_deleted=True, graph_deleted=True),
+    ):
         resp = client.delete(f"/api/v1/conversations/{sid}")
     assert resp.status_code == 200
 
@@ -131,11 +136,15 @@ def test_list_defaults_to_personal_scope_only(client, sessions_ms):
     ids = {c["conversation_id"] for c in resp.json()["conversations"]}
     assert personal in ids
     assert all(
-        sessions_ms.sessions[cid]["scope"] == "personal" for cid in ids if cid in sessions_ms.sessions
+        sessions_ms.sessions[cid]["scope"] == "personal"
+        for cid in ids
+        if cid in sessions_ms.sessions
     )
 
 
-def test_delete_returns_partial_true_when_qdrant_fails_after_retries(client, sessions_ms, monkeypatch):
+def test_delete_returns_partial_true_when_qdrant_fails_after_retries(
+    client, sessions_ms, monkeypatch
+):
     sid = _insert_session(sessions_ms)
     partial = PurgeResult(postgres_deleted=True, qdrant_deleted=False, graph_deleted=True)
     with patch("services.conversations.purge_session_memory", return_value=partial):
@@ -147,7 +156,7 @@ def test_delete_returns_partial_true_when_qdrant_fails_after_retries(client, ses
 def test_delete_partial_purge_retry_succeeds(client, sessions_ms, monkeypatch):
     sid = _insert_session(sessions_ms)
     partial = PurgeResult(postgres_deleted=True, qdrant_deleted=False, graph_deleted=True)
-    with patch("services.conversations.purge_session_memory", return_value=partial) as mock_purge:
+    with patch("services.conversations.purge_session_memory", return_value=partial):
         first = client.delete(f"/api/v1/conversations/{sid}")
     assert first.status_code == 200
     assert first.json()["partial"] is True
@@ -178,6 +187,56 @@ def test_continue_seed_uses_user_role_not_system(client, sessions_ms):
 def test_malformed_uuid_returns_422(client):
     resp = client.get("/api/v1/conversations/not-valid")
     assert resp.status_code == 422
+
+
+def test_put_upserts_web_header_before_session_row(client, sessions_ms):
+    """Client-minted thread ids must create web_conversations via PUT (LUM-162 slice 2)."""
+    sid = str(uuid.uuid4())
+    resp = client.put(
+        f"/api/v1/conversations/{sid}",
+        json={"title": "Active chat", "model": "test-model"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["conversation_id"] == sid
+    assert body["title"] == "Active chat"
+    key = f"{sid}:default"
+    assert key in sessions_ms.web_conversations
+
+
+def test_put_then_append_message_persists_transcript(client, sessions_ms):
+    sid = str(uuid.uuid4())
+    assert client.put(
+        f"/api/v1/conversations/{sid}",
+        json={"title": "Chat", "model": "m"},
+    ).status_code == 200
+    mid = str(uuid.uuid4())
+    resp = client.post(
+        f"/api/v1/conversations/{sid}/messages",
+        json={
+            "message_id": mid,
+            "role": "user",
+            "content": "hello world",
+            "model": "m",
+        },
+    )
+    assert resp.status_code == 201
+    assert resp.json()["content"] == "hello world"
+    assert mid in sessions_ms.web_messages
+
+
+def test_put_and_append_blocked_after_purge_tombstone(client, sessions_ms):
+    sid = str(uuid.uuid4())
+    sessions_ms.purged_conversations.add(("default", sid))
+    assert client.put(f"/api/v1/conversations/{sid}", json={"title": "x"}).status_code == 404
+    mid = str(uuid.uuid4())
+    assert (
+        client.post(
+            f"/api/v1/conversations/{sid}/messages",
+            json={"message_id": mid, "role": "user", "content": "nope"},
+        ).status_code
+        == 404
+    )
 
 
 def test_session_end_to_list_e2e(client, sessions_ms, monkeypatch):

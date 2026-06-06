@@ -337,7 +337,7 @@ Stack add-ons add containers. Code extensions add capability to the orchestrator
 
 | What you want to add | Where | Protocol |
 |---|---|---|
-| New file type extractor | `adapters/` | `extract_<extension>(path) -> str` function |
+| New file type extractor | `adapters/` | `@extractor(".ext")` on `def extract_…(path: str) -> str` — auto-imported by `get_extractors()`; no Protocol |
 | New vector store | `adapters/` | `VectorStore` in `ports/vector_store.py` |
 | New embedding model | `adapters/` | `Embedder` in `ports/embedder.py` |
 | New LLM provider | `adapters/` | `LLMProvider` in `ports/llm_provider.py` |
@@ -346,7 +346,7 @@ Stack add-ons add containers. Code extensions add capability to the orchestrator
 | New action handler | `actions/handlers/` | `ActionHandler` in `ports/action_handler.py` |
 | New optional feature | `plugins/<name>/` | Any hooks, routes, and tools you need |
 
-Every port is a Python `Protocol` in `orchestrator/ports/`. Read the port, implement the interface, register your adapter in `config.py`. For plugins, drop a directory into `orchestrator/plugins/` with an `__init__.py` — the loader discovers and mounts it at startup.
+Every port is a Python `Protocol` in `orchestrator/ports/`. Read the port, implement the interface, register your adapter in `config.py`. **Extractors are the exception** — use `@extractor` in the adapter module; `get_extractors()` imports `adapters/` automatically (no `config.py` factory entry). For plugins, drop a directory into `orchestrator/plugins/` with an `__init__.py` — the loader discovers and mounts it at startup.
 
 The same design principle runs from Docker all the way through the Python architecture: new capability is added by dropping things in, never by modifying the core.
 

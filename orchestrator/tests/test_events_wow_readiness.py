@@ -8,7 +8,6 @@ import time
 from unittest.mock import patch
 
 import pytest
-
 from routes import events as events_mod
 
 

@@ -579,9 +579,9 @@ class TestEntitiesExtractRoute:
 class TestSessionEndTriggersExtraction:
     @patch("routes.data.enqueue", return_value=1)
     def test_session_end_enqueues_with_messages_in_payload(self, mock_enqueue):
-        import main
         import uuid
 
+        import main
         from fastapi.testclient import TestClient
 
         session_id = str(uuid.uuid4())
@@ -608,9 +608,9 @@ class TestSessionEndTriggersExtraction:
 
     @patch("routes.data.enqueue", return_value=1)
     def test_session_end_enqueues_session_id_for_downstream_evidence(self, mock_enqueue):
-        import main
         import uuid
 
+        import main
         from fastapi.testclient import TestClient
 
         session_id = str(uuid.uuid4())

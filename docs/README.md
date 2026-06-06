@@ -1,8 +1,8 @@
 # Documentation Index
 
 > Status: Active
-> Last reviewed: 2026-06-04
-> Verified against commit: 0380ce81a
+> Last reviewed: 2026-06-06
+> Verified against commit: 4c22088
 > Owner: Docs Librarian
 
 ## Canonical docs
@@ -72,7 +72,7 @@
 
 ## Lumogis Search (desktop overlay)
 
-- [`../clients/lumogis-search/README.md`](../clients/lumogis-search/README.md) — AGPL Tauri 2 overlay for memory search against your household server
+- [`../clients/lumogis-search/README.md`](../clients/lumogis-search/README.md) — AGPL Tauri 2 overlay for memory search against your household server (**ADR 080**–**082**: export, boundary, public CI)
 
 ## Extending and contributing
 

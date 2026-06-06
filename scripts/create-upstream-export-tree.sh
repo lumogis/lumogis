@@ -51,11 +51,12 @@ done <"$STRIP_LIST"
 # LUM-376 — substitute public-safe agent orientation (sources live under docs/public-export/)
 PUBLIC_EXPORT_SRC="$ROOT/docs/public-export"
 [[ -d "$PUBLIC_EXPORT_SRC" ]] || die "missing public export templates: $PUBLIC_EXPORT_SRC"
-for required in AGENTS.md LUMOGIS_AGENT_ORIENTATION.md contributing-ai-agents.md; do
+for required in AGENTS.md LUMOGIS_AGENT_ORIENTATION.md contributing-ai-agents.md CONTRIBUTING-BEGINNERS.md; do
   [[ -f "$PUBLIC_EXPORT_SRC/$required" ]] || die "missing $PUBLIC_EXPORT_SRC/$required"
 done
 
 cp "$PUBLIC_EXPORT_SRC/AGENTS.md" "$OUT/AGENTS.md"
+cp "$PUBLIC_EXPORT_SRC/CONTRIBUTING-BEGINNERS.md" "$OUT/CONTRIBUTING-BEGINNERS.md"
 mkdir -p "$OUT/docs"
 cp "$PUBLIC_EXPORT_SRC/LUMOGIS_AGENT_ORIENTATION.md" "$OUT/docs/LUMOGIS_AGENT_ORIENTATION.md"
 

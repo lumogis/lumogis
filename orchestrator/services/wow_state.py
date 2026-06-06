@@ -12,9 +12,10 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-import config
 from auth import UserContext
 from visibility import visible_filter
+
+import config
 
 _STAGED_CLAUSE = "AND (is_staged IS NOT TRUE)"
 

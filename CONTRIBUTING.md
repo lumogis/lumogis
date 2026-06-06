@@ -6,11 +6,13 @@ For architecture internals, read [ARCHITECTURE.md](ARCHITECTURE.md) first.
 
 All participants must follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
+**First-time contributors:** start with [CONTRIBUTING-BEGINNERS.md](CONTRIBUTING-BEGINNERS.md) (human steps + copy-paste agent prompt).
+
 ## AI assistants and IDE agents
 
-For work in **this public repository**, read [AGENTS.md](AGENTS.md) and [docs/LUMOGIS_AGENT_ORIENTATION.md](docs/LUMOGIS_AGENT_ORIENTATION.md) first. Those files describe layout, open-core boundaries, and verification for the AGPL tree only.
+For work in **this public repository**, start with **[CONTRIBUTING-BEGINNERS.md](CONTRIBUTING-BEGINNERS.md)** if you are new, then read [AGENTS.md](AGENTS.md) and [docs/LUMOGIS_AGENT_ORIENTATION.md](docs/LUMOGIS_AGENT_ORIENTATION.md). Those files describe layout, open-core boundaries, and verification for the AGPL tree only.
 
-For ChatGPT or Claude outside the repository, add **`docs/LUMOGIS_AGENT_ORIENTATION.md`** (and **`ARCHITECTURE.md`**) to project knowledge — not private maintainer context packs or internal backlog exports.
+For ChatGPT or Claude outside the repository, add **`CONTRIBUTING-BEGINNERS.md`**, **`docs/LUMOGIS_AGENT_ORIENTATION.md`**, and **`ARCHITECTURE.md`** to project knowledge — not private maintainer context packs or internal backlog exports.
 
 ## Public CI parity (OpenAPI)
 
@@ -19,6 +21,8 @@ The public AGPL tree is produced by export (`scripts/create-upstream-export-tree
 **Do not** add any of the paths asserted by **`scripts/check-public-export.sh`** (search for `Required presence (LUM-303)` and the numbered path comment block) to **`scripts/public-export-strip-list.txt`** without updating that assertion, **`orchestrator/tests/test_check_public_export_script.py`**, and this section in the **same** change — otherwise **`make verify-public-rc`** / **`scripts/check-public-export.sh`** will fail on purpose.
 
 **Search overlay CI (LUM-433):** the public export must include **`.github/workflows/search-overlay-build.yml`** (four-target Tauri matrix for **`clients/lumogis-search/`**, unsigned v1 installers, **`search-v*`** tag releases on **`lumogis/lumogis`** only). **Do not** add that workflow path to **`scripts/public-export-strip-list.txt`** without updating **`scripts/check-public-export.sh`** (search for `Required presence (LUM-433)`), **`orchestrator/tests/test_check_public_export_script.py`**, and this section in the **same** change.
+
+**Beginners onboarding (LUM-378):** the public export must include **`CONTRIBUTING-BEGINNERS.md`** at the repository root (copied from **`docs/public-export/CONTRIBUTING-BEGINNERS.md`**). **Do not** add that path to **`scripts/public-export-strip-list.txt`** without updating **`scripts/check-public-export.sh`** (search for `Required presence (LUM-378)`), **`orchestrator/tests/test_check_public_export_script.py`**, and this section in the **same** change.
 
 Architecture context: **`docs/decisions/037-ghcr-publish-public-repo-only.md`** (export and public CI); **`docs/decisions/053-lum-94-ci-openapi-codegen-check-without-live-orchestrator.md`** (OpenAPI gate); **[ADR 061 — LUM-303](docs/decisions/061-lum-303-public-ci-parity-openapi-check-via-export.md)** (export presence contract).
 
@@ -234,11 +238,15 @@ Uses [scripts/check-changelog-touched.sh](scripts/check-changelog-touched.sh) (d
 
 ## How to write a new extractor
 
-Extractors are auto-discovered by file extension. Add one file to `adapters/`:
+Ingest extractors live under `orchestrator/adapters/`. Register file extensions with the **`@extractor(".ext")`** decorator from `config` (`orchestrator/config.py` — `extractor()` and `get_extractors()` auto-import adapter modules). No factory branches, no Protocol, and no config wiring changes.
 
 ```python
 # orchestrator/adapters/epub_extractor.py
 
+from config import extractor
+
+
+@extractor(".epub")
 def extract_epub(path: str) -> str:
     """Extract plain text from an EPUB file."""
     import ebooklib
@@ -253,7 +261,7 @@ def extract_epub(path: str) -> str:
     return "\n\n".join(chapters)
 ```
 
-That is the entire change. The function name `extract_<extension>` is the registration mechanism. No factory branches, no Protocol, no config changes. The ingest pipeline picks it up automatically.
+That is the entire change for a new file type. The ingest pipeline picks up decorated extractors automatically.
 
 Add any new dependencies to `orchestrator/requirements.txt`.
 

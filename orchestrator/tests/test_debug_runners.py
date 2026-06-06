@@ -10,8 +10,6 @@ import subprocess
 import textwrap
 from pathlib import Path
 
-import pytest
-
 REPO = Path(__file__).resolve().parents[2]
 DEBUG = REPO / "scripts" / "debug"
 
@@ -109,7 +107,7 @@ def test_rust_skips_when_cargo_absent(tmp_path: Path) -> None:
     fake = tmp_path / "fake-repo"
     search = fake / "clients" / "lumogis-search" / "src-tauri"
     search.mkdir(parents=True)
-    (search / "Cargo.toml").write_text("[package]\nname = \"stub\"\n", encoding="utf-8")
+    (search / "Cargo.toml").write_text('[package]\nname = "stub"\n', encoding="utf-8")
     dbg = fake / "scripts" / "debug"
     dbg.mkdir(parents=True)
     for name in ("_common.sh", "rust.sh"):

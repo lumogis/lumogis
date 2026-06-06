@@ -67,7 +67,7 @@ class SessionsMemoryMetadataStore:
             return
 
         if q.startswith("INSERT INTO web_conversations"):
-            cid, uid, title, model, _scope = p
+            cid, uid, title, model = p[:4]
             key = f"{cid}:{uid}"
             existing = self.web_conversations.get(key)
             self.web_conversations[key] = {
@@ -133,6 +133,13 @@ class SessionsMemoryMetadataStore:
         q = " ".join(query.split())
         p = params or ()
 
+        if "FROM sessions" in q and "SELECT summary" in q:
+            sid, uid = str(p[0]), str(p[1])
+            row = self.sessions.get(sid)
+            if row and row["user_id"] == uid:
+                return {"summary": row.get("summary", "")}
+            return None
+
         if "FROM sessions" in q and "session_id = %s" in q and "scope = 'personal'" in q:
             sid, uid = str(p[0]), str(p[1])
             row = self.sessions.get(sid)
@@ -164,6 +171,8 @@ class SessionsMemoryMetadataStore:
             key = f"{cid}:{uid}"
             row = self.web_conversations.get(key)
             if row:
+                if "message_count" in q:
+                    return dict(row)
                 return {"conversation_id": row["conversation_id"]}
             return None
 
@@ -181,9 +190,7 @@ class SessionsMemoryMetadataStore:
         if "FROM sessions s" in q and "ORDER BY s.updated_at DESC" in q:
             uid, scope, limit = str(p[0]), str(p[1]), int(p[2])
             rows = [
-                r
-                for r in self.sessions.values()
-                if r["user_id"] == uid and r.get("scope") == scope
+                r for r in self.sessions.values() if r["user_id"] == uid and r.get("scope") == scope
             ]
             rows.sort(key=lambda r: r["updated_at"], reverse=True)
             out = []

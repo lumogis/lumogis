@@ -22,8 +22,9 @@ from models.api_v1 import ConversationMessage
 from models.api_v1 import ConversationMessageAppendRequest
 from models.api_v1 import ConversationPatchRequest
 from models.api_v1 import ConversationSummary
-from services import conversations as conv_svc
 from services.conversations import ConversationNotFoundError
+
+from services import conversations as conv_svc
 
 router = APIRouter(
     prefix="/api/v1/conversations",

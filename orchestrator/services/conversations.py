@@ -16,6 +16,7 @@ from models.api_v1 import ConversationMessage
 from models.api_v1 import ConversationSummary
 from services.context_budget import truncate_text
 from services.memory_purge import conversation_purge_target_exists
+from services.memory_purge import is_conversation_purged
 from services.memory_purge import purge_session_memory
 
 import config
@@ -38,7 +39,9 @@ def _title_from_summary(summary: str) -> str:
     return "Chat"
 
 
-def _row_to_summary(row: dict[str, Any], *, message_count: int | None = None) -> ConversationSummary:
+def _row_to_summary(
+    row: dict[str, Any], *, message_count: int | None = None
+) -> ConversationSummary:
     wc_title = row.get("wc_title")
     title = (wc_title or "").strip() if wc_title else _title_from_summary(row.get("summary") or "")
     if not title:
@@ -155,12 +158,37 @@ def build_continue_seed(detail: ConversationDetail) -> list[ChatMessageDTO]:
     topics_joined = ", ".join(detail.topics) if detail.topics else "(none)"
     raw_summary = (detail.summary or "")[:_CONTINUE_SUMMARY_MAX_CHARS]
     summary_text = truncate_text(raw_summary, max_tokens=1024)
-    body = (
-        "[Prior conversation context]\n"
-        f"Summary: {summary_text}\n"
-        f"Topics: {topics_joined}"
-    )
+    body = f"[Prior conversation context]\nSummary: {summary_text}\nTopics: {topics_joined}"
     return [ChatMessageDTO(role="user", content=body)]
+
+
+def _web_conversation_summary(user_id: str, conversation_id: str) -> ConversationSummary:
+    """Build API summary from ``web_conversations`` (sessions row optional)."""
+    ms = config.get_metadata_store()
+    wc = ms.fetch_one(
+        """
+        SELECT conversation_id, title, model, message_count, updated_at, scope
+        FROM web_conversations
+        WHERE conversation_id = %s::uuid AND user_id = %s
+        """,
+        (conversation_id, user_id),
+    )
+    if not wc:
+        raise ConversationNotFoundError(conversation_id)
+    sess = ms.fetch_one(
+        "SELECT summary FROM sessions WHERE session_id = %s AND user_id = %s",
+        (conversation_id, user_id),
+    )
+    summary_text = (sess.get("summary") if sess else "") or ""
+    title = (wc.get("title") or "").strip() or _title_from_summary(summary_text) or "Chat"
+    return ConversationSummary(
+        conversation_id=str(wc["conversation_id"]),
+        title=title,
+        summary=summary_text,
+        ended_at=wc["updated_at"],
+        scope=wc.get("scope") or "personal",
+        message_count=wc.get("message_count"),
+    )
 
 
 def upsert_web_conversation(
@@ -171,6 +199,8 @@ def upsert_web_conversation(
     model: str = "",
 ) -> None:
     """Create or touch the web transcript header row (slice 2 sync)."""
+    if is_conversation_purged(user_id=user_id, session_id=conversation_id):
+        raise ConversationNotFoundError(conversation_id)
     ms = config.get_metadata_store()
     ms.execute(
         """
@@ -178,8 +208,10 @@ def upsert_web_conversation(
         VALUES (%s::uuid, %s, %s, %s, 'personal')
         ON CONFLICT (conversation_id) DO UPDATE
           SET updated_at = NOW(),
-              title = CASE WHEN EXCLUDED.title <> '' THEN EXCLUDED.title ELSE web_conversations.title END,
-              model = CASE WHEN EXCLUDED.model <> '' THEN EXCLUDED.model ELSE web_conversations.model END
+              title = CASE WHEN EXCLUDED.title <> ''
+                  THEN EXCLUDED.title ELSE web_conversations.title END,
+              model = CASE WHEN EXCLUDED.model <> ''
+                  THEN EXCLUDED.model ELSE web_conversations.model END
         """,
         (conversation_id, user_id, title, model),
     )
@@ -195,6 +227,8 @@ def append_web_message(
     model: str | None = None,
 ) -> ConversationMessage:
     """Append one message idempotently (client-supplied message_id)."""
+    if is_conversation_purged(user_id=user_id, session_id=conversation_id):
+        raise ConversationNotFoundError(conversation_id)
     ms = config.get_metadata_store()
     owned = ms.fetch_one(
         "SELECT conversation_id FROM web_conversations "
@@ -235,39 +269,19 @@ def update_web_conversation(
     title: str | None = None,
     model: str | None = None,
 ) -> ConversationSummary:
-    """Patch title/model on an owned web_conversations row."""
-    ms = config.get_metadata_store()
-    row = ms.fetch_one(
-        "SELECT conversation_id FROM web_conversations "
-        "WHERE conversation_id = %s::uuid AND user_id = %s",
-        (conversation_id, user_id),
+    """Upsert slice-2 header metadata (client-minted ``conversation_id``)."""
+    upsert_web_conversation(
+        user_id=user_id,
+        conversation_id=conversation_id,
+        title=title if title is not None else "",
+        model=model if model is not None else "",
     )
-    if not row:
-        raise ConversationNotFoundError(conversation_id)
-    if title is not None:
-        ms.execute(
-            "UPDATE web_conversations SET title = %s, updated_at = NOW() "
-            "WHERE conversation_id = %s::uuid AND user_id = %s",
-            (title, conversation_id, user_id),
-        )
-    if model is not None:
-        ms.execute(
-            "UPDATE web_conversations SET model = %s, updated_at = NOW() "
-            "WHERE conversation_id = %s::uuid AND user_id = %s",
-            (model, conversation_id, user_id),
-        )
-    detail = get_conversation(user_id, conversation_id)
-    return ConversationSummary(
-        conversation_id=detail.conversation_id,
-        title=detail.title,
-        summary=detail.summary,
-        ended_at=detail.ended_at,
-        scope=detail.scope,
-        message_count=len(detail.messages) or None,
-    )
+    return _web_conversation_summary(user_id, conversation_id)
 
 
-def create_web_conversation(*, user_id: str, title: str = "", model: str = "") -> ConversationSummary:
+def create_web_conversation(
+    *, user_id: str, title: str = "", model: str = ""
+) -> ConversationSummary:
     """Mint a new empty server-backed conversation thread."""
     conversation_id = str(uuid.uuid4())
     upsert_web_conversation(

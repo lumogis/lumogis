@@ -4,6 +4,8 @@
 
 Lumogis runs on a home server or workstation. By default it is reachable only on the local network (for example **http://localhost/** or **http://192.168.x.x/**). This guide covers how to give household members secure access from any device, including mobile, when they are off the LAN.
 
+**Lumogis Search** (Persona A/B) uses the same server URL you configure in first-run onboarding — see [`clients/lumogis-search/README.md`](../../clients/lumogis-search/README.md).
+
 ## Why HTTPS is required
 
 Lumogis Web is a progressive web app (PWA). The service worker (`clients/lumogis-web/src/pwa/sw.ts`) and Web Push notifications require a [secure context](https://developer.mozilla.org/en-US/docs/Web/Security/Secure_Contexts)—HTTPS in practice. Plain HTTP access prevents PWA installation and disables push notifications. Both **Tailscale Serve** and **Cloudflare Tunnel** terminate HTTPS for you automatically, so household devices get a working install and push path without exposing raw port forwarding on your router.

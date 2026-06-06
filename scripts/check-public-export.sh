@@ -295,7 +295,34 @@ assert_search_overlay_ci_export_contract() {
 assert_openapi_ci_export_contract "$TARGET"
 assert_search_overlay_ci_export_contract "$TARGET"
 
-# --- Public agent orientation (LUM-376) ---
+# --- Public export doc hygiene (LUM-376 / LUM-378) ---
+PUBLIC_EXPORT_FORBIDDEN_PATTERNS=(
+  'lumogis-app'
+  'lumogis-devtools'
+  'LUMOGIS_CONTEXT_PACK'
+  'linear\.app'
+  '/linear-update'
+  '/update-context-pack'
+  '/navigator'
+  '\.cursor/skills'
+  'Product OS'
+  'githubusercontent'
+  'raw\.githubusercontent\.com'
+)
+
+_scan_public_export_forbidden_patterns() {
+  local content="$1"
+  local label="$2"
+  local pat
+  for pat in "${PUBLIC_EXPORT_FORBIDDEN_PATTERNS[@]}"; do
+    if echo "$content" | grep -qiE "$pat"; then
+      echo "check-public-export: forbidden pattern in ${label}: ${pat}" >&2
+      return 1
+    fi
+  done
+  return 0
+}
+
 assert_public_agent_orientation() {
   local root="$1"
   local -a required=(
@@ -317,26 +344,30 @@ assert_public_agent_orientation() {
 
   local combined
   combined="$(cat "$root/AGENTS.md" "$root/docs/LUMOGIS_AGENT_ORIENTATION.md")"
-  local -a forbidden_patterns=(
-    'lumogis-app'
-    'lumogis-devtools'
-    'LUMOGIS_CONTEXT_PACK'
-    'linear\.app'
-    '/linear-update'
-    '/update-context-pack'
-    '/navigator'
-    '\.cursor/skills'
-    'Product OS'
-  )
-  local pat
-  for pat in "${forbidden_patterns[@]}"; do
-    if echo "$combined" | grep -qiE "$pat"; then
-      echo "check-public-export: LUM-376 forbidden pattern in public agent docs: $pat" >&2
-      die "public agent orientation (LUM-376): private maintainer leakage in AGENTS.md or LUMOGIS_AGENT_ORIENTATION.md"
-    fi
-  done
+  if ! _scan_public_export_forbidden_patterns "$combined" "public agent docs (LUM-376)"; then
+    die "public agent orientation (LUM-376): private maintainer leakage in AGENTS.md or LUMOGIS_AGENT_ORIENTATION.md"
+  fi
+}
+
+# --- Required presence (LUM-378) ---
+# Canonical beginners doc export contract (keep in sync with
+# orchestrator/tests/test_check_public_export_script.py and CONTRIBUTING.md):
+#   1.  CONTRIBUTING-BEGINNERS.md
+
+assert_public_beginners_doc() {
+  local root="$1"
+  local beginners="$root/CONTRIBUTING-BEGINNERS.md"
+  if [[ ! -f "$beginners" ]]; then
+    die "public beginners doc (LUM-378): missing required path: CONTRIBUTING-BEGINNERS.md"
+  fi
+  local content
+  content="$(cat "$beginners")"
+  if ! _scan_public_export_forbidden_patterns "$content" "CONTRIBUTING-BEGINNERS.md (LUM-378)"; then
+    die "public beginners doc (LUM-378): private maintainer leakage in CONTRIBUTING-BEGINNERS.md"
+  fi
 }
 
 assert_public_agent_orientation "$TARGET"
+assert_public_beginners_doc "$TARGET"
 
 echo "check-public-export.sh: OK ($TARGET)"

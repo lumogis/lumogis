@@ -138,13 +138,19 @@ def get_vector_store() -> VectorStore:
 
 ## Extractor auto-discovery
 
-File type extractors in `adapters/` are auto-discovered by `config.get_extractors()`. The pattern: any function in `adapters/` that matches `extract_<extension>(path: str) -> str` is automatically registered. No factory branches, no port, no Protocol — just a function with the right signature.
+File type extractors in `adapters/` are discovered at startup by `config.get_extractors()`, which imports every module under `adapters/` and collects functions decorated with **`@extractor(".ext")`** (`extractor()` in `orchestrator/config.py`). No factory branches, no port, no Protocol, and no manual registry entries in `config.py`.
 
 ```python
 # adapters/epub_extractor.py
+from config import extractor
+
+
+@extractor(".epub")
 def extract_epub(path: str) -> str:
     ...
 ```
+
+Reference implementation: `adapters/pdf_extractor.py`. See [CONTRIBUTING.md](CONTRIBUTING.md#how-to-write-a-new-extractor).
 
 This is deliberately minimal. Extractors are pure functions with no dependencies on the rest of the system.
 

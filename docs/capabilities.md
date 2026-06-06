@@ -79,8 +79,8 @@ Enable STT only when you accept extra CPU/RAM (and optional GPU) cost; use the S
 The first-party SPA is the primary household UI: chat, search, approvals, and Me/Admin settings on the same origin as Core via Caddy.
 
 - **Me**: profile (including password change), connectors, connector permissions, LLM providers, MCP tokens, notifications, export, tools/capabilities overview.
-- **Conversation history (LUM-162):** browse, continue, and delete past conversations with multi-store purge APIs — see **[ADR 074-lum-162](decisions/074-lum-162-conversation-history-ui.md)** (ADR number collides with stack-health ADR — see decisions index).
-- **First wow moment:** guided first-query and entity-discovery cards with server-owned readiness and dismissal — see **[ADR 075](decisions/075-lum-216-first-wow-moment.md)**.
+- **Conversation history:** browse, continue, and delete past conversations with multi-store purge APIs; server-side transcript sync upserts the `web_conversations` header on `PUT` so active-tab messages persist before `POST /session/end` — see **[ADR 074-lum-162](decisions/074-lum-162-conversation-history-ui.md)** and amendment **[ADR 085](decisions/085-lum-439-conversation-put-upsert-fix.md)**.
+- **First wow moment (LUM-216):** guided first-query and entity-discovery cards with server-owned readiness and dismissal — see **[ADR 075](decisions/075-lum-216-first-wow-moment.md)** and **`CHANGELOG.md`** [Unreleased].
 - **Admin**: users (import/export, password reset), connector credentials (including household and instance-system tiers where exposed), per-user connector permissions, MCP tokens, audit, diagnostics.
 - **Admin stack health (LUM-178):** read-only **System status** panel combining curated admin diagnostics with stack-control service rows (no Docker socket in Core) — see **[ADR 074-lum-178](decisions/074-lum-178-stack-health-dashboard.md)**.
 - Password change for self-service and admin-led reset are implemented; email-based forgot-password is not part of the shipped surface.
@@ -143,10 +143,14 @@ Daily digest and connector-backed notifications remain alternatives where browse
 
 AGPL-3.0-only Tauri 2 overlay at **`clients/lumogis-search/`** — included in the public export. Connects to your household Lumogis server (no local stack in the installer).
 
+**Personas A and B** share the same client-only Search installer (`lumogis-overlay-*`); only the configured server URL differs — localhost for **Persona A** (Docker Compose on the same machine) vs a household URL for **Persona B**. See the [Persona A / B / C distribution matrix](LUMOGIS_REFERENCE_MANUAL.md#persona-a--b--c--distribution-matrix) and [Persona A install steps](../clients/lumogis-search/README.md#persona-a--docker-track-localhost).
+
 - **Memory search (LUM-329 / LUM-430):** global hotkey frameless UI calling **`GET /api/v1/memory/search`** with OS keychain session storage — see **[ADR 069](decisions/069-lum-329-tauri-search-overlay.md)** and **`clients/lumogis-search/README.md`**.
 - **Household onboarding (LUM-398):** in-webview first-run flow (server URL → **`GET /healthz`** → sign-in when auth is on) — see **[ADR 072](decisions/072-lum-398-client-only-overlay.md)**.
 - **Overlay auth and ingest paths (LUM-397):** role-gated admin **`ingest_paths`**, push upload, and session refresh — see **[ADR 071](decisions/071-lum-397-tauri-overlay-auth-ingest.md)**.
 - **Build:** **`make search-dev`** / **`make search-build`** (or **`cd clients/lumogis-search && npm run tauri:build`**).
+- **Public release CI (LUM-433):** **`.github/workflows/search-overlay-build.yml`** exports to the AGPL tree; **`search-v*`** tags on **`lumogis/lumogis`** produce installer artefacts — see **[ADR 082](decisions/082-lum-433-search-overlay-public-ci.md)**.
+- **Export boundary (LUM-434):** canonical split between **Lumogis Search** (public) and maintainer-only **Lumogis Hub** — see **[ADR 081](decisions/081-lum-434-export-boundary-reconciliation.md)** (supersedes path framing in **ADR 069** / **072** / **076**).
 
 ---
 
@@ -192,6 +196,10 @@ gh attestation verify oci://ghcr.io/lumogis/lumogis-web@sha256:<digest> -R lumog
 For convenience you can substitute a tag for the `@sha256:…` suffix (for example `@v0.4.0`); prefer digests when you need a stable verifier subject. Advanced consumers may also inspect in-manifest BuildKit provenance with **`cosign`** or **`docker buildx imagetools`**; this section focuses on **`gh attestation verify`**.
 
 Build-from-source deployment (the default developer flow) remains fully supported via `docker compose up --build`.
+
+### Contributor onboarding
+
+The public export includes **`CONTRIBUTING-BEGINNERS.md`** at the repository root — a gentler entry point than `CONTRIBUTING.md`, with prerequisites, clone/build smoke steps, and a fenced copy-paste prompt for AI-assisted first contributions. Maintainer templates live under `docs/public-export/` and are copied into the AGPL tree by `scripts/create-upstream-export-tree.sh`.
 
 ---
 
