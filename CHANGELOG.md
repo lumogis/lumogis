@@ -51,8 +51,6 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
----
-
 ## [0.6.0] — 2026-05-30
 
 ### Added
@@ -84,6 +82,58 @@ Versions follow [Semantic Versioning](https://semver.org/).
 - **LUM-94:** CI adds a path-gated **`openapi-check`** job (alongside existing **`lint-and-test`**) plus **`make openapi-check`** as an alias of **`make web-codegen-check`**; contributor docs now describe offline OpenAPI snapshot / codegen drift checks (`dump_openapi`, not a live orchestrator). **`openapi.snapshot.json`** refreshed to match current **`dump_openapi`** output (schema emission deltas).
 - **`GRAPH_MODE` default is now `disabled`.** Fresh installs omit graph wiring until operators set `GRAPH_MODE=inprocess` (premium in-process plugin) or `GRAPH_MODE=service` (premium KG service overlay). Requests for `service`/`inprocess` degrade to `disabled` with a single structured WARNING when premium modules are absent (AGPL export / partial trees).
 - **`LUMOGIS_TOOL_CATALOG_ENABLED`** defaults to **on** when unset: operators running capability services no longer need to set this flag for the LLM to merge eligible tools. Operators who want the previous behaviour (**no** merged capability tools / OOP dispatch) must set **`LUMOGIS_TOOL_CATALOG_ENABLED=false`** explicitly.
+
+---
+
+---
+
+## [0.5.2] — 2026-05-24
+
+### Fixed
+
+- **Public CI lint:** orchestrator **`ruff format`** pass so the published **`lint-and-test`** job’s format check exits cleanly on GitHub Actions (no runtime behaviour change).
+
+---
+
+---
+
+## [0.5.1] — 2026-05-24
+
+### Fixed
+
+- **Public CI lint:** orchestrator import ordering and line-length violations that blocked the **`lint-and-test`** job on published **`main`**.
+- **Public CI doctor integration:** **`doctor-integration`** job compose chain no longer merges **`docker-compose.test.yml`**’s **`include:`** overlay with the base file (avoids **“services.orchestrator conflicts with imported resource”** on GitHub Actions); uses **`docker-compose.test-doctor.yml`** instead.
+
+---
+
+---
+
+## [0.5.0] — 2026-05-24
+
+### Added
+
+- **`make doctor`:** read-only operator health CLI — Compose **`ps`/`config`**, config grammar checks on **`.env`** (no **`source`**), optional **`/healthz`** probes, optional **`--json`** v1 contract (**`scripts/doctor/schema.v1.json`**), security category opt-in (**`--security`** / **`LUMOGIS_DOCTOR_RUN_SECURITY=1`**). See **`scripts/doctor/README.md`**.
+- **First-run onboarding:** skippable Lumogis Web orientation modal (per-user `users.onboarding_completed_at`, `GET`/`PATCH /api/v1/me/onboarding`) plus a shared empty-state component for the chat zero-state.
+- **First-run quickstart:** operator guide **[`docs/deployment/quickstart.md`](docs/deployment/quickstart.md)** for the published **GHCR** image path (`COMPOSE_FILE=docker-compose.yml:docker-compose.ghcr.yml`, first-boot **Ollama** / **Postgres** behaviour, **`curl`** health smoke vs **`make health`**, and common errors); **`README.md`** and **`docs/README.md`** cross-link for discoverability.
+- **Remote access guide:** **[`docs/deployment/remote-access.md`](docs/deployment/remote-access.md)** documents off-LAN household access patterns (Tailscale-first).
+- **paperless-ngx ingest (Docker / self-hosted):** read-only REST polling into the normal chunk → embed → Qdrant path; per-user encrypted credentials (`paperless` connector); `POST /api/v1/sources` with `source_type: "paperless"`; `sources.poll_cursor` + `external_documents` dedup; operator env `PAPERLESS_*`, `PAPERLESS_POLL_PAGE_SIZE`, and outbound URL policy knobs `LUMOGIS_ALLOW_PRIVATE_OUTBOUND_URLS` / `LUMOGIS_OUTBOUND_PRIVATE_HOST_ALLOWLIST` (see reference manual).
+- **Hybrid context building:** word-boundary explicit entity matches plus optional Qdrant semantic top-up (`LUMOGIS_CONTEXT_BUILDER_SEMANTIC`), configurable entity budget and ranking env vars, dedicated **`entities`** token slice in chat context allocation, and visibility filters mirrored into graph service queries when premium graph modules are present.
+- **GHCR image attestations:** published **`ghcr.io/lumogis/lumogis-orchestrator`** and **`ghcr.io/lumogis/lumogis-web`** images carry GitHub-hosted SLSA Level 2 build-provenance attestations verifiable with **`gh attestation verify`** (see **`docs/capabilities.md`** — **Verifying image provenance**).
+- **Chat auto-RAG:** optional per-turn injection of top **`documents`** chunks into **`POST /v1/chat/completions`** context (`LUMOGIS_AUTO_RAG_*` env knobs; default **off**); hybrid/RRF vs dense gating, BGE reranker floor when configured, and **`search_files`** dedupe against injected point ids.
+- **Public CI:** path-gated **`openapi-check`**, **`doctor-integration`**, and **`security-audit`** jobs in **`.github/workflows/ci.yml`**; offline OpenAPI snapshot/codegen drift checks via **`make openapi-check`**; semantic breaking-change gate via **`make openapi-breaking-check`** (requires **oasdiff**).
+
+### Security
+
+- **Pre-launch security audit:** structured findings under **`docs/security-audit/pre-launch-audit-2026.md`** plus committed **`docs/security-audit/zap-baseline-2026.json`** (OWASP ZAP baseline, auth **`none`**); path-gated CI job **`security-audit`** runs **`make audit-local`** (blocking) and advisory **Bandit** on `orchestrator/` (+ `services/lumogis-graph/` when present). **`stack-control/requirements.txt`** bumps **FastAPI** to **0.136.1**; **`clients/lumogis-web`** lockfile refreshed for clean **`npm audit`**.
+- **Qdrant household-union filters:** vector search now honours top-level **`should`** (OR) and **`match.any`** clauses in visibility filters, fixing a cross-tenant isolation failure for semantic search on **`documents`** / **`entities`** and for semantic context-building top-up when enabled.
+- **Graph statistics privacy:** canonical regression coverage for operator graph statistics visibility lives in the knowledge-graph service test suite; redundant Core-side test scaffolding removed from the default layout.
+
+### Changed
+
+- **Public webhook `DOCUMENT_INGESTED` payload** (Core → graph service when `GRAPH_MODE=service`): additive field **`ingestion_source_kind`** (`"filesystem"` \| `"external"`; default **`"filesystem"`**). When **`"external"`**, **`file_path`** may be a stable logical URI such as **`paperless://{source-uuid}/documents/{id}`** instead of a filesystem path.
+- **OpenAPI contract checks** use offline snapshot/codegen drift checks (`dump_openapi`, not a live orchestrator). **`openapi.snapshot.json`** refreshed to match current schema emission.
+- **`GRAPH_MODE` default is now `disabled`.** Fresh installs omit graph wiring until operators set `GRAPH_MODE=inprocess` (premium in-process plugin) or `GRAPH_MODE=service` (premium KG service overlay). Requests for `service`/`inprocess` degrade to `disabled` with a single structured WARNING when premium modules are absent (AGPL export / partial trees).
+- **`LUMOGIS_TOOL_CATALOG_ENABLED`** defaults to **on** when unset: operators running capability services no longer need to set this flag for the LLM to merge eligible tools. Operators who want the previous behaviour (**no** merged capability tools / out-of-process dispatch) must set **`LUMOGIS_TOOL_CATALOG_ENABLED=false`** explicitly.
 
 ---
 

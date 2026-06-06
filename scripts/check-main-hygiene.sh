@@ -147,4 +147,22 @@ if [[ "$secret_hit" -ne 0 ]]; then
   die "possible secrets matched in tracked files (see output above)"
 fi
 
+# --- CHANGELOG contains every version recorded in the public release log
+RELEASE_LOG="$ROOT/docs/release/public-release-log.md"
+CHANGELOG="$ROOT/CHANGELOG.md"
+[[ -f "$RELEASE_LOG" ]] || die "missing $RELEASE_LOG"
+[[ -f "$CHANGELOG" ]] || die "missing $CHANGELOG"
+
+missing_versions=()
+while IFS= read -r version; do
+  [[ -z "$version" ]] && continue
+  if ! grep -qF "## [$version]" "$CHANGELOG"; then
+    missing_versions+=("$version")
+  fi
+done < <(grep -E '^## [0-9]+\.[0-9]+\.[0-9]+' "$RELEASE_LOG" | sed -E 's/^## ([0-9]+\.[0-9]+\.[0-9]+).*/\1/')
+
+if [[ "${#missing_versions[@]}" -gt 0 ]]; then
+  die "CHANGELOG.md missing release-log version(s): ${missing_versions[*]}"
+fi
+
 echo "check-main-hygiene.sh: OK"
