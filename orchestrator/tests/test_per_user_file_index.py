@@ -121,6 +121,9 @@ def test_store_session_uses_user_namespaced_point_id(monkeypatch):
         def execute(self, *_a, **_kw):
             return None
 
+        def fetch_one(self, *_a, **_kw):
+            return None
+
     # Replace the autouse mocks with capturing ones for this test only.
     _config._instances["vector_store"] = _CapturingVS()
     _config._instances["embedder"] = _StubEmbedder()

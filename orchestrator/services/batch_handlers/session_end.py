@@ -14,6 +14,11 @@ from services.memory import summarize_session
 
 @register_batch_handler("session_end", SessionEndPayload)
 def handle(*, user_id: str, payload: SessionEndPayload) -> None:
+    from services.memory_purge import is_conversation_purged
+
+    if is_conversation_purged(user_id=user_id, session_id=payload.session_id):
+        return
+
     import hooks
     from events import Event
 

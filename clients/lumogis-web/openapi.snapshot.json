@@ -1822,6 +1822,326 @@
         "title": "ConnectorPermissionUpdate",
         "type": "object"
       },
+      "ConversationContinueRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "model": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          }
+        },
+        "title": "ConversationContinueRequest",
+        "type": "object"
+      },
+      "ConversationContinueResponse": {
+        "properties": {
+          "conversation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversation Id"
+          },
+          "seed_messages": {
+            "items": {
+              "$ref": "#/components/schemas/ChatMessageDTO"
+            },
+            "title": "Seed Messages",
+            "type": "array"
+          }
+        },
+        "required": [
+          "seed_messages"
+        ],
+        "title": "ConversationContinueResponse",
+        "type": "object"
+      },
+      "ConversationCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "model": {
+            "default": "",
+            "title": "Model",
+            "type": "string"
+          },
+          "title": {
+            "default": "",
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "title": "ConversationCreateRequest",
+        "type": "object"
+      },
+      "ConversationDeleteResponse": {
+        "properties": {
+          "conversation_id": {
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "deleted": {
+            "title": "Deleted",
+            "type": "boolean"
+          },
+          "partial": {
+            "default": false,
+            "title": "Partial",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "deleted",
+          "conversation_id"
+        ],
+        "title": "ConversationDeleteResponse",
+        "type": "object"
+      },
+      "ConversationDetail": {
+        "properties": {
+          "conversation_id": {
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "ended_at": {
+            "format": "date-time",
+            "title": "Ended At",
+            "type": "string"
+          },
+          "entities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Entities",
+            "type": "array"
+          },
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/ConversationMessage"
+            },
+            "title": "Messages",
+            "type": "array"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "topics": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Topics",
+            "type": "array"
+          }
+        },
+        "required": [
+          "conversation_id",
+          "title",
+          "summary",
+          "topics",
+          "entities",
+          "ended_at",
+          "scope"
+        ],
+        "title": "ConversationDetail",
+        "type": "object"
+      },
+      "ConversationListResponse": {
+        "properties": {
+          "conversations": {
+            "items": {
+              "$ref": "#/components/schemas/ConversationSummary"
+            },
+            "title": "Conversations",
+            "type": "array"
+          }
+        },
+        "required": [
+          "conversations"
+        ],
+        "title": "ConversationListResponse",
+        "type": "object"
+      },
+      "ConversationMessage": {
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "message_id": {
+            "title": "Message Id",
+            "type": "string"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "role": {
+            "enum": [
+              "user",
+              "assistant",
+              "system"
+            ],
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message_id",
+          "role",
+          "content",
+          "created_at"
+        ],
+        "title": "ConversationMessage",
+        "type": "object"
+      },
+      "ConversationMessageAppendRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "maxLength": 64000,
+            "title": "Content",
+            "type": "string"
+          },
+          "message_id": {
+            "title": "Message Id",
+            "type": "string"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "role": {
+            "enum": [
+              "user",
+              "assistant",
+              "system"
+            ],
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message_id",
+          "role",
+          "content"
+        ],
+        "title": "ConversationMessageAppendRequest",
+        "type": "object"
+      },
+      "ConversationPatchRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "ConversationPatchRequest",
+        "type": "object"
+      },
+      "ConversationSummary": {
+        "properties": {
+          "conversation_id": {
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "ended_at": {
+            "format": "date-time",
+            "title": "Ended At",
+            "type": "string"
+          },
+          "message_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message Count"
+          },
+          "scope": {
+            "default": "personal",
+            "title": "Scope",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "conversation_id",
+          "title",
+          "summary",
+          "ended_at"
+        ],
+        "title": "ConversationSummary",
+        "type": "object"
+      },
       "DanglingReference": {
         "properties": {
           "count": {
@@ -3254,6 +3574,68 @@
         "title": "MeOnboardingResponse",
         "type": "object"
       },
+      "MeWowPatchRequest": {
+        "additionalProperties": false,
+        "description": "Body for ``PATCH /api/v1/me/wow-state`` — v1 only records dismissal.",
+        "properties": {
+          "dismissed": {
+            "const": true,
+            "title": "Dismissed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "dismissed"
+        ],
+        "title": "MeWowPatchRequest",
+        "type": "object"
+      },
+      "MeWowStateResponse": {
+        "description": "Wow-moment readiness and dismissal state for the authenticated user.",
+        "properties": {
+          "entities_ready": {
+            "title": "Entities Ready",
+            "type": "boolean"
+          },
+          "onboarding_completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Onboarding Completed At"
+          },
+          "top_entities": {
+            "items": {
+              "$ref": "#/components/schemas/WowTopEntity"
+            },
+            "maxItems": 5,
+            "title": "Top Entities",
+            "type": "array"
+          },
+          "wow_dismissed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wow Dismissed At"
+          }
+        },
+        "required": [
+          "entities_ready"
+        ],
+        "title": "MeWowStateResponse",
+        "type": "object"
+      },
       "MePasswordChangeRequest": {
         "description": "Body for ``POST /api/v1/me/password`` — policy enforced again in :mod:`services.users`.",
         "properties": {
@@ -4304,6 +4686,287 @@
         "title": "SourceRequest",
         "type": "object"
       },
+      "StackStatusMeta": {
+        "description": "Snapshot metadata for ``GET …/stack-status``.",
+        "properties": {
+          "cache_age_sec": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cache Age Sec"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "overall_status": {
+            "enum": [
+              "ok",
+              "degraded",
+              "down"
+            ],
+            "title": "Overall Status",
+            "type": "string"
+          },
+          "stack_control_reachable": {
+            "title": "Stack Control Reachable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "generated_at",
+          "stack_control_reachable",
+          "overall_status"
+        ],
+        "title": "StackStatusMeta",
+        "type": "object"
+      },
+      "StackStatusOllamaModel": {
+        "description": "Read-only Ollama model row (slice 1 — no mutations).",
+        "properties": {
+          "loaded": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Loaded"
+          },
+          "modified_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modified At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "size_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size Bytes"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "StackStatusOllamaModel",
+        "type": "object"
+      },
+      "StackStatusResponse": {
+        "description": "Response for ``GET /api/v1/admin/diagnostics/stack-status``.",
+        "properties": {
+          "meta": {
+            "$ref": "#/components/schemas/StackStatusMeta"
+          },
+          "ollama": {
+            "items": {
+              "$ref": "#/components/schemas/StackStatusOllamaModel"
+            },
+            "title": "Ollama",
+            "type": "array"
+          },
+          "services": {
+            "items": {
+              "$ref": "#/components/schemas/StackStatusServiceItem"
+            },
+            "title": "Services",
+            "type": "array"
+          },
+          "storage": {
+            "items": {
+              "$ref": "#/components/schemas/StackStatusStorageItem"
+            },
+            "title": "Storage",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/AdminDiagnosticsWarning"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "meta",
+          "services",
+          "storage",
+          "ollama"
+        ],
+        "title": "StackStatusResponse",
+        "type": "object"
+      },
+      "StackStatusServiceItem": {
+        "description": "One runtime service row for the stack health dashboard.",
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "runtime_detail": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Runtime Detail",
+            "type": "object"
+          },
+          "runtime_kind": {
+            "default": "docker_compose",
+            "enum": [
+              "docker_compose",
+              "process",
+              "unknown"
+            ],
+            "title": "Runtime Kind",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "healthy",
+              "degraded",
+              "down",
+              "unknown",
+              "not_configured"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "display_name",
+          "state"
+        ],
+        "title": "StackStatusServiceItem",
+        "type": "object"
+      },
+      "StackStatusStorageItem": {
+        "description": "Host partition or informational Docker storage row.",
+        "properties": {
+          "mount_id": {
+            "title": "Mount Id",
+            "type": "string"
+          },
+          "partition_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Partition Id"
+          },
+          "path_label": {
+            "title": "Path Label",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "ok",
+              "warn",
+              "critical",
+              "unknown"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "total_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Bytes"
+          },
+          "used_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Used Bytes"
+          },
+          "used_percent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Used Percent"
+          },
+          "warn_threshold_percent": {
+            "default": 80.0,
+            "title": "Warn Threshold Percent",
+            "type": "number"
+          }
+        },
+        "required": [
+          "mount_id",
+          "path_label",
+          "status"
+        ],
+        "title": "StackStatusStorageItem",
+        "type": "object"
+      },
       "StopEntityRequest": {
         "properties": {
           "action": {
@@ -4490,6 +5153,47 @@
           "role"
         ],
         "title": "UserPublic",
+        "type": "object"
+      },
+      "WowTopEntity": {
+        "description": "Top entity row for the wow discovery card.",
+        "properties": {
+          "entity_id": {
+            "description": "UUID PK — wire for LUM-161 row keys / future detail links; slice-1 UI uses name for askAboutEntity only",
+            "title": "Entity Id",
+            "type": "string"
+          },
+          "entity_type": {
+            "title": "Entity Type",
+            "type": "string"
+          },
+          "mention_count": {
+            "minimum": 0.0,
+            "title": "Mention Count",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "scope": {
+            "enum": [
+              "personal",
+              "shared",
+              "system"
+            ],
+            "title": "Scope",
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id",
+          "name",
+          "entity_type",
+          "mention_count",
+          "scope"
+        ],
+        "title": "WowTopEntity",
         "type": "object"
       },
       "ValidationError": {
@@ -5236,6 +5940,28 @@
           }
         },
         "summary": "Credential Key Fingerprint",
+        "tags": [
+          "admin-diagnostics"
+        ]
+      }
+    },
+    "/api/v1/admin/diagnostics/stack-status": {
+      "get": {
+        "description": "Read-only stack health snapshot (services, storage, Ollama list).",
+        "operationId": "admin_stack_status_api_v1_admin_diagnostics_stack_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StackStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Admin Stack Status",
         "tags": [
           "admin-diagnostics"
         ]
@@ -7434,6 +8160,338 @@
         ]
       }
     },
+    "/api/v1/conversations": {
+      "get": {
+        "operationId": "list_conversations_api_v1_conversations_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Conversations",
+        "tags": [
+          "v1",
+          "v1-conversations"
+        ]
+      },
+      "post": {
+        "operationId": "create_conversation_api_v1_conversations_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConversationCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Conversation",
+        "tags": [
+          "v1",
+          "v1-conversations"
+        ]
+      }
+    },
+    "/api/v1/conversations/{conversation_id}": {
+      "delete": {
+        "operationId": "delete_conversation_api_v1_conversations__conversation_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationDeleteResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Conversation",
+        "tags": [
+          "v1",
+          "v1-conversations"
+        ]
+      },
+      "get": {
+        "operationId": "get_conversation_api_v1_conversations__conversation_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Conversation",
+        "tags": [
+          "v1",
+          "v1-conversations"
+        ]
+      },
+      "put": {
+        "operationId": "patch_conversation_api_v1_conversations__conversation_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConversationPatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Conversation",
+        "tags": [
+          "v1",
+          "v1-conversations"
+        ]
+      }
+    },
+    "/api/v1/conversations/{conversation_id}/continue": {
+      "post": {
+        "operationId": "continue_conversation_api_v1_conversations__conversation_id__continue_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ConversationContinueRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationContinueResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Continue Conversation",
+        "tags": [
+          "v1",
+          "v1-conversations"
+        ]
+      }
+    },
+    "/api/v1/conversations/{conversation_id}/messages": {
+      "post": {
+        "operationId": "append_message_api_v1_conversations__conversation_id__messages_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConversationMessageAppendRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationMessage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Append Message",
+        "tags": [
+          "v1",
+          "v1-conversations"
+        ]
+      }
+    },
     "/api/v1/entities/{entity_id}/publish": {
       "delete": {
         "operationId": "unpublish_entity_api_v1_entities__entity_id__publish_delete",
@@ -8331,6 +9389,68 @@
           }
         },
         "summary": "Mark first-run onboarding complete",
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/wow-state": {
+      "get": {
+        "description": "Return wow card eligibility inputs for the caller (LUM-216).\n\n``AUTH_ENABLED=false`` returns synthetic readiness for QA.",
+        "operationId": "get_my_wow_state_api_v1_me_wow_state_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeWowStateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "First wow-moment path readiness and dismissal state",
+        "tags": [
+          "me"
+        ]
+      },
+      "patch": {
+        "description": "Idempotently record wow-path dismissal (LUM-216).",
+        "operationId": "patch_my_wow_state_api_v1_me_wow_state_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MeWowPatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeWowStateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Dismiss the first wow-moment path",
         "tags": [
           "me"
         ]

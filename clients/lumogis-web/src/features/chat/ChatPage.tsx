@@ -31,10 +31,20 @@ import {
   useState,
   type FormEvent,
 } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 
+import { patchMeWowDismissed } from "../../api/meWow";
 import { useAuth } from "../../auth/AuthProvider";
+import type { ChatPrefillState } from "../wow/askAboutEntity";
+import { WowGate } from "../wow/WowGate";
 import type { ChatMessageDTO } from "../../api/chat";
+import {
+  appendConversationMessage,
+  continueConversation,
+  upsertWebConversation,
+} from "../../api/conversations";
 import type { ApiClient } from "../../api/client";
+import { postSessionEnd } from "../../api/session";
 import type { ModelDescriptor, ModelsResponse } from "../../api/models";
 import {
   deleteDraft,
@@ -44,6 +54,8 @@ import {
 } from "../../pwa/drafts";
 import { useOnlineStatus } from "../../pwa/useOnlineStatus";
 import { consumeChatStream } from "./ChatStream";
+import { ConversationSidebar } from "./ConversationSidebar";
+import { messageIdForServerSync } from "./messageIdForServerSync";
 import {
   useChatThreads,
   type ChatMessage,
@@ -55,6 +67,8 @@ const DEFAULT_MODEL = "claude";
 
 export function ChatPage(): JSX.Element {
   const { client } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
   const online = useOnlineStatus();
   const { models, modelError, refreshModels } = useModelCatalog(client);
   const initialModel = models[0]?.id ?? DEFAULT_MODEL;
@@ -71,11 +85,16 @@ export function ChatPage(): JSX.Element {
     setModel(active.id, models[0]!.id);
   }, [active, models, setModel]);
 
+  /** Tracks the `?session=<id>` we have already hydrated so it fires once. */
+  const hydratedSessionRef = useRef<string | null>(null);
+
   const [input, setInput] = useState("");
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const [streaming, setStreaming] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [historyRefresh, setHistoryRefresh] = useState(0);
+  const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /** Mirrors composer text for IndexedDB flush on thread switches / unload. */
   const inputMirrorRef = useRef("");
@@ -83,14 +102,156 @@ export function ChatPage(): JSX.Element {
   const prevActiveIdRef = useRef<string | null>(null);
   const submissionBackupRef = useRef("");
   const lastThreadIdRef = useRef<string | null>(null);
+  const wowDismissOnSendRef = useRef(false);
+  const suppressDraftHydrateRef = useRef(false);
 
   useEffect(() => {
     inputMirrorRef.current = input;
   }, [input]);
 
+  const applyComposerPrefill = useCallback(
+    (text: string, options?: { wowDismissOnSend?: boolean }) => {
+      wowDismissOnSendRef.current = options?.wowDismissOnSend === true;
+      suppressDraftHydrateRef.current = true;
+      setInput(text);
+      inputMirrorRef.current = text;
+      composerRef.current?.focus();
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const state = location.state as ChatPrefillState | null;
+    if (state === null || state === undefined || typeof state.prefill !== "string") {
+      return;
+    }
+    wowDismissOnSendRef.current = state.wowDismissOnSend === true;
+    applyComposerPrefill(state.prefill);
+    void navigate(".", { replace: true, state: {} });
+  }, [applyComposerPrefill, location.state, navigate]);
+
   useEffect(() => {
     lastThreadIdRef.current = active?.id ?? null;
   }, [active?.id]);
+
+  const cancelStream = useCallback((): void => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+  }, []);
+
+  const endSessionForThread = useCallback(
+    (thread: ChatThread | null | undefined) => {
+      if (thread === null || thread === undefined) return;
+      if (thread.messages.length === 0) return;
+      postSessionEnd(client, {
+        session_id: thread.id,
+        messages: thread.messages
+          .filter((m) => m.role === "user" || m.role === "assistant")
+          .map(messageToDto),
+      });
+      setHistoryRefresh((n) => n + 1);
+    },
+    [client],
+  );
+
+  const registerServerThread = useCallback(
+    (threadId: string, model: string, title: string) => {
+      void upsertWebConversation(client, threadId, { model, title }).catch(() => {
+        /* Best-effort slice-2 sync; ephemeral tab state remains authoritative. */
+      });
+    },
+    [client],
+  );
+
+  useEffect(() => {
+    const threadId = active?.id;
+    const model = active?.model;
+    const title = active?.title;
+    if (threadId === undefined || model === undefined || title === undefined) return;
+    registerServerThread(threadId, model, title);
+  }, [active?.id, active?.model, active?.title, registerServerThread]);
+
+  const scheduleMessageSync = useCallback(
+    (thread: ChatThread, message: ChatMessage) => {
+      if (syncTimerRef.current !== null) clearTimeout(syncTimerRef.current);
+      syncTimerRef.current = setTimeout(() => {
+        void appendConversationMessage(client, thread.id, {
+          message_id: messageIdForServerSync(message.id),
+          role: message.role,
+          content: message.content,
+          model: thread.model,
+        }).catch(() => undefined);
+      }, 400);
+    },
+    [client],
+  );
+
+  const handleNewThread = useCallback(() => {
+    cancelStream();
+    endSessionForThread(active);
+    const id = newThread();
+    registerServerThread(id, active?.model ?? initialModel, "New chat");
+  }, [active, cancelStream, endSessionForThread, initialModel, newThread, registerServerThread]);
+
+  const handleSelectThread = useCallback(
+    (id: string) => {
+      cancelStream();
+      if (active !== null && active.id !== id) {
+        endSessionForThread(active);
+      }
+      selectThread(id);
+    },
+    [active, cancelStream, endSessionForThread, selectThread],
+  );
+
+  const handleContinueFromHistory = useCallback(
+    (seedMessages: ChatMessageDTO[]) => {
+      endSessionForThread(active);
+      const id = newThread();
+      const createdAt = Date.now();
+      registerServerThread(id, active?.model ?? initialModel, "Continued chat");
+      dispatch({
+        type: "LOAD_SEED_MESSAGES",
+        threadId: id,
+        messages: seedMessages,
+        createdAt,
+      });
+    },
+    [active, dispatch, endSessionForThread, initialModel, newThread, registerServerThread],
+  );
+
+  // Slice-2 server restore (LUM-414): when the page is opened at
+  // `/chat?session=<id>`, hydrate the conversation transcript from the server
+  // by reusing the existing continue-from-history mechanism
+  // (`continueConversation` -> `LOAD_SEED_MESSAGES`). The mechanism itself is
+  // unchanged; this only wires it from the URL param.
+  const hydrateFromSession = useCallback(
+    async (sessionId: string): Promise<void> => {
+      try {
+        const res = await continueConversation(client, sessionId);
+        handleContinueFromHistory(res.seed_messages);
+      } catch {
+        /* Unknown/invalid session id: leave the fresh thread intact. */
+      }
+    },
+    [client, handleContinueFromHistory],
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const sessionId = params.get("session");
+    if (sessionId === null || sessionId.length === 0) return;
+    if (hydratedSessionRef.current === sessionId) return;
+    hydratedSessionRef.current = sessionId;
+    void hydrateFromSession(sessionId);
+    // Drop the param so a reload/remount does not re-trigger hydration and the
+    // URL stays clean once the transcript is loaded.
+    params.delete("session");
+    const query = params.toString();
+    const cleaned = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
+    window.history.replaceState(window.history.state, "", cleaned);
+  }, [hydrateFromSession]);
 
   // Phase 3C: hydrate composer from IndexedDB per thread; flush outgoing thread draft before loading the next.
   useEffect(() => {
@@ -115,9 +276,14 @@ export function ChatPage(): JSX.Element {
       if (cancelled) return;
       // Still on this thread (user did not switch away).
       if (lastThreadIdRef.current !== currentId) return;
+      if (suppressDraftHydrateRef.current) {
+        suppressDraftHydrateRef.current = false;
+        return;
+      }
       // If the user typed while IndexedDB was slow, do not stomp live input.
       if (inputMirrorRef.current !== mirrorBeforeHydrate) return;
       setInput(d ?? "");
+      inputMirrorRef.current = d ?? "";
     })();
 
     return () => {
@@ -149,11 +315,6 @@ export function ChatPage(): JSX.Element {
       void setDraft(key, raw);
     }, 400);
   }, [active]);
-
-  const cancelStream = useCallback((): void => {
-    abortRef.current?.abort();
-    abortRef.current = null;
-  }, []);
 
   // Cancel any in-flight stream when the active thread changes or the
   // component unmounts so we don't spill deltas into the wrong bubble.
@@ -294,7 +455,21 @@ export function ChatPage(): JSX.Element {
           threadId: active.id,
           messageId: assistantMessageId,
         });
+        const finishedThread = {
+          ...active,
+          messages: active.messages.map((m) =>
+            m.id === assistantMessageId ? { ...m, status: "complete" as const } : m,
+          ),
+        };
+        const finishedMsg = finishedThread.messages.find((m) => m.id === assistantMessageId);
+        if (finishedMsg !== undefined) {
+          scheduleMessageSync(finishedThread, finishedMsg);
+        }
         await deleteDraft(draftKey);
+        if (wowDismissOnSendRef.current) {
+          wowDismissOnSendRef.current = false;
+          void patchMeWowDismissed(client).catch(() => undefined);
+        }
       } catch (err) {
         if (controller.signal.aborted) {
           dispatch({
@@ -319,7 +494,7 @@ export function ChatPage(): JSX.Element {
         setStreaming(false);
       }
     },
-    [active, client, dispatch, input, online, streaming],
+    [active, client, dispatch, input, online, streaming, scheduleMessageSync],
   );
 
   return (
@@ -329,25 +504,24 @@ export function ChatPage(): JSX.Element {
           <h2 className="lumogis-chat__heading">Conversations</h2>
           <button
             type="button"
-            onClick={() => {
-              cancelStream();
-              newThread();
-            }}
+            onClick={handleNewThread}
             className="lumogis-chat__new-thread"
           >
             + New chat
           </button>
         </div>
+        <ConversationSidebar
+          client={client}
+          refreshToken={historyRefresh}
+          onContinue={handleContinueFromHistory}
+        />
         <ul className="lumogis-chat__thread-list" role="list">
           {state.threads.map((t) => (
             <li key={t.id}>
               <ThreadRow
                 thread={t}
                 active={t.id === state.activeId}
-                onSelect={() => {
-                  cancelStream();
-                  selectThread(t.id);
-                }}
+                onSelect={() => handleSelectThread(t.id)}
                 onDelete={() => {
                   cancelStream();
                   deleteThread(t.id);
@@ -357,7 +531,7 @@ export function ChatPage(): JSX.Element {
           ))}
         </ul>
         <p className="lumogis-chat__threads-note" id="lumogis-chat-ephemeral-note">
-          Conversations live in this tab only; closing the tab discards them.
+          Active tab threads are ephemeral. Ended chats appear in History after summarization.
         </p>
       </aside>
 
@@ -406,6 +580,8 @@ export function ChatPage(): JSX.Element {
             {submitError}
           </p>
         )}
+
+        <WowGate onPrefillComposer={applyComposerPrefill} />
 
         <form className="lumogis-chat__compose" onSubmit={(e) => void onSubmit(e)}>
           <label htmlFor="lumogis-chat-input" className="lumogis-chat__compose-label">

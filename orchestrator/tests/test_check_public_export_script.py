@@ -13,8 +13,21 @@ REPO = Path(__file__).resolve().parents[2]
 CHECK = REPO / "scripts/check-public-export.sh"
 STRIP_LIST = REPO / "scripts" / "public-export-strip-list.txt"
 
+
+def _repo_has_git() -> bool:
+    """True for normal repos and linked worktrees (.git may be a file)."""
+    git_path = REPO / ".git"
+    return git_path.is_dir() or git_path.is_file()
+
+
 # Canonical OpenAPI CI export contract paths — duplicate exactly scripts/check-public-export.sh
 # lum303_paths array + comment block (LUM-303).
+# Canonical Search overlay CI export contract path — duplicate exactly
+# scripts/check-public-export.sh LUM-433 comment block.
+SEARCH_OVERLAY_CI_CANONICAL_PATHS: tuple[str, ...] = (
+    ".github/workflows/search-overlay-build.yml",
+)
+
 LUM303_CANONICAL_OPENAPI_PATHS: tuple[str, ...] = (
     ".github/workflows/ci.yml",
     ".github/scripts/openapi-check-paths.sh",
@@ -74,9 +87,50 @@ def _lum303_minimal_ci_yml_wrong_indent_job() -> str:
 """
 
 
-def _minimal_passing_export_openapi_contract(tmp_path: Path) -> None:
+def _write_minimal_search_overlay_workflow_stub(tmp_path: Path) -> None:
+    """Secret-scan-safe stub for LUM-433 export contract (no forbidden Hub substrings)."""
+    rel = SEARCH_OVERLAY_CI_CANONICAL_PATHS[0]
+    full = tmp_path / rel
+    full.parent.mkdir(parents=True, exist_ok=True)
+    full.write_text(
+        """# SPDX-License-Identifier: AGPL-3.0-only
+name: Search overlay build stub
+on:
+  workflow_dispatch:
+jobs:
+  build-matrix:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo stub
+""",
+        encoding="utf-8",
+    )
+
+
+def _write_minimal_public_agent_docs(tmp_path: Path) -> None:
+    """LUM-376 stubs — must avoid forbidden maintainer patterns in check-public-export.sh."""
+    (tmp_path / "AGENTS.md").write_text(
+        "# SPDX-License-Identifier: AGPL-3.0-only\n"
+        "Public agent orientation stub for export contract tests.\n",
+        encoding="utf-8",
+    )
+    orient = tmp_path / "docs" / "LUMOGIS_AGENT_ORIENTATION.md"
+    orient.parent.mkdir(parents=True, exist_ok=True)
+    orient.write_text(
+        "# SPDX-License-Identifier: AGPL-3.0-only\n"
+        "Agent orientation stub for export contract tests.\n",
+        encoding="utf-8",
+    )
+
+
+def _minimal_passing_export_openapi_contract(
+    tmp_path: Path,
+    *,
+    include_search_overlay: bool = True,
+) -> None:
     """Materialise LICENSE + all LUM-303 paths with secret-scan-safe stub content."""
     (tmp_path / "LICENSE").write_text(_minimal_license(), encoding="utf-8")
+    _write_minimal_public_agent_docs(tmp_path)
     for rel in LUM303_CANONICAL_OPENAPI_PATHS:
         full = tmp_path / rel
         full.parent.mkdir(parents=True, exist_ok=True)
@@ -106,6 +160,13 @@ def _minimal_passing_export_openapi_contract(tmp_path: Path) -> None:
             full.write_text("{}\n", encoding="utf-8")
         else:
             full.write_text("stub\n", encoding="utf-8")
+    if include_search_overlay:
+        _write_minimal_search_overlay_workflow_stub(tmp_path)
+
+
+def _minimal_passing_export_search_overlay_contract(tmp_path: Path) -> None:
+    """LUM-433 minimal tree: OpenAPI contract + Search overlay workflow stub."""
+    _minimal_passing_export_openapi_contract(tmp_path, include_search_overlay=True)
 
 
 def _run_check(tmp_path: Path) -> subprocess.CompletedProcess[str]:
@@ -184,6 +245,46 @@ def test_lum303_fails_when_openapi_check_wrong_indent(tmp_path):
     assert "LUM-303" in combined
 
 
+def test_lum433_minimal_export_passes_with_search_workflow(tmp_path):
+    _minimal_passing_export_search_overlay_contract(tmp_path)
+    proc = _run_check(tmp_path)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def test_lum433_fails_when_search_workflow_missing(tmp_path):
+    _minimal_passing_export_openapi_contract(tmp_path, include_search_overlay=False)
+    proc = _run_check(tmp_path)
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode != 0
+    assert "search-overlay-ci-export-contract" in combined
+    assert "LUM-433" in combined
+
+
+def test_lum433_fails_when_workflow_references_hub(tmp_path):
+    _minimal_passing_export_search_overlay_contract(tmp_path)
+    workflow = tmp_path / SEARCH_OVERLAY_CI_CANONICAL_PATHS[0]
+    workflow.write_text(
+        workflow.read_text(encoding="utf-8") + "apps/lumogis-hub\n",
+        encoding="utf-8",
+    )
+    proc = _run_check(tmp_path)
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode != 0
+    assert "search-overlay-ci-export-contract" in combined
+    assert "LUM-433" in combined
+
+
+def test_search_overlay_required_path_disjoint_from_strip_list():
+    text = STRIP_LIST.read_text(encoding="utf-8")
+    strip_entries: set[str] = set()
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if line:
+            strip_entries.add(line)
+    overlap = strip_entries.intersection(SEARCH_OVERLAY_CI_CANONICAL_PATHS)
+    assert not overlap, f"strip list must not list LUM-433 paths: {overlap}"
+
+
 def test_lum303_required_paths_disjoint_from_strip_list():
     text = STRIP_LIST.read_text(encoding="utf-8")
     strip_entries: set[str] = set()
@@ -193,3 +294,71 @@ def test_lum303_required_paths_disjoint_from_strip_list():
             strip_entries.add(line)
     overlap = strip_entries.intersection(LUM303_CANONICAL_OPENAPI_PATHS)
     assert not overlap, f"strip list must not list LUM-303 paths: {overlap}"
+
+
+def test_export_tree_includes_search_overlay_workflow(tmp_path):
+    """LUM-433: Search overlay CI must ship on lumogis/lumogis; Hub CI must not."""
+    if not _repo_has_git():
+        pytest.skip("needs git checkout")
+    out = tmp_path / "export"
+    export_script = REPO / "scripts" / "create-upstream-export-tree.sh"
+    proc = subprocess.run(
+        ["bash", str(export_script), str(out)],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO),
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert (out / SEARCH_OVERLAY_CI_CANONICAL_PATHS[0]).is_file()
+    assert not (out / ".github/workflows/hub-build.yml").exists()
+    check = _run_check(out)
+    assert check.returncode == 0, check.stdout + check.stderr
+
+
+def test_export_tree_omits_hub_build_workflow(tmp_path):
+    """LUM-329: Hub CI must not ship on lumogis/lumogis (no Hub tree in export)."""
+    if not _repo_has_git():
+        pytest.skip("needs git checkout")
+    out = tmp_path / "export"
+    export_script = REPO / "scripts" / "create-upstream-export-tree.sh"
+    proc = subprocess.run(
+        ["bash", str(export_script), str(out)],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO),
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert not (out / ".github/workflows/hub-build.yml").exists()
+    assert not (out / "apps/lumogis-hub").exists()
+    check = _run_check(out)
+    assert check.returncode == 0, check.stdout + check.stderr
+
+
+def test_export_tree_has_sanitized_public_agent_docs(tmp_path):
+    """LUM-376: public export substitutes AGENTS + orientation; strips private context pack."""
+    if not _repo_has_git():
+        pytest.skip("needs git checkout")
+    out = tmp_path / "export"
+    export_script = REPO / "scripts" / "create-upstream-export-tree.sh"
+    proc = subprocess.run(
+        ["bash", str(export_script), str(out)],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO),
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert (out / "AGENTS.md").is_file()
+    assert (out / "docs/LUMOGIS_AGENT_ORIENTATION.md").is_file()
+    assert not (out / "docs/LUMOGIS_CONTEXT_PACK.md").exists()
+    assert not (out / "docs/public-export").exists()
+    agents = (out / "AGENTS.md").read_text(encoding="utf-8")
+    orientation = (out / "docs/LUMOGIS_AGENT_ORIENTATION.md").read_text(encoding="utf-8")
+    combined = agents + orientation
+    assert "lumogis-devtools" not in combined
+    assert "LUMOGIS_CONTEXT_PACK" not in combined
+    assert "linear.app" not in combined.lower()
+    contrib = (out / "CONTRIBUTING.md").read_text(encoding="utf-8")
+    assert "LUMOGIS_AGENT_ORIENTATION.md" in contrib
+    assert "LUMOGIS_CONTEXT_PACK.md" not in contrib
+    check = _run_check(out)
+    assert check.returncode == 0, check.stdout + check.stderr

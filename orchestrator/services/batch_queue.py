@@ -121,6 +121,28 @@ def register_batch_handler(kind: str, payload_model: type[BaseModel]):
     return decorator
 
 
+def cancel_pending_session_end_jobs(*, user_id: str, session_id: str) -> int:
+    """Mark pending session_end jobs dead so a purge cannot be resurrected by the queue."""
+    ms = config.get_metadata_store()
+    rows = ms.fetch_all(
+        """
+        UPDATE user_batch_jobs
+        SET status = 'dead',
+            finished_at = NOW(),
+            error = LEFT(%s, 1000),
+            worker_id = NULL,
+            started_at = NULL
+        WHERE user_id = %s
+          AND kind = 'session_end'
+          AND status = 'pending'
+          AND payload->>'session_id' = %s
+        RETURNING id
+        """,
+        ("cancelled: conversation purged", user_id, session_id),
+    )
+    return len(rows)
+
+
 def enqueue(
     *,
     user_id: str,

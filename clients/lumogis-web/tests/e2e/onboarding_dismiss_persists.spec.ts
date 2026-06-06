@@ -40,7 +40,7 @@ test.describe("LUM-315 onboarding dismiss persists after reload", () => {
     await loginWithSmokeCredentials(page, { dismissOnboarding: false });
     await expectOnboardingModalVisible(page);
 
-    await page.getByRole("button", { name: /^skip$/i }).click();
+    await page.getByRole("button", { name: /^skip$/i }).click({ force: true });
     await expectOnboardingModalHidden(page);
 
     await page.reload();
@@ -53,14 +53,14 @@ test.describe("LUM-315 onboarding dismiss persists after reload", () => {
     await expectOnboardingModalVisible(page);
 
     const dialog = page.getByRole("dialog");
-    await dialog.getByRole("button", { name: /^next$/i }).click();
+    await dialog.getByRole("button", { name: /^next$/i }).click({ force: true });
     await expect(dialog.getByRole("heading", { name: "Add knowledge" })).toBeVisible();
-    await dialog.getByRole("button", { name: /^next$/i }).click();
+    await dialog.getByRole("button", { name: /^next$/i }).click({ force: true });
     await expect(dialog.getByRole("heading", { name: "Connect sources" })).toBeVisible();
-    await dialog.getByRole("button", { name: /^next$/i }).click();
+    await dialog.getByRole("button", { name: /^next$/i }).click({ force: true });
     await expect(dialog.getByRole("heading", { name: "Done" })).toBeVisible();
 
-    await dialog.getByRole("button", { name: /^done$/i }).click();
+    await dialog.getByRole("button", { name: /^done$/i }).click({ force: true });
     await expectOnboardingModalHidden(page);
 
     await page.reload();

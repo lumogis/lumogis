@@ -75,3 +75,6 @@ lumogis-data/
 .venv-pytest-run/
 .verify-venv/
 .merge-venv/
+
+# LUM-377 — debug runner tee logs (local only)
+target/debug-logs/

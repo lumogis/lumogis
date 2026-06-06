@@ -26,6 +26,7 @@ services:
       # Directory mount avoids Docker's single-file bind mount bug where individual
       # file mounts (./.env:/app/host.env) create empty directories instead of files.
       - .:/project
+      # ai-workspace/inbox → /workspace/inbox (auto-ingest); see .env.example (LUMOGIS_INBOX_*).
       - ./ai-workspace:/workspace
       # HuggingFace model cache — persists BGE reranker weights across container rebuilds
       - hf_cache:/root/.cache/huggingface

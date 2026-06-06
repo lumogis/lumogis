@@ -1,7 +1,7 @@
 # Automated testing strategy
 
-Last reviewed: 2026-05-13  
-Verified against commit: ca83054
+Last reviewed: 2026-06-04
+Verified against commit: 0380ce81a
 
 Lumogis ships a **permanent, layered** automated test setup. **Where** you run the **full** stack matters: see **Dev vs `main` (comprehensive testing)** below.
 
@@ -21,6 +21,13 @@ Lumogis ships a **permanent, layered** automated test setup. **Where** you run t
 3. **Stack-backed tests are explicit** — integration, web, KG, and browser suites need the right Compose services or Node tooling; they are documented here so nothing is “only run before release” without a written home.
 4. **Auth defaults for pytest** — `make compose-test` and `make test` force `AUTH_ENABLED=false` so local family-LAN `.env` settings do not break TestClient suites (see `Makefile`).
 
+## Coverage matrices (feature → test)
+
+**Companion to this doc:** [docs/testing/README.md](README.md) indexes **TEST-COVERAGE-MATRIX-*** files for core, web, and related surfaces. They answer *which product behaviours have test evidence*, while `scripts/debug/inventory.tsv` (LUM-377) answers *which commands to run*.
+
+- **Statuses** (✅/🟡/❌/🚫) come from code/plan audit, not from capabilities prose alone.
+- **v1 baseline:** LUM-384 seed; **ongoing:** rows updated when **`/verify-plan`** closes a feature plan. **Structure gate (LUM-429):** `make coverage-matrix-check` in CI.
+
 ## Layers — commands, needs, and what they cover
 
 | Layer | Command(s) | Needs | What it covers |
@@ -32,6 +39,8 @@ Lumogis ships a **permanent, layered** automated test setup. **Where** you run t
 | **lumogis-graph service tests** | `make compose-test-kg` | Docker (KG test image) | KG service unit tests in an isolated image — webhook parity, scheduler off, no accidental hits to your dev volumes. |
 | **Mock capability contract tests** | `make mock-capability-test` | Python venv with `services/lumogis-mock-capability/requirements-dev.txt` | Second-party capability HTTP contract and manifest behaviour. |
 | **Web unit / lint** | `make web-test`, `make web-lint` | Node in `clients/lumogis-web` | Client TypeScript/Vitest, ESLint, OpenAPI codegen checks — **no** browser launch. |
+| **Search overlay unit** | `cd clients/lumogis-search && npm test` | Node 20+ in `clients/lumogis-search` | Vitest for overlay UI (`searchClient`, `overlayUi`, onboarding DOM helpers) — **no** full Tauri shell required. |
+| **Search overlay Rust** | `cd clients/lumogis-search/src-tauri && cargo test` | Rust toolchain | Tauri crate unit tests (auth, path allowlist, overlay config) — invoked via `scripts/debug/rust.sh` or directly. |
 | **Web e2e (Playwright)** | `make web-e2e` or `make web-e2e-prove` | Stack + env creds (see `clients/lumogis-web/README.md`) | **Real browser**: gate UI flows, workflows, mobile viewports; **`verify-public-rc`** uses a **narrow** Playwright gate; **`verify-public-rc-full`** adds **full** signed-in navigation after seeding a smoke user. |
 | **Caddy security headers** | `make web-caddy-headers` / `make web-caddy-headers-prove` | Caddy + web + orchestrator | Same-origin / security header contracts at the edge. |
 | **Graph inprocess vs service parity** | `make test-graph-parity` | Docker; **destructive** to dev volumes — see `Makefile` | Core behaviour against **in-process** graph plugin vs **lumogis-graph** HTTP path — optional tail of **`verify-public-rc-full`**. |
@@ -41,7 +50,7 @@ Lumogis ships a **permanent, layered** automated test setup. **Where** you run t
 ## CI vs local
 
 - **CI today:** `ruff check` / `ruff format --check` on `orchestrator/`, `pytest` on `orchestrator/tests/`, `pytest` on `stack-control/test_main.py`.
-- **Optional path/label-gated Playwright:** **`.github/workflows/web-e2e.yml`** (LUM-60) runs **`make web-e2e-prove`** against a slim Compose stack when a maintainer adds **`ci:run-web-e2e`** on same-repo PRs that touch the gated paths, on **`workflow_dispatch`**, or on the nightly schedule (see [CONTRIBUTING.md](../../CONTRIBUTING.md) § *Optional CI — web Playwright*). It does **not** replace **`make verify-public-rc`** / **`verify-public-rc-full`**.
+- **Optional path/label-gated Playwright:** **`.github/workflows/web-e2e.yml`** (LUM-60) runs **`make web-e2e-prove`** against a slim Compose stack when a maintainer adds **`ci:run-web-e2e`** on same-repo PRs that touch the gated paths, or on **`workflow_dispatch`** (see [CONTRIBUTING.md](../../CONTRIBUTING.md) § *Optional CI — web Playwright*). It does **not** replace **`make verify-public-rc`** / **`verify-public-rc-full`**.
 - **Not in default CI:** Docker integration, Playwright (except the optional LUM-60 workflow above), KG image tests, and parity — not because they are optional forever, but because they need heavier runners; contributors on **`dev`** still run the **relevant** subset when touching those surfaces. **Maintainers** run the **full** `make verify-public-rc-full` on the **release line** before treating `main` as publish-ready.
 
 ## Release gates (LUM-225)
@@ -59,8 +68,57 @@ These Makefile targets are for **maintainers on `main`** (or a `promote/clean-ma
 
 Integration tests run via `scripts/integration-public-rc.sh full-cycle` against the triple-merged Compose stack (`docker-compose.yml` + `docker-compose.test.yml` + `docker-compose.public-rc-stack.yml`) using the `integration and public_rc` pytest marker predicate.
 
+## Test inventory (canonical)
+
+Machine-readable source: **`scripts/debug/inventory.tsv`**. Human view: **`make test-list`**
+(same columns).
+
+| id | Command | Wrapper | Stage | Heavy | Private tree only |
+| --- | --- | --- | --- | --- | --- |
+| orchestrator-unit | `make test` | unit | local-dev | no | no |
+| stack-control-unit | (in `make test`) | unit | local-dev | no | no |
+| compose-unit | `make compose-test` | unit | local-dev | no | no |
+| test-kg | `make test-kg` | none | local-dev | yes | yes |
+| mock-capability | `make mock-capability-test` | none | local-dev | no | yes |
+| test-integration | `make test-integration` | integration | local-dev | yes | no |
+| rc-integration | `scripts/integration-public-rc.sh full-cycle` | integration | release-rc | yes | no |
+| e2e-ingest-restart | `make e2e-ingest-restart` | integration | opt-in-heavy | yes | no |
+| graph-parity | `make test-graph-parity` | integration | opt-in-heavy | yes | no |
+| web-unit | `make web-test` | web | local-dev | no | no |
+| search-vitest | `cd clients/lumogis-search && npm test` | none | local-dev | no | no |
+| search-rust | `cargo test` (lumogis-search) | rust | local-dev | no | no |
+| web-e2e | `make web-e2e` | web | opt-in-heavy | yes | no |
+| lint-python | `make lint` | lint | local-dev | no | no |
+| openapi-codegen / breaking | `make web-codegen-check`, `openapi-breaking-check` | none | ci-main | no | no |
+| compose-policy | `make compose-policy-check` | none | ci-main | no | no |
+| export-hygiene | export tree + `check-public-export.sh` | none | release-rc | no | no |
+| verify-public-rc | `make verify-public-rc` | none | release-rc | yes | no |
+| verify-public-rc-full | `make verify-public-rc-full` | none | release-full | yes | no |
+
+See **`scripts/debug/inventory.tsv`** for the full ~26-row inventory (prereqs column).
+
+## Release-stage gating map
+
+| Stage | What runs | Automation | Gap / notes |
+| --- | --- | --- | --- |
+| **Local `dev` (per change)** | Targeted subset (`make test`, `make web-test`, …) | Manual / agent choice | **`make debug`** + **`make test-list`** (LUM-377) — no path→suite helper yet |
+| **CI on PR/push to `main`/`master`** | ci.yml unit + lint + compose-policy; optional web-e2e label | GitHub Actions | Default PR gate is Core + stack-control unit tests; search overlay: `clients/lumogis-search` Vitest + `cargo test` locally or in extended gates |
+| **`dev` → private `main`** | hygiene, `make test`, export checks, `verify-public-rc(-full)` for release-scale | `prepare-private-release-from-dev` skill | Judgement manual; use **`verify-public-rc-full`** on release line |
+| **private `main` → public `main`** | `verify-public-rc-full` on exact SHA, then export | `publish-private-main-to-public` skill | Run Make targets directly; debug wrappers optional for logs |
+
+## Debug runners (`scripts/debug/`)
+
+- **`make debug`** — fast/safe chain (unit, lint, web unit, rust); summary on stdout, full log under **`target/debug-logs/`**.
+- **`make test-list`** — print inventory table.
+- **Heavy suites** — `graph-parity`, `restart-e2e`, RC integration, web e2e: require **`--heavy`** or **`LUMOGIS_DEBUG_HEAVY=1`**.
+- **Release umbrellas** — still **`make verify-public-rc`** / **`make verify-public-rc-full`** (not replaced by wrappers).
+- **Python summaries** — dev-only **`pytest-agent-digest`** via **`PYTEST_ADDOPTS`** in `unit.sh` only (CI `make test` unchanged).
+
+Operator doc: [scripts/debug/README.md](../../scripts/debug/README.md).
+
 ## References
 
+- [docs/testing/README.md](README.md) — coverage matrices (feature → test evidence)
 - [CONTRIBUTING.md](../../CONTRIBUTING.md) — setup, venv vs Docker
 - [Makefile](../../Makefile) — authoritative target definitions
 - [tests/integration/README.md](../../tests/integration/README.md) — live stack integration

@@ -15,7 +15,7 @@ ARGS ?=
 SHELL := /bin/bash
 
 .PHONY: dev build test check-pytest test-integration test-integration-full e2e-ingest-restart lint ingest health logs doctor \
-        desktop-dev desktop-build desktop-build-client-only \
+        search-dev search-build search-build-client \
         audit-local bandit-check web-audit-fix \
         compose-policy-check \
         graph-relates-to-merge-policy-check \
@@ -33,7 +33,9 @@ SHELL := /bin/bash
         m1-compat-with-retry \
         auth-sessions-grep-guard \
         changelog-check \
-        verify-no-telemetry
+        coverage-matrix-check \
+        verify-no-telemetry \
+        debug test-list
 
 # ─── User-facing convenience ─────────────────────────────────────────────────
 
@@ -109,6 +111,10 @@ auth-sessions-grep-guard:
 changelog-check:
 	@scripts/check-changelog-touched.sh
 
+# LUM-429 — TEST-COVERAGE-MATRIX format + feature-ids.json sync (Node; no network).
+coverage-matrix-check:
+	@node scripts/check-coverage-matrix.mjs
+
 verify-no-telemetry:
 	grep -r "posthog\|mixpanel\|amplitude" orchestrator/ && echo "FAIL: analytics library found" && exit 1 || echo "OK: no analytics libraries found"
 
@@ -151,43 +157,31 @@ graph-relates-to-merge-policy-check: ## LUM-208 — AST-aware scan for invalid R
 m1-compat-with-retry: ## Live FalkorDB compat gate — e.g. FALKORDB_URL=redis://127.0.0.1:6380 RUN_M1_COMPAT=1 (optional FALKORDB_HOST_PORT if not 6380); one retry on flake
 	cd orchestrator && (RUN_M1_COMPAT=1 $(PYTHON) -m pytest tests/premium/test_graph_writer.py::TestFalkorDBCompatGate -q || (sleep 2 && RUN_M1_COMPAT=1 $(PYTHON) -m pytest tests/premium/test_graph_writer.py::TestFalkorDBCompatGate -q))
 
-# NOTE: Must run on an export-shaped RC branch (after
-# create-upstream-export-tree.sh has stripped docs/private/ and other
-# private paths). Will fail by design on raw dev/main private checkouts
-# where docs/private/ is tracked.
+# NOTE: Intended for release/export-shaped checkouts (see scripts/create-upstream-export-tree.sh).
 verify-public-rc: ## RC gate (smoke) — run before /publish-private-main-to-public
-	@set -e; \
-	echo "==> verify-public-rc (smoke)"; \
-	_qdrant_user_set=0; \
-	[ -n "$${QDRANT_HOST_PORT:-}" ] && _qdrant_user_set=1; \
-	export QDRANT_HOST_PORT="$${QDRANT_HOST_PORT:-$$($(CURDIR)/scripts/integration-public-rc.sh print-qdrant-host-port)}"; \
-	echo "[verify-public-rc] Using QDRANT_HOST_PORT=$$QDRANT_HOST_PORT"; \
-	scripts/check-main-hygiene.sh; \
-	$(MAKE) compose-policy-check; \
-	$(MAKE) graph-relates-to-merge-policy-check; \
-	$(MAKE) compose-test; \
-	if [ -z "$${VERIFY_PUBLIC_RC_SKIP_WEB_CODEGEN_CHECK:-}" ]; then \
+	@echo "==> verify-public-rc (smoke)"
+	scripts/check-main-hygiene.sh
+	$(MAKE) compose-policy-check
+	$(MAKE) graph-relates-to-merge-policy-check
+	$(MAKE) compose-test
+	@if [ -z "$${VERIFY_PUBLIC_RC_SKIP_WEB_CODEGEN_CHECK:-}" ]; then \
 	  $(MAKE) web-codegen-check; \
 	else \
 	  echo "WARN: web-codegen-check skipped (VERIFY_PUBLIC_RC_SKIP_WEB_CODEGEN_CHECK set)"; \
-	fi; \
-	$(MAKE) web-lint; \
-	$(MAKE) web-test; \
-	$(MAKE) web-build; \
-	if [ "$${VERIFY_PUBLIC_RC_SKIP_INTEGRATION:-}" != "1" ] && [ "$$_qdrant_user_set" -eq 0 ]; then \
-	  export QDRANT_HOST_PORT="$$(env -u QDRANT_HOST_PORT $(CURDIR)/scripts/integration-public-rc.sh print-qdrant-host-port)"; \
-	  echo "[verify-public-rc] Using QDRANT_HOST_PORT=$$QDRANT_HOST_PORT (integration stack)"; \
-	fi; \
-	if [ "$${VERIFY_PUBLIC_RC_FORCE_INTEGRATION:-}" = "1" ]; then \
+	fi
+	$(MAKE) web-lint
+	$(MAKE) web-test
+	$(MAKE) web-build
+	@if [ "$${VERIFY_PUBLIC_RC_FORCE_INTEGRATION:-}" = "1" ]; then \
 	  scripts/integration-public-rc.sh full-cycle; \
 	elif [ "$${VERIFY_PUBLIC_RC_SKIP_INTEGRATION:-}" = "1" ]; then \
 	  echo "WARN: integration step skipped (VERIFY_PUBLIC_RC_SKIP_INTEGRATION=1) — only use this on dev machines with live production stacks"; \
 	else \
 	  scripts/integration-public-rc.sh full-cycle; \
-	fi; \
-	scripts/create-upstream-export-tree.sh; \
-	scripts/check-public-export.sh /tmp/lumogis-upstream-export; \
-	echo "==> verify-public-rc PASSED"
+	fi
+	scripts/create-upstream-export-tree.sh
+	scripts/check-public-export.sh /tmp/lumogis-upstream-export
+	@echo "==> verify-public-rc PASSED"
 
 # Runs verify-public-rc with VERIFY_PUBLIC_RC_FORCE_INTEGRATION=1 so integration
 # always executes even if VERIFY_PUBLIC_RC_SKIP_INTEGRATION=1 is set in the environment.
@@ -195,7 +189,12 @@ verify-public-rc-full: ## Full RC gate — includes e2e and optional graph parit
 	@echo "==> verify-public-rc-full"
 	@VERIFY_PUBLIC_RC_FORCE_INTEGRATION=1 $(MAKE) verify-public-rc
 	@if [ -z "$${VERIFY_PUBLIC_RC_SKIP_WEB_E2E:-}" ]; then \
-	  $(MAKE) web-e2e-prove; \
+	  COMPOSE_FILE=docker-compose.yml:docker-compose.test.yml:docker-compose.public-rc-stack.yml \
+	    docker compose --env-file config/test.env.example build lumogis-web; \
+	  scripts/integration-public-rc.sh gate-start; \
+	  set -a && . config/test.env.example && set +a && \
+	  $(MAKE) web-e2e-prove || { ec=$$?; scripts/integration-public-rc.sh gate-end || true; exit $$ec; }; \
+	  scripts/integration-public-rc.sh gate-end; \
 	else \
 	  echo "WARN: web-e2e-prove skipped (VERIFY_PUBLIC_RC_SKIP_WEB_E2E set)"; \
 	fi
@@ -245,6 +244,13 @@ compose-test-integration:
 # Phase 5 dev-only second capability (not part of default compose); see services/lumogis-mock-capability/README.md
 mock-capability-test:
 	cd services/lumogis-mock-capability && $(PYTHON) -m pip install -q -r requirements-dev.txt && $(PYTHON) -m pytest tests -q
+
+# LUM-377 — summary-first test wrappers (see scripts/debug/README.md).
+test-list:
+	@./scripts/debug/cli.sh list
+
+debug:
+	@./scripts/debug/cli.sh debug
 
 # ─── Developer tools (requires local venv) ───────────────────────────────────
 
@@ -418,22 +424,21 @@ web-lint:
 	cd clients/lumogis-web && npm run lint
 
 web-build:
-	cd clients/lumogis-web && npm run codegen && npm run build
+	cd clients/lumogis-web && npm run build
 
 web-dev:
 	cd clients/lumogis-web && npm run dev
 
-# LUM-329 — Tauri 2 memory overlay (`clients/lumogis-desktop/`). Requires Node 20+, Rust stable,
-# Linux: webkit2gtk-4.1-dev + build tools; macOS: Xcode CLT; Windows: MSVC + WebView2.
-# Installs `@tauri-apps/cli` via npm; first run: `cd clients/lumogis-desktop && npm ci`.
-desktop-dev:
-	cd clients/lumogis-desktop && npm ci && npm run build && npm run tauri:dev
+# LUM-430 — AGPL household search overlay (`clients/lumogis-search/`). Public export includes this tree.
+# Requires Node 20+, Rust stable, OS webview deps (see clients/lumogis-search/README.md).
+search-dev:
+	cd clients/lumogis-search && npm ci && npm run build && npm run tauri:dev
 
-desktop-build:
-	cd clients/lumogis-desktop && npm ci && npm run build && npm run tauri:build
+search-build search-build-client:
+	cd clients/lumogis-search && npm ci && npm run build && npm run tauri:build
 
-desktop-build-client-only:
-	cd clients/lumogis-desktop && npm ci && npm run build && npm run tauri build -- --config src-tauri/tauri.client-only.conf.json
+# Optional extended Hub targets when `Makefile.hub.mk` is present.
+-include Makefile.hub.mk
 
 # Playwright e2e (Phase 1 Pass 1.5; FP-046 me/admin shell spec included). Requires stack
 # + Caddy on PLAYWRIGHT_BASE_URL (default http://127.0.0.1) and

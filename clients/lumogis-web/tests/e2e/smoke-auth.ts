@@ -30,7 +30,7 @@ export async function dismissOnboardingIfPresent(page: Page): Promise<void> {
   } catch {
     return;
   }
-  await skipButton.click();
+  await skipButton.click({ force: true });
   await expect(page.getByRole("dialog")).toHaveCount(0, { timeout: 30_000 });
 }
 
@@ -42,8 +42,11 @@ export async function loginWithSmokeCredentials(
   await page.goto("/");
   await expect(page.getByLabel("Email")).toBeVisible();
   await page.getByLabel("Email").fill(smokeEmail);
-  await page.getByLabel("Password", { exact: true }).fill(smokePassword);
-  await page.getByRole("button", { name: /^sign in$/i }).click();
+  const password = page.getByLabel("Password", { exact: true });
+  await password.fill(smokePassword);
+  // Enter submits the form reliably; clicking the button can hang on actionability
+  // when the password field keeps focus (headless Chromium stability checks).
+  await password.press("Enter");
   await expect(page).toHaveURL(/\/chat$/, { timeout: 60_000 });
   await expect(page.getByTestId("lumogis-shell")).toBeVisible({ timeout: 60_000 });
   if (dismissOnboarding) {

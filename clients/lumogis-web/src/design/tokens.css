@@ -815,6 +815,78 @@ input:focus-visible,
   margin: 0;
 }
 
+.lumogis-chat__history {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lumogis-space-2);
+  border-top: 1px solid var(--lumogis-border);
+  padding-top: var(--lumogis-space-2);
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.lumogis-chat__history-heading {
+  font-size: 0.8rem;
+  margin: 0;
+  color: var(--lumogis-fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.lumogis-chat__history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.lumogis-chat__history-group-label {
+  display: block;
+  font-size: 0.7rem;
+  color: var(--lumogis-fg-muted);
+  margin: var(--lumogis-space-2) 0 var(--lumogis-space-1);
+}
+
+.lumogis-chat__history-item {
+  display: flex;
+  align-items: stretch;
+  gap: var(--lumogis-space-1);
+  margin-bottom: var(--lumogis-space-1);
+}
+
+.lumogis-chat__history-select {
+  flex: 1;
+  text-align: left;
+  background: transparent;
+  border: 1px solid var(--lumogis-border);
+  border-radius: var(--lumogis-radius-sm);
+  padding: var(--lumogis-space-2);
+  cursor: pointer;
+  color: var(--lumogis-fg);
+}
+
+.lumogis-chat__history-title {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.lumogis-chat__history-summary {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--lumogis-fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lumogis-chat__history-delete {
+  border: none;
+  background: transparent;
+  color: var(--lumogis-fg-muted);
+  cursor: pointer;
+  min-width: 28px;
+}
+
 .lumogis-chat__main {
   display: grid;
   grid-template-rows: auto 1fr auto auto;

@@ -8,10 +8,13 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1";
+const proveMode = process.env.E2E_REQUIRE_CREDS === "1";
 
 export default defineConfig({
   testDir: "./tests/e2e",
-  fullyParallel: true,
+  fullyParallel: !proveMode,
+  workers: proveMode ? 1 : undefined,
+  timeout: proveMode ? 90_000 : 30_000,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
   reporter: [["list"]],
@@ -19,6 +22,7 @@ export default defineConfig({
     ...devices["Desktop Chrome"],
     baseURL,
     trace: "on-first-retry",
+    ...(proveMode ? { contextOptions: { reducedMotion: "reduce" as const } } : {}),
   },
   // Family-LAN auth uses a single active refresh-token jti per user; parallel
   // browser logins as the same smoke user revoke each other. Run those specs

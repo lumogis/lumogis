@@ -133,6 +133,15 @@ def store_session(
     """
     resolved_entity_ids = entity_ids or []
 
+    from services.memory_purge import is_conversation_purged
+
+    if is_conversation_purged(user_id=user_id, session_id=summary.session_id):
+        _log.info(
+            "store_session skipped: conversation purged session_id=%s",
+            summary.session_id,
+        )
+        return
+
     # ---- Qdrant (semantic projection) ----
     embedder = config.get_embedder()
     vs = config.get_vector_store()

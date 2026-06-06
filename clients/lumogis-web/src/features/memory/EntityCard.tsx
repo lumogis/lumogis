@@ -11,8 +11,10 @@
 /* eslint-disable react-refresh/only-export-components */
 
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 import type { ApiClient } from "../../api/client";
+import { buildAskAboutQuery, navigateToChatWithPrefill } from "../wow/askAboutEntity";
 import {
   getEntity,
   getRelatedEntities,
@@ -99,6 +101,7 @@ export function EntityCardPanel({
   client,
   initialCard,
 }: EntityCardPanelProps): JSX.Element {
+  const navigate = useNavigate();
   const { card, related, loading, error } = useEntityCard(client, entityId);
 
   const displayed = card ?? initialCard ?? null;
@@ -135,6 +138,20 @@ export function EntityCardPanel({
           {displayed.summary && (
             <p className="lumogis-entity-card__summary">{displayed.summary}</p>
           )}
+
+          <p className="lumogis-entity-card__actions">
+            <button
+              type="button"
+              className="lumogis-entity-card__ask"
+              onClick={() => {
+                navigateToChatWithPrefill(navigate, buildAskAboutQuery(displayed.name), {
+                  wowDismissOnSend: true,
+                });
+              }}
+            >
+              Ask Lumogis about {displayed.name}
+            </button>
+          </p>
 
           {displayed.aliases.length > 0 && (
             <section className="lumogis-entity-card__section">

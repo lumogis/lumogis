@@ -481,6 +481,47 @@ def set_onboarding_completed(user_id: str) -> datetime:
     return val
 
 
+def get_wow_dismissed_at(user_id: str) -> datetime | None:
+    """Return stored wow-path dismissal instant, or ``None`` if not dismissed."""
+    ms = config.get_metadata_store()
+    row = ms.fetch_one(
+        "SELECT wow_dismissed_at FROM users WHERE id = %s",
+        (user_id,),
+    )
+    if row is None:
+        return None
+    val = row.get("wow_dismissed_at")
+    if val is None:
+        return None
+    if isinstance(val, datetime):
+        if val.tzinfo is None:
+            return val.replace(tzinfo=timezone.utc)
+        return val
+    return None
+
+
+def set_wow_dismissed(user_id: str) -> datetime:
+    """Idempotently set ``wow_dismissed_at`` if unset; return persisted value.
+
+    Raises:
+        LookupError: no ``users`` row for ``user_id``.
+    """
+    ms = config.get_metadata_store()
+    row = ms.fetch_one(
+        "UPDATE users SET wow_dismissed_at = COALESCE(wow_dismissed_at, NOW()) "
+        "WHERE id = %s RETURNING wow_dismissed_at",
+        (user_id,),
+    )
+    if row is None:
+        raise LookupError("user not found")
+    val = row.get("wow_dismissed_at")
+    if not isinstance(val, datetime):
+        raise RuntimeError("set_wow_dismissed: unexpected RETURNING shape")
+    if val.tzinfo is None:
+        return val.replace(tzinfo=timezone.utc)
+    return val
+
+
 def bootstrap_if_empty() -> InternalUser | None:
     """Seed the bootstrap admin from env if the table is empty.
 

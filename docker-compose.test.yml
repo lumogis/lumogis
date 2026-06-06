@@ -3,15 +3,10 @@
 # host does not leak into `lumogis-test` (verify-public-rc expects auth-on behaviour).
 #
 # Merge as: docker-compose.yml:docker-compose.test.yml[:docker-compose.public-rc-stack.yml]
-#
-# LUM-249: env_file uses `!override` to REPLACE (not concatenate) the inherited
-# `env_file: .env` from docker-compose.yml. Compose's default merge rule for
-# list-typed fields like env_file appends, which causes the host `.env` to leak
-# into the `lumogis-test` orchestrator alongside config/test.env.example.
 include:
   - path: docker-compose.yml
 
 services:
   orchestrator:
-    env_file: !override
+    env_file:
       - config/test.env.example

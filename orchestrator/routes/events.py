@@ -19,6 +19,7 @@ Architecture:
 import asyncio
 import json
 import logging
+import threading
 import time
 from collections import deque
 from typing import AsyncGenerator
@@ -49,6 +50,11 @@ _BUFFER_TTL = 300  # 5 minutes
 
 # Monotonic event counter for IDs.
 _event_counter = 0
+
+# LUM-216 slice 2 — debounced wow-state invalidation hint for connected clients.
+WOW_READINESS_DEBOUNCE_S = 1.5
+_wow_debounce_lock = threading.Lock()
+_wow_debounce_timers: dict[str, threading.Timer] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -146,11 +152,49 @@ def on_routine_elevation_ready(**kwargs) -> None:
     )
 
 
+def _schedule_wow_readiness_push(user_id: str) -> None:
+    """Debounced SSE hint so web clients refetch ``GET /me/wow-state`` (LUM-216 slice 2)."""
+
+    def _fire() -> None:
+        with _wow_debounce_lock:
+            _wow_debounce_timers.pop(user_id, None)
+        _push_to_connections("wow_readiness_changed", {}, user_id=user_id)
+
+    with _wow_debounce_lock:
+        existing = _wow_debounce_timers.pop(user_id, None)
+        if existing is not None:
+            existing.cancel()
+        timer = threading.Timer(WOW_READINESS_DEBOUNCE_S, _fire)
+        timer.daemon = True
+        _wow_debounce_timers[user_id] = timer
+        timer.start()
+
+
+def on_wow_readiness_entity_created(**kwargs) -> None:
+    user_id = kwargs.get("user_id")
+    if not user_id:
+        _log.warning("entity_created hook: missing user_id; dropping wow SSE hint")
+        return
+    if kwargs.get("is_staged"):
+        return
+    _schedule_wow_readiness_push(user_id)
+
+
+def on_wow_readiness_document_ingested(**kwargs) -> None:
+    user_id = kwargs.get("user_id")
+    if not user_id:
+        _log.warning("document_ingested hook: missing user_id; dropping wow SSE hint")
+        return
+    _schedule_wow_readiness_push(user_id)
+
+
 def register_hooks() -> None:
     """Register SSE push callbacks on all relevant events. Call from main.py."""
     hooks.register(Event.SIGNAL_RECEIVED, on_signal_received)
     hooks.register(Event.ACTION_EXECUTED, on_action_executed)
     hooks.register(Event.ROUTINE_ELEVATION_READY, on_routine_elevation_ready)
+    hooks.register(Event.ENTITY_CREATED, on_wow_readiness_entity_created)
+    hooks.register(Event.DOCUMENT_INGESTED, on_wow_readiness_document_ingested)
     _log.info("SSE hooks registered")
 
 

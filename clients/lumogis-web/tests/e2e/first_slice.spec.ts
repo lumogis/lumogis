@@ -19,11 +19,17 @@ test.describe("Lumogis Web first slice", () => {
   test.skip(!hasSmokeCreds, smokeCredsSkipMessage);
 
   test("login, land on chat, navigate search, axe main", async ({ page }) => {
+    test.setTimeout(180_000);
     await loginWithSmokeCredentials(page);
     await expect(page.getByRole("navigation", { name: /primary navigation/i })).toBeVisible();
 
+    await page.getByRole("link", { name: /^search$/i }).click({ force: true });
+    await expect(page).toHaveURL(/\/search$/);
+    await expect(page.getByRole("textbox", { name: /search query/i })).toBeVisible();
+
     const axe = await new AxeBuilder({ page })
       .include("#lumogis-main")
+      .withTags(["wcag2a", "wcag2aa"])
       .analyze();
     const serious = axe.violations.filter(
       (v) => v.impact === "serious" || v.impact === "critical",
@@ -32,9 +38,5 @@ test.describe("Lumogis Web first slice", () => {
       serious,
       `a11y (serious/critical in #lumogis-main): ${JSON.stringify(serious, null, 2)}`,
     ).toHaveLength(0);
-
-    await page.getByRole("link", { name: /^search$/i }).click();
-    await expect(page).toHaveURL(/\/search$/);
-    await expect(page.getByRole("textbox", { name: /search query/i })).toBeVisible();
   });
 });

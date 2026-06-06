@@ -14,13 +14,14 @@
 //   - Empty query clears results without network call
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { ApiClient } from "../../../src/api/client";
 import { AccessTokenStore } from "../../../src/api/tokens";
 import { AuthProvider } from "../../../src/auth/AuthProvider";
 import { SearchPage } from "../../../src/features/memory/SearchPage";
+import { renderWithRouter } from "../../helpers/renderWithRouter";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -143,10 +144,11 @@ function buildClient(overrides: FetchOverrides = {}) {
 
 function mountSearchPage(overrides: FetchOverrides = {}) {
   const { tokens, client } = buildClient(overrides);
-  render(
+  renderWithRouter(
     <AuthProvider client={client} tokens={tokens}>
       <SearchPage />
     </AuthProvider>,
+    { route: "/search" },
   );
   return { client };
 }

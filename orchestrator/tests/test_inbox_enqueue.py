@@ -5,12 +5,16 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
+from datetime import timezone
 from pathlib import Path
 from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import pytest
 
 import config
+from models.ingest import IngestResult
 from services import ingest as ingest_mod
 
 
@@ -78,6 +82,58 @@ def test_enqueue_containment_rejects_outside_inbox(inbox_tree: Path, monkeypatch
     ingest_mock.assert_not_called()
 
 
+def test_enqueue_inbox_rejects_symlink_escape(
+    inbox_tree: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    outside = inbox_tree.parent / "secret.txt"
+    outside.write_text("nope", encoding="utf-8")
+    link = inbox_tree / "link.txt"
+    link.symlink_to(outside)
+
+    ingest_mock = MagicMock()
+    monkeypatch.setattr(ingest_mod, "ingest_file", ingest_mock)
+    ingest_mod.enqueue_inbox_file(link, user_id="owner-1", source="watcher")
+    ingest_mock.assert_not_called()
+
+
+def test_ingest_folder_routes_through_safe_ingest_with_containment_root(
+    inbox_tree: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    doc = inbox_tree / "doc.txt"
+    doc.write_text("hello", encoding="utf-8")
+    calls: list[tuple[Path, Path, str]] = []
+
+    def _capture(path, *, user_id, containment_root, source):
+        calls.append((Path(path), containment_root, source))
+        return IngestResult(file_path=str(path), chunk_count=0, skipped=True)
+
+    monkeypatch.setattr(ingest_mod, "_ingest_file_safe", _capture)
+    monkeypatch.setattr(config, "get_extractors", lambda: {".txt": lambda _p: ""})
+    stats = ingest_mod.ingest_folder(str(inbox_tree), user_id="owner-1")
+    assert stats.total_files == 1
+    assert len(calls) == 1
+    assert calls[0][1] == inbox_tree.resolve(strict=False)
+    assert calls[0][2] == "folder"
+
+
+def test_ingest_folder_rejects_symlink_escape(
+    inbox_tree: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    outside = inbox_tree.parent / "secret.txt"
+    outside.write_text("nope", encoding="utf-8")
+    link = inbox_tree / "link.txt"
+    link.symlink_to(outside)
+
+    ingest_mock = MagicMock()
+    monkeypatch.setattr(ingest_mod, "ingest_file", ingest_mock)
+    monkeypatch.setattr(ingest_mod, "wait_for_stable_file", lambda *_a, **_k: True)
+    monkeypatch.setattr(config, "get_extractors", lambda: {".txt": lambda _p: "text"})
+    stats = ingest_mod.ingest_folder(str(inbox_tree), user_id="owner-1")
+    ingest_mock.assert_not_called()
+    assert stats.total_files == 1
+    assert stats.skipped == 1
+
+
 def test_inbox_poll_should_ingest_when_no_row_then_true(
     inbox_tree: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -103,6 +159,43 @@ def test_inbox_poll_should_ingest_when_mtime_unchanged_then_false(
     meta.fetch_one.return_value = {"updated_at": updated}
     monkeypatch.setattr(config, "get_metadata_store", lambda: meta)
     assert ingest_mod.inbox_poll_should_ingest(f, user_id="owner-1") is False
+
+
+def test_inbox_poll_mtime_fast_path_skips_file_hash_on_second_tick(
+    inbox_tree: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    f = inbox_tree / "indexed.txt"
+    f.write_text("data", encoding="utf-8")
+    st = f.stat()
+    indexed_at = datetime.fromtimestamp(st.st_mtime, tz=timezone.utc)
+    poll_passes = 0
+
+    def fetch_one(sql: str, params: tuple[object, ...]) -> dict | None:
+        nonlocal poll_passes
+        if "updated_at" in sql:
+            if poll_passes == 0:
+                poll_passes += 1
+                return None
+            return {"updated_at": indexed_at}
+        if "file_hash" in sql:
+            return None
+        return None
+
+    meta = MagicMock()
+    meta.fetch_one.side_effect = fetch_one
+    monkeypatch.setattr(config, "get_metadata_store", lambda: meta)
+    monkeypatch.setattr(ingest_mod, "wait_for_stable_file", lambda *_a, **_k: True)
+    monkeypatch.setattr(
+        config,
+        "get_extractors",
+        lambda: {".txt": lambda _p: ""},
+    )
+
+    with patch.object(ingest_mod, "_file_hash", wraps=ingest_mod._file_hash) as hash_spy:
+        ingest_mod._run_inbox_poll()
+        assert hash_spy.call_count == 1
+        ingest_mod._run_inbox_poll()
+        assert hash_spy.call_count == 1
 
 
 def test_get_inbox_mode_malformed_coerces_off(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -9,10 +9,13 @@ Security:
 - Runs as non-root inside the container.
 """
 
+import json
 import logging
 import os
 import stat
 import subprocess
+import threading
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -179,3 +182,132 @@ def restart(request: Request, body: RestartRequest = RestartRequest()):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+_COMPOSE_PS_TIMEOUT_SEC = 15
+_DF_TIMEOUT_SEC = int(os.environ.get("LUMOGIS_STACK_STATUS_DF_TIMEOUT_SEC", "30"))
+
+_df_lock = threading.Lock()
+_df_busy = False
+_last_system_df: object | None = None
+_last_system_df_error: str | None = None
+
+
+def _parse_compose_ps_output(stdout: str) -> list[dict]:
+    """Accept NDJSON (one object per line) or a top-level JSON array."""
+    text = stdout.strip()
+    if not text:
+        return []
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, list):
+            return [row for row in parsed if isinstance(row, dict)]
+    except json.JSONDecodeError:
+        pass
+    rows: list[dict] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):
+            rows.append(obj)
+    return rows
+
+
+def _run_compose_ps() -> list[dict]:
+    cmd = _compose_cmd(["ps", "--format", "json"])
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        timeout=_COMPOSE_PS_TIMEOUT_SEC,
+        cwd=_PROJECT_DIR,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"docker compose ps exited {result.returncode}: {result.stderr[:400]}"
+        )
+    return _parse_compose_ps_output(result.stdout)
+
+
+def _run_system_df() -> tuple[object | None, str | None]:
+    """Return (parsed rows or None, error message)."""
+    cmd = ["docker", "system", "df", "--format", "{{json .}}"]
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=_DF_TIMEOUT_SEC,
+            cwd=_PROJECT_DIR,
+        )
+    except subprocess.TimeoutExpired:
+        raise
+    if result.returncode != 0:
+        return None, f"docker system df exited {result.returncode}: {result.stderr[:400]}"
+    rows: list[dict] = []
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):
+            rows.append(obj)
+    if not rows:
+        return None, "docker system df returned no parseable rows"
+    return rows, None
+
+
+@app.get("/status")
+def stack_status(request: Request):
+    """Read-only compose ps + docker system df snapshot (token-gated)."""
+    global _df_busy, _last_system_df, _last_system_df_error
+
+    _check_token(request)
+    fetched_at = datetime.now(timezone.utc).isoformat()
+
+    try:
+        compose_ps = _run_compose_ps()
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="docker compose ps timed out.")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)[:400])
+
+    system_df: object | None = None
+    system_df_error: str | None = None
+    system_df_busy = False
+
+    with _df_lock:
+        if _df_busy:
+            system_df_busy = True
+            system_df = _last_system_df
+            system_df_error = _last_system_df_error or "system_df_busy"
+        else:
+            _df_busy = True
+
+    if not system_df_busy:
+        try:
+            system_df, system_df_error = _run_system_df()
+        except subprocess.TimeoutExpired:
+            with _df_lock:
+                _df_busy = False
+            raise HTTPException(status_code=504, detail="docker system df timed out.")
+        with _df_lock:
+            _last_system_df = system_df
+            _last_system_df_error = system_df_error
+            _df_busy = False
+
+    return {
+        "compose_ps": compose_ps,
+        "system_df": system_df,
+        "system_df_error": system_df_error,
+        "system_df_busy": system_df_busy,
+        "fetched_at": fetched_at,
+    }

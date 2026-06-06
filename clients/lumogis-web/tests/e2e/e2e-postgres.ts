@@ -45,9 +45,12 @@ export function resetOnboardingCompletedAt(
   smokeEmail: string,
   deps: { spawnSync?: SpawnSyncFn } = {},
 ): void {
-  const spawnSync = deps.spawnSync ?? nodeSpawnSync;
   const escaped = smokeEmail.replace(/'/g, "''");
-  const sql = `UPDATE users SET onboarding_completed_at = NULL WHERE email = '${escaped}';`;
+  runPsqlSql(`UPDATE users SET onboarding_completed_at = NULL WHERE email = '${escaped}';`, deps);
+}
+
+function runPsqlSql(sql: string, deps: { spawnSync?: SpawnSyncFn } = {}): void {
+  const spawnSync = deps.spawnSync ?? nodeSpawnSync;
   const pgUser = process.env.POSTGRES_USER ?? "lumogis";
   const pgDb = process.env.POSTGRES_DB ?? "lumogis";
   const pgHost = process.env.POSTGRES_HOST ?? "127.0.0.1";
@@ -57,7 +60,6 @@ export function resetOnboardingCompletedAt(
   const psqlArgs = ["-h", pgHost, "-p", String(pgPort), "-U", pgUser, "-d", pgDb, "-c", sql];
   const pgEnv = { ...process.env, PGPASSWORD: pgPassword };
 
-  // Prefer host psql when CI overlay publishes postgres (see docker-compose.web-e2e-ci.yml).
   if (spawnOk(spawnSync, "psql", psqlArgs, { env: pgEnv })) {
     return;
   }
@@ -88,7 +90,51 @@ export function resetOnboardingCompletedAt(
   }
 
   throw new Error(
-    `Could not reset users.onboarding_completed_at for ${smokeEmail}. ` +
-      "Ensure the stack is up and POSTGRES_* reaches Postgres, or set LUMOGIS_E2E_COMPOSE_FILES.",
+    "Could not run psql for e2e helper. Ensure the stack is up and POSTGRES_* reaches Postgres.",
+  );
+}
+
+/**
+ * Clear wow-path dismissal so cards may show on next `/chat` load (LUM-216).
+ */
+export function resetWowDismissedAt(
+  smokeEmail: string,
+  deps: { spawnSync?: SpawnSyncFn } = {},
+): void {
+  const escaped = smokeEmail.replace(/'/g, "''");
+  runPsqlSql(`UPDATE users SET wow_dismissed_at = NULL WHERE email = '${escaped}';`, deps);
+}
+
+/**
+ * Ensure onboarding is complete for wow gate eligibility (LUM-216 e2e).
+ */
+export function ensureOnboardingCompletedAt(
+  smokeEmail: string,
+  deps: { spawnSync?: SpawnSyncFn } = {},
+): void {
+  const escaped = smokeEmail.replace(/'/g, "''");
+  runPsqlSql(
+    `UPDATE users SET onboarding_completed_at = COALESCE(onboarding_completed_at, NOW()) WHERE email = '${escaped}';`,
+    deps,
+  );
+}
+
+/**
+ * Seed non-staged personal entities for the smoke user (LUM-216).
+ */
+export function seedWowEntitiesForSmokeUser(
+  smokeEmail: string,
+  count = 3,
+  deps: { spawnSync?: SpawnSyncFn } = {},
+): void {
+  const escaped = smokeEmail.replace(/'/g, "''");
+  const n = Math.max(1, Math.min(count, 10));
+  runPsqlSql(
+    `INSERT INTO entities (entity_id, user_id, name, entity_type, mention_count, scope, is_staged)
+     SELECT gen_random_uuid(), u.id, 'E2E Wow Entity ' || gs.n, 'Person', gs.n, 'personal', FALSE
+     FROM users u
+     CROSS JOIN generate_series(1, ${n}) AS gs(n)
+     WHERE u.email = '${escaped}';`,
+    deps,
   );
 }

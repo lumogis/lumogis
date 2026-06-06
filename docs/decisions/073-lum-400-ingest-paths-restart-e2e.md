@@ -4,7 +4,10 @@
 **Last updated:** 2026-05-29
 **Decided by:** /explore --headless (claude-opus-4-8-thinking-medium)
 
-> **Numbering note:** This branch (`agent/lum-400`) was cut before `dev`'s `072-lum-398-client-only-overlay.md` landed. Reconcile this file's number against `dev` at merge time (next free is likely `073` or `074`); `/merge-workflow` owns that reconciliation.
+> Status: Active
+> Last reviewed: 2026-06-04
+> Verified against commit: 0380ce81a
+> Notes: Allocated **`073-lum-400-*.md`** on merge to **`dev`** (after **070**–**072**; prefix **072** is a duplicate cluster — see **`072-lum-398-*.md`** and **`072-lum-401-*.md`**; prefix **074** is also duplicated — see **`074-lum-162-*.md`** and **`074-lum-178-*.md`**). Next free filename prefix for collision renames is **`081+`** (after **`080-lum-430-lumogis-search-public-export.md`**).
 
 ## Context
 LUM-397 shipped multi-root `ingest_paths` settings, the `restart_required` banner, and `POST /settings/restart` (container recreate via the stack-control sidecar), all covered by unit/mock tests. `/verify-plan` accepted one **P1** gap: the Docker restart round-trip was never exercised on a live stack. LUM-400 is that follow-up — it must produce **reproducible evidence** that a restart truly re-reads a changed `ingest_paths`, the watcher activates on the new path, a dropped file is ingested and appears in search, and the malformed-`INGEST_PATHS` silent fallback is documented. The decisive constraint: adding a brand-new host directory needs a **new bind mount**, which Docker applies only on container **recreate** (`compose up --force-recreate`) — exactly what stack-control already does — so the verification must reproduce that real path, not a cheaper stand-in (e.g. `stop()/start()` of the same container) that tests a different mechanism.
@@ -28,7 +31,7 @@ See `.cursor/explorations/LUM-400-ingest-paths-restart-e2e.md` for full detail.
 ## Revisit conditions
 - If Lumogis adopts testcontainers/pytest-docker elsewhere and the bespoke `integration-public-rc.sh` harness is retired, revisit whether this test should migrate.
 - If stack-control changes its restart mechanism away from `compose up --force-recreate`, re-validate that the test still exercises the production path.
-- Once **LUM-401** lands, extend to multi-bind paths and drop the deferral note.
+- **LUM-401** shipped (**`docs/decisions/072-lum-401-compose-multibind-generator.md`**, `orchestrator/compose_ingest_binds.py`). Extend restart E2E to multi-bind `ingest_paths[1..n]` when scheduled; index-0 coverage remains LUM-400.
 - If `get_effective_ingest_paths()` gains a user-visible error for malformed `INGEST_PATHS` (instead of silent fallback), update the negative test's expected behaviour.
 
 ## Implementation note (verify-plan, 2026-05-29)

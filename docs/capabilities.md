@@ -8,9 +8,7 @@
 - [Knowledge Graph](#knowledge-graph)
 - [Memory & Entities](#memory--entities)
 - [Capture & Voice](#capture--voice)
-- [Connectors / Sources](#connectors--sources)
 - [Lumogis Web](#lumogis-web)
-- [Desktop Overlay](#desktop-overlay)
 - [Search & Retrieval](#search--retrieval)
 - [Auth / Users / Credentials](#auth--users--credentials)
 - [MCP & Tool Catalog](#mcp--tool-catalog)
@@ -27,14 +25,13 @@ Core is the FastAPI orchestrator: HTTP APIs, business logic, optional in-process
 
 - Default Compose runs Core with Postgres, Qdrant, Ollama, Lumogis Web, Caddy (same-origin routing to the SPA and Core APIs), and stack-control.
 - Ingestion and indexing pipeline feed semantic search; sessions and related metadata live in Postgres.
+- **Filesystem inbox auto-ingest (LUM-330):** drop supported files into **`ai-workspace/inbox/`** (container path **`/workspace/inbox`**); configurable **`LUMOGIS_INBOX_*`** modes (**`event`**, **`poll`**, **`off`**), write-stability before ingest, poll fallback for unreliable bind mounts, and **`ai-workspace/quarantine/`** for terminal failures — see **[ADR 070](decisions/070-lum-330-folder-watch-inbox.md)** and **`docs/LUMOGIS_REFERENCE_MANUAL.md`**.
+- **Multi-path ingest compose binds (LUM-401):** admin **`PUT /settings`** can list multiple **`ingest_paths`**; indices **1..n** use **`orchestrator/compose_ingest_binds.py`** to generate tiered **`docker-compose.override.yml`** snippets (stack restart still required) — see **[ADR 072-lum-401](decisions/072-lum-401-compose-multibind-generator.md)** (ADR number collides with client-only overlay — see **`docs/decisions/`** index).
 - **Signals** ingest external or scheduled inputs (feeds, pages, calendars, and similar); monitors poll, score, and persist for downstream use.
 - **Routines** automate trusted **Ask** toward **Do** after repeated clean approvals (threshold from configuration).
-- Notifications include daily digest patterns via connectors such as ntfy alongside other notification paths.
+- Notifications include daily digest patterns via connectors such as ntfy alongside other notification paths. A unified in-process dispatcher, per-user routing preferences, and channel adapters are **decided** in **[ADR 077](decisions/077-lum-189-notification-architecture.md)** (**LUM-189**; implementation programme **LUM-93 → LUM-144 → LUM-28 → LUM-174** — **not shipped** in core yet).
 - Server-sent events are available at **`/events`** for live streams.
 - Legacy OpenAI-style **`/v1/*`** routes remain for compatible clients (for example optional LibreChat); Lumogis Web uses the versioned **`/api/v1/*`** façade.
-- **Inbox folder-watch:** operators configure **`LUMOGIS_INBOX_PATH`** and **`LUMOGIS_INBOX_MODE`** (`event`, `poll`, or `off`). Files are held until write-stable, then enqueued for ingest; terminal failures can be quarantined under **`ai-workspace/quarantine/`**. **`/healthz`** exposes inbox liveness fields without absolute paths; an auth-gated inbox summary appears on **`GET /api/v1/admin/diagnostics`**.
-- **Multi-path ingest:** host paths round-trip through **`INGEST_PATHS`** / **`INGEST_PATHS_HOST`**. **`GET /settings`** returns **`ingest_paths`**, **`pending_ingest_paths`**, **`restart_required`**, and **`paperless_configured`** (replacing the older single-root fields). **`POST /api/v1/ingest/upload`** accepts multipart uploads, returns **`202`** with a **`file_id`**, and stores files under the workspace **`uploads/`** tree for batch ingest.
-- **Chat auto-RAG (default off):** optional per-turn injection of top **`documents`** chunks into **`POST /v1/chat/completions`** via **`LUMOGIS_AUTO_RAG_*`** env knobs; hybrid/RRF vs dense gating and an optional BGE reranker floor when configured. See [Search & Retrieval](#search--retrieval) for behaviour and privacy notes.
 
 Self-hosters configure the stack via `.env` (see `.env.example`), Compose overlays for optional profiles, and Caddy for TLS and routing.
 
@@ -68,7 +65,7 @@ Structured memory and extracted entities sit alongside search so chat can draw o
 
 Surfaces for quick capture and optional speech input complement chat and ingest.
 
-- **Quick capture** uses bounded client-side staging (IndexedDB) with explicit sync steps rather than silent server writes from the queue alone.
+- **`/capture` (QuickCapture)** uses bounded client-side staging (IndexedDB) with explicit sync steps rather than silent server writes from the queue alone.
 - **Authenticated capture ledger APIs** under **`/api/v1/captures`** create, list, update, and delete capture rows for the signed-in user; support attachments and capture-linked transcription requests; and expose indexing submission so captures can enter the ingest pipeline. Pending captures stay editable; indexed captures block destructive edits enforced by the API.
 - **Semantic search** over captures versus ordinary **`documents`** remains uneven—treat capture-oriented discovery as still catching up to library search.
 - **Push-to-talk** transcription via **`POST /api/v1/voice/transcribe`** accepts short audio uploads and returns plain text for an editable field when speech-to-text is enabled (`STT_BACKEND`); **off** by default. A lightweight **`fake_stt`** backend supports tests and scaffolding; production-style deployments use Whisper-class STT in-process or via an optional HTTP sidecar enabled through Compose.
@@ -77,34 +74,19 @@ Enable STT only when you accept extra CPU/RAM (and optional GPU) cost; use the S
 
 ---
 
-## Connectors / Sources
-
-External document sources plug into the same chunk → embed → Qdrant pipeline as filesystem ingest.
-
-- **paperless-ngx (self-hosted):** read-only REST polling ingests new documents with per-user encrypted credentials. Register via **`POST /api/v1/sources`** with **`source_type: "paperless"`**; deduplication uses **`sources.poll_cursor`** and **`external_documents`**. Operator env includes **`PAPERLESS_*`** and **`PAPERLESS_POLL_PAGE_SIZE`**. Outbound URL policy is controlled by **`LUMOGIS_ALLOW_PRIVATE_OUTBOUND_URLS`** and **`LUMOGIS_OUTBOUND_PRIVATE_HOST_ALLOWLIST`**.
-
----
-
 ## Lumogis Web
 
 The first-party SPA is the primary household UI: chat, search, approvals, and Me/Admin settings on the same origin as Core via Caddy.
 
 - **Me**: profile (including password change), connectors, connector permissions, LLM providers, MCP tokens, notifications, export, tools/capabilities overview.
-- **First-run onboarding:** a skippable orientation modal per user (`users.onboarding_completed_at`); **`GET`** / **`PATCH /api/v1/me/onboarding`** read and update completion. Skip and Done both persist dismissal across reload; core chat is not blocked.
+- **Conversation history (LUM-162):** browse, continue, and delete past conversations with multi-store purge APIs — see **[ADR 074-lum-162](decisions/074-lum-162-conversation-history-ui.md)** (ADR number collides with stack-health ADR — see decisions index).
+- **First wow moment:** guided first-query and entity-discovery cards with server-owned readiness and dismissal — see **[ADR 075](decisions/075-lum-216-first-wow-moment.md)**.
 - **Admin**: users (import/export, password reset), connector credentials (including household and instance-system tiers where exposed), per-user connector permissions, MCP tokens, audit, diagnostics.
+- **Admin stack health (LUM-178):** read-only **System status** panel combining curated admin diagnostics with stack-control service rows (no Docker socket in Core) — see **[ADR 074-lum-178](decisions/074-lum-178-stack-health-dashboard.md)**.
 - Password change for self-service and admin-led reset are implemented; email-based forgot-password is not part of the shipped surface.
 - Older FastAPI-hosted HTML pages (dashboard, settings, graph views, backup, and similar) still exist for compatibility; full replacement by Lumogis Web is not claimed as finished.
 
 Pin **`LUMOGIS_PUBLIC_ORIGIN`** when authentication is on; align trusted proxy settings if TLS terminates in front of Caddy.
-
----
-
-## Desktop Overlay
-
-Optional Tauri 2 desktop client for quick memory search from the keyboard. **Proprietary:** the desktop tree is excluded from the public AGPL export.
-
-- **Household overlay:** global hotkey (default **Ctrl+Shift+L** / **⌃⇧L**), frameless overlay, up to five hits from **`GET /api/v1/memory/search`**, bearer JWT in the OS keychain, and library-root sandboxing for native open/reveal. Local builds: **`make desktop-dev`** and **`make desktop-build`**.
-- **Client-only distribution:** household-member profile with in-app first-run onboarding (server URL → **`/healthz`** → sign-in → search, with optional empty library roots). State is stored in **`overlay.json`** schema v2 including **`onboardingComplete`**. Build with **`make desktop-build-client-only`**.
 
 ---
 
@@ -114,7 +96,7 @@ Retrieval combines structured metadata with dense vectors (and optional hybrid /
 
 - Qdrant-backed search applies **user_id** filtering on queries.
 - Composed prompts sent to a **cloud LLM** (if configured) include retrieval excerpts and bounded context—not the entire local corpus; connectors still reach their own external APIs when used.
-- **Auto-RAG (opt-in via `LUMOGIS_AUTO_RAG_ENABLED`):** before each OpenAI-style **`POST /v1/chat/completions`** turn, Core may pull a small slate of relevant **`documents`** chunks (same visibility rules as **`search_files`**), optionally rerank with the configured BGE cross-encoder, wrap them through the injection sanitiser when enabled, and prepend them to the assembled context so the model does not need to call **`search_files`** first. **`search_files`** remains available and dedupes chunks already injected in the same request (matched by Qdrant point id). Operators should expect extra latency (embed + vector search + optional rerank) when auto-RAG is on; the first reranker batch after a cold process start can take seconds while the model loads. **Privacy:** injected **`document:{file_path}`** attribute tokens and chunk text follow the same exposure class as explicit **`search_files`** results—they are sent to whichever LLM you configure for that chat.
+- **Auto-RAG (LUM-308, opt-in via `LUMOGIS_AUTO_RAG_ENABLED`):** before each OpenAI-style **`POST /v1/chat/completions`** turn, Core may pull a small slate of relevant **`documents`** chunks (same visibility rules as **`search_files`**), optionally rerank with the configured BGE cross-encoder, wrap them through the injection sanitiser when enabled, and prepend them to the assembled context so the model does not need to call **`search_files`** first. **`search_files`** remains available and dedupes chunks already injected in the same request (matched by Qdrant point id). Operators should expect extra latency (embed + vector search + optional rerank) when auto-RAG is on; the first reranker batch after a cold process start can take seconds while the model loads. **Privacy:** injected **`document:{file_path}`** attribute tokens and chunk text follow the same exposure class as explicit **`search_files`** results—they are sent to whichever LLM you configure for that chat.
 
 ---
 
@@ -157,6 +139,17 @@ Daily digest and connector-backed notifications remain alternatives where browse
 
 ---
 
+## Lumogis Search (desktop overlay)
+
+AGPL-3.0-only Tauri 2 overlay at **`clients/lumogis-search/`** — included in the public export. Connects to your household Lumogis server (no local stack in the installer).
+
+- **Memory search (LUM-329 / LUM-430):** global hotkey frameless UI calling **`GET /api/v1/memory/search`** with OS keychain session storage — see **[ADR 069](decisions/069-lum-329-tauri-search-overlay.md)** and **`clients/lumogis-search/README.md`**.
+- **Household onboarding (LUM-398):** in-webview first-run flow (server URL → **`GET /healthz`** → sign-in when auth is on) — see **[ADR 072](decisions/072-lum-398-client-only-overlay.md)**.
+- **Overlay auth and ingest paths (LUM-397):** role-gated admin **`ingest_paths`**, push upload, and session refresh — see **[ADR 071](decisions/071-lum-397-tauri-overlay-auth-ingest.md)**.
+- **Build:** **`make search-dev`** / **`make search-build`** (or **`cd clients/lumogis-search && npm run tauri:build`**).
+
+---
+
 ## Capabilities / Plugins
 
 Extensions split between **in-process plugins** and **out-of-process capabilities**.
@@ -187,15 +180,7 @@ Pre-built multi-platform images (amd64/arm64) are published to `ghcr.io/lumogis/
 COMPOSE_FILE=docker-compose.yml:docker-compose.ghcr.yml docker compose up -d --pull always
 ```
 
-**First-run quickstart:** **[`docs/deployment/quickstart.md`](deployment/quickstart.md)** — published **GHCR** path (`COMPOSE_FILE=docker-compose.yml:docker-compose.ghcr.yml`), first-boot **Ollama** / **Postgres** behaviour, **`curl`** health smoke vs **`make health`**, and common errors.
-
-**Off-LAN access:** Tailscale-first remote access patterns — **[`docs/deployment/remote-access.md`](deployment/remote-access.md)**.
-
-**Health checks:** **`make doctor`** is a read-only operator CLI — Compose **`ps`** / **`config`**, **`.env`** grammar checks (no shell **`source`**), optional **`/healthz`** probes, optional **`--json`** v1 contract (**`scripts/doctor/schema.v1.json`**), and a security category opt-in (**`--security`** or **`LUMOGIS_DOCTOR_RUN_SECURITY=1`**). See **`scripts/doctor/README.md`**.
-
 ### Verifying image provenance
-
-The **`make verify-public-rc`** gate (or the narrower integration script it chains) uses a separate Compose project name and pinned test env for Core so it can run beside a normal developer stack without picking up the wrong orchestrator variables from a local `.env`.
 
 After pulling an image, confirm build provenance against the digest you resolved (digest pins are recommended; tags can move):
 

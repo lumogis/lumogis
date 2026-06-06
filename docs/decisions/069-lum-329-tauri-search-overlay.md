@@ -1,6 +1,8 @@
 # ADR-069: Tauri 2 desktop memory search overlay (LUM-329)
 
-**Status:** Finalised
+> **Superseded (export boundary and product paths)** by **[ADR 081](081-lum-434-export-boundary-reconciliation.md)**. Overlay **behaviour** below remains valid; implement at **`clients/lumogis-search/`** (**Lumogis Search**).
+
+**Status:** Superseded (export boundary) — behaviour record retained
 **Created:** 2026-05-27
 **Last updated:** 2026-05-27
 **Decided by:** `/explore --headless` LUM-329 (Claude Opus 4.7) + `/review-plan --arbitrate` R1
@@ -8,11 +10,11 @@
 
 ## Context
 
-The household Docker-track launch needs a **system-wide** memory search surface: global hotkey, small overlay UI, **`GET /api/v1/memory/search`** (limit 5), native open/reveal under operator-controlled **library roots**, and **bearer JWT** in the OS keychain when **`AUTH_ENABLED=true`**. ADR 030 deferred a full Tauri shell until revisit triggers; **LUM-329** implements a **minimal overlay** (not a Phase 6 `lumogis-web` bundle) in the proprietary app tree **`clients/lumogis-desktop/`**, stripped from the public AGPL export via **`scripts/public-export-strip-list.txt`**.
+The household Docker-track launch needs a **system-wide** memory search surface: global hotkey, small overlay UI, **`GET /api/v1/memory/search`** (limit 5), native open/reveal under operator-controlled **library roots**, and **bearer JWT** in the OS keychain when **`AUTH_ENABLED=true`**. ADR 030 deferred a full Tauri shell until revisit triggers; **LUM-329** implements a **minimal overlay** (not a Phase 6 `lumogis-web` bundle). **Current product:** **Lumogis Search** at **`clients/lumogis-search/`** (**ADR 081**).
 
 ## Decision
 
-Ship the overlay as **Tauri 2** under **`clients/lumogis-desktop/`**: `tauri-plugin-global-shortcut`, `tauri-plugin-opener`, frameless transparent always-on-top window, hide-on-blur, **`overlay.json`** for non-secret settings, **`keyring`** for access token, explicit **Tauri 2 capability identifiers** (no wildcards), and **explicit CSP** (`connect-src 'none'`) with **HTTP performed from Rust (`reqwest`)** for search so the webview does not need a widening `connect-src` for arbitrary orchestrator origins.
+Ship the overlay as **Tauri 2** **Lumogis Search** (`clients/lumogis-search/`): `tauri-plugin-global-shortcut`, `tauri-plugin-opener`, frameless transparent always-on-top window, hide-on-blur, **`overlay.json`** for non-secret settings, **`keyring`** for access token, explicit **Tauri 2 capability identifiers** (no wildcards), and **explicit CSP** (`connect-src 'none'`) with **HTTP performed from Rust (`reqwest`)** for search so the webview does not need a widening `connect-src` for arbitrary orchestrator origins.
 
 ## Alternatives considered
 
@@ -36,8 +38,11 @@ See `.cursor/explorations/LUM-329-tauri-search-overlay.md` (Tauri 1, Electron, W
 - 2026-05-27: Revised during `/review-plan --arbitrate` R1 — locked **`keyring`** for v0.1.
 - 2026-05-27: Finalised by `/verify-plan --headless` LUM-329 — implementation confirmed; canonical copy this file.
 - 2026-05-27: Filename renumbered **066 → 069** to resolve prefix collision with **`066-lum-124-memory-as-hint.md`** (LUM-124 shipped first).
+- 2026-06-05: Path note amended by `/verify-plan` **LUM-435** — **public** AGPL overlay behaviour ships from **`clients/lumogis-search/`** (**ADR 080**); bundled Persona C appliance uses the same overlay UX via shared crate (**ADR 081**).
+- 2026-06-05: Export boundary superseded by **ADR 081** (**LUM-434**).
 
 ## Relation to other decisions
 
 - **[ADR 030](030-cross-device-client-architecture.md)** — status-history documents partial lift: overlay shipped; Phase 6 full SPA-wrapping shell remains **LUM-44** programme scope.
-- **LUM-333** — connector manager panel should reuse this **same Tauri binary** (second window); see **`clients/lumogis-desktop/README.md`**.
+- **[ADR 081](081-lum-434-export-boundary-reconciliation.md)** — canonical export boundary (**LUM-434**).
+- **[ADR 080](080-lum-430-lumogis-search-public-export.md)** — export split as-shipped record (**LUM-432**).

@@ -1,0 +1,16 @@
+{
+  "productName": "Lumogis Search",
+  "identifier": "com.lumogis.overlay",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Lumogis Search"
+      }
+    ]
+  },
+  "bundle": {
+    "shortDescription": "Lumogis memory search overlay (household client — connects to your server)",
+    "copyright": "Copyright (C) 2026 Thomas Kohlborn, trading as Lumogis. Licensed under AGPL-3.0-only."
+  }
+}

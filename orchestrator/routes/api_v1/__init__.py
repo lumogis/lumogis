@@ -23,6 +23,7 @@ from .approvals import router as approvals_router
 from .audit import router as audit_router
 from .captures import router as captures_router
 from .chat import router as chat_router
+from .conversations import router as conversations_router
 from .events import router as events_router
 from .ingest import router as ingest_router
 from .kg import router as kg_router
@@ -33,6 +34,7 @@ from .voice import router as voice_router
 router = APIRouter(tags=["v1"])
 
 router.include_router(chat_router)
+router.include_router(conversations_router)
 router.include_router(memory_router)
 router.include_router(kg_router)
 router.include_router(approvals_router)

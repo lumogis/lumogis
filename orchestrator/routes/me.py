@@ -48,6 +48,9 @@ from models.api_v1 import MeNotificationsResponse
 from models.api_v1 import MeOnboardingPatchRequest
 from models.api_v1 import MeOnboardingResponse
 from models.api_v1 import MeToolsResponse
+from models.api_v1 import MeWowPatchRequest
+from models.api_v1 import MeWowStateResponse
+from models.api_v1 import WowTopEntity
 from models.auth import AckOk
 from models.auth import MePasswordChangeRequest
 from models.user_export import ExportRequest
@@ -58,6 +61,7 @@ from services import me_notifications as me_notifications_svc
 from services import me_tools_catalog
 from services import user_export as user_export_service
 from services import users as users_service
+from services import wow_state as wow_state_service
 
 _log = logging.getLogger(__name__)
 
@@ -315,3 +319,114 @@ def patch_my_onboarding(
             detail="database_unavailable",
         ) from None
     return MeOnboardingResponse(completed_at=completed_at)
+
+
+def _wow_state_response(
+    *,
+    user_id: str,
+    onboarding_completed_at: datetime | None,
+    wow_dismissed_at: datetime | None,
+) -> MeWowStateResponse:
+    state = wow_state_service.get_wow_state(user_id)
+    top = [WowTopEntity(**row) for row in state["top_entities"]]
+    return MeWowStateResponse(
+        entities_ready=state["entities_ready"],
+        top_entities=top,
+        wow_dismissed_at=wow_dismissed_at,
+        onboarding_completed_at=onboarding_completed_at,
+    )
+
+
+@router.get(
+    "/wow-state",
+    response_model=MeWowStateResponse,
+    summary="First wow-moment path readiness and dismissal state",
+)
+def get_my_wow_state(request: Request, response: Response) -> MeWowStateResponse:
+    """Return wow card eligibility inputs for the caller (LUM-216).
+
+    ``AUTH_ENABLED=false`` returns synthetic readiness for QA.
+    """
+    _onboarding_no_store(response)
+    if not auth_enabled():
+        now = datetime.now(timezone.utc)
+        return MeWowStateResponse(
+            entities_ready=True,
+            top_entities=[],
+            wow_dismissed_at=None,
+            onboarding_completed_at=now,
+        )
+    caller = get_user(request)
+    try:
+        if users_service.get_user_by_id(caller.user_id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="user not found",
+            ) from None
+        onboarding_at = users_service.get_onboarding_completed_at(caller.user_id)
+        dismissed_at = users_service.get_wow_dismissed_at(caller.user_id)
+    except HTTPException:
+        raise
+    except Exception:
+        _log.exception("me/wow-state GET failed user_id=%s", caller.user_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="database_unavailable",
+        ) from None
+    return _wow_state_response(
+        user_id=caller.user_id,
+        onboarding_completed_at=onboarding_at,
+        wow_dismissed_at=dismissed_at,
+    )
+
+
+@router.patch(
+    "/wow-state",
+    response_model=MeWowStateResponse,
+    summary="Dismiss the first wow-moment path",
+    dependencies=[Depends(require_same_origin)],
+)
+def patch_my_wow_state(
+    body: MeWowPatchRequest,
+    request: Request,
+    response: Response,
+) -> MeWowStateResponse:
+    """Idempotently record wow-path dismissal (LUM-216)."""
+    _ = body
+    _ = request
+    _onboarding_no_store(response)
+    if not auth_enabled():
+        now = datetime.now(timezone.utc)
+        return MeWowStateResponse(
+            entities_ready=True,
+            top_entities=[],
+            wow_dismissed_at=now,
+            onboarding_completed_at=now,
+        )
+    caller = get_user(request)
+    try:
+        if users_service.get_user_by_id(caller.user_id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="user not found",
+            ) from None
+        dismissed_at = users_service.set_wow_dismissed(caller.user_id)
+        onboarding_at = users_service.get_onboarding_completed_at(caller.user_id)
+    except HTTPException:
+        raise
+    except LookupError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="user not found",
+        ) from None
+    except Exception:
+        _log.exception("me/wow-state PATCH failed user_id=%s", caller.user_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="database_unavailable",
+        ) from None
+    return _wow_state_response(
+        user_id=caller.user_id,
+        onboarding_completed_at=onboarding_at,
+        wow_dismissed_at=dismissed_at,
+    )

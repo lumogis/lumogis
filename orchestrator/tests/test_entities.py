@@ -580,13 +580,16 @@ class TestSessionEndTriggersExtraction:
     @patch("routes.data.enqueue", return_value=1)
     def test_session_end_enqueues_with_messages_in_payload(self, mock_enqueue):
         import main
+        import uuid
+
         from fastapi.testclient import TestClient
 
+        session_id = str(uuid.uuid4())
         with TestClient(main.app) as client:
             resp = client.post(
                 "/session/end",
                 json={
-                    "session_id": "sess-123",
+                    "session_id": session_id,
                     "messages": [
                         {"role": "user", "content": "Alice wrote the report."},
                         {"role": "assistant", "content": "Got it."},
@@ -598,7 +601,7 @@ class TestSessionEndTriggersExtraction:
         assert resp.json()["status"] == "session end queued"
         mock_enqueue.assert_called_once()
         payload = mock_enqueue.call_args.kwargs["payload"]
-        assert payload["session_id"] == "sess-123"
+        assert payload["session_id"] == session_id
         msgs = payload["messages"]
         assert any(m["content"] == "Alice wrote the report." for m in msgs)
         assert any(m["content"] == "Got it." for m in msgs)
@@ -606,19 +609,22 @@ class TestSessionEndTriggersExtraction:
     @patch("routes.data.enqueue", return_value=1)
     def test_session_end_enqueues_session_id_for_downstream_evidence(self, mock_enqueue):
         import main
+        import uuid
+
         from fastapi.testclient import TestClient
 
+        session_id = str(uuid.uuid4())
         with TestClient(main.app) as client:
             client.post(
                 "/session/end",
                 json={
-                    "session_id": "sess-456",
+                    "session_id": session_id,
                     "messages": [{"role": "user", "content": "hello"}],
                 },
             )
 
         payload = mock_enqueue.call_args.kwargs["payload"]
-        assert payload["session_id"] == "sess-456"
+        assert payload["session_id"] == session_id
         assert mock_enqueue.call_args.kwargs["kind"] == "session_end"
 
 

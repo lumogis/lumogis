@@ -1,0 +1,28 @@
+id	make_target	wrapper	prereqs	stage	heavy	private_tree_only
+orchestrator-unit	make test	unit	venv or Docker; AUTH_ENABLED=false	local-dev	0	0
+stack-control-unit	make test (includes stack-control)	unit	venv	local-dev	0	0
+compose-unit	make compose-test	unit	Docker only	local-dev	0	0
+test-kg	make test-kg	none	venv or compose-test-kg	local-dev	1	1
+mock-capability	make mock-capability-test	none	venv	local-dev	0	1
+test-integration	make test-integration	integration	live stack up	local-dev	1	0
+test-integration-full	make test-integration-full	integration	live stack	local-dev	1	0
+rc-integration	scripts/integration-public-rc.sh full-cycle	integration	RC compose triple	release-rc	1	0
+e2e-ingest-restart	make e2e-ingest-restart	integration	RC stack 3-5 min	opt-in-heavy	1	0
+graph-parity	make test-graph-parity	integration	Docker; destructive volumes	opt-in-heavy	1	0
+m1-compat	make m1-compat-with-retry	integration	live FalkorDB	opt-in-heavy	1	0
+web-caddy-headers	make web-caddy-headers	none	stack + Caddy	opt-in-heavy	1	0
+web-unit	make web-test	web	Node >=20 in lumogis-web	local-dev	0	0
+search-vitest	cd clients/lumogis-search && npm test	none	Node >=20	local-dev	0	0
+web-e2e	make web-e2e	web	stack + Caddy + smoke creds	opt-in-heavy	1	0
+web-e2e-prove	make web-e2e-prove	web	stack + smoke creds	opt-in-heavy	1	0
+search-rust	cargo test (lumogis-search)	rust	Rust toolchain	local-dev	0	0
+lint-python	make lint	lint	venv	local-dev	0	0
+lint-web	make web-lint	web	Node	local-dev	0	0
+openapi-codegen	make web-codegen-check	none	venv + Node	ci-main	0	0
+openapi-breaking	make openapi-breaking-check	none	Go 1.26+ and oasdiff	ci-main	0	0
+compose-policy	make compose-policy-check	none	PyYAML + compose CLI	ci-main	0	0
+compose-test-doctor	make compose-test-doctor	none	Docker + jq	ci-main	0	0
+export-hygiene	create-upstream-export-tree.sh + check-public-export.sh	none	bash/git	release-rc	0	0
+audit-local	make audit-local	none	network for advisory DBs	local-dev	0	0
+verify-public-rc	make verify-public-rc	none	Docker; .env from .env.example	release-rc	1	0
+verify-public-rc-full	make verify-public-rc-full	none	RC gate + Playwright smoke creds	release-full	1	0

@@ -92,7 +92,13 @@ export type ThreadAction =
   | { type: "APPEND_ASSISTANT_DELTA"; threadId: string; messageId: string; delta: string }
   | { type: "FINISH_ASSISTANT"; threadId: string; messageId: string }
   | { type: "ABORT_ASSISTANT"; threadId: string; messageId: string }
-  | { type: "FAIL_ASSISTANT"; threadId: string; messageId: string; detail: string };
+  | { type: "FAIL_ASSISTANT"; threadId: string; messageId: string; detail: string }
+  | {
+      type: "LOAD_SEED_MESSAGES";
+      threadId: string;
+      messages: ChatMessageDTO[];
+      createdAt: number;
+    };
 
 export const initialThreadState: ThreadState = { threads: [], activeId: null };
 
@@ -209,6 +215,24 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
             : m,
         ),
       }));
+
+    case "LOAD_SEED_MESSAGES": {
+      const seeded: ChatMessage[] = action.messages.map((m, idx) => ({
+        id: `seed-${idx}-${action.createdAt}`,
+        role: m.role,
+        content: m.content,
+        createdAt: action.createdAt + idx,
+        status: m.role === "assistant" ? ("complete" as const) : undefined,
+      }));
+      const firstUser = seeded.find((m) => m.role === "user");
+      const titleText = firstUser?.content ?? "Continued chat";
+      return mapThread(state, action.threadId, (t) => ({
+        ...t,
+        title: deriveTitle(titleText),
+        updatedAt: action.createdAt,
+        messages: [...seeded, ...t.messages],
+      }));
+    }
 
     default: {
       const _exhaustive: never = action;
@@ -383,9 +407,7 @@ export function useChatThreads(opts: UseChatThreadsOptions): UseChatThreadsResul
 }
 
 function defaultId(): string {
-  // crypto.randomUUID is available in modern jsdom; fall back to a Math.random
-  // based id for super-old environments so the hook still mounts in tests.
   const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
   if (c && typeof c.randomUUID === "function") return c.randomUUID();
-  return `t_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`;
+  throw new Error("crypto.randomUUID is required for chat thread ids");
 }

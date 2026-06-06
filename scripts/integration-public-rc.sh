@@ -128,6 +128,31 @@ _ensure_embedding_model_rc() {
     || echo "[integration-public-rc] WARNING: could not pull '${model}'; restart_e2e ingest assertions may fail" >&2
 }
 
+_wait_web_smoke_ready() {
+  local origin="${LUMOGIS_WEB_BASE_URL:-http://127.0.0.1}"
+  local email password i
+  eval "$(python3 "$ROOT/scripts/rc_test_env_defaults.py" "$ROOT/$ENV_FILE")"
+  email="${LUMOGIS_WEB_SMOKE_EMAIL:-${LUMOGIS_BOOTSTRAP_ADMIN_EMAIL:-}}"
+  password="${LUMOGIS_WEB_SMOKE_PASSWORD:-${LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD:-}}"
+  echo "[integration-public-rc] INFO: waiting for Caddy + auth at ${origin}" >&2
+  for i in $(seq 1 60); do
+    if curl -sf "${origin}/" 2>/dev/null | grep -q '<div id="root">'; then
+      if [ -n "$email" ] && [ -n "$password" ]; then
+        if E="$email" P="$password" curl -sf -o /dev/null -X POST "${origin}/api/v1/auth/login" \
+          -H 'Content-Type: application/json' \
+          -d "$(E="$email" P="$password" python3 -c 'import json,os; print(json.dumps({"email":os.environ["E"],"password":os.environ["P"]}))')"; then
+          return 0
+        fi
+      elif curl -sf -o /dev/null "${origin}/health"; then
+        return 0
+      fi
+    fi
+    sleep 2
+  done
+  echo "[integration-public-rc] ERROR: stack not ready for Playwright at ${origin} after 120s" >&2
+  return 1
+}
+
 cmd_up() {
   (cd "$ROOT" && test -f .env || cp config/test.env.example .env)
   # Create the default filesystem root on the host as the invoking user *before* compose up.
@@ -142,6 +167,7 @@ cmd_up() {
     bash "$ROOT/scripts/seed-public-rc-ingest-owner.sh"
     _ensure_embedding_model_rc
     _recreate_orchestrator_rc
+    _wait_web_smoke_ready
   fi
 }
 

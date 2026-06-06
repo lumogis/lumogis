@@ -99,7 +99,9 @@ Out of scope:
 - Denial of service via resource exhaustion on self-hosted instances
 - Issues requiring physical access to the host machine
 
-Telemetry disclosure is tracked for release under **LUM-217**; a dedicated TELEMETRY.md may ship in the same programme.
+## Lumogis Web chat transcripts (LUM-162)
+
+When conversation history sync is enabled, Lumogis Web may persist chat message text in Postgres tables **`web_conversations`** and **`web_messages`** (migration **027**) on your instance. Data stays on your hardware. Users can **hard-delete** a conversation via **`DELETE /api/v1/conversations/{id}`**, which removes the Postgres rows and best-effort Qdrant/graph session artefacts (see reference manual §6).
 
 ## Security Design Notes
 

@@ -149,6 +149,30 @@ class _FakeBatchQueueStore:
         q = _norm(query)
         p = params or ()
         now = datetime.now(timezone.utc)
+        if (
+            q.startswith("update user_batch_jobs set")
+            and "status = 'dead'" in q
+            and "returning id" in q
+            and "payload->>'session_id'" in q
+        ):
+            _err, uid, sid = p
+            out = []
+            for r in self.rows.values():
+                if r["user_id"] != uid:
+                    continue
+                if r["kind"] != "session_end":
+                    continue
+                if r["status"] != "pending":
+                    continue
+                if str(r["payload"].get("session_id")) != sid:
+                    continue
+                r["status"] = "dead"
+                r["finished_at"] = now
+                r["error"] = str(_err)[:1000]
+                r["worker_id"] = None
+                r["started_at"] = None
+                out.append({"id": r["id"]})
+            return out
         if "returning id" in q and "status = 'pending'" in q and "attempt + 1" in q:
             stuck_s, ma = int(p[0]), int(p[1])
             out = []
@@ -263,3 +287,30 @@ def test_run_one_tick_dispatches_to_handler(_fake_batch_store) -> None:
     assert batch_queue._run_one_tick("worker-x") is True
     assert seen == [("bob", 7)]
     assert _fake_batch_store.rows[1]["status"] == "done"
+
+
+def test_cancel_pending_session_end_jobs_marks_matching_pending_dead(_fake_batch_store) -> None:
+    class P(BaseModel):
+        session_id: str
+        messages: list[dict] = []
+
+    @batch_queue.register_batch_handler("session_end", P)
+    def _h(*, user_id: str, payload: P) -> None:
+        pass
+
+    sid = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    other = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+    j1 = batch_queue.enqueue(
+        user_id="alice",
+        kind="session_end",
+        payload={"session_id": sid, "messages": []},
+    )
+    j2 = batch_queue.enqueue(
+        user_id="alice",
+        kind="session_end",
+        payload={"session_id": other, "messages": []},
+    )
+    n = batch_queue.cancel_pending_session_end_jobs(user_id="alice", session_id=sid)
+    assert n == 1
+    assert _fake_batch_store.rows[j1]["status"] == "dead"
+    assert _fake_batch_store.rows[j2]["status"] == "pending"

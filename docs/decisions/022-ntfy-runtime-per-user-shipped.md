@@ -80,6 +80,7 @@ The ntfy notifier resolves its delivery config per call from the ADR 018 `user_c
 
 ## Revisit conditions
 
+- Clarified by [ADR 077](077-lum-189-notification-architecture.md) (notification routing preferences). ADR 022's "no sibling table" rule applies to **ntfy delivery credentials** only; non-secret routing prefs use dedicated tables in ADR 077.
 - If a second household-batch job (`services/routines.weekly_review`, etc.) needs per-user fanout, factor digest's "enumerate distinct active `user_id`" SQL into a shared helper rather than duplicating it. This is the natural moment to open audit B7.
 - If a second notification channel ships (Web Push, Matrix, Apprise), revisit whether `NOTIFIER_BACKEND` should remain a deployment switch or become a per-user choice. The current contract assumes one channel per deployment.
 - If household-broadcast notifications become a product requirement, define the `user_id="__system__"` sentinel resolution path (most likely: a credential row keyed on the sentinel, falling back to a `NTFY_HOUSEHOLD_TOPIC` env var). Do NOT add `user_id: str | None` to the Protocol.

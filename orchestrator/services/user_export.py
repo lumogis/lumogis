@@ -98,6 +98,8 @@ _USER_EXPORT_TABLES: tuple[str, ...] = (
     "file_index",
     "entities",
     "sessions",
+    "web_conversations",
+    "web_messages",
     "notes",
     "audio_memos",
     "signals",
@@ -174,6 +176,11 @@ _OMITTED_USER_TABLES: dict[str, str] = {
     "auth_sessions": (
         "excluded (per-instance refresh session hashes; JWT secret-bound; non-portable)"
     ),
+    # Hard-delete tombstones (LUM-162) coordinate in-flight purge vs session_end
+    # jobs on the source instance; they are not meaningful portable user content.
+    "purged_conversations": (
+        "excluded (purge tombstone bookkeeping; source-instance coordination)"
+    ),
 }
 
 
@@ -223,6 +230,7 @@ _TABLES_WITH_SCOPE: frozenset[str] = frozenset(
         "file_index",
         "entities",
         "sessions",
+        "web_conversations",
         "notes",
         "audio_memos",
         "signals",

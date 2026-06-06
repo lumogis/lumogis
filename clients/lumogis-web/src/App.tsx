@@ -40,6 +40,7 @@ import { AdminConnectorPermissionsView } from "./features/admin/AdminConnectorPe
 import { AdminMcpTokensView } from "./features/admin/AdminMcpTokensView";
 import { AdminAuditView } from "./features/admin/AdminAuditView";
 import { AdminDiagnosticsView } from "./features/admin/AdminDiagnosticsView";
+import { AdminSystemStatusView } from "./features/admin/AdminSystemStatusView";
 import { QuickCapturePage } from "./features/capture/QuickCapturePage";
 import { OnboardingGate } from "./features/onboarding/OnboardingGate";
 
@@ -130,6 +131,7 @@ function ShellRoutes(): JSX.Element {
             <Route path="mcp-tokens" element={<AdminMcpTokensView />} />
             <Route path="audit" element={<AdminAuditView />} />
             <Route path="diagnostics" element={<AdminDiagnosticsView />} />
+            <Route path="system-status" element={<AdminSystemStatusView />} />
             <Route path="*" element={<Navigate to="users" replace />} />
           </Route>
           <Route path="*" element={<Navigate to="/chat" replace />} />

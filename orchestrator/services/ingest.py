@@ -765,13 +765,12 @@ def inbox_poll_should_ingest(path: Path, *, user_id: str) -> bool:
 
 
 def _validate_inbox_containment(resolved: Path) -> bool:
+    from services.path_containment import _resolved_path_under_root
+
     global _inbox_containment_violations
     inbox_root = config.get_inbox_path().resolve(strict=False)
-    try:
-        if resolved.is_relative_to(inbox_root):
-            return True
-    except ValueError:
-        pass
+    if _resolved_path_under_root(resolved, inbox_root):
+        return True
     _log.error(
         "Inbox path containment violation: %s is not under %s",
         resolved,
@@ -846,35 +845,52 @@ def _quarantine_inbox_file(
                 pass
 
 
-def enqueue_inbox_file(
+_IngestSafeSource = Literal["watcher", "poll", "folder"]
+
+
+def _ingest_file_safe(
     path: str | Path,
     *,
     user_id: str,
-    source: Literal["watcher", "poll"],
-) -> None:
-    """Single seam from watcher/poll into ``ingest_file`` (LUM-330)."""
+    containment_root: Path,
+    source: _IngestSafeSource,
+) -> IngestResult | None:
+    """Containment, size guard, stability wait, then ``ingest_file`` with quarantine on failure."""
+    from services.path_containment import _resolved_path_under_root
+
     resolved = Path(path).resolve(strict=False)
     if not resolved.exists():
-        _log.debug("enqueue_inbox_file: path gone before ingest: %s", resolved)
-        return
-    if not _validate_inbox_containment(resolved):
-        return
+        _log.debug("_ingest_file_safe: path gone before ingest: %s", resolved)
+        return None
+
+    root = containment_root.expanduser().resolve(strict=False)
+    if not _resolved_path_under_root(resolved, root):
+        inbox_root = config.get_inbox_path().resolve(strict=False)
+        if root == inbox_root:
+            _validate_inbox_containment(resolved)
+        else:
+            _log.error(
+                "Folder ingest path containment violation: %s is not under %s",
+                resolved,
+                root,
+            )
+        return None
 
     try:
         size = resolved.stat().st_size
     except OSError:
-        _log.debug("enqueue_inbox_file: cannot stat %s", resolved)
-        return
+        _log.debug("_ingest_file_safe: cannot stat %s", resolved)
+        return None
 
     max_bytes = config.get_inbox_max_file_bytes()
     if size > max_bytes:
         _log.warning(
-            "Skipping oversized inbox file %s (%d bytes > %d)",
+            "Skipping oversized file %s (%d bytes > %d)",
             resolved,
             size,
             max_bytes,
         )
-        return
+        return None
 
     budget_ms = config.get_inbox_stability_delay_ms()
     path_key = str(resolved)
@@ -898,22 +914,22 @@ def enqueue_inbox_file(
                     resolved,
                 )
         else:
-            _log.warning("Inbox file not stable after %dms: %s", budget_ms, resolved)
-        return
+            _log.warning("File not stable after %dms: %s", budget_ms, resolved)
+        return None
 
     _poll_stability_failures.pop(path_key, None)
 
     try:
-        ingest_file(str(resolved), user_id=user_id)
+        return ingest_file(str(resolved), user_id=user_id)
     except Exception as exc:
         if _is_transient_ingest_error(exc):
             _log.error(
-                "Transient inbox ingest failure for %s (%s) — leaving in inbox",
+                "Transient ingest failure for %s (%s) — leaving file in place",
                 resolved,
                 type(exc).__name__,
             )
-            return
-        _log.exception("Terminal inbox ingest failure for %s", resolved)
+            return None
+        _log.exception("Terminal ingest failure for %s", resolved)
         _quarantine_inbox_file(
             resolved,
             user_id=user_id,
@@ -921,6 +937,22 @@ def enqueue_inbox_file(
             reason=f"{type(exc).__name__}: {exc}",
             exc=exc,
         )
+        return None
+
+
+def enqueue_inbox_file(
+    path: str | Path,
+    *,
+    user_id: str,
+    source: Literal["watcher", "poll"],
+) -> None:
+    """Single seam from watcher/poll into ``ingest_file`` (LUM-330)."""
+    _ingest_file_safe(
+        path,
+        user_id=user_id,
+        containment_root=config.get_inbox_path(),
+        source=source,
+    )
 
 
 def watcher_status() -> dict[str, str]:
@@ -1264,7 +1296,7 @@ def ingest_folder(folder_path: str, *, user_id: str) -> IngestStats:
     """
     if not isinstance(user_id, str) or not user_id:
         raise TypeError("ingest_folder: user_id (keyword-only) is required")
-    root = Path(folder_path)
+    root = Path(folder_path).expanduser().resolve(strict=False)
     total = 0
     ingested = 0
     skipped = 0
@@ -1283,8 +1315,15 @@ def ingest_folder(folder_path: str, *, user_id: str) -> IngestStats:
             total += 1
             guard.wait_if_needed()
             try:
-                result = ingest_file(fpath, user_id=user_id)
-                if result.skipped:
+                result = _ingest_file_safe(
+                    fpath,
+                    user_id=user_id,
+                    containment_root=root,
+                    source="folder",
+                )
+                if result is None:
+                    skipped += 1
+                elif result.skipped:
                     skipped += 1
                 else:
                     ingested += 1

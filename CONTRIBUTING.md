@@ -8,15 +8,17 @@ All participants must follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## AI assistants and IDE agents
 
-For Lumogis work, read [AGENTS.md](AGENTS.md) and [docs/LUMOGIS_CONTEXT_PACK.md](docs/LUMOGIS_CONTEXT_PACK.md) first. The context pack is the canonical repo-evidence onboarding summary; do not duplicate it into other files. Refresh it with **`/update-context-pack`** when stale.
+For work in **this public repository**, read [AGENTS.md](AGENTS.md) and [docs/LUMOGIS_AGENT_ORIENTATION.md](docs/LUMOGIS_AGENT_ORIENTATION.md) first. Those files describe layout, open-core boundaries, and verification for the AGPL tree only.
 
-For ChatGPT or Claude outside the repository, add **`docs/LUMOGIS_CONTEXT_PACK.md`** to the relevant Project Knowledge or project files and use it as the first context source for Lumogis work.
+For ChatGPT or Claude outside the repository, add **`docs/LUMOGIS_AGENT_ORIENTATION.md`** (and **`ARCHITECTURE.md`**) to project knowledge — not private maintainer context packs or internal backlog exports.
 
 ## Public CI parity (OpenAPI)
 
-The public AGPL tree is produced by export (`scripts/create-upstream-export-tree.sh`); it must keep the same **`.github/workflows/ci.yml`** surface as private development, including the **`openapi-check`** job and the offline scripts, Makefile target, web client snapshot/codegen inputs, and breaking-check fixtures that job relies on.
+The public AGPL tree is produced by export (`scripts/create-upstream-export-tree.sh`); it receives **sanitized** [`docs/public-export/AGENTS.md`](docs/public-export/AGENTS.md) and [`docs/LUMOGIS_AGENT_ORIENTATION.md`](docs/public-export/LUMOGIS_AGENT_ORIENTATION.md) (not the private context pack). It must keep the same **`.github/workflows/ci.yml`** surface as private development, including the **`openapi-check`** job and the offline scripts, Makefile target, web client snapshot/codegen inputs, and breaking-check fixtures that job relies on.
 
 **Do not** add any of the paths asserted by **`scripts/check-public-export.sh`** (search for `Required presence (LUM-303)` and the numbered path comment block) to **`scripts/public-export-strip-list.txt`** without updating that assertion, **`orchestrator/tests/test_check_public_export_script.py`**, and this section in the **same** change — otherwise **`make verify-public-rc`** / **`scripts/check-public-export.sh`** will fail on purpose.
+
+**Search overlay CI (LUM-433):** the public export must include **`.github/workflows/search-overlay-build.yml`** (four-target Tauri matrix for **`clients/lumogis-search/`**, unsigned v1 installers, **`search-v*`** tag releases on **`lumogis/lumogis`** only). **Do not** add that workflow path to **`scripts/public-export-strip-list.txt`** without updating **`scripts/check-public-export.sh`** (search for `Required presence (LUM-433)`), **`orchestrator/tests/test_check_public_export_script.py`**, and this section in the **same** change.
 
 Architecture context: **`docs/decisions/037-ghcr-publish-public-repo-only.md`** (export and public CI); **`docs/decisions/053-lum-94-ci-openapi-codegen-check-without-live-orchestrator.md`** (OpenAPI gate); **[ADR 061 — LUM-303](docs/decisions/061-lum-303-public-ci-parity-openapi-check-via-export.md)** (export presence contract).
 
@@ -26,7 +28,7 @@ The workflow **`.github/workflows/web-e2e.yml`** starts a **slim** Compose proje
 
 | Topic | Detail |
 | --- | --- |
-| **Triggers** | **`workflow_dispatch`**, nightly **`schedule`** (workflow file is read from the default branch; the job checks out **`dev`** explicitly before compose), and **`pull_request`** to **`main`** / **`master`** with types **`opened`**, **`synchronize`**, **`reopened`**, **`labeled`**, **`unlabeled`** so toggling the label re-runs the job. |
+| **Triggers** | **`pull_request`** to **`main`** / **`master`** with types **`opened`**, **`synchronize`**, **`reopened`**, **`labeled`**, **`unlabeled`** (toggling the label re-runs the job), and **`workflow_dispatch`**. The nightly **`schedule`** trigger was removed from **`.github/workflows/web-e2e.yml`** (2026-05-30). |
 | **Path gate** | On pull requests, **`.github/scripts/web-e2e-paths.sh`** must see a diff hit on the web, Caddy, compose, Makefile, or workflow surfaces listed in that script — otherwise the job logs **`SKIP_WEB_E2E_PATHS`** and exits successfully without starting Docker. |
 | **Label (pull requests only)** | Add the repository label **`ci:run-web-e2e`** so cred-gated steps run on same-repo PRs. Path-matched PRs **without** the label **skip** Playwright (they do not fail solely for missing secrets). |
 | **Fork PRs** | When **`github.event.pull_request.head.repo.full_name`** differs from the base repository, the workflow logs **`SKIP_FORK_PR`** and skips cred-gated steps. |
@@ -122,6 +124,8 @@ Then:
 
 ```bash
 make test       # orchestrator + stack-control unit tests — no Docker needed
+make test-list  # canonical test inventory (all suites + release stages)
+make debug      # fast local chain with summary stdout + tee logs (see scripts/debug/README.md)
 make lint       # ruff check + format check
 ```
 
@@ -151,6 +155,15 @@ docker compose run --rm -w /project/orchestrator orchestrator sh -c \
 ```
 
 Other compose targets: `make compose-lint`, `make compose-test-stack-control`, `make compose-test-integration` (see `Makefile`).
+
+### Coverage matrices
+
+Feature→test evidence lives in [docs/testing/README.md](docs/testing/README.md):
+
+- **Public clone:** update [docs/testing/TEST-COVERAGE-MATRIX-core.md](docs/testing/TEST-COVERAGE-MATRIX-core.md) and/or [docs/testing/TEST-COVERAGE-MATRIX-web.md](docs/testing/TEST-COVERAGE-MATRIX-web.md) when **`/verify-plan`** closes a planned feature chunk — not on every unrelated PR.
+- **Full private tree:** KG and desktop matrices under [docs/private/testing/](docs/private/testing/README.md) follow the same **verify-plan** rule (**Step 7c** in `.cursor/skills/verify-plan/SKILL.md`).
+
+The v1 baseline was seeded in **LUM-384** (code audit). **LUM-428** tightened ✅ rows and cross-checks **active + archived** `.cursor/plans/*.plan.md` for test citations. Re-run `python3 scripts/testing/_lum428_audit_matrix_citations.py` after matrix edits. **LUM-429:** CI runs `make coverage-matrix-check` — row ID format, legend, duplicate IDs, catalog sync (`scripts/feature-ids.json`). After adding or renaming IDs, run `node scripts/check-coverage-matrix.mjs --write-catalog` in the same PR. Do not assign ✅ from `docs/capabilities.md` or CHANGELOG alone; cite `` `test_name` in `file` `` in the matrix **Notes** column.
 
 ### OpenAPI snapshot / Lumogis Web typed client
 
@@ -206,47 +219,6 @@ Workflows on forks may show **Expected — Waiting for status** until a maintain
 ### CI on `main` / `master`
 
 [`.github/workflows/changelog.yml`](.github/workflows/changelog.yml) runs on pull requests targeting **`main`** or **`master`** (and on pushes that change that workflow file). For gated product paths, CI requires **`CHANGELOG.md`** updates under **`[Unreleased]`** before merge; merged PRs carry those entries onto the default branch. See bypasses above if you need an exception.
-
-### Local check (optional)
-
-Before pushing:
-
-```bash
-make changelog-check
-```
-
-Uses [scripts/check-changelog-touched.sh](scripts/check-changelog-touched.sh) (diff vs `origin/dev`, then `origin/main`, then `HEAD~1`). To mimic the **PR-body** skip locally, set **`CHANGELOG_GATE_PR_BODY`** to a string containing **`[skip changelog]`**.
-
----
-
-## Changelog
-
-We follow [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) in [CHANGELOG.md](CHANGELOG.md).
-
-### When you must update the changelog
-
-If your pull request changes **product-facing paths** tracked in [`.github/workflows/changelog.yml`](.github/workflows/changelog.yml), **`CHANGELOG.md` must appear in the PR diff** (typically under **`[Unreleased]`** with **Added** / **Changed** / **Fixed** / **Removed** as appropriate). The same path list lives in [scripts/changelog-gate-paths.txt](scripts/changelog-gate-paths.txt) for local checks—**keep these in sync** when globs change.
-
-PRs that touch only paths outside that filter (for example **`docs/**`** alone or **`.github/`** alone) **do not** run this workflow and have **no** changelog obligation from that gate.
-
-### Bypasses (maintainers)
-
-- GitHub label **`Skip-Changelog`** (see `skipLabels` in the workflow).
-- The literal **`[skip changelog]`** anywhere in the **PR description/body** (case-insensitive), matching CI.
-
-Third-party outages or misconfiguration may block the check until fixed; the same bypasses are the supported escape hatches—document in the PR when you use them.
-
-### Branch protection / required checks
-
-If this workflow is marked **required** in branch protection while it uses **workflow-level `paths:`** filters, **docs-only** (or otherwise filtered) PRs may show **no status** from this job and appear stuck (“waiting for status”). **Do not** mark the changelog check **required** until you add a job-level path filter with an always-reporting success job, or your process explicitly handles that case.
-
-### Fork pull requests
-
-Workflows on forks may show **Expected — Waiting for status** until a maintainer approves the first run on that PR. That is normal GitHub behaviour, not a bug in this gate.
-
-### Public vs private enforcement
-
-The **published** GitHub workflow ships with this repository and may also appear in the **public** export tree, but **identical enforcement on `lumogis/lumogis`** may lag until maintainer work (see Linear **LUM-227** / children of **LUM-193**). Outside contributors should still follow this document; parity is tracked separately.
 
 ### Local check (optional)
 

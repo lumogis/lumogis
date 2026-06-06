@@ -736,6 +736,42 @@ class MeOnboardingPatchRequest(BaseModel):
     completed: Literal[True]
 
 
+# ── Me / wow moment (LUM-216) ─────────────────────────────────────────
+
+
+class WowTopEntity(BaseModel):
+    """Top entity row for the wow discovery card."""
+
+    model_config = _RES
+    entity_id: str = Field(
+        description=(
+            "UUID PK — wire for LUM-161 row keys / future detail links; "
+            "slice-1 UI uses name for askAboutEntity only"
+        ),
+    )
+    name: str
+    entity_type: str
+    mention_count: int = Field(ge=0)
+    scope: Literal["personal", "shared", "system"]
+
+
+class MeWowStateResponse(BaseModel):
+    """Wow-moment readiness and dismissal state for the authenticated user."""
+
+    model_config = _RES
+    entities_ready: bool
+    top_entities: list[WowTopEntity] = Field(default_factory=list, max_length=5)
+    wow_dismissed_at: Optional[datetime] = None
+    onboarding_completed_at: Optional[datetime] = None
+
+
+class MeWowPatchRequest(BaseModel):
+    """Body for ``PATCH /api/v1/me/wow-state`` — v1 only records dismissal."""
+
+    model_config = _REQ
+    dismissed: Literal[True]
+
+
 # ── Admin / diagnostics (read-only façade) ───────────────────────────
 
 
@@ -932,6 +968,63 @@ class VoiceTranscribeResponse(BaseModel):
     segments: List[TranscriptionSegment] = Field(default_factory=list)
 
 
+class StackStatusServiceItem(BaseModel):
+    """One runtime service row for the stack health dashboard."""
+
+    model_config = _RES
+    id: str
+    display_name: str
+    state: Literal["healthy", "degraded", "down", "unknown", "not_configured"]
+    runtime_kind: Literal["docker_compose", "process", "unknown"] = "docker_compose"
+    runtime_detail: dict[str, str | int | None] = Field(default_factory=dict)
+    message: Optional[str] = None
+
+
+class StackStatusStorageItem(BaseModel):
+    """Host partition or informational Docker storage row."""
+
+    model_config = _RES
+    mount_id: str
+    path_label: str
+    partition_id: Optional[str] = None
+    used_bytes: Optional[int] = None
+    total_bytes: Optional[int] = None
+    used_percent: Optional[float] = None
+    warn_threshold_percent: float = 80.0
+    status: Literal["ok", "warn", "critical", "unknown"]
+
+
+class StackStatusOllamaModel(BaseModel):
+    """Read-only Ollama model row (slice 1 — no mutations)."""
+
+    model_config = _RES
+    name: str
+    size_bytes: Optional[int] = None
+    modified_at: Optional[datetime] = None
+    loaded: Optional[bool] = None
+
+
+class StackStatusMeta(BaseModel):
+    """Snapshot metadata for ``GET …/stack-status``."""
+
+    model_config = _RES
+    generated_at: datetime
+    cache_age_sec: Optional[int] = None
+    stack_control_reachable: bool
+    overall_status: Literal["ok", "degraded", "down"]
+
+
+class StackStatusResponse(BaseModel):
+    """Response for ``GET /api/v1/admin/diagnostics/stack-status``."""
+
+    model_config = _RES
+    meta: StackStatusMeta
+    services: List[StackStatusServiceItem]
+    storage: List[StackStatusStorageItem]
+    ollama: List[StackStatusOllamaModel]
+    warnings: List[AdminDiagnosticsWarning] = Field(default_factory=list)
+
+
 class AdminDiagnosticsResponse(BaseModel):
     """Response for ``GET /api/v1/admin/diagnostics`` — curated operator diagnostics."""
 
@@ -961,6 +1054,83 @@ class IngestUploadQueuedResponse(BaseModel):
     model_config = _RES
     status: Literal["queued"] = "queued"
     file_id: str
+
+
+# ── Conversations (LUM-162) ──────────────────────────────────────────
+
+
+class ConversationSummary(BaseModel):
+    model_config = _RES
+    conversation_id: str
+    title: str
+    summary: str
+    ended_at: datetime
+    scope: str = "personal"
+    message_count: int | None = None
+
+
+class ConversationMessage(BaseModel):
+    model_config = _RES
+    message_id: str
+    role: Literal["user", "assistant", "system"]
+    content: str
+    created_at: datetime
+    model: str | None = None
+
+
+class ConversationDetail(BaseModel):
+    model_config = _RES
+    conversation_id: str
+    title: str
+    summary: str
+    topics: list[str]
+    entities: list[str]
+    ended_at: datetime
+    scope: str
+    messages: list[ConversationMessage] = Field(default_factory=list)
+
+
+class ConversationListResponse(BaseModel):
+    model_config = _RES
+    conversations: list[ConversationSummary]
+
+
+class ConversationDeleteResponse(BaseModel):
+    model_config = _RES
+    deleted: bool
+    conversation_id: str
+    partial: bool = False
+
+
+class ConversationContinueResponse(BaseModel):
+    model_config = _RES
+    seed_messages: list[ChatMessageDTO]
+    conversation_id: str | None = None
+
+
+class ConversationContinueRequest(BaseModel):
+    model_config = _REQ
+    model: str | None = Field(default=None, max_length=64)
+
+
+class ConversationCreateRequest(BaseModel):
+    model_config = _REQ
+    title: str = ""
+    model: str = ""
+
+
+class ConversationPatchRequest(BaseModel):
+    model_config = _REQ
+    title: str | None = None
+    model: str | None = None
+
+
+class ConversationMessageAppendRequest(BaseModel):
+    model_config = _REQ
+    message_id: str
+    role: Literal["user", "assistant", "system"]
+    content: str = Field(max_length=64_000)
+    model: str | None = Field(default=None, max_length=64)
 
 
 # ── Errors ───────────────────────────────────────────────────────────
@@ -1036,6 +1206,11 @@ __all__ = [
     "TranscriptionSegment",
     "TranscriptionResult",
     "VoiceTranscribeResponse",
+    "StackStatusServiceItem",
+    "StackStatusStorageItem",
+    "StackStatusOllamaModel",
+    "StackStatusMeta",
+    "StackStatusResponse",
     "AdminDiagnosticsResponse",
     "IngestUploadQueuedResponse",
     "ErrorResponse",

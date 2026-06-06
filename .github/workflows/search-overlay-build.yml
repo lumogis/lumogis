@@ -1,0 +1,111 @@
+# LUM-433 — build Lumogis Search overlay (Tauri 2) on macOS, Windows, Linux.
+# DO NOT RENAME without updating export-contract tests and docs cross-links.
+#
+# Pinned third-party Actions (bump: update tag, re-resolve full commit SHA, run actionlint):
+#   actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+#   actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
+#   dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9  # v1
+#   tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5  # v0
+#   actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+name: Search overlay build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [dev, main]
+    tags:
+      - "search-v*"
+    paths:
+      - "clients/lumogis-search/**"
+      - ".github/workflows/search-overlay-build.yml"
+
+concurrency:
+  group: search-overlay-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-matrix:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: --target aarch64-apple-darwin
+            artifact: macos-arm64
+          - platform: macos-latest
+            args: --target x86_64-apple-darwin
+            artifact: macos-x64
+          - platform: ubuntu-22.04
+            args: ""
+            artifact: linux-x64
+          - platform: windows-latest
+            args: ""
+            artifact: windows-x64
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: setup node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: clients/lumogis-search/package-lock.json
+
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
+
+      - name: add macOS cross targets
+        if: matrix.platform == 'macos-latest'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - name: install webkit deps (ubuntu)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - name: npm ci + vite build
+        working-directory: clients/lumogis-search
+        run: npm ci && npm run build
+
+      - name: Run Rust unit tests (cargo test)
+        if: matrix.platform == 'ubuntu-22.04'
+        working-directory: clients/lumogis-search/src-tauri
+        run: cargo test
+
+      - name: Assert tag matches base tauri.conf.json version
+        if: >-
+          startsWith(github.ref, 'refs/tags/search-v')
+          && github.repository == 'lumogis/lumogis'
+          && matrix.platform == 'ubuntu-22.04'
+        shell: bash
+        working-directory: clients/lumogis-search/src-tauri
+        run: |
+          tag="${GITHUB_REF_NAME#search-v}"
+          conf="$(python3 -c "import json; print(json.load(open('tauri.conf.json'))['version'])")"
+          test "$tag" = "$conf" || { echo "tag search-v$tag != tauri.conf.json version $conf"; exit 1; }
+
+      - uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: clients/lumogis-search
+          args: --config src-tauri/tauri.client-only.conf.json ${{ matrix.args }}
+          tagName: ${{ github.repository == 'lumogis/lumogis' && startsWith(github.ref, 'refs/tags/search-v') && github.ref_name || '' }}
+          releaseName: ${{ github.repository == 'lumogis/lumogis' && startsWith(github.ref, 'refs/tags/search-v') && format('Lumogis Search {0}', github.ref_name) || '' }}
+          releaseDraft: false
+
+      - name: Upload desktop build artefacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: lumogis-overlay-${{ matrix.artifact }}
+          path: |
+            clients/lumogis-search/src-tauri/target/release/bundle/
+            clients/lumogis-search/src-tauri/target/*/release/bundle/
+          if-no-files-found: error

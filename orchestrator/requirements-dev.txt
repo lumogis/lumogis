@@ -9,3 +9,5 @@
 ruff>=0.4.0
 pytest>=8.0.0
 pytest-asyncio>=0.24.0
+# LUM-377 — compact pytest summaries for scripts/debug (dev/CI only; not runtime image)
+pytest-agent-digest>=0.3.2,<0.4

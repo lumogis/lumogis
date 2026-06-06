@@ -18,7 +18,7 @@ Ship an **optional, path-gated** GitHub Actions workflow **`.github/workflows/we
 - Injects **bootstrap + smoke credentials** from **`LUMOGIS_WEB_SMOKE_EMAIL`** / **`LUMOGIS_WEB_SMOKE_PASSWORD`** repository secrets (same values for bootstrap and Playwright) via compose **`environment`** host interpolation.
 - Runs a **host `curl` readiness gate** on **`http://127.0.0.1/`** and **`http://127.0.0.1:8000/healthz`** before Playwright.
 - Installs **Node 20**, **`npm ci`**, **`npx playwright install --with-deps chromium`**, then **`make web-e2e-prove`**.
-- **Triggers:** `pull_request` to `main`/`master` (types include `labeled` / `unlabeled`), **`workflow_dispatch`**, nightly **`schedule`** with **`actions/checkout`** **`ref: dev`** for scheduled runs.
+- **Triggers (as shipped 2026-05-23):** `pull_request` to `main`/`master` (types include `labeled` / `unlabeled`), **`workflow_dispatch`**, nightly **`schedule`** with **`actions/checkout`** **`ref: dev`** for scheduled runs.
 - **Path gate:** **`.github/scripts/web-e2e-paths.sh`** → `should_run` in `GITHUB_OUTPUT`; PRs without path hits skip with **`SKIP_WEB_E2E_PATHS`**.
 - **Label + fork policy:** same-repo PRs require label **`ci:run-web-e2e`** for cred-gated steps; fork PRs log **`SKIP_FORK_PR`** and skip secrets.
 - **Failure artefacts:** compose logs + Playwright report dirs uploaded on failure; **`docker compose down -v`** in **`if: always()`** with the same `-f` chain.
@@ -43,3 +43,4 @@ Current e2e specs **do not** call streaming **`/v1/chat`** completions; **`LUMOG
 
 - 2026-05-23: Draft in `.cursor/adrs/web-e2e-ci.md` from `/explore` + `/review-plan --arbitrate` R1.
 - 2026-05-23: Finalised as **ADR-064** — `/verify-plan --headless` LUM-60 (workflow + compose overlay + docs).
+- 2026-05-31: Nightly **`schedule`** trigger removed from **`.github/workflows/web-e2e.yml`**; live triggers are **`pull_request`** + **`workflow_dispatch`** only. **`CONTRIBUTING.md`** and **`docs/testing/automated-test-strategy.md`** updated to match.

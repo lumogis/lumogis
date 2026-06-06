@@ -16,6 +16,7 @@ from fastapi import Request
 from models.sessions import SessionMessage
 from pydantic import BaseModel
 from pydantic import ValidationError
+from pydantic import field_validator
 from services.batch_queue import enqueue
 from services.search import semantic_search
 from visibility import visible_filter
@@ -107,6 +108,19 @@ class SessionEndRequest(BaseModel):
     session_id: str
     messages: List[SessionMessage]
 
+    @field_validator("session_id")
+    @classmethod
+    def session_id_must_be_uuid_v4(cls, value: str) -> str:
+        import uuid
+
+        try:
+            parsed = uuid.UUID(value)
+        except ValueError as exc:
+            raise ValueError("invalid_session_id") from exc
+        if parsed.version != 4:
+            raise ValueError("invalid_session_id")
+        return str(parsed)
+
 
 @router.post("/session/end")
 def session_end(body: SessionEndRequest, request: Request):
@@ -123,6 +137,13 @@ def session_end(body: SessionEndRequest, request: Request):
         )
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=exc.errors()) from exc
+    except ValueError as exc:
+        if str(exc) == "invalid_session_id":
+            raise HTTPException(
+                status_code=422,
+                detail={"error": "invalid_session_id"},
+            ) from exc
+        raise
     return {"status": "session end queued", "session_id": body.session_id}
 
 

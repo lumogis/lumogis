@@ -48,6 +48,35 @@ while IFS= read -r raw_line || [[ -n "${raw_line}" ]]; do
   fi
 done <"$STRIP_LIST"
 
+# LUM-376 — substitute public-safe agent orientation (sources live under docs/public-export/)
+PUBLIC_EXPORT_SRC="$ROOT/docs/public-export"
+[[ -d "$PUBLIC_EXPORT_SRC" ]] || die "missing public export templates: $PUBLIC_EXPORT_SRC"
+for required in AGENTS.md LUMOGIS_AGENT_ORIENTATION.md contributing-ai-agents.md; do
+  [[ -f "$PUBLIC_EXPORT_SRC/$required" ]] || die "missing $PUBLIC_EXPORT_SRC/$required"
+done
+
+cp "$PUBLIC_EXPORT_SRC/AGENTS.md" "$OUT/AGENTS.md"
+mkdir -p "$OUT/docs"
+cp "$PUBLIC_EXPORT_SRC/LUMOGIS_AGENT_ORIENTATION.md" "$OUT/docs/LUMOGIS_AGENT_ORIENTATION.md"
+
+CONTRIB="$OUT/CONTRIBUTING.md"
+[[ -f "$CONTRIB" ]] || die "export tree missing CONTRIBUTING.md"
+python3 - "$CONTRIB" "$PUBLIC_EXPORT_SRC/contributing-ai-agents.md" <<'PY'
+import sys
+from pathlib import Path
+
+contrib = Path(sys.argv[1])
+snippet = Path(sys.argv[2]).read_text(encoding="utf-8").strip() + "\n"
+text = contrib.read_text(encoding="utf-8")
+start_marker = "## AI assistants and IDE agents\n"
+end_marker = "## Public CI parity (OpenAPI)\n"
+i = text.find(start_marker)
+j = text.find(end_marker)
+if i == -1 or j == -1 or j <= i:
+    sys.exit("CONTRIBUTING.md AI section markers not found for public export patch")
+contrib.write_text(text[: i + len(start_marker)] + "\n" + snippet + "\n" + text[j:], encoding="utf-8")
+PY
+
 echo "create-upstream-export-tree: $OUT"
 echo "create-upstream-export-tree: top-level:"
 ls -la "$OUT"

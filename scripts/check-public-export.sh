@@ -256,6 +256,87 @@ assert_openapi_ci_export_contract() {
   fi
 }
 
+# --- Required presence (LUM-433) ---
+# Canonical Search overlay CI export contract path (keep in sync with
+# orchestrator/tests/test_check_public_export_script.py and CONTRIBUTING.md):
+#   1.  .github/workflows/search-overlay-build.yml
+assert_search_overlay_ci_export_contract() {
+  local root="$1"
+  local listf="$SCRIPT_DIR/public-export-strip-list.txt"
+  local workflow_path=".github/workflows/search-overlay-build.yml"
+
+  [[ -f "$listf" ]] || die "search-overlay-ci-export-contract (LUM-433): missing strip list: $listf"
+
+  if [[ ! -f "$root/$workflow_path" ]]; then
+    echo "search-overlay-ci-export-contract LUM-433: missing required path in export tree: $workflow_path" >&2
+    die "search-overlay-ci-export-contract (LUM-433): missing file $workflow_path"
+  fi
+
+  while IFS= read -r raw_line || [[ -n "${raw_line}" ]]; do
+    local line="${raw_line%%#*}"
+    line="$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    [[ -z "$line" ]] && continue
+    if [[ "$line" == "$workflow_path" ]]; then
+      echo "search-overlay-ci-export-contract LUM-433: strip list entry intersects required Search overlay CI path: $line" >&2
+      die "search-overlay-ci-export-contract (LUM-433): strip list intersects search-overlay export contract path"
+    fi
+  done <"$listf"
+
+  local -a forbidden=(apps/lumogis-hub hub-build.yml lumogis-hub)
+  local pat
+  for pat in "${forbidden[@]}"; do
+    if grep -q "$pat" "$root/$workflow_path"; then
+      echo "search-overlay-ci-export-contract LUM-433: forbidden reference in $workflow_path: $pat" >&2
+      die "search-overlay-ci-export-contract (LUM-433): workflow must not reference private Hub paths"
+    fi
+  done
+}
+
 assert_openapi_ci_export_contract "$TARGET"
+assert_search_overlay_ci_export_contract "$TARGET"
+
+# --- Public agent orientation (LUM-376) ---
+assert_public_agent_orientation() {
+  local root="$1"
+  local -a required=(
+    "AGENTS.md"
+    "docs/LUMOGIS_AGENT_ORIENTATION.md"
+  )
+  local p
+  for p in "${required[@]}"; do
+    if [[ ! -f "$root/$p" ]]; then
+      die "public agent orientation (LUM-376): missing required path: $p"
+    fi
+  done
+  if [[ -e "$root/docs/LUMOGIS_CONTEXT_PACK.md" ]]; then
+    die "public agent orientation (LUM-376): private context pack must not ship: docs/LUMOGIS_CONTEXT_PACK.md"
+  fi
+  if [[ -e "$root/docs/public-export" ]]; then
+    die "public agent orientation (LUM-376): maintainer templates must not ship: docs/public-export"
+  fi
+
+  local combined
+  combined="$(cat "$root/AGENTS.md" "$root/docs/LUMOGIS_AGENT_ORIENTATION.md")"
+  local -a forbidden_patterns=(
+    'lumogis-app'
+    'lumogis-devtools'
+    'LUMOGIS_CONTEXT_PACK'
+    'linear\.app'
+    '/linear-update'
+    '/update-context-pack'
+    '/navigator'
+    '\.cursor/skills'
+    'Product OS'
+  )
+  local pat
+  for pat in "${forbidden_patterns[@]}"; do
+    if echo "$combined" | grep -qiE "$pat"; then
+      echo "check-public-export: LUM-376 forbidden pattern in public agent docs: $pat" >&2
+      die "public agent orientation (LUM-376): private maintainer leakage in AGENTS.md or LUMOGIS_AGENT_ORIENTATION.md"
+    fi
+  done
+}
+
+assert_public_agent_orientation "$TARGET"
 
 echo "check-public-export.sh: OK ($TARGET)"

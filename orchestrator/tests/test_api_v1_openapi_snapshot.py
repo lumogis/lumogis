@@ -74,6 +74,7 @@ REQUIRED_V1_PATHS = frozenset(
         "/api/v1/admin/users/{user_id}/password",
         "/api/v1/admin/permissions",
         "/api/v1/admin/diagnostics",
+        "/api/v1/admin/diagnostics/stack-status",
         # Speech-to-text foundation (STT-1)
         "/api/v1/voice/transcribe",
     }

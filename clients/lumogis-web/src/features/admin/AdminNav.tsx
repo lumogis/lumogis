@@ -9,6 +9,7 @@ const mainLinks: { to: string; label: string }[] = [
   { to: "/admin/mcp-tokens", label: "MCP tokens" },
   { to: "/admin/audit", label: "Audit" },
   { to: "/admin/diagnostics", label: "Diagnostics" },
+  { to: "/admin/system-status", label: "System status" },
 ];
 
 const legacy: { href: string; label: string }[] = [
@@ -18,7 +19,7 @@ const legacy: { href: string; label: string }[] = [
   { href: "/review-queue", label: "Review queue" },
   { href: "/backup", label: "Backup/restore" },
   { href: "/kg/stop-entities", label: "Stop entities" },
-  { href: "/health", label: "Stack health" },
+  { href: "/health", label: "Stack health (legacy)" },
 ];
 
 export function AdminNav(): JSX.Element {
@@ -37,7 +38,12 @@ export function AdminNav(): JSX.Element {
           {legacy.map((l) => (
             <li key={l.href}>
               <a href={l.href} target="_blank" rel="noopener noreferrer">
-                {l.label} <span style={{ fontSize: "0.7rem" }}>(opens legacy dashboard)</span>
+                {l.label}{" "}
+                <span style={{ fontSize: "0.7rem" }}>
+                  {l.href === "/health"
+                    ? "(legacy tab — use System status for live panel)"
+                    : "(opens legacy dashboard)"}
+                </span>
               </a>
             </li>
           ))}

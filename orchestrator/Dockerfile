@@ -1,6 +1,7 @@
 FROM python:3.12-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    tesseract-ocr poppler-utils curl && rm -rf /var/lib/apt/lists/*
+    tesseract-ocr poppler-utils curl git nodejs && rm -rf /var/lib/apt/lists/* \
+    && git config --global --add safe.directory '*'
 WORKDIR /app
 COPY orchestrator/requirements.txt .
 RUN pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt

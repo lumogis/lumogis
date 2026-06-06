@@ -1,0 +1,24 @@
+<svg width="200" height="200" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="central" cx="40%" cy="35%" r="60%">
+      <stop offset="0%" stop-color="#FFCC77"/>
+      <stop offset="100%" stop-color="#E8890A"/>
+    </radialGradient>
+    <radialGradient id="satellite" cx="40%" cy="35%" r="60%">
+      <stop offset="0%" stop-color="#FFE0A0"/>
+      <stop offset="100%" stop-color="#F5B845"/>
+    </radialGradient>
+  </defs>
+  <!-- Connection lines -->
+  <line x1="50" y1="50" x2="22" y2="24" stroke="#888888" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="50" y1="50" x2="78" y2="28" stroke="#888888" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="50" y1="50" x2="24" y2="72" stroke="#888888" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="50" y1="50" x2="76" y2="74" stroke="#888888" stroke-width="2.5" stroke-linecap="round"/>
+  <!-- Satellite nodes -->
+  <circle cx="22" cy="24" r="10" fill="url(#satellite)"/>
+  <circle cx="78" cy="28" r="8"  fill="url(#satellite)"/>
+  <circle cx="24" cy="72" r="11" fill="url(#satellite)"/>
+  <circle cx="76" cy="74" r="9"  fill="url(#satellite)"/>
+  <!-- Central node -->
+  <circle cx="50" cy="50" r="20" fill="url(#central)"/>
+</svg>

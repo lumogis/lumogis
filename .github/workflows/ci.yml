@@ -57,6 +57,13 @@ jobs:
           fi
           cd services/lumogis-graph && python -m pytest -q
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: LUM-429 — coverage matrix format + feature-ids.json
+        run: make coverage-matrix-check
+
   compose-policy:
     runs-on: ubuntu-latest
     steps:

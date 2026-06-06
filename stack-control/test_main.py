@@ -2,6 +2,7 @@
 # Copyright (C) 2026 Lumogis
 """Tests for the stack-control sidecar."""
 
+import json
 import os
 import subprocess
 from unittest.mock import patch, MagicMock
@@ -163,3 +164,62 @@ class TestRestart:
         assert cmd.count("-f") == 2
         assert "docker-compose.yml" in cmd
         assert "docker-compose.override.yml" in cmd
+
+
+class TestStatus:
+    def test_missing_token_returns_403(self, client):
+        resp = client.get("/status")
+        assert resp.status_code == 403
+
+    def test_wrong_token_returns_403(self, client):
+        resp = client.get("/status", headers={"X-Lumogis-Restart-Token": "wrong"})
+        assert resp.status_code == 403
+
+    def test_valid_token_returns_compose_and_df(self, client):
+        compose_stdout = json.dumps(
+            [{"Service": "postgres", "State": "running", "Health": "healthy"}]
+        )
+        df_stdout = '{"Type":"Images","TotalCount":1}\n'
+        mock_ps = MagicMock(returncode=0, stdout=compose_stdout, stderr="")
+        mock_df = MagicMock(returncode=0, stdout=df_stdout, stderr="")
+
+        def fake_run(cmd, **kwargs):
+            if "ps" in cmd:
+                return mock_ps
+            return mock_df
+
+        with patch("main.subprocess.run", side_effect=fake_run) as mock_run:
+            resp = client.get("/status", headers=_auth_headers())
+        assert resp.status_code == 200
+        body = resp.json()
+        assert len(body["compose_ps"]) == 1
+        assert body["compose_ps"][0]["Service"] == "postgres"
+        assert body["system_df_busy"] is False
+        assert "fetched_at" in body
+        assert mock_run.call_count == 2
+        assert mock_run.call_args_list[0][1]["cwd"] == main._PROJECT_DIR
+
+    def test_compose_ps_timeout_returns_504(self, client):
+        with patch(
+            "main.subprocess.run",
+            side_effect=subprocess.TimeoutExpired("cmd", 15),
+        ):
+            resp = client.get("/status", headers=_auth_headers())
+        assert resp.status_code == 504
+
+    def test_system_df_timeout_returns_504(self, client):
+        mock_ps = MagicMock(returncode=0, stdout="[]", stderr="")
+
+        def fake_run(cmd, **kwargs):
+            if "ps" in cmd:
+                return mock_ps
+            raise subprocess.TimeoutExpired("cmd", 30)
+
+        with patch("main.subprocess.run", side_effect=fake_run):
+            resp = client.get("/status", headers=_auth_headers())
+        assert resp.status_code == 504
+
+    def test_no_secret_configured_returns_503(self, client, monkeypatch):
+        monkeypatch.setattr(main, "_current_restart_secret", lambda: "")
+        resp = client.get("/status")
+        assert resp.status_code == 503

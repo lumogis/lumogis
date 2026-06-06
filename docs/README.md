@@ -1,15 +1,15 @@
 # Documentation Index
 
 > Status: Active
-> Last reviewed: 2026-05-27
-> Verified against commit: 110e8cc
+> Last reviewed: 2026-06-04
+> Verified against commit: 0380ce81a
 > Owner: Docs Librarian
 
 ## Canonical docs
 
-- [`LUMOGIS_CONTEXT_PACK.md`](LUMOGIS_CONTEXT_PACK.md) — canonical repo-evidence onboarding for Cursor, ChatGPT, Claude, and other assistants (maintained by **`/update-context-pack`**; do not duplicate elsewhere)
 - [`LUMOGIS_REFERENCE_MANUAL.md`](LUMOGIS_REFERENCE_MANUAL.md) — consolidated operator and contributor reference
-- [`capabilities.md`](capabilities.md) — shipped capability narrative (kept in sync with releases; see public export / release skills)
+- [`LUMOGIS_AGENT_ORIENTATION.md`](LUMOGIS_AGENT_ORIENTATION.md) — concise onboarding for AI assistants and contributors
+- [`capabilities.md`](capabilities.md) — shipped capability narrative
 - [Repository root `README.md`](../README.md) — product overview and quickstart (Lumogis Web + Caddy + Core)
 
 ## Documentation structure
@@ -24,6 +24,7 @@
 | `development/` | Local development setup |
 | `testing/` | Test strategy |
 | `release/` | Release and export workflows (maintainers) |
+| `public-export/` | Maintainer templates copied into the AGPL export tree (**LUM-376**) — see [`public-export/README.md`](public-export/README.md) |
 | `private/` | Private maintainer material (not in public export) |
 
 ## Architecture
@@ -31,7 +32,6 @@
 - [`../ARCHITECTURE.md`](../ARCHITECTURE.md) — Core structure, Caddy routing, MCP/capability registry
 - [`architecture/plugin-imports.md`](architecture/plugin-imports.md) — plugin import conventions
 - [`architecture/tool-vocabulary.md`](architecture/tool-vocabulary.md) — LLM vs MCP tool naming
-- Maintainer-only plans and closeouts: [`private/architecture/`](private/architecture/) and [`private/archive/`](private/archive/) (may be omitted from public export trees—see release scripts)
 
 ## Decisions / ADRs
 
@@ -40,7 +40,7 @@
 ## Implementation plans
 
 - [`decisions/`](decisions/) and the public architecture references above — primary shipped intent for the tree
-- [`testing/automated-test-strategy.md`](testing/automated-test-strategy.md) — CI, pytest layers, integration, web, KG, Playwright
+- [`testing/automated-test-strategy.md`](testing/automated-test-strategy.md) — CI, pytest layers, integration, web, KG, Playwright; **`make debug`** / **`make test-list`** and [`scripts/debug/README.md`](../scripts/debug/README.md) (**ADR 078**, LUM-377)
 
 ## Operations
 
@@ -52,6 +52,7 @@
 - [`guides/per-user-export-format.md`](guides/per-user-export-format.md)
 - [`guides/structured-logging.md`](guides/structured-logging.md)
 - [`release/public-agpl-release-workflow.md`](release/public-agpl-release-workflow.md) — building a publishable source tree
+- [`public-export/README.md`](public-export/README.md) — sanitized **`AGENTS.md`** / orientation templates for **`/update-public-export`**
 - [`release/dev-to-main-clean-promotion-workflow.md`](release/dev-to-main-clean-promotion-workflow.md) — promoting integration work onto the release line
 
 ## Testing (reference)
@@ -69,14 +70,17 @@
 - [`../clients/lumogis-web/src/pwa/README.md`](../clients/lumogis-web/src/pwa/README.md) — service worker, Web Push, offline UX boundaries
 - Optional Speaches STT Compose overlay: **`docker-compose.stt.yml`** and the composition table in the root **`README.md`**
 
+## Lumogis Search (desktop overlay)
+
+- [`../clients/lumogis-search/README.md`](../clients/lumogis-search/README.md) — AGPL Tauri 2 overlay for memory search against your household server
+
 ## Extending and contributing
 
 - [`extending/extending-the-stack.md`](extending/extending-the-stack.md) — compose overlays, capability services, adapters/plugins
 - [`../CONTRIBUTING.md`](../CONTRIBUTING.md) — contributor setup and expectations
 - [`extending/examples/example_plugin/`](extending/examples/example_plugin/) — minimal plugin template
-- [`../AGENTS.md`](../AGENTS.md) — coding-agent routing and guardrails (read with [`LUMOGIS_CONTEXT_PACK.md`](LUMOGIS_CONTEXT_PACK.md))
+- [`../AGENTS.md`](../AGENTS.md) — coding-agent routing and guardrails (read with [`LUMOGIS_AGENT_ORIENTATION.md`](LUMOGIS_AGENT_ORIENTATION.md))
 
 ## Archive
 
-- Historical maintainer extractions and closeouts: [`private/archive/`](private/archive/)
-- Docs librarian inventory and daily reports: [`_librarian/`](_librarian/)
+- Docs librarian inventory and daily reports: [`_librarian/`](_librarian/) (when present in your checkout)

@@ -5,8 +5,10 @@
 
 # Maintainer hygiene (migrated from hard-coded omit lists)
 
-# LUM-329 — proprietary Tauri desktop overlay (commercial / app-only sources)
-clients/lumogis-desktop/
+# LUM-329 — proprietary Lumogis Hub (commercial / app-only sources)
+apps/lumogis-hub/
+Makefile.hub.mk
+.github/workflows/hub-build.yml
 
 .cursor
 .claude
@@ -14,6 +16,10 @@ docs/private
 docs/release
 docs/_librarian
 docs/development/local-ai-devtools.md
+
+# LUM-376 — private Product OS context; public tree uses docs/public-export templates
+docs/LUMOGIS_CONTEXT_PACK.md
+docs/public-export
 
 # KG / premium surfaces (premium capability available separately)
 
@@ -41,6 +47,10 @@ docker-compose.parity.yml
 
 orchestrator/tests/premium/
 
+# LUM-430 hygiene: never export bundled build artefacts
+apps/lumogis-hub/build/
+apps/lumogis-hub/.venv-bundled-build/
+apps/lumogis-hub/src-tauri/binaries/
 
 docs/decisions/007-graph-plugin-architecture.md
 
@@ -51,3 +61,6 @@ docs/decisions/009-knowledge_graph_visualization.md
 docs/decisions/011-lumogis-graph-service-extraction.md
 
 docs/decisions/035-kg-graph-proxy-service-bearer-fail-closed.md
+
+# LUM-434 — bundled appliance architecture (maintainer-only; not public AGPL)
+docs/decisions/076-lum-396-bundled-sidecar-process-manager.md

@@ -15,7 +15,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "e2e": "playwright test",
-    "e2e:prove": "E2E_REQUIRE_CREDS=1 playwright test",
+    "e2e:prove": "E2E_REQUIRE_CREDS=1 playwright test --workers=1",
     "codegen": "node scripts/codegen.mjs",
     "codegen:check": "node scripts/codegen.mjs --check",
     "verify:pwa-dist": "node scripts/check-pwa-dist.mjs"

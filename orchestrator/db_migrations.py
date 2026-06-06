@@ -68,6 +68,8 @@ for human readers cross-referencing plans/ADRs):
                      `recent_sessions` / recency reads — LUM-209)
   025 user-onboarding-completed-at  (nullable ``users.onboarding_completed_at``;
                      first-run onboarding gate for Lumogis Web — LUM-165)
+  028 user-wow-dismissed-at  (nullable ``users.wow_dismissed_at``; first wow-moment
+                     path dismissal for Lumogis Web — LUM-216)
 
   Lexical ordering applies **all** ``024-*.sql`` files before ``025-*.sql``;
   two ``024-*`` prefixes already coexist (``024-paperless-external-documents.sql``

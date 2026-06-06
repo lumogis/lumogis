@@ -15,7 +15,7 @@
 // human-readable error in the UI.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { clear } from "idb-keyval";
 
@@ -25,6 +25,7 @@ import { AuthProvider } from "../../../src/auth/AuthProvider";
 import { ChatPage, humaniseChatError } from "../../../src/features/chat/ChatPage";
 import * as drafts from "../../../src/pwa/drafts";
 import { getDraft, makeChatDraftKey } from "../../../src/pwa/drafts";
+import { renderWithRouter } from "../../helpers/renderWithRouter";
 
 const origGetDraft = drafts.getDraft;
 
@@ -50,6 +51,15 @@ function modelsResponse() {
       { id: "claude", label: "Claude", is_local: false, enabled: true, provider: "anthropic" },
       { id: "ollama-mistral", label: "Ollama (mistral)", is_local: true, enabled: true, provider: "ollama" },
     ],
+  });
+}
+
+function wowStateResponse() {
+  return jsonResponse(200, {
+    entities_ready: false,
+    top_entities: [],
+    wow_dismissed_at: null,
+    onboarding_completed_at: "2026-01-01T00:00:00Z",
   });
 }
 
@@ -102,6 +112,10 @@ function buildClient(cfg: RouterCfg = {}): ApiClient {
     if (url.includes("/auth/me"))
       return (cfg.me ?? (() => jsonResponse(200, { id: "u1", email: "alice@home.lan", role: "user" })))();
     if (url.endsWith("/api/v1/models")) return (cfg.models ?? modelsResponse)();
+    // ConversationSidebar lists history on mount; empty list keeps the sidebar
+    // out of its error state (no stray role="alert").
+    if (url.endsWith("/api/v1/conversations")) return jsonResponse(200, { conversations: [] });
+    if (url.includes("/api/v1/me/wow-state")) return wowStateResponse();
     if (url.endsWith("/api/v1/chat/completions"))
       return (cfg.chat ?? (() => sseResponse(sseStreamFrom([sseChunk("ok", "stop"), "data: [DONE]\n\n"]))))(init);
     throw new Error(`unexpected fetch: ${url}`);
@@ -109,14 +123,13 @@ function buildClient(cfg: RouterCfg = {}): ApiClient {
   return new ApiClient({ tokens, fetchImpl: fetchImpl as unknown as typeof fetch });
 }
 
-function renderChat(client: ApiClient): { tokens: AccessTokenStore } {
-  const tokens = new AccessTokenStore();
-  render(
+function renderChat(client: ApiClient, tokens = new AccessTokenStore()) {
+  return renderWithRouter(
     <AuthProvider client={client} tokens={tokens}>
       <ChatPage />
     </AuthProvider>,
+    { route: "/chat" },
   );
-  return { tokens };
 }
 
 let originalFetch: typeof fetch;
@@ -145,11 +158,7 @@ describe("ChatPage — render + send", () => {
   it("Phase 2B: chat layout root uses lumogis-chat for narrow-width constraints", async () => {
     const client = buildClient();
     const tokens = new AccessTokenStore();
-    const { container } = render(
-      <AuthProvider client={client} tokens={tokens}>
-        <ChatPage />
-      </AuthProvider>,
-    );
+    const { container } = renderChat(client, tokens);
     await waitFor(() => {
       expect(screen.getByTestId("chat-page")).toBeInTheDocument();
     });
@@ -159,11 +168,7 @@ describe("ChatPage — render + send", () => {
   it("Phase 2D: conversation transcript exposes log + polite live region", async () => {
     const client = buildClient();
     const tokens = new AccessTokenStore();
-    render(
-      <AuthProvider client={client} tokens={tokens}>
-        <ChatPage />
-      </AuthProvider>,
-    );
+    renderChat(client, tokens);
     await waitFor(() => {
       expect(screen.getByTestId("chat-page")).toBeInTheDocument();
     });
@@ -288,11 +293,7 @@ describe("ChatPage — render + send", () => {
     const user = userEvent.setup();
     const client = buildClient();
 
-    const { unmount } = render(
-      <AuthProvider client={client} tokens={new AccessTokenStore()}>
-        <ChatPage />
-      </AuthProvider>,
-    );
+    const { unmount } = renderChat(client);
     await waitFor(() => screen.getByLabelText(/model$/i));
     await user.type(screen.getByLabelText(/^message$/i), "Question one");
     await user.click(screen.getByRole("button", { name: /send/i }));
@@ -302,11 +303,7 @@ describe("ChatPage — render + send", () => {
 
     unmount();
 
-    render(
-      <AuthProvider client={buildClient()} tokens={new AccessTokenStore()}>
-        <ChatPage />
-      </AuthProvider>,
-    );
+    renderChat(buildClient());
 
     await waitFor(() => {
       const matches = screen.getAllByText(/Question one/);
@@ -443,11 +440,7 @@ describe("ChatPage — sessionStorage isolation per tab", () => {
   it("is keyed by sessionStorage so two storages produce two independent thread lists", async () => {
     // Simulate "tab 1": send a message, persist to the shared sessionStorage.
     const user = userEvent.setup();
-    const tab1 = render(
-      <AuthProvider client={buildClient()} tokens={new AccessTokenStore()}>
-        <ChatPage />
-      </AuthProvider>,
-    );
+    const tab1 = renderChat(buildClient());
     await waitFor(() => screen.getByLabelText(/model$/i));
     await user.type(screen.getByLabelText(/^message$/i), "tab one message");
     await user.click(screen.getByRole("button", { name: /send/i }));
@@ -461,11 +454,7 @@ describe("ChatPage — sessionStorage isolation per tab", () => {
       globalThis.sessionStorage.clear();
     });
 
-    render(
-      <AuthProvider client={buildClient()} tokens={new AccessTokenStore()}>
-        <ChatPage />
-      </AuthProvider>,
-    );
+    renderChat(buildClient());
     await waitFor(() => screen.getByLabelText(/model$/i));
     expect(screen.queryByText(/tab one message/)).not.toBeInTheDocument();
   });

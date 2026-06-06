@@ -22,7 +22,7 @@ See `.cursor/explorations/archived/LUM-330-folder-watch-inbox.md` — `watchfile
 
 **Easier:** Documented inbox contract; single seam for future LUM-132 `PreIngest` hooks; poll mode for degraded bind mounts.
 
-**Harder / deferred:** `ingest_folder` bulk rewire through `enqueue_inbox_file` (follow-up Linear child); per-user inbox subdirs; `Event.INBOX_FILE_QUARANTINED`.
+**Harder / deferred:** per-file **`ingest_folder`** bulk walk now routes through **`_ingest_file_safe`** with containment (**LUM-409**, 2026-05-30); funneling bulk folder ingest through **`enqueue_inbox_file`** (inbox stability/quarantine semantics) remains deferred; per-user inbox subdirs; `Event.INBOX_FILE_QUARANTINED`.
 
 **As shipped (verify notes):**
 
@@ -34,6 +34,7 @@ See `.cursor/explorations/archived/LUM-330-folder-watch-inbox.md` — `watchfile
 - 2026-05-27: Draft created by `/explore` LUM-330.
 - 2026-05-28: Revised during `/review-plan --arbitrate` R1 — poll fast-path, `/healthz` path removal, `ingest_folder` seam deferred.
 - 2026-05-28: Finalised by `/verify-plan` LUM-330 — implementation confirmed; canonical copy this file.
+- 2026-05-31: **LUM-409** — `ingest_folder` per-file walk uses shared **`_ingest_file_safe`** guards; **`enqueue_inbox_file`** seam for bulk folder ingest still open.
 
 ## Relation to other decisions
 

@@ -1,0 +1,43 @@
+[package]
+name = "lumogis-search"
+version = "0.1.0"
+description = "Lumogis memory search desktop overlay (AGPL household client)"
+authors = ["Lumogis"]
+edition = "2021"
+rust-version = "1.74"
+license = "AGPL-3.0-only"
+
+[lib]
+name = "lumogis_search_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["macos-private-api"] }
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["time", "sync", "macros", "rt-multi-thread"] }
+tokio-util = "0.7"
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "blocking"] }
+keyring = "3"
+sha2 = "0.10"
+tracing = "0.1"
+url = "2"
+urlencoding = "2"
+global-hotkey = "0.6"
+getrandom = "0.2"
+time = { version = "0.3", features = ["formatting"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

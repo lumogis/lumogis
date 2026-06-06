@@ -1,6 +1,13 @@
 # ADR-072: Client-only overlay distribution for Persona B (LUM-398)
 
-**Status:** Finalised
+> **Superseded (export boundary and product paths)** by **[ADR 081](081-lum-434-export-boundary-reconciliation.md)**. Persona B **distribution UX** below remains valid; artefact is **`clients/lumogis-search/`**.
+
+> Status: Active (numbering conflict)
+> Last reviewed: 2026-06-04
+> Verified against commit: 0380ce81a
+> Notes: **`docs/decisions/072-lum-401-compose-multibind-generator.md`** also claims **ADR 072** in its title. Resolve by renumbering one document and sweeping references. Filename prefixes **053–080** are already taken (duplicate clusters on **053**, **059**, **060**, **061**, **063**, **064**, **072**, **074**, plus **`065-lum-320-*.md`** through **`080-lum-430-lumogis-search-public-export.md`**). Pick a **non-colliding** new slug (for example **`081-*.md`**) when renumbering—coordinate with any **`034-linear-evidence-index.md`** / **046** pair rename in the same pass—see `docs/_librarian/docs-inventory.md`.
+
+**Status:** Superseded (export boundary) — distribution UX record retained
 **Created:** 2026-05-29
 **Last updated:** 2026-05-29
 **Decided by:** `/explore --headless LUM-398` → `/create-plan` → `/review-plan` (self + critique + arbitrate) → implement → `/verify-plan`
@@ -16,9 +23,9 @@ Exploration and plan: `.cursor/explorations/LUM-398-client-only-overlay.md`, `.c
 
 ### Distribution profile (A2)
 
-- **Tauri 2 `--config` merge** via `tauri.client-only.conf.json` (RFC 7396) on the **same** `src-tauri/` crate — no fork.
-- **CI** (`.github/workflows/desktop-build.yml`) passes `--config src-tauri/tauri.client-only.conf.json` to `tauri-action@v0` (`projectPath: clients/lumogis-desktop`); upload artefacts **`lumogis-overlay-{platform}-{arch}`**.
-- **Local parity:** `make desktop-build-client-only`.
+- **Tauri 2 `--config` merge** via `tauri.client-only.conf.json` (RFC 7396) on **`clients/lumogis-search/`** — no bundled sidecars.
+- **CI:** public Persona B builds use **`clients/lumogis-search/`** (`make search-build-client`); dedicated public workflow tracked under **LUM-433**.
+- **Local parity:** `make search-build-client`.
 - **Identifier:** keep `com.lumogis.overlay` (side-by-side install deferred to LUM-396 if needed).
 
 ### First-run onboarding (B1)
@@ -51,3 +58,5 @@ Exploration and plan: `.cursor/explorations/LUM-398-client-only-overlay.md`, `.c
 
 - 2026-05-29: Draft created by `/explore --headless LUM-398`.
 - 2026-05-29: Finalised by `/verify-plan` — implementation confirmed decision.
+- 2026-06-05: Path note amended by `/verify-plan` **LUM-435** — public client-only overlay is **`clients/lumogis-search/`**.
+- 2026-06-05: Export boundary superseded by **ADR 081** (**LUM-434**).
