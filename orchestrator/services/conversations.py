@@ -100,7 +100,26 @@ def get_conversation(user_id: str, conversation_id: str) -> ConversationDetail:
         (conversation_id, user_id),
     )
     if not row:
-        raise ConversationNotFoundError(conversation_id)
+        wc = ms.fetch_one(
+            """
+            SELECT conversation_id, title, model, message_count, updated_at, scope
+            FROM web_conversations
+            WHERE conversation_id = %s::uuid AND user_id = %s
+            """,
+            (conversation_id, user_id),
+        )
+        if not wc:
+            raise ConversationNotFoundError(conversation_id)
+        row = {
+            "session_id": wc["conversation_id"],
+            "summary": "",
+            "topics": [],
+            "entities": [],
+            "scope": wc.get("scope") or "personal",
+            "updated_at": wc["updated_at"],
+            "wc_title": wc.get("title"),
+            "message_count": wc.get("message_count"),
+        }
 
     messages: list[ConversationMessage] = []
     try:
@@ -148,12 +167,15 @@ def delete_conversation(user_id: str, conversation_id: str):
 
 def build_continue_seed(detail: ConversationDetail) -> list[ChatMessageDTO]:
     """Slice 1: summary context message; slice 2: verbatim transcript when present."""
-    if detail.messages:
-        return [
-            ChatMessageDTO(role=m.role, content=m.content)
-            for m in detail.messages
-            if m.role in ("user", "assistant", "system")
-        ]
+    verbatim = [
+        ChatMessageDTO(role=m.role, content=m.content)
+        for m in detail.messages
+        if m.role in ("user", "assistant", "system")
+    ]
+    # Incomplete slice-2 sync (e.g. assistant-only rows) must not shadow the
+    # slice-1 summary — that would drop the user's side of the conversation.
+    if verbatim and any(m.role == "user" for m in verbatim):
+        return verbatim
 
     topics_joined = ", ".join(detail.topics) if detail.topics else "(none)"
     raw_summary = (detail.summary or "")[:_CONTINUE_SUMMARY_MAX_CHARS]
@@ -202,6 +224,12 @@ def upsert_web_conversation(
     if is_conversation_purged(user_id=user_id, session_id=conversation_id):
         raise ConversationNotFoundError(conversation_id)
     ms = config.get_metadata_store()
+    owner = ms.fetch_one(
+        "SELECT user_id FROM web_conversations WHERE conversation_id = %s::uuid",
+        (conversation_id,),
+    )
+    if owner and owner["user_id"] != user_id:
+        raise ConversationNotFoundError(conversation_id)
     ms.execute(
         """
         INSERT INTO web_conversations (conversation_id, user_id, title, model, scope)
@@ -212,6 +240,7 @@ def upsert_web_conversation(
                   THEN EXCLUDED.title ELSE web_conversations.title END,
               model = CASE WHEN EXCLUDED.model <> ''
                   THEN EXCLUDED.model ELSE web_conversations.model END
+          WHERE web_conversations.user_id = EXCLUDED.user_id
         """,
         (conversation_id, user_id, title, model),
     )
@@ -248,11 +277,11 @@ def append_web_message(
     )
     row = ms.fetch_one(
         "SELECT message_id, role, content, model, created_at FROM web_messages "
-        "WHERE message_id = %s::uuid",
-        (message_id,),
+        "WHERE message_id = %s::uuid AND conversation_id = %s::uuid AND user_id = %s",
+        (message_id, conversation_id, user_id),
     )
     if not row:
-        raise ConversationNotFoundError(message_id)
+        raise ConversationNotFoundError(conversation_id)
     return ConversationMessage(
         message_id=str(row["message_id"]),
         role=row["role"],

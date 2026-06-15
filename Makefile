@@ -19,22 +19,24 @@ SHELL := /bin/bash
         audit-local bandit-check web-audit-fix \
         compose-policy-check \
         graph-relates-to-merge-policy-check \
-        verify-public-rc verify-public-rc-full \
-        compose-lint compose-test compose-test-stack-control compose-test-doctor compose-test-integration \
+        verify-public-rc verify-public-rc-full release-doc-sync-check \
+        compose-test-backup backup backup-prune backup-verify restore \
+        test-backup-retention \
         compose-policy-check compose-policy-check-baseline compose-policy-check-adversarial \
         compose-policy-check-adversarial-envfile \
         mock-capability-test \
         sync-vendored test-kg test-kg-image compose-test-kg \
         test-graph-parity \
         demo-seed demo-test demo-ready \
-        web-install web-codegen web-codegen-check openapi-check openapi-breaking-check web-dockerfile-check web-docker-build web-test web-lint web-build web-dev web-e2e \
+        web-install web-codegen web-codegen-check openapi-check openapi-breaking-check web-dockerfile-check shellcheck-web-docker-build-paths shellcheck-ci-paths web-docker-build web-test web-lint web-build web-dev web-e2e \
         test-web-e2e \
-        web-e2e-prove web-caddy-headers web-caddy-headers-prove \
+        web-e2e-prove web-e2e-ollama-prove web-caddy-headers web-caddy-headers-prove \
         m1-compat-with-retry \
         auth-sessions-grep-guard \
         changelog-check \
         coverage-matrix-check \
         verify-no-telemetry \
+        render-site-pages check-site-pages \
         debug test-list
 
 # ─── User-facing convenience ─────────────────────────────────────────────────
@@ -110,6 +112,21 @@ auth-sessions-grep-guard:
 # LUM-193 — optional pre-push mirror of the CI changelog path gate.
 changelog-check:
 	@scripts/check-changelog-touched.sh
+
+release-doc-sync-check: ## main vs dev — CHANGELOG, capabilities, public-export templates
+	@scripts/check-dev-release-doc-sync.sh
+
+# LUM-226 — lumogis.ai static /capabilities + /changelog (Cloudflare Pages sibling repo).
+LUMOGIS_SITE_ROOT ?= $(abspath ../lumogis-site/public)
+render-site-pages: ## Regenerate lumogis-site capabilities + changelog HTML
+	@test -d "$(LUMOGIS_SITE_ROOT)" || { echo "LUMOGIS_SITE_ROOT missing: $(LUMOGIS_SITE_ROOT)"; exit 1; }
+	node scripts/render-lumogis-site-pages.mjs --site-out "$(LUMOGIS_SITE_ROOT)" \
+	  --omit-unreleased --strip-ticket-ids
+
+check-site-pages: check-pytest ## Dry-run renderer + pytest harness for site page generator
+	node scripts/render-lumogis-site-pages.mjs --site-out "$(LUMOGIS_SITE_ROOT)" \
+	  --omit-unreleased --strip-ticket-ids --dry-run
+	$(PYTHON) -m pytest orchestrator/tests/test_render_lumogis_site_pages_script.py -q
 
 # LUM-429 — TEST-COVERAGE-MATRIX format + feature-ids.json sync (Node; no network).
 coverage-matrix-check:
@@ -241,6 +258,30 @@ compose-test-integration:
 	  orchestrator \
 	  sh -c "pip install -q -r requirements-dev.txt && python -m pytest /integration-tests/integration -v --tb=short -m 'integration and not slow and not manual'"
 
+# LUM-185 — DR backup sidecar (operator targets).
+backup:
+	docker compose run --rm backup /scripts/backup/backup.sh run
+
+backup-prune:
+	docker compose run --rm backup /scripts/backup/backup.sh prune
+
+backup-verify:
+	@if [ -n "$(ARGS)" ]; then \
+	  docker compose run --rm backup /scripts/backup/verify.sh $(ARGS) --rewrite-manifest; \
+	else \
+	  docker compose run --rm backup sh -c 'latest=$$(ls -1t /backups/snapshots 2>/dev/null | grep -v "^\.tmp$$" | head -1); test -n "$$latest"; /scripts/backup/verify.sh "/backups/snapshots/$$latest" --rewrite-manifest'; \
+	fi
+
+SNAPSHOT ?=
+restore:
+	docker compose run --rm -it backup /scripts/backup/restore.sh $(SNAPSHOT) --yes
+
+compose-test-backup:
+	QDRANT_HOST_PORT=$${QDRANT_HOST_PORT:-6336} bash scripts/integration-backup-roundtrip.sh
+
+test-backup-retention:
+	bash tests/unit/test_backup_retention.sh
+
 # Phase 5 dev-only second capability (not part of default compose); see services/lumogis-mock-capability/README.md
 mock-capability-test:
 	cd services/lumogis-mock-capability && $(PYTHON) -m pip install -q -r requirements-dev.txt && $(PYTHON) -m pytest tests -q
@@ -289,6 +330,7 @@ check-pytest:
 # user when `require_user` no-ops — that requires AUTH_ENABLED=false unless every test
 # supplies a bearer token. Host shells often export AUTH_ENABLED=true from compose.
 test: check-pytest
+	$(MAKE) test-backup-retention
 	cd orchestrator && AUTH_ENABLED=false $(PYTHON) -m pytest -x -q
 	cd stack-control && $(PYTHON) -m pytest test_main.py -q
 
@@ -406,12 +448,33 @@ openapi-breaking-check:
 	@command -v oasdiff >/dev/null 2>&1 || (echo "openapi-breaking-check: oasdiff not on PATH. Install Go 1.26+ then: go install github.com/oasdiff/oasdiff@v1.15.2" >&2; exit 2)
 	bash .github/scripts/openapi-breaking-check.sh
 
-# LUM-224 — fail if Dockerfile drops lockfile COPY or npm ci (supply-chain regression guard).
+# LUM-224 / LUM-253 — fail if Dockerfile drops lockfile COPY, npm ci, or BuildKit syntax.
 web-dockerfile-check:
 	@grep -qF 'COPY package.json package-lock.json' clients/lumogis-web/Dockerfile \
 	  || (echo "web-dockerfile-check: clients/lumogis-web/Dockerfile must COPY package.json package-lock.json" >&2; exit 1)
-	@grep -qE '^[[:space:]]*RUN[[:space:]]+npm ci([[:space:]]|$$)' clients/lumogis-web/Dockerfile \
+	@grep -qE '^[[:space:]]*RUN\b.*\bnpm ci\b' clients/lumogis-web/Dockerfile \
 	  || (echo "web-dockerfile-check: clients/lumogis-web/Dockerfile must RUN npm ci" >&2; exit 1)
+	@grep -qF '# syntax=docker/dockerfile:1' clients/lumogis-web/Dockerfile \
+	  || (echo "web-dockerfile-check: clients/lumogis-web/Dockerfile must declare # syntax=docker/dockerfile:1 for BuildKit cache mount" >&2; exit 1)
+	@grep -qE '^[[:space:]]*RUN\b.*\bnpm install\b' clients/lumogis-web/Dockerfile \
+	  && (echo "web-dockerfile-check: clients/lumogis-web/Dockerfile must not RUN npm install" >&2; exit 1) \
+	  || true
+
+# LUM-274 — static analysis for web-docker-build path gate (CI parity).
+shellcheck-web-docker-build-paths:
+	@command -v shellcheck >/dev/null 2>&1 || (echo "shellcheck-web-docker-build-paths: shellcheck not on PATH. Install e.g. apt install shellcheck" >&2; exit 2)
+	shellcheck .github/scripts/web-docker-build-paths.sh
+
+# LUM-444 — static analysis for remaining CI *-paths.sh gates (CI parity).
+shellcheck-ci-paths:
+	@command -v shellcheck >/dev/null 2>&1 || (echo "shellcheck-ci-paths: shellcheck not on PATH. Install e.g. apt install shellcheck" >&2; exit 2)
+	shellcheck .github/scripts/web-e2e-paths.sh
+	shellcheck .github/scripts/openapi-check-paths.sh
+	shellcheck .github/scripts/doctor-integration-paths.sh
+	shellcheck .github/scripts/backup-integration-paths.sh
+	shellcheck .github/scripts/test-backup-integration-paths.sh
+	shellcheck .github/scripts/security-audit-paths.sh
+	shellcheck .github/scripts/test-security-audit-paths.sh
 
 # LUM-254 — same image build CI exercises (requires Docker; run from repo root).
 web-docker-build:
@@ -437,8 +500,8 @@ search-dev:
 search-build search-build-client:
 	cd clients/lumogis-search && npm ci && npm run build && npm run tauri:build
 
-# Optional extended Hub targets when `Makefile.hub.mk` is present.
--include Makefile.hub.mk
+# Optional extended Server targets when `Makefile.server.mk` is present.
+-include Makefile.server.mk
 
 # Playwright e2e (Phase 1 Pass 1.5; FP-046 me/admin shell spec included). Requires stack
 # + Caddy on PLAYWRIGHT_BASE_URL (default http://127.0.0.1) and
@@ -455,6 +518,16 @@ test-web-e2e: web-e2e
 # LUMOGIS_WEB_SMOKE_EMAIL / LUMOGIS_WEB_SMOKE_PASSWORD in the environment.
 web-e2e-prove:
 	cd clients/lumogis-web && npm run e2e:prove
+
+# Opt-in Ollama mutation Playwright (LUM-450). Requires full stack (docker compose up -d
+# including ollama), smoke creds, LUMOGIS_E2E_EXPECT_ADMIN=1 and LUMOGIS_E2E_EXPECT_OLLAMA=1.
+# NOT part of web-e2e-prove or verify-public-rc-full (ADR-064).
+web-e2e-ollama-prove:
+	cd clients/lumogis-web && \
+	  E2E_REQUIRE_CREDS=1 \
+	  LUMOGIS_E2E_EXPECT_ADMIN=1 \
+	  LUMOGIS_E2E_EXPECT_OLLAMA=1 \
+	  npx playwright test admin_ollama_mutations --workers=1
 
 # Requires stack up (docker compose up -d). Uses the orchestrator image (pytest+httpx)
 # and fetches the Caddy service at http://caddy (set LUMOGIS_WEB_BASE_URL to override).

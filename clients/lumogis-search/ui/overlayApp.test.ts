@@ -19,6 +19,9 @@ const invokeMock = vi.fn(async (_cmd: string, _args?: InvokeArgs): Promise<unkno
 const listenMock =
   vi.fn(async (_event: string, _cb: (ev: { payload: unknown }) => void) => () => {});
 const windowCloseMock = vi.fn();
+const windowOnFocusChangedMock = vi.fn(
+  async (_handler: (ev: { payload: boolean }) => void) => () => {},
+);
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (cmd: string, args?: InvokeArgs) => invokeMock(cmd, args),
@@ -27,11 +30,15 @@ vi.mock("@tauri-apps/api/event", () => ({
   listen: (event: string, cb: (ev: { payload: unknown }) => void) => listenMock(event, cb),
 }));
 vi.mock("@tauri-apps/api/window", () => ({
-  getCurrentWindow: () => ({ close: windowCloseMock }),
+  getCurrentWindow: () => ({
+    close: windowCloseMock,
+    onFocusChanged: windowOnFocusChangedMock,
+  }),
 }));
 
 // Imported after the mocks are registered (vi.mock is hoisted).
 import { createOverlayApp, type OverlayAppContext } from "./app";
+import { SUMMON_HINT_STORAGE_KEY, resetSummonHintStateForTests } from "./summonHint";
 
 type OverlaySettings = {
   schemaVersion: number;
@@ -75,6 +82,8 @@ function wireInvoke(settings: OverlaySettings, probe: AuthProbe) {
           restartRequired: false,
           paperlessConfigured: false,
         };
+      case "take_pending_summon_hint":
+        return false;
       default:
         return undefined;
     }
@@ -109,6 +118,9 @@ beforeEach(() => {
   invokeMock.mockReset();
   listenMock.mockClear();
   windowCloseMock.mockClear();
+  windowOnFocusChangedMock.mockClear();
+  localStorage.clear();
+  resetSummonHintStateForTests();
   stubMatchMedia();
 });
 
@@ -129,7 +141,8 @@ describe("createOverlayApp markup parity (Chunk B1)", () => {
     expect(q).not.toBeNull();
     expect(q!.disabled).toBe(false);
     expect(root.querySelector("#btn-settings")).not.toBeNull();
-    expect(root.querySelector("#settings")).not.toBeNull();
+    expect(root.querySelector(".overlay-card")).not.toBeNull();
+    expect(root.querySelector("#settings")).toBeNull();
     expect(root.querySelector("#results")).not.toBeNull();
   });
 
@@ -281,6 +294,15 @@ describe("createOverlayApp hook seam (Chunk B2)", () => {
     expect(q!.disabled).toBe(true);
   });
 
+  it("overlayChrome renders inside the search shell when provided", async () => {
+    wireInvoke(makeSettings(), { mode: "off", sessionPresent: false });
+    await createOverlayApp({
+      overlayChrome: () => '<div class="hub-tray" id="hub-tray">Hub — running</div>',
+    }).boot();
+    expect(document.querySelector("#hub-tray")).not.toBeNull();
+    expect(document.querySelector(".overlay-card")).not.toBeNull();
+  });
+
   it("startingBanner renders atop the main shell when provided, absent otherwise", async () => {
     wireInvoke(makeSettings(), { mode: "off", sessionPresent: false });
     await createOverlayApp({ startingBanner: () => "Starting Lumogis…" }).boot();
@@ -302,5 +324,140 @@ describe("createOverlayApp hook seam (Chunk B2)", () => {
       },
     }).boot();
     expect(rootHadSearchInput).toBe(true);
+  });
+});
+
+describe("createOverlayApp summon hint (LUM-456)", () => {
+  it("registers onFocusChanged on boot", async () => {
+    wireInvoke(makeSettings(), { mode: "off", sessionPresent: false });
+    await createOverlayApp().boot();
+    expect(windowOnFocusChangedMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("take_pending_summon_hint_offers_on_boot", async () => {
+    wireInvoke(makeSettings(), { mode: "off", sessionPresent: false });
+    invokeMock.mockImplementation(async (cmd: string): Promise<unknown> => {
+      if (cmd === "take_pending_summon_hint") return true;
+      if (cmd === "get_desktop_profile") return "client-only";
+      if (cmd === "get_overlay_settings") return makeSettings();
+      if (cmd === "probe_auth_state") return { mode: "off", sessionPresent: false };
+      return undefined;
+    });
+    await createOverlayApp().boot();
+    const hint = document.querySelector("#summon-hint");
+    expect(hint).not.toBeNull();
+    expect(hint!.textContent).toContain("anytime to open search");
+  });
+
+  it("summon_hint_suppressed_when_localStorage_seen", async () => {
+    localStorage.setItem(SUMMON_HINT_STORAGE_KEY, "1");
+    wireInvoke(makeSettings(), { mode: "off", sessionPresent: false });
+    invokeMock.mockImplementation(async (cmd: string): Promise<unknown> => {
+      if (cmd === "take_pending_summon_hint") return true;
+      if (cmd === "get_desktop_profile") return "client-only";
+      if (cmd === "get_overlay_settings") return makeSettings();
+      if (cmd === "probe_auth_state") return { mode: "off", sessionPresent: false };
+      return undefined;
+    });
+    await createOverlayApp().boot();
+    expect(document.querySelector("#summon-hint")).toBeNull();
+  });
+
+  it("summon_hint_shown_after_onboarding_when_not_seen", async () => {
+    wireInvoke(makeSettings({ onboardingComplete: false }), {
+      mode: "off",
+      sessionPresent: false,
+    });
+    invokeMock.mockImplementation(async (cmd: string): Promise<unknown> => {
+      if (cmd === "probe_server_health") return { status: "ok", message: null };
+      if (cmd === "complete_onboarding") return undefined;
+      if (cmd === "get_desktop_profile") return "client-only";
+      if (cmd === "get_overlay_settings") {
+        return makeSettings({ onboardingComplete: false });
+      }
+      if (cmd === "probe_auth_state") return { mode: "off", sessionPresent: false };
+      if (cmd === "take_pending_summon_hint") return false;
+      return undefined;
+    });
+    await createOverlayApp().boot();
+    const base = document.querySelector<HTMLInputElement>("#onboard-base");
+    expect(base).not.toBeNull();
+    base!.value = "http://127.0.0.1:8000";
+    document.querySelector<HTMLButtonElement>("#btn-test-connection")!.click();
+    await vi.waitFor(() => {
+      const btn = document.querySelector<HTMLButtonElement>("#btn-onboard-continue");
+      expect(btn).not.toBeNull();
+      expect(btn!.disabled).toBe(false);
+    });
+    invokeMock.mockImplementation(async (cmd: string): Promise<unknown> => {
+      if (cmd === "complete_onboarding") return undefined;
+      if (cmd === "get_desktop_profile") return "client-only";
+      if (cmd === "get_overlay_settings") {
+        return makeSettings({ onboardingComplete: true });
+      }
+      if (cmd === "probe_auth_state") return { mode: "off", sessionPresent: false };
+      if (cmd === "take_pending_summon_hint") return false;
+      return undefined;
+    });
+    document.querySelector<HTMLButtonElement>("#btn-onboard-continue")!.click();
+    await vi.waitFor(() => {
+      expect(document.querySelector("#summon-hint")).not.toBeNull();
+    });
+    expect(document.querySelector("#summon-hint")!.textContent).toContain("Shift");
+  });
+
+  it("summon_hint_not_shown_during_onboarding", async () => {
+    wireInvoke(makeSettings({ onboardingComplete: false }), {
+      mode: "off",
+      sessionPresent: false,
+    });
+    await createOverlayApp().boot();
+    expect(document.querySelector("#summon-hint")).toBeNull();
+  });
+
+  it("summon_hint_does_not_disable_search_input", async () => {
+    wireInvoke(makeSettings(), { mode: "off", sessionPresent: false });
+    invokeMock.mockImplementation(async (cmd: string): Promise<unknown> => {
+      if (cmd === "take_pending_summon_hint") return true;
+      if (cmd === "get_desktop_profile") return "client-only";
+      if (cmd === "get_overlay_settings") return makeSettings();
+      if (cmd === "probe_auth_state") return { mode: "off", sessionPresent: false };
+      return undefined;
+    });
+    await createOverlayApp().boot();
+    const q = document.querySelector<HTMLInputElement>("#q");
+    expect(q).not.toBeNull();
+    expect(q!.disabled).toBe(false);
+    expect(document.activeElement?.id).not.toBe("summon-hint");
+  });
+
+  it("render_does_not_duplicate_active_hint", async () => {
+    wireInvoke(makeSettings(), { mode: "off", sessionPresent: false });
+    invokeMock.mockImplementation(async (cmd: string): Promise<unknown> => {
+      if (cmd === "take_pending_summon_hint") return true;
+      if (cmd === "get_desktop_profile") return "client-only";
+      if (cmd === "get_overlay_settings") return makeSettings();
+      if (cmd === "probe_auth_state") return { mode: "off", sessionPresent: false };
+      return undefined;
+    });
+    await createOverlayApp({
+      onBoot: async (ctx) => {
+        ctx.render();
+      },
+    }).boot();
+    expect(document.querySelectorAll("#summon-hint").length).toBe(1);
+  });
+
+  it("summon_hint_copy_exact_template", async () => {
+    wireInvoke(makeSettings(), { mode: "off", sessionPresent: false });
+    invokeMock.mockImplementation(async (cmd: string): Promise<unknown> => {
+      if (cmd === "take_pending_summon_hint") return true;
+      if (cmd === "get_desktop_profile") return "client-only";
+      if (cmd === "get_overlay_settings") return makeSettings();
+      if (cmd === "probe_auth_state") return { mode: "off", sessionPresent: false };
+      return undefined;
+    });
+    await createOverlayApp().boot();
+    expect(document.querySelector("#summon-hint")!.textContent).toContain("anytime to open search");
   });
 });

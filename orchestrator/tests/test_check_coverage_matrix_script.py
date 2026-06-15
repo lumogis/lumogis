@@ -82,7 +82,22 @@ def test_fixture_rejects_manual_without_ms_tbd() -> None:
         "--skip-audit-header",
     )
     assert proc.returncode != 0
-    assert "MS-TBD" in proc.stderr
+    assert "MS-TBD" in proc.stderr or "MS-###" in proc.stderr
+
+
+@pytest.mark.skipif(
+    subprocess.run(["node", "--version"], capture_output=True).returncode != 0,
+    reason="node not available",
+)
+def test_fixture_accepts_ms_numeric_ref() -> None:
+    proc = _run(
+        "--matrix",
+        str(FIXTURES / "valid-mini.md"),
+        "--catalog",
+        str(FIXTURES / "valid-mini-catalog.json"),
+        "--skip-audit-header",
+    )
+    assert proc.returncode == 0, proc.stderr
 
 
 @pytest.mark.skipif(

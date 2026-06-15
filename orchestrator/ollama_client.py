@@ -6,7 +6,9 @@ import json
 import logging
 import os
 import re
+from collections.abc import Iterator
 from pathlib import Path
+from typing import TypedDict
 
 import httpx
 
@@ -54,6 +56,60 @@ def list_local_models(timeout: float = 5.0) -> list[dict]:
         return []
 
 
+class PullProgressEvent(TypedDict):
+    status: str
+    completed: int | None
+    total: int | None
+    progress_pct: int | None
+
+
+def _pull_timeout_sec() -> float:
+    raw = os.environ.get("OLLAMA_PULL_TIMEOUT_SEC", "7200").strip()
+    try:
+        return float(raw)
+    except ValueError:
+        return 7200.0
+
+
+def iter_pull_progress(name: str, timeout: float | None = None) -> Iterator[PullProgressEvent]:
+    """Stream Ollama pull NDJSON and yield progress events.
+
+    Raises RuntimeError on Ollama error lines or HTTP failure.
+    """
+    if timeout is None:
+        timeout = _pull_timeout_sec()
+    with httpx.stream(
+        "POST",
+        f"{_OLLAMA_URL}/api/pull",
+        json={"name": name, "stream": True},
+        timeout=timeout,
+    ) as response:
+        response.raise_for_status()
+        for raw_line in response.iter_lines():
+            if not raw_line:
+                continue
+            try:
+                data = json.loads(raw_line)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(f"Invalid Ollama pull JSON: {exc}") from exc
+            if not isinstance(data, dict):
+                continue
+            if data.get("error"):
+                raise RuntimeError(str(data["error"]))
+            total = data.get("total")
+            completed = data.get("completed")
+            progress_pct: int | None = None
+            if isinstance(total, int) and total > 0 and isinstance(completed, int):
+                progress_pct = min(100, max(0, round(100 * completed / total)))
+            status = str(data.get("status") or "pulling")
+            yield PullProgressEvent(
+                status=status,
+                completed=completed if isinstance(completed, int) else None,
+                total=total if isinstance(total, int) else None,
+                progress_pct=progress_pct,
+            )
+
+
 def pull_model(name: str, timeout: float | None = None) -> None:
     """Trigger an Ollama model pull (blocking until complete).
 
@@ -63,11 +119,7 @@ def pull_model(name: str, timeout: float | None = None) -> None:
     Raises httpx.HTTPStatusError on failure.
     """
     if timeout is None:
-        raw = os.environ.get("OLLAMA_PULL_TIMEOUT_SEC", "7200").strip()
-        try:
-            timeout = float(raw)
-        except ValueError:
-            timeout = 7200.0
+        timeout = _pull_timeout_sec()
     r = httpx.post(
         f"{_OLLAMA_URL}/api/pull",
         json={"name": name, "stream": False},

@@ -92,6 +92,21 @@ class TestSummarizeSession:
         result = summarize_session(MESSAGES)
         assert result.summary  # non-empty
 
+    def test_rc_stub_skips_llm_and_uses_first_user_line(self, monkeypatch):
+        monkeypatch.setenv("LUMOGIS_RC_SESSION_END_STUB", "true")
+
+        def _fail_llm(*_args, **_kwargs):
+            raise AssertionError("LLM must not be called when RC session-end stub is enabled")
+
+        monkeypatch.setattr(_config, "get_llm_provider", _fail_llm)
+
+        result = summarize_session(MESSAGES, session_id="sess-rc-stub")
+
+        assert result.session_id == "sess-rc-stub"
+        assert "RBA cash rate" in result.summary
+        assert result.topics == []
+        assert result.entities == []
+
 
 # ---------------------------------------------------------------------------
 # store_session
@@ -139,6 +154,26 @@ class TestStoreSession:
         store_session(summary)
 
         assert any("finance" in t for t in embedded_texts)
+
+    def test_rc_stub_writes_postgres_only(self, mock_embedder, mock_vector_store, monkeypatch):
+        monkeypatch.setenv("LUMOGIS_RC_SESSION_END_STUB", "true")
+
+        def _fail_embed(_text):
+            raise AssertionError("embedder must not run when RC session-end stub is enabled")
+
+        mock_embedder.embed = _fail_embed
+
+        from models.memory import SessionSummary
+
+        summary = SessionSummary(
+            session_id="sess-rc-store-1",
+            summary="Stub ended chat.",
+            topics=[],
+            entities=[],
+        )
+        store_session(summary, user_id="alice")
+
+        assert mock_vector_store._collections.get("conversations", []) == []
 
 
 # ---------------------------------------------------------------------------

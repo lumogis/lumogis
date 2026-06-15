@@ -44,9 +44,11 @@ from fastapi import HTTPException
 from fastapi import Request
 from fastapi import status
 from models.api_v1 import AdminDiagnosticsResponse
+from models.api_v1 import BackupStatusResponse
 from models.api_v1 import StackStatusResponse
 
 from services import admin_diagnostics as admin_diagnostics_svc
+from services import backup_status as backup_status_svc
 from services import connector_credentials as ccs
 from services import credential_tiers as cts
 from services import stack_status as stack_status_svc
@@ -86,6 +88,12 @@ def admin_diagnostics(request: Request) -> AdminDiagnosticsResponse:
 def admin_stack_status() -> StackStatusResponse:
     """Read-only stack health snapshot (services, storage, Ollama list)."""
     return stack_status_svc.build_stack_status_response()
+
+
+@router.get("/backup-status", response_model=BackupStatusResponse)
+def admin_backup_status() -> BackupStatusResponse:
+    """Read-only DR backup snapshot status (admin-only)."""
+    return backup_status_svc.build_backup_status_response()
 
 
 @router.get("/credential-key-fingerprint")

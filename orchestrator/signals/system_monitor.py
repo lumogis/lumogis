@@ -4,7 +4,7 @@
 
 Checks every 30 minutes via APScheduler. Conditions monitored:
   - Disk usage > 85%
-  - Backup age > 7 days (newest file in ai-workspace/backups/)
+  - Backup age > 7 days (newest verified DR snapshot under /workspace/backups/snapshots/)
   - Inbox depth > 50 files (ai-workspace/inbox/)
   - review_queue depth > 0 (entities needing user resolution)
   - Error spike detection (simple count of logged errors; future: log tail)
@@ -14,6 +14,7 @@ resolution — without it, items sit in the queue indefinitely with no
 notification.
 """
 
+import json
 import logging
 import os
 import uuid
@@ -105,31 +106,48 @@ def _check_disk() -> list[dict]:
 
 def _check_backup_age() -> list[dict]:
     alerts = []
-    backup_dir = _WORKSPACE / "backups"
+    snapshots_dir = Path("/workspace/backups") / "snapshots"
     try:
-        if not backup_dir.exists():
+        if not snapshots_dir.is_dir():
             return []
-        backups = sorted(backup_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True)
-        if not backups:
+        newest_mtime: float | None = None
+        newest_id: str | None = None
+        for child in snapshots_dir.iterdir():
+            if not child.is_dir() or child.name == ".tmp":
+                continue
+            manifest_path = child / "manifest.json"
+            if not manifest_path.is_file():
+                continue
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if manifest.get("verify_status") != "ok":
+                continue
+            mtime = manifest_path.stat().st_mtime
+            if newest_mtime is None or mtime > newest_mtime:
+                newest_mtime = mtime
+                newest_id = child.name
+        if newest_mtime is None:
             alerts.append(
                 {
-                    "title": "No backups found",
+                    "title": "No verified DR backups found",
                     "body": (
-                        "No backup files in ai-workspace/backups/. Run POST /backup to create one."
+                        "No verified snapshots in /workspace/backups/snapshots/. "
+                        "Run make backup (see docs/guides/backup-restore.md)."
                     ),
                     "importance": 0.75,
                 }
             )
         else:
-            newest = backups[0]
-            age_days = (datetime.now().timestamp() - newest.stat().st_mtime) / 86400
+            age_days = (datetime.now().timestamp() - newest_mtime) / 86400
             if age_days > _BACKUP_MAX_AGE_DAYS:
                 alerts.append(
                     {
                         "title": f"Backup overdue: {age_days:.0f} days old",
                         "body": (
-                            f"Newest backup ({newest.name}) is "
-                            f"{age_days:.0f} days old. Run POST /backup."
+                            f"Newest verified snapshot ({newest_id}) is "
+                            f"{age_days:.0f} days old. Run make backup."
                         ),
                         "importance": 0.60,
                     }

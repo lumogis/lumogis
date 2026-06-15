@@ -1,8 +1,8 @@
 # Documentation Index
 
 > Status: Active
-> Last reviewed: 2026-06-06
-> Verified against commit: 4c22088
+> Last reviewed: 2026-06-14
+> Verified against commit: a36f022
 > Owner: Docs Librarian
 
 ## Canonical docs
@@ -40,7 +40,7 @@
 ## Implementation plans
 
 - [`decisions/`](decisions/) and the public architecture references above — primary shipped intent for the tree
-- [`testing/automated-test-strategy.md`](testing/automated-test-strategy.md) — CI, pytest layers, integration, web, KG, Playwright; **`make debug`** / **`make test-list`** and [`scripts/debug/README.md`](../scripts/debug/README.md) (**ADR 078**, LUM-377)
+- [`testing/automated-test-strategy.md`](testing/automated-test-strategy.md) — CI, pytest layers, integration, web, KG, Playwright; **`make debug`** / **`make test-list`** and [`scripts/debug/README.md`](../scripts/debug/README.md) (**ADR 078**, LUM-377); opt-in Ollama mutation e2e (**ADR 087**, LUM-450)
 
 ## Operations
 
@@ -54,6 +54,7 @@
 - [`release/public-agpl-release-workflow.md`](release/public-agpl-release-workflow.md) — building a publishable source tree
 - [`public-export/README.md`](public-export/README.md) — sanitized **`AGENTS.md`** / orientation templates for **`/update-public-export`**
 - [`release/dev-to-main-clean-promotion-workflow.md`](release/dev-to-main-clean-promotion-workflow.md) — promoting integration work onto the release line
+- [`RELEASE-MANUAL-CHECKLIST.md`](RELEASE-MANUAL-CHECKLIST.md) — manual sign-off rows referenced by coverage matrices and release workflows
 
 ## Testing (reference)
 
@@ -72,12 +73,12 @@
 
 ## Lumogis Search (desktop overlay)
 
-- [`../clients/lumogis-search/README.md`](../clients/lumogis-search/README.md) — AGPL Tauri 2 overlay for memory search against your household server (**ADR 080**–**082**: export, boundary, public CI)
+- [`../clients/lumogis-search/README.md`](../clients/lumogis-search/README.md) — AGPL Tauri 2 overlay for memory search against your household server (**ADR 080**–**083**: export, boundary, public CI, Persona A distribution; **ADR 089** Hub handoff; **ADR 090** system tray; **ADR 091** persona-aware Settings; **ADR 096** cold-start library resync on bundled Hub/Server)
 
 ## Extending and contributing
 
 - [`extending/extending-the-stack.md`](extending/extending-the-stack.md) — compose overlays, capability services, adapters/plugins
-- [`../CONTRIBUTING.md`](../CONTRIBUTING.md) — contributor setup and expectations
+- [`../CONTRIBUTING.md`](../CONTRIBUTING.md) — contributor setup and expectations; beginners onboarding via **`CONTRIBUTING-BEGINNERS.md`** export (**ADR 084**)
 - [`extending/examples/example_plugin/`](extending/examples/example_plugin/) — minimal plugin template
 - [`../AGENTS.md`](../AGENTS.md) — coding-agent routing and guardrails (read with [`LUMOGIS_AGENT_ORIENTATION.md`](LUMOGIS_AGENT_ORIENTATION.md))
 

@@ -11,14 +11,24 @@ Exports:
     ask_stream() — generator, yields StreamEvent objects for real-time streaming
 """
 
+from __future__ import annotations
+
 import json
 import logging
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import replace
 from typing import Generator
 
 import hooks
 from events import Event
 from models.llm import LLMResponse
+from models.session_state import SessionLoopEvent
+from models.session_state import SessionParams
+from models.session_state import SessionState
+from models.session_state import SessionTerminal
+from models.session_state import ToolChainBudget  # noqa: F401 — re-export for test compat
+from models.session_state import TransitionReason
+from models.session_state import initial_session_state
 from models.stream import StreamEvent
 from services.tools import TOOLS
 from services.tools import run_tool
@@ -49,15 +59,6 @@ SYSTEM_PROMPT_NO_TOOLS = (
     "switch to Claude (Cloud) or Qwen 2.5 (Local) which have file search capabilities. "
     "Answer questions using only your own knowledge."
 )
-
-
-@dataclass
-class ToolChainBudget:
-    """Per-request pessimistic dispatch counter for abusive tool-loop fan-out."""
-
-    cap: int
-    observed: int = 0
-    tripped_event: bool = False
 
 
 def _lumogis_blocked_payload(tool_name: str, budget: ToolChainBudget) -> str:
@@ -109,6 +110,245 @@ def _system_prompt(use_tools: bool) -> str:
     return SYSTEM_PROMPT_TOOLS if use_tools else SYSTEM_PROMPT_NO_TOOLS
 
 
+def _fire_loop_event(
+    on_loop_event: Callable[[SessionLoopEvent, SessionState], None] | None,
+    event: SessionLoopEvent,
+    state: SessionState,
+) -> None:
+    if on_loop_event is not None:
+        on_loop_event(event, state)
+
+
+def _finish_session_loop(
+    gen: Generator[StreamEvent, None, tuple[SessionTerminal, SessionState]],
+) -> tuple[SessionTerminal, SessionState]:
+    try:
+        while True:
+            next(gen)
+    except StopIteration as exc:
+        return exc.value
+
+
+def _assistant_from_llm_response(response: LLMResponse) -> dict:
+    assistant_msg: dict = {"role": "assistant", "content": response.text}
+    if response.tool_calls:
+        assistant_msg["tool_calls"] = [
+            {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
+            for tc in response.tool_calls
+        ]
+    return assistant_msg
+
+
+def _sync_should_dispatch(response: LLMResponse) -> bool:
+    return response.stop_reason == "tool_calls" and bool(response.tool_calls)
+
+
+def _run_session_loop(
+    state: SessionState,
+    params: SessionParams,
+    *,
+    provider,
+    stream: bool,
+    on_loop_event: Callable[[SessionLoopEvent, SessionState], None] | None = None,
+) -> Generator[StreamEvent, None, tuple[SessionTerminal, SessionState]]:
+    """Shared sync/stream tool loop with atomic SessionState transitions."""
+
+    for _round_index in range(MAX_TOOL_ROUNDS + 1):
+        messages_for_provider = list(state.messages)
+
+        if not stream:
+            response: LLMResponse = provider.chat(
+                messages_for_provider,
+                tools=params.tools,
+                system=params.system,
+                max_tokens=4096,
+            )
+            assistant_msg = _assistant_from_llm_response(response)
+            state = replace(state, transition=TransitionReason.MODEL_CALL)
+            _fire_loop_event(on_loop_event, SessionLoopEvent.SITE_MODEL_CALL, state)
+
+            if not _sync_should_dispatch(response):
+                state = replace(
+                    state,
+                    messages=state.messages + (assistant_msg,),
+                    transition=TransitionReason.TERMINATE,
+                    terminal=SessionTerminal.COMPLETED,
+                )
+                _fire_loop_event(on_loop_event, SessionLoopEvent.SITE_TERMINATE, state)
+                return SessionTerminal.COMPLETED, state
+
+            tool_messages: list[dict] = []
+            for tc in response.tool_calls:
+                result = dispatch_tool_under_cap(
+                    tc.name,
+                    tc.arguments,
+                    user_id=params.user_id,
+                    budget=state.tool_chain_budget,
+                    auto_rag_point_ids=params.auto_rag_point_ids,
+                )
+                tool_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": result,
+                    }
+                )
+
+            state = replace(
+                state,
+                messages=state.messages + (assistant_msg,) + tuple(tool_messages),
+                transition=TransitionReason.TOOL_DISPATCH,
+            )
+            _fire_loop_event(on_loop_event, SessionLoopEvent.SITE_TOOL_DISPATCH, state)
+
+            state = replace(
+                state,
+                turn_count=state.turn_count + 1,
+                transition=TransitionReason.TURN_ADVANCE,
+            )
+            _fire_loop_event(on_loop_event, SessionLoopEvent.SITE_TURN_ADVANCE, state)
+            continue
+
+        text_parts: list[str] = []
+        tool_calls: list[dict] = []
+
+        for event in provider.chat_stream(
+            messages_for_provider,
+            tools=params.tools,
+            system=params.system,
+            max_tokens=4096,
+        ):
+            if event.type == "text":
+                text_parts.append(event.content)
+                yield StreamEvent(type="text", content=event.content)
+            elif event.type == "tool_call" and event.tool_call:
+                tool_calls.append(
+                    {
+                        "id": event.tool_call.id,
+                        "name": event.tool_call.name,
+                        "arguments": event.tool_call.arguments,
+                    }
+                )
+            elif event.type == "end":
+                break
+
+        assistant_msg = {"role": "assistant", "content": "".join(text_parts)}
+        if tool_calls:
+            assistant_msg["tool_calls"] = tool_calls
+
+        state = replace(state, transition=TransitionReason.MODEL_CALL)
+        _fire_loop_event(on_loop_event, SessionLoopEvent.SITE_MODEL_CALL, state)
+
+        if not tool_calls:
+            state = replace(
+                state,
+                messages=state.messages + (assistant_msg,),
+                transition=TransitionReason.TERMINATE,
+                terminal=SessionTerminal.COMPLETED,
+            )
+            _fire_loop_event(on_loop_event, SessionLoopEvent.SITE_TERMINATE, state)
+            return SessionTerminal.COMPLETED, state
+
+        tool_messages = []
+        for tc in tool_calls:
+            result = dispatch_tool_under_cap(
+                tc["name"],
+                tc["arguments"],
+                user_id=params.user_id,
+                budget=state.tool_chain_budget,
+                auto_rag_point_ids=params.auto_rag_point_ids,
+            )
+            tool_messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tc["id"],
+                    "content": result,
+                }
+            )
+
+        state = replace(
+            state,
+            messages=state.messages + (assistant_msg,) + tuple(tool_messages),
+            transition=TransitionReason.TOOL_DISPATCH,
+        )
+        _fire_loop_event(on_loop_event, SessionLoopEvent.SITE_TOOL_DISPATCH, state)
+
+        state = replace(
+            state,
+            turn_count=state.turn_count + 1,
+            transition=TransitionReason.TURN_ADVANCE,
+        )
+        _fire_loop_event(on_loop_event, SessionLoopEvent.SITE_TURN_ADVANCE, state)
+        yield StreamEvent(type="text", content="\n\n")
+
+    _log.warning("Tool loop hit MAX_TOOL_ROUNDS=%d, forcing final answer", MAX_TOOL_ROUNDS)
+    messages_for_provider = list(state.messages)
+
+    if not stream:
+        final = provider.chat(messages_for_provider, system=params.system, max_tokens=4096)
+        assistant_msg = _assistant_from_llm_response(final)
+        state = replace(state, transition=TransitionReason.MODEL_CALL)
+        _fire_loop_event(on_loop_event, SessionLoopEvent.SITE_MODEL_CALL, state)
+        state = replace(
+            state,
+            messages=state.messages + (assistant_msg,),
+            transition=TransitionReason.TERMINATE,
+            terminal=SessionTerminal.MAX_TOOL_ROUNDS,
+        )
+        _fire_loop_event(on_loop_event, SessionLoopEvent.SITE_TERMINATE, state)
+        return SessionTerminal.MAX_TOOL_ROUNDS, state
+
+    text_parts = []
+    for event in provider.chat_stream(
+        messages_for_provider,
+        system=params.system,
+        max_tokens=4096,
+    ):
+        if event.type == "text":
+            text_parts.append(event.content)
+            yield StreamEvent(type="text", content=event.content)
+        elif event.type == "end":
+            break
+
+    assistant_msg = {"role": "assistant", "content": "".join(text_parts)}
+    state = replace(state, transition=TransitionReason.MODEL_CALL)
+    _fire_loop_event(on_loop_event, SessionLoopEvent.SITE_MODEL_CALL, state)
+    state = replace(
+        state,
+        messages=state.messages + (assistant_msg,),
+        transition=TransitionReason.TERMINATE,
+        terminal=SessionTerminal.MAX_TOOL_ROUNDS,
+    )
+    _fire_loop_event(on_loop_event, SessionLoopEvent.SITE_TERMINATE, state)
+    return SessionTerminal.MAX_TOOL_ROUNDS, state
+
+
+def _build_session_params_and_state(
+    *,
+    question: str,
+    history: list | None,
+    model: str,
+    use_tools: bool,
+    user_id: str,
+    tools: list[dict] | None,
+    system: str,
+    chain_budget: ToolChainBudget | None,
+    auto_rag_point_ids: set[str] | None,
+) -> tuple[SessionParams, SessionState]:
+    messages = list(history) if history else []
+    messages.append({"role": "user", "content": question})
+    params = SessionParams(
+        user_id=user_id,
+        system=system,
+        tools=tools,
+        use_tools=use_tools,
+        model=model,
+        auto_rag_point_ids=auto_rag_point_ids,
+    )
+    state = initial_session_state(messages=messages, chain_budget=chain_budget)
+    return params, state
+
+
 def ask(
     question: str,
     history: list | None = None,
@@ -118,19 +358,11 @@ def ask(
     user_id: str,
     auto_rag_point_ids: set[str] | None = None,
 ) -> str:
-    """Synchronous tool-loop. ``user_id`` is keyword-only and required.
-
-    Phase 3: every chat path threads the caller's ``user_id`` down to
-    :func:`services.tools.run_tool` so per-user data stores never leak
-    across users. Callers that forget the kwarg fail loud at import-call
-    time with :class:`TypeError`.
-    """
+    """Synchronous tool-loop. ``user_id`` is keyword-only and required."""
     if not isinstance(user_id, str) or not user_id:
         raise TypeError("loop.ask: user_id (keyword-only) is required")
 
     provider = config.get_llm_provider(model, user_id=user_id)
-    messages = list(history) if history else []
-    messages.append({"role": "user", "content": question})
 
     oop_tok = None
     if use_tools:
@@ -146,45 +378,25 @@ def ask(
     cap_cfg = config.get_tool_chain_cap()
     chain_budget = ToolChainBudget(cap=cap_cfg) if cap_cfg > 0 else None
 
+    params, state = _build_session_params_and_state(
+        question=question,
+        history=history,
+        model=model,
+        use_tools=use_tools,
+        user_id=user_id,
+        tools=tools,
+        system=system,
+        chain_budget=chain_budget,
+        auto_rag_point_ids=auto_rag_point_ids,
+    )
+
     try:
-        for _round in range(MAX_TOOL_ROUNDS + 1):
-            response: LLMResponse = provider.chat(
-                messages,
-                tools=tools,
-                system=system,
-                max_tokens=4096,
-            )
-
-            assistant_msg: dict = {"role": "assistant", "content": response.text}
-            if response.tool_calls:
-                assistant_msg["tool_calls"] = [
-                    {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
-                    for tc in response.tool_calls
-                ]
-            messages.append(assistant_msg)
-
-            if response.stop_reason != "tool_calls" or not response.tool_calls:
-                return response.text
-
-            for tc in response.tool_calls:
-                result = dispatch_tool_under_cap(
-                    tc.name,
-                    tc.arguments,
-                    user_id=user_id,
-                    budget=chain_budget,
-                    auto_rag_point_ids=auto_rag_point_ids,
-                )
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": result,
-                    }
-                )
-
-        _log.warning("Tool loop hit MAX_TOOL_ROUNDS=%d, forcing final answer", MAX_TOOL_ROUNDS)
-        final = provider.chat(messages, system=system, max_tokens=4096)
-        return final.text
+        _terminal, final_state = _finish_session_loop(
+            _run_session_loop(state, params, provider=provider, stream=False)
+        )
+        last = final_state.messages[-1]
+        content = last.get("content", "")
+        return content if isinstance(content, str) else str(content)
     finally:
         if oop_tok is not None:
             finish_llm_tools_request(oop_tok)
@@ -223,17 +435,19 @@ def ask_stream(
     try:
         try:
             provider = config.get_llm_provider(model, user_id=user_id)
-            messages = list(history) if history else []
-            messages.append({"role": "user", "content": question})
-
-            yield from _stream_loop(
-                provider,
-                messages,
-                tools,
-                system,
+            params, state = _build_session_params_and_state(
+                question=question,
+                history=history,
+                model=model,
+                use_tools=use_tools,
                 user_id=user_id,
+                tools=tools,
+                system=system,
                 chain_budget=chain_budget,
                 auto_rag_point_ids=auto_rag_point_ids,
+            )
+            yield from _run_session_loop(
+                state, params, provider=provider, stream=True
             )
         except Exception as exc:
             _log.exception("ask_stream failed for model=%s", model)
@@ -253,78 +467,3 @@ def _friendly_error(exc: Exception) -> str:
     if "timeout" in msg:
         return "The request timed out. Please try again."
     return "Sorry, something went wrong. Check the orchestrator logs for details."
-
-
-def _stream_loop(
-    provider,
-    messages: list,
-    tools: list[dict] | None,
-    system: str,
-    *,
-    user_id: str,
-    chain_budget: ToolChainBudget | None = None,
-    auto_rag_point_ids: set[str] | None = None,
-) -> Generator[StreamEvent, None, None]:
-    """Inner streaming loop with tool-call handling. ``user_id`` is required."""
-    for _round in range(MAX_TOOL_ROUNDS + 1):
-        text_parts: list[str] = []
-        tool_calls: list[dict] = []
-
-        for event in provider.chat_stream(
-            messages,
-            tools=tools,
-            system=system,
-            max_tokens=4096,
-        ):
-            if event.type == "text":
-                text_parts.append(event.content)
-                yield StreamEvent(type="text", content=event.content)
-            elif event.type == "tool_call" and event.tool_call:
-                tool_calls.append(
-                    {
-                        "id": event.tool_call.id,
-                        "name": event.tool_call.name,
-                        "arguments": event.tool_call.arguments,
-                    }
-                )
-            elif event.type == "end":
-                break
-
-        assistant_msg: dict = {"role": "assistant", "content": "".join(text_parts)}
-        if tool_calls:
-            assistant_msg["tool_calls"] = tool_calls
-        messages.append(assistant_msg)
-
-        if not tool_calls:
-            return
-
-        for tc in tool_calls:
-            result = dispatch_tool_under_cap(
-                tc["name"],
-                tc["arguments"],
-                user_id=user_id,
-                budget=chain_budget,
-                auto_rag_point_ids=auto_rag_point_ids,
-            )
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tc["id"],
-                    "content": result,
-                }
-            )
-        yield StreamEvent(type="text", content="\n\n")
-
-    _log.warning(
-        "Streaming tool loop hit MAX_TOOL_ROUNDS=%d, forcing final answer",
-        MAX_TOOL_ROUNDS,
-    )
-    for event in provider.chat_stream(
-        messages,
-        system=system,
-        max_tokens=4096,
-    ):
-        if event.type == "text":
-            yield StreamEvent(type="text", content=event.content)
-        elif event.type == "end":
-            break

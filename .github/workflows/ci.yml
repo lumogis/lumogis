@@ -18,8 +18,21 @@ jobs:
       - name: LUM-190 — security-audit path gate contract tests
         run: bash .github/scripts/test-security-audit-paths.sh
 
+      - name: LUM-486 — backup integration path gate contract tests
+        run: bash .github/scripts/test-backup-integration-paths.sh
+
+      - name: LUM-485 — backup retention prune unit test
+        run: make test-backup-retention
+
       - name: LUM-60 — web-e2e path script syntax
         run: bash -n .github/scripts/web-e2e-paths.sh
+
+      - name: Shellcheck CI path scripts (lint-and-test)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+          shellcheck .github/scripts/web-e2e-paths.sh
+          shellcheck .github/scripts/test-security-audit-paths.sh
 
       - uses: actions/setup-python@v5
         with:
@@ -90,6 +103,9 @@ jobs:
 
   web-docker-build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write # BuildKit GHA cache export (LUM-445)
     timeout-minutes: 20
     concurrency:
       group: web-docker-build-${{ github.event.pull_request.number || github.ref }}
@@ -101,6 +117,12 @@ jobs:
 
       - name: Validate path-detection script syntax
         run: bash -n .github/scripts/web-docker-build-paths.sh
+
+      - name: Shellcheck path-detection script
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+          shellcheck .github/scripts/web-docker-build-paths.sh
 
       - name: Determine if web Docker build is needed
         id: paths
@@ -117,9 +139,21 @@ jobs:
           test -f .env.example || (echo "web-docker-build: missing .env.example" >&2; exit 1)
           cp .env.example .env
 
+      - name: Set up Docker Buildx
+        if: steps.paths.outputs.should_build == 'true'
+        uses: docker/setup-buildx-action@v3
+
       - name: Docker compose build lumogis-web
         if: steps.paths.outputs.should_build == 'true'
-        run: docker compose build lumogis-web
+        uses: docker/bake-action@v6
+        with:
+          files: docker-compose.yml
+          targets: lumogis-web
+          pull: true
+          load: true
+          set: |
+            *.cache-from=type=gha
+            *.cache-to=type=gha,mode=max
 
       - name: Skip web Docker build (path contract)
         if: steps.paths.outputs.should_build != 'true'
@@ -141,6 +175,12 @@ jobs:
         run: |
           bash -n .github/scripts/openapi-check-paths.sh
           bash -n .github/scripts/openapi-breaking-check.sh
+
+      - name: Shellcheck OpenAPI path script
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+          shellcheck .github/scripts/openapi-check-paths.sh
 
       - name: Determine if OpenAPI codegen check is needed
         id: paths
@@ -236,6 +276,12 @@ jobs:
       - name: Validate doctor integration path script syntax
         run: bash -n .github/scripts/doctor-integration-paths.sh
 
+      - name: Shellcheck doctor integration path script
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+          shellcheck .github/scripts/doctor-integration-paths.sh
+
       - name: Determine if doctor integration is needed
         id: paths
         shell: bash
@@ -289,6 +335,76 @@ jobs:
           echo 'SKIP_DOCTOR_INTEGRATION: no paths matched contract'
           exit 0
 
+  backup-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    concurrency:
+      group: backup-integration-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate backup integration path script syntax
+        run: bash -n .github/scripts/backup-integration-paths.sh
+
+      - name: Shellcheck backup integration path script
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+          shellcheck .github/scripts/backup-integration-paths.sh
+          shellcheck .github/scripts/test-backup-integration-paths.sh
+
+      - name: Determine if backup integration is needed
+        id: paths
+        shell: bash
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
+        run: bash -euo pipefail .github/scripts/backup-integration-paths.sh
+
+      - name: Ensure jq is available
+        if: steps.paths.outputs.should_run == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v jq >/dev/null 2>&1; then
+            jq --version
+            exit 0
+          fi
+          sudo apt-get update
+          sudo apt-get install -y jq
+          command -v jq >/dev/null 2>&1 || { echo "backup-integration: jq missing after apt install" >&2; exit 1; }
+          jq --version
+
+      - name: Run compose-test-backup (DR volume-wipe round-trip)
+        if: steps.paths.outputs.should_run == 'true'
+        env:
+          BACKUP_INCLUDE_FALKORDB: "true"
+          QDRANT_HOST_PORT: "6336"
+          FALKORDB_HOST_PORT: "6381"
+        run: make compose-test-backup
+
+      - name: Compose diagnostics (bounded)
+        if: always() && steps.paths.outputs.should_run == 'true'
+        shell: bash
+        env:
+          COMPOSE_PROJECT_NAME: lumogis-test-backup
+          COMPOSE_FILE: docker-compose.yml:docker-compose.falkordb.yml
+        run: |
+          set +e
+          cd "$GITHUB_WORKSPACE"
+          docker compose --env-file config/test.env.example ps -a
+          docker compose --env-file config/test.env.example logs --tail=200 backup falkordb postgres qdrant
+
+      - name: Skip backup integration (path contract)
+        if: steps.paths.outputs.should_run != 'true'
+        run: |
+          echo 'SKIP_BACKUP_INTEGRATION: no paths matched contract'
+          exit 0
+
   security-audit:
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -302,6 +418,12 @@ jobs:
 
       - name: Validate path-detection script syntax
         run: bash -n .github/scripts/security-audit-paths.sh
+
+      - name: Shellcheck security-audit path script
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+          shellcheck .github/scripts/security-audit-paths.sh
 
       - name: Determine if security audit is needed
         id: paths

@@ -1,13 +1,13 @@
 # ADR-074: Stack Health Dashboard — service status, storage, Ollama management
 
 > Status: Active (numbering conflict)
-> Last reviewed: 2026-06-06
-> Verified against commit: 4c22088
-> Notes: **`docs/decisions/074-lum-162-conversation-history-ui.md`** also claims **ADR 074** in its title. Resolve by renumbering one document and sweeping references. Filename prefixes **049–082** are already in use under `docs/decisions/` (duplicate clusters on **053**, **059**, **060**, **061**, **063**, **064**, **072**, **074**, plus **`065-lum-320-*.md`** through **`082-lum-433-search-overlay-public-ci.md`**). Pick a **non-colliding** new slug (for example **`083-*.md`**) when renumbering—coordinate with any **`034-linear-evidence-index.md`** / **046** / **072** rename in the same pass—see `docs/_librarian/docs-inventory.md`.
+> Last reviewed: 2026-06-14
+> Verified against commit: a36f022
+> Notes: **`docs/decisions/074-lum-162-conversation-history-ui.md`** also claims **ADR 074** in its title; **[ADR 085](085-lum-439-conversation-put-upsert-fix.md)** amends **074-lum-162** as canonical **ADR 074** — renumber **this** file to **`098-lum-178-stack-health-dashboard.md`** in a coordinated pass (**096** is **LUM-477** cold-start resync; **097** is **LUM-470** pip hash-pinning). Filename prefixes **049–097** are already in use under `docs/decisions/` (duplicate clusters on **053**, **059**, **060**, **061**, **063**, **064**, **072**, **074**, plus **`065-lum-320-*.md`** through **`097-lum-470-pip-dependency-hash-pinning.md`**). Pick a **non-colliding** new slug (for example **`098-lum-178-*.md`**) when renumbering—coordinate with any **`034-linear-evidence-index.md`** / **046** / **072** rename in the same pass—see `docs/_librarian/docs-inventory.md`.
 
 **Status:** Finalised
 **Created:** 2026-06-01
-**Last updated:** 2026-06-01
+**Last updated:** 2026-06-08
 **Decided by:** /explore --headless (LUM-178); slice 1 implemented and verified 2026-06-01
 
 ## Context
@@ -21,7 +21,9 @@ Build the dashboard as a **hybrid, sliced** feature in core (AGPL):
 - **Slice 1 (shipped):** sibling admin sub-resource `GET /api/v1/admin/diagnostics/stack-status` returning `StackStatusResponse` on the existing `admin_diagnostics` router (same auth/audit posture as other diagnostics read-only routes; does **not** embed into `AdminDiagnosticsResponse`).
 - **stack-control:** read-only `GET /status` returning `docker compose ps` + `docker system df` JSON, proxied by the orchestrator via `RESTART_SECRET` / `X-Lumogis-Restart-Token` with TTL cache and single-flight per worker.
 - **Lumogis Web:** `AdminSystemStatusView` at `/admin/system-status` (services, storage bars, Ollama list read-only).
-- **Slice 2 (deferred):** in-SPA Ollama pull/delete via existing unprefixed `/settings/ollama-*` admin routes.
+- **Slice 2 (shipped):** in-SPA Ollama pull/delete via existing unprefixed `/settings/ollama-*` admin routes; registry-alias and embedding badges; `GET /settings/ollama-discovery` extended with `embedding_model` and `default_model` (see `.cursor/adrs/LUM-423-ollama-admin-actions.md`); `POST /settings/ollama-pull` returns nullable `qdrant_init_warning` when embedding pull succeeds but Qdrant collection init fails (LUM-452).
+- **Slice 2b (shipped, LUM-449):** SPA uses async pull — `POST /settings/ollama-pull/async` (202 + `job_id`), `GET /settings/ollama-pull/jobs/{job_id}` poll, `GET /settings/ollama-pull/jobs/active` for tab refresh; Postgres `ollama_pull_jobs`; progress bar in `AdminSystemStatusView`. Legacy sync `POST /settings/ollama-pull` unchanged for HTML dashboard.
+- **Slice 2c (shipped, LUM-451):** Lumogis Web SPA calls typed **`/api/v1/admin/ollama/*`** (discovery, async pull, job poll/active, delete); shared `services/admin_ollama.py`; legacy `/settings/ollama-*` thin delegates for HTML dashboard; no v1 sync pull — see [ADR 088](088-lum-451-ollama-api-v1-promotion.md).
 - **Slice 3 (deferred, blocked by LUM-174):** storage-threshold inbox notifications.
 
 The service-status JSON contract is **runtime-agnostic** (`runtime_kind`, allowlisted `runtime_detail`) so LUM-396 can supply process-manager rows without Docker-shaped top-level fields.
@@ -55,3 +57,7 @@ Full detail: `.cursor/explorations/LUM-178-stack-health-dashboard.md`.
 - 2026-06-01: Draft created by /explore --headless (LUM-178)
 - 2026-06-01: Revised during /review-plan --arbitrate R1 — sibling sub-resource wording, unprefixed Ollama paths for slice 2
 - 2026-06-01: Finalised by /verify-plan — slice 1 implementation confirmed (LUM-178)
+- 2026-06-08: Slice 2 planned and implemented (LUM-423) — Ollama pull/delete in `AdminSystemStatusView`; discovery response extended with `embedding_model` + `default_model`
+- 2026-06-08: LUM-452 — `qdrant_init_warning` on pull response + admin UI warning when Qdrant init fails after embedding pull
+- 2026-06-08: LUM-449 — async Ollama pull jobs + SPA progress bar (poll contract stable for LUM-450/LUM-451)
+- 2026-06-08: LUM-451 — SPA migrated to `/api/v1/admin/ollama/*`; legacy `/settings/ollama-*` delegates retained (ADR-088)

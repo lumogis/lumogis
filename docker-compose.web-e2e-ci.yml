@@ -20,6 +20,8 @@ services:
     environment:
       COMPOSE_FILE: docker-compose.yml:docker-compose.web-e2e-ci.yml
       GRAPH_MODE: disabled
+      # Slim stack has no Ollama (ADR-064). LUM-414 Playwright needs session_end -> sessions row.
+      LUMOGIS_RC_SESSION_END_STUB: "true"
       LUMOGIS_BOOTSTRAP_ADMIN_EMAIL: ${LUMOGIS_BOOTSTRAP_ADMIN_EMAIL}
       LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD: ${LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD}
       LUMOGIS_WEB_SMOKE_EMAIL: ${LUMOGIS_WEB_SMOKE_EMAIL}

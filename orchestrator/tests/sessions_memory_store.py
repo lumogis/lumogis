@@ -68,20 +68,40 @@ class SessionsMemoryMetadataStore:
 
         if q.startswith("INSERT INTO web_conversations"):
             cid, uid, title, model = p[:4]
+            cid_str = str(cid)
+            existing_key = next(
+                (
+                    k
+                    for k, row in self.web_conversations.items()
+                    if str(row["conversation_id"]) == cid_str
+                ),
+                None,
+            )
+            if existing_key is not None:
+                existing = self.web_conversations[existing_key]
+                if existing["user_id"] != uid:
+                    return
+                if title:
+                    existing["title"] = title
+                if model:
+                    existing["model"] = model
+                existing["updated_at"] = _now()
+                return
             key = f"{cid}:{uid}"
-            existing = self.web_conversations.get(key)
             self.web_conversations[key] = {
-                "conversation_id": uuid.UUID(str(cid)),
+                "conversation_id": uuid.UUID(cid_str),
                 "user_id": uid,
-                "title": title if title else (existing or {}).get("title", ""),
-                "model": model if model else (existing or {}).get("model", ""),
-                "message_count": (existing or {}).get("message_count", 0),
+                "title": title or "",
+                "model": model or "",
+                "message_count": 0,
                 "updated_at": _now(),
             }
             return
 
         if q.startswith("INSERT INTO web_messages"):
             mid, cid, uid, role, content, model = p
+            if "ON CONFLICT (message_id) DO NOTHING" in q and str(mid) in self.web_messages:
+                return
             self.web_messages[str(mid)] = {
                 "message_id": uuid.UUID(str(mid)),
                 "conversation_id": uuid.UUID(str(cid)),
@@ -166,17 +186,40 @@ class SessionsMemoryMetadataStore:
                 return out
             return None
 
+        if "FROM web_conversations" in q and "SELECT user_id" in q:
+            cid = str(p[0])
+            for key, row in self.web_conversations.items():
+                if str(row["conversation_id"]) == cid:
+                    return {"user_id": row["user_id"]}
+            return None
+
         if "FROM web_conversations" in q:
+            if "SELECT user_id FROM web_conversations" in q:
+                cid = str(p[0])
+                for row in self.web_conversations.values():
+                    if str(row["conversation_id"]) == cid:
+                        return {"user_id": row["user_id"]}
+                return None
             cid, uid = str(p[0]), str(p[1])
             key = f"{cid}:{uid}"
             row = self.web_conversations.get(key)
             if row:
-                if "message_count" in q:
+                if "title" in q or "message_count" in q:
                     return dict(row)
                 return {"conversation_id": row["conversation_id"]}
             return None
 
         if "FROM web_messages" in q and "message_id = %s" in q:
+            if len(p) == 3:
+                mid, cid, uid = str(p[0]), str(p[1]), str(p[2])
+                row = self.web_messages.get(mid)
+                if (
+                    row
+                    and str(row["conversation_id"]) == cid
+                    and row["user_id"] == uid
+                ):
+                    return dict(row)
+                return None
             mid = str(p[0])
             row = self.web_messages.get(mid)
             return dict(row) if row else None

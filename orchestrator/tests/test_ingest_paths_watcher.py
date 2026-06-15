@@ -89,6 +89,7 @@ def test_ingest_paths_observer_does_not_break_inbox(
     ingest_mod.stop_watcher()
     ingest_mod.start_watcher(inbox_path=str(inbox))
     ingest_mod.start_ingest_path_watchers()
+    ingest_mod.enqueue_initial_ingest_scan()
     try:
         assert ingest_mod._observer is not None
         assert ingest_mod._observer.is_alive()
@@ -98,6 +99,49 @@ def test_ingest_paths_observer_does_not_break_inbox(
     finally:
         ingest_mod.stop_ingest_path_watchers()
         ingest_mod.stop_watcher()
+
+
+def test_enqueue_initial_ingest_scan_is_idempotent(
+    ingest_watch_env: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _inbox, data = ingest_watch_env
+    monkeypatch.setenv("INGEST_PATHS_OWNER_USER_ID", "owner-1")
+    folder_jobs: list[str] = []
+
+    def _fake_enqueue(*, user_id, kind, payload):
+        if kind == "ingest_folder":
+            folder_jobs.append(payload["path"])
+
+    monkeypatch.setattr("services.batch_queue.enqueue", _fake_enqueue)
+    # Reset the once-per-process guard so the test starts from a clean slate
+    # (the autouse _mock_watcher fixture stubs stop_ingest_path_watchers).
+    monkeypatch.setattr(ingest_mod, "_initial_ingest_scan_enqueued", False)
+
+    assert ingest_mod.enqueue_initial_ingest_scan() is True
+    assert folder_jobs == [str(data.resolve(strict=False))]
+
+    # Second call must not enqueue a duplicate bulk scan.
+    assert ingest_mod.enqueue_initial_ingest_scan() is True
+    assert folder_jobs == [str(data.resolve(strict=False))]
+
+
+def test_enqueue_initial_ingest_scan_noop_without_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("INGEST_PATHS_WATCH_MODE", "event")
+    # No owner → watch disabled → the initial scan must not be enqueued.
+    monkeypatch.setattr(config, "get_ingest_paths_owner_user_id", lambda: "")
+    monkeypatch.setattr(ingest_mod, "_initial_ingest_scan_enqueued", False)
+    called = False
+
+    def _fake_enqueue(*, user_id, kind, payload):
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr("services.batch_queue.enqueue", _fake_enqueue)
+    assert ingest_mod.enqueue_initial_ingest_scan() is False
+    assert called is False
 
 
 def test_watcher_status_ingest_paths_off_when_disabled(

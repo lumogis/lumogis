@@ -30,9 +30,11 @@ function mountMainSearchShell(searchDisabled: boolean): HTMLDivElement {
   root.id = "root";
   document.body.appendChild(root);
   root.innerHTML = `
-    <div class="toolbar">
-      <input type="search" id="q" placeholder="Search memory…" autocomplete="off" ${searchDisabled ? "disabled" : ""} />
-      <button type="button" id="btn-settings">Settings</button>
+    <div class="overlay-card">
+      <div class="overlay-searchbar">
+        <input type="search" id="q" placeholder="Search your household memory…" autocomplete="off" ${searchDisabled ? "disabled" : ""} />
+        <button type="button" id="btn-settings">Settings</button>
+      </div>
     </div>
   `;
   return root;

@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Thomas Kohlborn, trading as Lumogis
 
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   fetchMemorySearch,
@@ -15,7 +15,10 @@ import {
   watchSystemTheme,
   type ThemeMode,
 } from "./theme";
+import { formatHotkeyForDisplay } from "./hotkeyDisplay";
 import { createHitRow } from "./hitRow";
+import { iconMarkup, logoDragHandleMarkup, statusPillMarkup } from "./primitives";
+import { focusSearchInput, wireLogoDrag } from "./overlayWindow";
 import {
   canManageIngestPaths,
   canUploadIngest,
@@ -24,6 +27,27 @@ import {
   onboardingMarkup,
   type AuthMode,
 } from "./overlayUi";
+import {
+  activateSummonHint,
+  dismissSummonHint,
+  isSummonHintActive,
+  offerSummonHintIfPending,
+  upsertSummonHintElement,
+} from "./summonHint";
+import {
+  composeSettingsBody,
+  overlaySettingsSavePayload,
+  resolveSettingsPanel,
+  type DesktopProfile,
+  type SettingsPanelDescriptor,
+} from "./settingsPanel";
+
+export type {
+  DesktopProfile,
+  IngestSectionLabels,
+  SearchCopy,
+  SettingsPanelDescriptor,
+} from "./settingsPanel";
 
 /** Overlay settings DTO (the OverlayConfig-shaped type used by the Rust side). */
 export type OverlaySettings = {
@@ -38,9 +62,6 @@ export type OverlaySettings = {
   sessionPresent?: boolean;
   sessionRole?: string | null;
 };
-
-/** Host-reported desktop profile (`get_desktop_profile`); literals are opaque to this crate. */
-export type DesktopProfile = "client-only" | "bundled";
 
 /**
  * Stable read/controlled-write surface the factory passes to every hook.
@@ -76,6 +97,8 @@ export interface OverlayAppContext {
 export interface OverlayAppHooks {
   /** Resolve the desktop profile (default: invoke `get_desktop_profile`); resolves before the first render(). */
   resolveProfile?(): Promise<DesktopProfile>;
+  /** Override onboarding gate (default: shared `needsOnboarding`). */
+  shouldShowOnboarding?(ctx: OverlayAppContext): boolean;
   /** Render a custom onboarding wizard; return true if it rendered (default absent → shared wizard). */
   renderOnboarding?(ctx: OverlayAppContext): boolean;
   /** Override whether the search box is disabled (default: shared isSearchDisabled). */
@@ -86,6 +109,19 @@ export interface OverlayAppHooks {
   hideAdminIngest?(ctx: OverlayAppContext): boolean;
   /** Post-boot hook (e.g. register host-specific listeners and call ctx.render()). */
   onBoot?(ctx: OverlayAppContext): Promise<void>;
+  /** After settings load, before first render (e.g. restore bundled wizard state). */
+  prepareBoot?(ctx: OverlayAppContext): Promise<void>;
+  /** Native folder picker for library roots (Hub bundled); absent → type paths manually. */
+  pickLibraryFolder?(ctx: OverlayAppContext): Promise<string | null>;
+  /** After settings save (e.g. Hub: sync library root to bundled Core). */
+  afterSaveSettings?(ctx: OverlayAppContext, libraryRoots: string[]): Promise<void>;
+  /** HTML prepended to the main overlay shell (e.g. Hub running indicator). */
+  overlayChrome?(ctx: OverlayAppContext): string | null;
+  /** Persona-specific settings panel visibility and copy (default: client-only A/B layout). */
+  customizeSettingsPanel?(
+    ctx: OverlayAppContext,
+    defaults: SettingsPanelDescriptor,
+  ): SettingsPanelDescriptor;
 }
 
 /**
@@ -101,8 +137,6 @@ type AuthProbe = {
   sessionPresent: boolean;
   role?: string | null;
 };
-
-const LOGO_MARK_SRC = new URL("./assets/logo-mark.svg", import.meta.url).href;
 
 const root = document.querySelector<HTMLDivElement>("#root")!;
 
@@ -137,8 +171,12 @@ let adminSettings: AdminSettings | null = null;
 let lastController: AbortController | null = null;
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let unwatchSystemTheme: (() => void) | null = null;
+let settingsViewOpen = false;
+let selectedHitIndex = 0;
+let keyboardNavBound = false;
 
 let profile: DesktopProfile = "client-only";
+let currentSettingsDescriptor: SettingsPanelDescriptor;
 
 // Stable hook context over this factory's state. Getters keep `settings`/`profile`
 // live across reassignment. With no hooks it is constructed but never used.
@@ -180,7 +218,9 @@ const ctx: OverlayAppContext = {
 async function defaultResolveProfile(): Promise<DesktopProfile> {
   try {
     const p = await invoke<string>("get_desktop_profile");
-    return p === "bundled" ? "bundled" : "client-only";
+    if (p === "bundled") return "bundled";
+    if (p === "server") return "server";
+    return "client-only";
   } catch {
     return "client-only";
   }
@@ -216,52 +256,6 @@ function editorIngestPaths(): string[] {
   return [...adminSettings.ingestPaths];
 }
 
-function ingestPathsEditorMarkup(): string {
-  const paths = editorIngestPaths();
-  const rows = paths
-    .map(
-      (p) =>
-        `<div class="ingest-path-row">
-          <input type="text" class="ingest-path-input" value="${escapeHtml(p)}" placeholder="Host path (e.g. ./lumogis-data)" />
-          <button type="button" class="ingest-path-remove" title="Remove">×</button>
-        </div>`,
-    )
-    .join("");
-  const paperless = adminSettings?.paperlessConfigured
-    ? `<span class="badge ok">Paperless connected</span>`
-    : `<span class="badge muted">Paperless not configured</span>`;
-  const restartBanner = adminSettings?.restartRequired
-    ? `<div class="banner warn" id="restart-banner">Restart required for ingest path changes to take effect. New bind mounts need a Docker restart.</div>`
-    : "";
-  return `
-    <section class="settings-section">
-      <h2 class="settings-heading">Server ingest paths</h2>
-      <p class="hint">Paths on the host where Lumogis watches and ingests files. Additional paths beyond the first may require extra volume mounts in Docker Compose.</p>
-      ${paperless}
-      ${restartBanner}
-      <div id="ingest-paths-list">${rows}</div>
-      <div class="toolbar">
-        <input type="text" id="new-ingest-path" placeholder="Add path…" />
-        <button type="button" id="btn-add-ingest-path">+ Add path</button>
-      </div>
-      <div class="toolbar">
-        <button type="button" id="btn-save-ingest-paths">Save ingest paths</button>
-        <button type="button" id="btn-restart-stack" ${adminSettings?.restartRequired ? "" : "disabled"}>Apply &amp; Restart</button>
-      </div>
-      <p class="hint" id="ingest-admin-hint"></p>
-    </section>`;
-}
-
-function uploadSectionMarkup(): string {
-  return `
-    <section class="settings-section">
-      <h2 class="settings-heading">Push upload</h2>
-      <p class="hint">Upload a document to your personal ingest queue on the server.</p>
-      <input type="file" id="ingest-upload-input" />
-      <p class="hint" id="upload-hint"></p>
-    </section>`;
-}
-
 function mapSearchError(err: unknown): string {
   const s = String(err);
   if (s.includes("session_expired")) {
@@ -294,29 +288,54 @@ function mapSearchError(err: unknown): string {
   return "Search failed — see README troubleshooting.";
 }
 
-function themeToggleMarkup(): string {
-  const mode = currentTheme();
-  const options: { id: ThemeMode; label: string }[] = [
-    { id: "system", label: "System" },
-    { id: "light", label: "Light" },
-    { id: "dark", label: "Dark" },
+function overlayStatusPillMarkup(): string {
+  if (profile === "server") {
+    const starting = hooks.startingBanner?.(ctx);
+    if (!starting) {
+      return statusPillMarkup("Server running");
+    }
+    return statusPillMarkup("Starting…", "warn");
+  }
+  if (profile === "bundled") {
+    const starting = hooks.startingBanner?.(ctx);
+    if (!starting) {
+      return statusPillMarkup("Hub running");
+    }
+    return statusPillMarkup("Starting…", "warn");
+  }
+  if (authMode === "unreachable") {
+    return statusPillMarkup("Unreachable", "warn");
+  }
+  return "";
+}
+
+function overlayFooterMarkup(hotkey: string): string {
+  const hk = formatHotkeyForDisplay(hotkey);
+  const isMac = hk.length <= 4 && !hk.includes("+");
+  const hints: [string, string][] = [
+    ["↑↓", "navigate"],
+    ["↵", "open"],
+    [isMac ? "⌥↵" : "Shift+↵", "reveal"],
+    ["esc", settingsViewOpen ? "close" : "hide"],
   ];
-  const buttons = options
+  const hintHtml = hints
     .map(
-      (o) =>
-        `<button type="button" class="theme-option" data-theme-value="${o.id}" aria-pressed="${mode === o.id}">${o.label}</button>`,
+      ([k, label]) =>
+        `<span class="overlay-kbd-hint"><kbd>${k}</kbd>${label}</span>`,
     )
     .join("");
-  return `
-    <label>Theme
-      <div class="theme-toggle" role="group" aria-label="Theme">
-        ${buttons}
-      </div>
-    </label>`;
+  return `<div class="overlay-footer">
+    ${hintHtml}
+    <span class="overlay-footer__hotkey">${escapeHtml(hk)}</span>
+  </div>`;
+}
+
+function shouldShowOnboarding(): boolean {
+  return hooks.shouldShowOnboarding?.(ctx) ?? needsOnboarding(settings);
 }
 
 function render() {
-  if (needsOnboarding(settings)) {
+  if (shouldShowOnboarding()) {
     if (hooks.renderOnboarding?.(ctx)) {
       return;
     }
@@ -333,113 +352,254 @@ function render() {
     return;
   }
 
+  root.classList.remove("hub-setup-mode");
+
   const rootsEmpty = settings.libraryRoots.length === 0;
   const searchDisabled = hooks.computeSearchDisabled
     ? hooks.computeSearchDisabled(ctx)
     : isSearchDisabled(needsLogin(), authMode);
   const startingBanner = hooks.startingBanner?.(ctx) ?? null;
-  root.innerHTML = `
-    <div class="toolbar">
-      <input type="search" id="q" placeholder="Search memory…" autocomplete="off" ${searchDisabled ? "disabled" : ""} />
-      <button type="button" id="btn-settings">Settings</button>
+  const overlayChrome = hooks.overlayChrome?.(ctx) ?? "";
+  const showAdminIngest =
+    canManageIngestPaths(authMode, sessionRole) && !hooks.hideAdminIngest?.(ctx);
+  const canUpload = canUploadIngest(authMode, sessionPresent);
+  currentSettingsDescriptor = resolveSettingsPanel(
+    ctx,
+    hooks.customizeSettingsPanel
+      ? (c, defaults) => hooks.customizeSettingsPanel!(c, defaults)
+      : undefined,
+    showAdminIngest,
+    canUpload,
+    profile,
+  );
+  const searchCopy = currentSettingsDescriptor.searchCopy;
+  const prevQuery = root.querySelector<HTMLInputElement>("#q")?.value ?? "";
+  const hasResults = Boolean(prevQuery.trim());
+
+  root.classList.toggle("view-settings", settingsViewOpen);
+  root.classList.toggle("has-results", hasResults);
+
+  const searchBody = settingsViewOpen
+    ? ""
+    : `
+    <div class="overlay-messages">
+      ${overlayChrome}
+      ${startingBanner ? `<div class="banner warn" id="starting-banner">${escapeHtml(startingBanner)}</div>` : ""}
+      ${authMode === "unreachable" && !startingBanner ? `<div class="banner err" id="auth-unreachable">Could not reach Lumogis — check the base URL and that the stack is running.</div>` : ""}
+      ${needsLogin() ? `<div class="login-panel" id="login-panel">
+        <p class="hint">${searchCopy.loginHint}</p>
+        <label>Email <input id="login-email" class="field" type="email" autocomplete="username" /></label>
+        <label>Password <input id="login-password" class="field" type="password" minlength="12" autocomplete="current-password" /></label>
+        <div class="toolbar">
+          <button type="button" class="btn btn--primary btn--sm" id="btn-login">Sign in</button>
+        </div>
+        <p class="hint err-text" id="login-error"></p>
+      </div>` : ""}
+      ${rootsEmpty && currentSettingsDescriptor.showLibraryRoots && searchCopy.rootsBanner ? `<div class="banner warn" id="roots-banner">${searchCopy.rootsBanner}</div>` : ""}
+      <p id="search-hint" class="hint search-empty-hint">${searchCopy.emptyHint}</p>
+      <div id="degraded" class="banner warn" style="display:none"></div>
+      <div id="error" class="banner err" style="display:none"></div>
     </div>
-    ${startingBanner ? `<div class="banner" id="starting-banner">${startingBanner}</div>` : ""}
-    ${authMode === "unreachable" ? `<div class="banner err" id="auth-unreachable">Could not reach Lumogis — check the base URL and that the stack is running.</div>` : ""}
-    ${needsLogin() ? `<div class="login-panel" id="login-panel">
-      <p class="hint">Sign in to search your memory.</p>
-      <label>Email <input id="login-email" type="email" autocomplete="username" /></label>
-      <label>Password <input id="login-password" type="password" minlength="12" autocomplete="current-password" /></label>
-      <div class="toolbar">
-        <button type="button" class="primary" id="btn-login">Sign in</button>
-      </div>
-      <p class="hint err-text" id="login-error"></p>
-    </div>` : ""}
-    ${rootsEmpty ? `<div class="banner warn" id="roots-banner">Add library roots in Settings to open files locally.</div>` : ""}
-    <p id="search-hint" class="hint search-empty-hint">Start typing to search your files…</p>
-    <div id="degraded" class="banner warn" style="display:none"></div>
-    <div id="error" class="banner err" style="display:none"></div>
     <div class="results" id="results"></div>
-    <div class="settings-panel" id="settings">
-      <div class="settings-brand">
-        <img src="${LOGO_MARK_SRC}" width="28" height="28" alt="" />
-        <span class="settings-wordmark">Lumogis</span>
+    ${overlayFooterMarkup(settings.hotkey)}`;
+
+  const settingsBody = composeSettingsBody({
+    descriptor: currentSettingsDescriptor,
+    themeMode: currentTheme(),
+    showAdminIngest,
+    showPickLibraryFolder: Boolean(hooks.pickLibraryFolder),
+    needsLogin: needsLogin(),
+    authMode,
+    sessionPresent,
+    ingestPaths: editorIngestPaths(),
+    paperlessConfigured: adminSettings?.paperlessConfigured ?? false,
+    restartRequired: adminSettings?.restartRequired ?? false,
+    overlayStatusPillHtml: overlayStatusPillMarkup(),
+  });
+
+  root.innerHTML = `
+    <div class="overlay-card">
+      <div class="overlay-searchbar">
+        ${logoDragHandleMarkup(22)}
+        <input type="search" id="q" placeholder="${searchCopy.placeholder}" autocomplete="off" ${searchDisabled ? "disabled" : ""}${searchDisabled ? "" : " autofocus"} />
+        ${overlayStatusPillMarkup()}
+        <button type="button" id="btn-settings" class="overlay-gear${settingsViewOpen ? " overlay-gear--active" : ""}" aria-label="Search settings" title="Settings">${iconMarkup("settings", 16)}</button>
       </div>
-      ${themeToggleMarkup()}
-      <label>Orchestrator base URL
-        <input id="set-base" type="url" />
-      </label>
-      <label>Global hotkey
-        <input id="set-hotkey" type="text" />
-      </label>
-      <p class="hint">Default <code>CommandOrControl+Shift+L</code>. Invalid values are not saved.</p>
-      <label>Library roots (one directory per line)
-        <textarea id="set-roots"></textarea>
-      </label>
-      <p class="hint">Open / Shift+click reveal use these <strong>local</strong> folders only — not server ingest paths.</p>
-      ${canManageIngestPaths(authMode, sessionRole) && !hooks.hideAdminIngest?.(ctx) ? ingestPathsEditorMarkup() : ""}
-      ${canUploadIngest(authMode, sessionPresent) ? uploadSectionMarkup() : ""}
-      <p class="hint" id="session-hint"></p>
-      <div class="toolbar">
-        <button type="button" class="primary" id="btn-save">Save settings</button>
-        <button type="button" id="btn-logout" ${authMode !== "on" || !sessionPresent ? "disabled" : ""}>Sign out</button>
-        <button type="button" id="btn-close-settings">Back</button>
+      <div class="overlay-body">
+        ${settingsViewOpen ? settingsBody : searchBody}
       </div>
-      <p class="hint" id="keychain-hint"></p>
     </div>
   `;
 
   const q = root.querySelector<HTMLInputElement>("#q")!;
-  const results = root.querySelector<HTMLDivElement>("#results")!;
-  const degraded = root.querySelector<HTMLDivElement>("#degraded")!;
-  const errBox = root.querySelector<HTMLDivElement>("#error")!;
-  const panel = root.querySelector<HTMLDivElement>("#settings")!;
+  q.value = prevQuery;
 
   applyTheme(currentTheme());
   updateQueryEmptyState(q.value);
 
   q.addEventListener("input", () => {
+    selectedHitIndex = 0;
     updateQueryEmptyState(q.value);
+    root.classList.toggle("has-results", q.value.trim().length > 0);
     if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => void runSearch(q.value, results, degraded, errBox), 250);
+    const results = root.querySelector<HTMLDivElement>("#results");
+    const degraded = root.querySelector<HTMLDivElement>("#degraded");
+    const errBox = root.querySelector<HTMLDivElement>("#error");
+    if (results && degraded && errBox) {
+      debounceTimer = setTimeout(() => void runSearch(q.value, results, degraded, errBox), 250);
+    }
   });
 
   root.querySelector("#btn-settings")!.addEventListener("click", () => {
-    void openSettingsPanel();
+    void toggleSettingsPanel();
   });
-  root.querySelector("#btn-close-settings")!.addEventListener("click", () => {
-    panel.classList.remove("open");
+
+  const panel = root.querySelector<HTMLDivElement>("#settings");
+  panel?.querySelector("#btn-pick-library-root")?.addEventListener("click", () => {
+    void pickLibraryRootIntoSettings();
   });
-  root.querySelector("#btn-save")!.addEventListener("click", () => void saveAllSettings(panel));
-  const logoutBtn = root.querySelector<HTMLButtonElement>("#btn-logout");
-  if (logoutBtn) {
-    logoutBtn.addEventListener("click", () => void signOut());
-  }
+  panel?.querySelector("#btn-save")?.addEventListener("click", () => {
+    if (panel) void saveAllSettings(panel);
+  });
+  const logoutBtn = panel?.querySelector<HTMLButtonElement>("#btn-logout");
+  logoutBtn?.addEventListener("click", () => void signOut());
+  const openLoginBtn = panel?.querySelector<HTMLButtonElement>("#btn-open-login");
+  openLoginBtn?.addEventListener("click", () => {
+    settingsViewOpen = false;
+    render();
+    root.querySelector<HTMLInputElement>("#login-email")?.focus();
+  });
+
   const loginBtn = root.querySelector<HTMLButtonElement>("#btn-login");
-  if (loginBtn) {
-    loginBtn.addEventListener("click", () => void submitLogin());
+  loginBtn?.addEventListener("click", () => void submitLogin());
+
+  if (panel) {
+    wireIngestPathsEditor(panel);
+    if (currentSettingsDescriptor.showPushUpload) {
+      wireUploadInput(panel);
+    }
+    for (const btn of panel.querySelectorAll<HTMLButtonElement>(".theme-option")) {
+      btn.addEventListener("click", () => {
+        const value = normalizeTheme(btn.dataset.themeValue ?? "system");
+        setThemeMode(value);
+        for (const b of panel.querySelectorAll<HTMLButtonElement>(".theme-option")) {
+          b.setAttribute("aria-pressed", String(b.dataset.themeValue === value));
+        }
+      });
+    }
+    if (settingsViewOpen) {
+      fillSettingsForm();
+    }
   }
 
-  wireIngestPathsEditor(panel);
-  wireUploadInput(panel);
-
-  for (const btn of panel.querySelectorAll<HTMLButtonElement>(".theme-option")) {
-    btn.addEventListener("click", () => {
-      const value = normalizeTheme(btn.dataset.themeValue ?? "system");
-      setThemeMode(value);
-      for (const b of panel.querySelectorAll<HTMLButtonElement>(".theme-option")) {
-        b.setAttribute("aria-pressed", String(b.dataset.themeValue === value));
-      }
-    });
+  if (!settingsViewOpen) {
+    const results = root.querySelector<HTMLDivElement>("#results");
+    const degraded = root.querySelector<HTMLDivElement>("#degraded");
+    const errBox = root.querySelector<HTMLDivElement>("#error");
+    if (results && degraded && errBox) {
+      void runSearch(q.value, results, degraded, errBox);
+    }
   }
 
-  void runSearch(q.value, results, degraded, errBox);
+  wireKeyboardNavigation();
+  wireLogoDrag(root);
+  focusSearchInput(root, settingsViewOpen);
+
+  if (isSummonHintActive()) {
+    upsertSummonHintElement(root, settings.hotkey);
+  }
 }
 
-async function openSettingsPanel() {
-  await loadAdminSettingsIfNeeded();
+async function toggleSettingsPanel() {
+  if (!settingsViewOpen) {
+    await loadAdminSettingsIfNeeded();
+    settingsViewOpen = true;
+  } else {
+    settingsViewOpen = false;
+  }
   render();
-  root.querySelector<HTMLDivElement>("#settings")?.classList.add("open");
-  fillSettingsForm();
+}
+
+function closeSettingsPanel() {
+  if (!settingsViewOpen) {
+    return;
+  }
+  settingsViewOpen = false;
+  render();
+}
+
+function wireKeyboardNavigation() {
+  if (keyboardNavBound) {
+    return;
+  }
+  keyboardNavBound = true;
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && settingsViewOpen) {
+      e.preventDefault();
+      closeSettingsPanel();
+      return;
+    }
+    if (settingsViewOpen || shouldShowOnboarding()) {
+      return;
+    }
+    const results = root.querySelector<HTMLDivElement>("#results");
+    if (!results) {
+      return;
+    }
+    const rows = Array.from(results.querySelectorAll<HTMLButtonElement>(".hit-row:not(.hit-row--disabled)"));
+    if (!rows.length) {
+      return;
+    }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      selectedHitIndex = Math.min(selectedHitIndex + 1, rows.length - 1);
+      updateHitSelection(rows);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      selectedHitIndex = Math.max(selectedHitIndex - 1, 0);
+      updateHitSelection(rows);
+    } else if (e.key === "Enter" && document.activeElement?.id === "q") {
+      const row = rows[selectedHitIndex];
+      if (!row) {
+        return;
+      }
+      e.preventDefault();
+      if (e.altKey || e.shiftKey) {
+        row.dispatchEvent(new MouseEvent("click", { shiftKey: true, bubbles: true }));
+      } else {
+        row.click();
+      }
+    }
+  });
+}
+
+function updateHitSelection(rows: HTMLButtonElement[]) {
+  rows.forEach((row, i) => {
+    row.classList.toggle("hit-row--selected", i === selectedHitIndex);
+  });
+  rows[selectedHitIndex]?.scrollIntoView({ block: "nearest" });
+}
+
+async function pickLibraryRootIntoSettings() {
+  if (!hooks.pickLibraryFolder) {
+    return;
+  }
+  const picked = await hooks.pickLibraryFolder(ctx);
+  if (!picked) {
+    return;
+  }
+  const area = root.querySelector<HTMLTextAreaElement>("#set-roots");
+  if (!area) {
+    return;
+  }
+  const lines = area.value
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (!lines.includes(picked)) {
+    lines.unshift(picked);
+  }
+  area.value = lines.join("\n");
 }
 
 async function loadAdminSettingsIfNeeded() {
@@ -471,8 +631,8 @@ function wireIngestPathsEditor(panel: HTMLElement) {
     const row = document.createElement("div");
     row.className = "ingest-path-row";
     row.innerHTML = `
-      <input type="text" class="ingest-path-input" value="${escapeHtml(input.value.trim())}" placeholder="Host path" />
-      <button type="button" class="ingest-path-remove" title="Remove">×</button>`;
+      <input type="text" class="field ingest-path-input" value="${escapeHtml(input.value.trim())}" placeholder="Host path" />
+      <button type="button" class="btn btn--ghost btn--sm ingest-path-remove" title="Remove">×</button>`;
     list.appendChild(row);
     input.value = "";
   });
@@ -507,16 +667,11 @@ async function saveIngestPaths(panel: HTMLElement) {
   }
   try {
     adminSettings = await invoke<AdminSettings>("save_admin_ingest_paths", { ingestPaths: paths });
-    if (hint) hint.textContent = "Ingest paths saved. Restart when prompted if paths changed.";
-    const restartBtn = panel.querySelector<HTMLButtonElement>("#btn-restart-stack");
-    if (restartBtn) restartBtn.disabled = !adminSettings.restartRequired;
-    const banner = panel.querySelector<HTMLDivElement>("#restart-banner");
-    if (adminSettings.restartRequired && !banner) {
-      const section = panel.querySelector(".settings-section");
-      section?.insertAdjacentHTML(
-        "beforeend",
-        `<div class="banner warn" id="restart-banner">Restart required for ingest path changes to take effect.</div>`,
-      );
+    if (hint) hint.textContent = currentSettingsDescriptor.ingestLabels.saveSuccessHint;
+    if (adminSettings.restartRequired) {
+      settingsViewOpen = true;
+      render();
+      fillSettingsForm();
     }
   } catch (e) {
     if (hint) hint.textContent = String(e);
@@ -525,9 +680,7 @@ async function saveIngestPaths(panel: HTMLElement) {
 
 async function applyRestart(panel: HTMLElement) {
   const hint = panel.querySelector<HTMLParagraphElement>("#ingest-admin-hint");
-  const ok = confirm(
-    "Apply pending ingest path changes and restart the orchestrator stack?\n\nThis recreates containers (brief downtime).",
-  );
+  const ok = confirm(currentSettingsDescriptor.ingestLabels.restartConfirmText);
   if (!ok) return;
   try {
     await invoke("restart_orchestrator_stack");
@@ -582,9 +735,12 @@ async function handleUploadSelected(panel: HTMLElement, input: HTMLInputElement)
 }
 
 function fillSettingsForm() {
-  (root.querySelector("#set-base") as HTMLInputElement).value = settings.orchestratorBaseUrl;
-  (root.querySelector("#set-hotkey") as HTMLInputElement).value = settings.hotkey;
-  (root.querySelector("#set-roots") as HTMLTextAreaElement).value = settings.libraryRoots.join("\n");
+  const baseEl = root.querySelector<HTMLInputElement>("#set-base");
+  if (baseEl) baseEl.value = settings.orchestratorBaseUrl;
+  const hotkeyEl = root.querySelector<HTMLInputElement>("#set-hotkey");
+  if (hotkeyEl) hotkeyEl.value = settings.hotkey;
+  const rootsEl = root.querySelector<HTMLTextAreaElement>("#set-roots");
+  if (rootsEl) rootsEl.value = settings.libraryRoots.join("\n");
   const sessionHint = root.querySelector("#session-hint")!;
   const keyHint = root.querySelector("#keychain-hint")!;
   if (authMode === "off") {
@@ -615,33 +771,38 @@ async function refreshSettingsFromRust() {
 }
 
 async function refreshAuthFromRust(orchestratorBaseUrl?: string | null) {
-  const probe = await invoke<AuthProbe>("probe_auth_state", {
-    orchestratorBaseUrl: orchestratorBaseUrl ?? null,
-  });
-  authMode = (probe.mode as AuthMode) || "unknown";
-  sessionPresent = Boolean(probe.sessionPresent);
-  sessionRole = probe.role ?? null;
+  try {
+    const probe = await invoke<AuthProbe>("probe_auth_state", {
+      orchestratorBaseUrl: orchestratorBaseUrl ?? null,
+    });
+    authMode = (probe.mode as AuthMode) || "unknown";
+    sessionPresent = Boolean(probe.sessionPresent);
+    sessionRole = probe.role ?? null;
+  } catch {
+    // Core may still be starting (bundled Hub) or the stack may be down — not fatal.
+    authMode = "unreachable";
+    sessionPresent = false;
+    sessionRole = null;
+  }
 }
 
 async function saveAllSettings(panel: HTMLElement) {
-  const base = (root.querySelector("#set-base") as HTMLInputElement).value.trim();
-  const hotkey = (root.querySelector("#set-hotkey") as HTMLInputElement).value.trim();
-  const rootsRaw = (root.querySelector("#set-roots") as HTMLTextAreaElement).value;
-  const roots = rootsRaw
-    .split("\n")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const theme = currentTheme();
+  const payload = overlaySettingsSavePayload(
+    currentSettingsDescriptor,
+    settings,
+    {
+      orchestratorBaseUrl: root.querySelector<HTMLInputElement>("#set-base")?.value,
+      hotkey: root.querySelector<HTMLInputElement>("#set-hotkey")?.value ?? "",
+      libraryRootsRaw: root.querySelector<HTMLTextAreaElement>("#set-roots")?.value,
+    },
+    currentTheme(),
+  );
   try {
-    await invoke("save_overlay_settings", {
-      orchestratorBaseUrl: base,
-      hotkey,
-      libraryRoots: roots,
-      theme,
-    });
+    await invoke("save_overlay_settings", payload);
+    await hooks.afterSaveSettings?.(ctx, payload.libraryRoots);
     await refreshSettingsFromRust();
     await refreshAuthFromRust();
-    panel.classList.remove("open");
+    settingsViewOpen = false;
     render();
   } catch (e) {
     alert(String(e));
@@ -699,7 +860,7 @@ async function runSearch(
   degraded: HTMLDivElement,
   errBox: HTMLDivElement,
 ) {
-  if (needsOnboarding(settings)) {
+  if (shouldShowOnboarding()) {
     return;
   }
   degraded.style.display = "none";
@@ -741,9 +902,13 @@ async function runSearch(
       results.innerHTML = `<p class="hint">No hits.</p>`;
       return;
     }
-    for (const h of data.hits.slice(0, 5)) {
-      results.appendChild(createHitRow(h, settings.libraryRoots));
+    const hits = data.hits.slice(0, 5);
+    if (selectedHitIndex >= hits.length) {
+      selectedHitIndex = 0;
     }
+    hits.forEach((h, i) => {
+      results.appendChild(createHitRow(h, settings.libraryRoots, invoke, i === selectedHitIndex));
+    });
   } catch (e) {
     if (ac.signal.aborted) return;
     const raw = String(e);
@@ -868,13 +1033,25 @@ async function finishOnboarding() {
     await refreshSettingsFromRust();
     await refreshAuthFromRust();
     render();
+    activateSummonHint(ctx);
   } catch (e) {
     alert(String(e));
   }
 }
 
+/** WDIO WebDriver webview: `listen()` can hang; event hooks are not needed for GUI E2E specs. */
+async function listenOverlay(
+  event: string,
+  handler: Parameters<typeof listen>[1],
+): Promise<UnlistenFn> {
+  if (import.meta.env.VITE_WDIO_E2E === "true") {
+    return async () => {};
+  }
+  return listen(event, handler);
+}
+
 async function boot() {
-  await listen("overlay-config-corrupt", (ev) => {
+  await listenOverlay("overlay-config-corrupt", (ev) => {
     const p = (ev.payload as { error?: string; path?: string }) || {};
     const ok = confirm(
       `overlay.json is corrupt or unsupported (${p.error ?? "error"}).\n\nReset to defaults? (A backup was written next to the file.)`,
@@ -885,26 +1062,66 @@ async function boot() {
       void getCurrentWindow().close();
     }
   });
-  await listen("hotkey-register-failed", (ev) => {
+  await listenOverlay("hotkey-register-failed", (ev) => {
     alert(`Global hotkey registration failed: ${String(ev.payload)}`);
   });
-  await listen("settings-saved", async () => {
+  await listenOverlay("settings-saved", async () => {
     await refreshSettingsFromRust();
+  });
+  await listen("core-ready", async () => {
+    if (!shouldShowOnboarding()) {
+      await refreshAuthFromRust();
+      render();
+    }
+  });
+  await getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+    if (focused) {
+      // Tray/hotkey can show the window while wizard markup is still mounted.
+      if (
+        !shouldShowOnboarding() &&
+        (root.classList.contains("hub-setup-mode") || root.querySelector("#onboarding"))
+      ) {
+        root.classList.remove("hub-setup-mode");
+        render();
+      }
+      focusSearchInput(root, settingsViewOpen);
+    } else {
+      dismissSummonHint(ctx);
+    }
   });
 
   // Resolve the desktop profile before the first render().
   profile = hooks.resolveProfile ? await hooks.resolveProfile() : await defaultResolveProfile();
 
-  await refreshSettingsFromRust();
-  if (!needsOnboarding(settings)) {
-    await refreshAuthFromRust();
+  try {
+    await refreshSettingsFromRust();
+    await hooks.prepareBoot?.(ctx);
+    unwatchSystemTheme?.();
+    unwatchSystemTheme = watchSystemTheme(() => {
+      if (currentTheme() === "system") applyTheme("system");
+    });
+    render();
+    await hooks.onBoot?.(ctx);
+    if (!shouldShowOnboarding()) {
+      if (import.meta.env.VITE_WDIO_E2E === "true") {
+        // WDIO specs mock invoke; avoid blocking boot on live Core.
+        authMode = (settings.authMode as AuthMode) || "on";
+        sessionPresent = Boolean(settings.sessionPresent);
+        sessionRole = settings.sessionRole ?? null;
+      } else {
+        const stackWarming = Boolean(hooks.startingBanner?.(ctx));
+        if (!stackWarming) {
+          await refreshAuthFromRust();
+        }
+      }
+      render();
+    }
+    if (import.meta.env.VITE_WDIO_E2E !== "true") {
+      await offerSummonHintIfPending(ctx);
+    }
+  } catch (e) {
+    root.innerHTML = `<div class="banner err"><p>Lumogis failed to start.</p><p class="hint">${String(e)}</p></div>`;
   }
-  unwatchSystemTheme?.();
-  unwatchSystemTheme = watchSystemTheme(() => {
-    if (currentTheme() === "system") applyTheme("system");
-  });
-  render();
-  await hooks.onBoot?.(ctx);
 }
 
   return { boot };

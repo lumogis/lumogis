@@ -171,16 +171,19 @@ export function ChatPage(): JSX.Element {
     registerServerThread(threadId, model, title);
   }, [active?.id, active?.model, active?.title, registerServerThread]);
 
-  const scheduleMessageSync = useCallback(
-    (thread: ChatThread, message: ChatMessage) => {
+  const scheduleTurnSync = useCallback(
+    (threadId: string, model: string, messages: ChatMessage[]) => {
+      if (messages.length === 0) return;
       if (syncTimerRef.current !== null) clearTimeout(syncTimerRef.current);
       syncTimerRef.current = setTimeout(() => {
-        void appendConversationMessage(client, thread.id, {
-          message_id: messageIdForServerSync(message.id),
-          role: message.role,
-          content: message.content,
-          model: thread.model,
-        }).catch(() => undefined);
+        for (const message of messages) {
+          void appendConversationMessage(client, threadId, {
+            message_id: messageIdForServerSync(message.id),
+            role: message.role,
+            content: message.content,
+            model,
+          }).catch(() => undefined);
+        }
       }, 400);
     },
     [client],
@@ -400,10 +403,12 @@ export function ChatPage(): JSX.Element {
         }
 
         let sawDelta = false;
+        let assistantContent = "";
         let streamError: string | null = null;
         await consumeChatStream(res.body, {
           onDelta: (delta: string) => {
             sawDelta = true;
+            assistantContent += delta;
             dispatch({
               type: "APPEND_ASSISTANT_DELTA",
               threadId: active.id,
@@ -455,16 +460,21 @@ export function ChatPage(): JSX.Element {
           threadId: active.id,
           messageId: assistantMessageId,
         });
-        const finishedThread = {
-          ...active,
-          messages: active.messages.map((m) =>
-            m.id === assistantMessageId ? { ...m, status: "complete" as const } : m,
-          ),
-        };
-        const finishedMsg = finishedThread.messages.find((m) => m.id === assistantMessageId);
-        if (finishedMsg !== undefined) {
-          scheduleMessageSync(finishedThread, finishedMsg);
-        }
+        scheduleTurnSync(active.id, active.model, [
+          {
+            id: userMessageId,
+            role: "user",
+            content: text,
+            createdAt: created,
+          },
+          {
+            id: assistantMessageId,
+            role: "assistant",
+            content: assistantContent,
+            createdAt: created,
+            status: "complete",
+          },
+        ]);
         await deleteDraft(draftKey);
         if (wowDismissOnSendRef.current) {
           wowDismissOnSendRef.current = false;
@@ -494,7 +504,7 @@ export function ChatPage(): JSX.Element {
         setStreaming(false);
       }
     },
-    [active, client, dispatch, input, online, streaming, scheduleMessageSync],
+    [active, client, dispatch, input, online, streaming, scheduleTurnSync],
   );
 
   return (

@@ -1,9 +1,9 @@
 # ADR-046: LUM-35 FP-017 per-user backup follow-ups reconciliation
 
 > Status: Needs update
-> Last reviewed: 2026-06-06
-> Verified against commit: 4c22088
-> Notes: **Duplicate ADR number:** `docs/decisions/046-telemetry-md-zero-telemetry-proof.md` is also **ADR 046**. Renumber this file to a **non-colliding** ADR filename (prefixes **053–082** are already used in `docs/decisions/`, including duplicate clusters on **061** / **063** / **064** / **072** / **074**, plus **`065-lum-320-*.md`** through **`082-lum-433-search-overlay-public-ci.md`**) in a coordinated maintainer pass (together with any **`034-linear`** / **072** rename) and update inbound links (e.g. `docs/LUMOGIS_REFERENCE_MANUAL.md`). Next free filename prefix at HEAD: **`083+`** — re-verify before rename. Do not delete either decision record.
+> Last reviewed: 2026-06-11
+> Verified against commit: c609ec4
+> Notes: **Duplicate ADR number:** `docs/decisions/046-telemetry-md-zero-telemetry-proof.md` is also **ADR 046**. Renumber this file to a **non-colliding** ADR filename (prefixes **053–097** are already used in `docs/decisions/`, including duplicate clusters on **061** / **063** / **064** / **072** / **074**, plus **`065-lum-320-*.md`** through **`097-lum-470-pip-dependency-hash-pinning.md`**) in a coordinated maintainer pass (together with any **`034-linear`** / **072** / **074** rename) and update inbound links (e.g. `docs/LUMOGIS_REFERENCE_MANUAL.md`). Next free filename prefix at HEAD: **`098+`** — re-verify before rename. Do not delete either decision record.
 
 **Status:** Finalised
 **Created:** 2026-05-16

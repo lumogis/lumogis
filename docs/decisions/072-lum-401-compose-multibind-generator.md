@@ -1,9 +1,9 @@
 # ADR-072: Compose multi-bind generator for ingest_paths[1..n] (LUM-401)
 
 > Status: Active (numbering conflict)
-> Last reviewed: 2026-06-06
-> Verified against commit: 4c22088
-> Notes: **`docs/decisions/072-lum-398-client-only-overlay.md`** also claims **ADR 072** in its title. Resolve by renumbering one document and sweeping references. Filename prefixes **053–082** are already taken (duplicate clusters on **053**, **059**, **060**, **061**, **063**, **064**, **072**, **074**, plus **`065-lum-320-*.md`** through **`082-lum-433-search-overlay-public-ci.md`**). Pick a **non-colliding** new slug (for example **`083-*.md`**) when renumbering—coordinate with any **`034-linear-evidence-index.md`** / **046** pair rename in the same pass—see `docs/_librarian/docs-inventory.md`.
+> Last reviewed: 2026-06-14
+> Verified against commit: a36f022
+> Notes: **`docs/decisions/072-lum-398-client-only-overlay.md`** also claims **ADR 072** in its title. Resolve by renumbering one document and sweeping references. Filename prefixes **053–097** are already taken (duplicate clusters on **053**, **059**, **060**, **061**, **063**, **064**, **072**, **074**, plus **`065-lum-320-*.md`** through **`097-lum-470-pip-dependency-hash-pinning.md`**). Pick a **non-colliding** new slug (for example **`098-*.md`**) when renumbering—coordinate with any **`034-linear-evidence-index.md`** / **046** / **074** pair rename in the same pass—see `docs/_librarian/docs-inventory.md`.
 
 **Status:** Finalised
 **Created:** 2026-05-29

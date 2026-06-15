@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Lumogis
-// Read-only Notifications view — GET /api/v1/me/notifications only.
+// Me Notifications view — status façade + editable prefs matrix.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -77,15 +77,53 @@ describe("MeNotificationsView", () => {
     },
   };
 
-  it("calls GET /api/v1/me/notifications and renders summary", async () => {
-    let url: string | null = null;
-    const fetchImpl = vi.fn(async (input: RequestInfo, _init?: RequestInit) => {
+  const samplePrefs = {
+    types: [
+      {
+        notification_type: "signal_received",
+        tier: "informational",
+        channels: [
+          { channel: "ntfy", enabled: true, effective: true, mutable: true, tier_default: true },
+          { channel: "web_push", enabled: true, effective: true, mutable: true, tier_default: true },
+          { channel: "in_app", enabled: true, effective: true, mutable: true, tier_default: true },
+        ],
+      },
+      {
+        notification_type: "consolidation_done",
+        tier: "background",
+        channels: [
+          { channel: "ntfy", enabled: false, effective: false, mutable: false, tier_default: false },
+          { channel: "web_push", enabled: false, effective: false, mutable: false, tier_default: false },
+          { channel: "in_app", enabled: true, effective: true, mutable: true, tier_default: true },
+        ],
+      },
+    ],
+    timezone: null,
+    quiet_hours_start: null,
+    quiet_hours_end: null,
+  };
+
+  function mockFetch(
+    fetchImpl: (input: RequestInfo, init?: RequestInit) => Promise<Response>,
+  ) {
+    return vi.fn(async (input: RequestInfo, init?: RequestInit) => {
       const u = String(input);
       if (u.includes("/api/v1/auth/me")) return jsonResponse(200, user);
       if (u.includes("/api/v1/notifications/vapid-public-key")) {
         return jsonResponse(503, { detail: { error: "webpush_not_configured" } });
       }
       if (/\/api\/v1\/notifications\/subscriptions$/.test(u)) return jsonResponse(200, { subscriptions: [] });
+      if (u.includes("/api/v1/me/notification-preferences") && init?.method !== "PATCH") {
+        return jsonResponse(200, samplePrefs);
+      }
+      return fetchImpl(input, init);
+    });
+  }
+
+  it("calls GET /api/v1/me/notifications and renders summary", async () => {
+    let url: string | null = null;
+    const fetchImpl = mockFetch(async (input: RequestInfo, _init?: RequestInit) => {
+      const u = String(input);
       if (
         u.includes("/api/v1/me/notifications") &&
         (_init?.method === "GET" || _init?.method === undefined)
@@ -111,14 +149,9 @@ describe("MeNotificationsView", () => {
     expect(screen.getByLabelText(/Paused channels: 0/)).toBeInTheDocument();
   });
 
-  it("renders channels read-only — no send/save/reveal", async () => {
-    const fetchImpl = vi.fn(async (input: RequestInfo) => {
+  it("renders channels status table — no send/save/reveal on status rows", async () => {
+    const fetchImpl = mockFetch(async (input: RequestInfo) => {
       const u = String(input);
-      if (u.includes("/api/v1/auth/me")) return jsonResponse(200, user);
-      if (u.includes("/api/v1/notifications/vapid-public-key")) {
-        return jsonResponse(503, { detail: { error: "webpush_not_configured" } });
-      }
-      if (/\/api\/v1\/notifications\/subscriptions$/.test(u)) return jsonResponse(200, { subscriptions: [] });
       if (u.includes("/api/v1/me/notifications")) return jsonResponse(200, samplePayload);
       return jsonResponse(404, {});
     });
@@ -192,15 +225,8 @@ describe("MeNotificationsView", () => {
       },
     };
 
-    const fetchImpl = vi.fn(async (input: RequestInfo, _init?: RequestInit) => {
+    const fetchImpl = mockFetch(async (input: RequestInfo, _init?: RequestInit) => {
       const u = String(input);
-      if (u.includes("/api/v1/auth/me")) return jsonResponse(200, user);
-      if (u.includes("/api/v1/notifications/vapid-public-key")) {
-        return jsonResponse(503, { detail: { error: "webpush_not_configured" } });
-      }
-      if (/\/api\/v1\/notifications\/subscriptions$/.test(u)) {
-        return jsonResponse(200, { subscriptions: [] });
-      }
       if (u.includes("/api/v1/me/notifications")) return jsonResponse(200, pausedPayload);
       return jsonResponse(404, {});
     });
@@ -217,6 +243,69 @@ describe("MeNotificationsView", () => {
     await waitFor(() => expect(screen.getByLabelText(/ntfy paused/)).toBeInTheDocument());
     fireEvent.change(screen.getByLabelText("Filter channels"), { target: { value: "configured" } });
     expect(screen.queryByLabelText(/ntfy paused/)).toBeNull();
+  });
+
+  it("renders preference matrix with checkboxes", async () => {
+    const fetchImpl = mockFetch(async (input: RequestInfo) => {
+      const u = String(input);
+      if (u.includes("/api/v1/me/notifications")) return jsonResponse(200, samplePayload);
+      return jsonResponse(404, {});
+    });
+    const store = new AccessTokenStore();
+    const client = new ApiClient({ tokens: store, fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    render(
+      <AuthProvider client={client} tokens={store} skipRefreshOnMount>
+        <MeNotificationsView />
+      </AuthProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByLabelText("Notification preference matrix")).toBeInTheDocument());
+    expect(screen.getByLabelText("Signal received — ntfy")).toBeInTheDocument();
+    expect(screen.getByText("Not available yet")).toBeInTheDocument();
+  });
+
+  it("toggle calls PATCH with optimistic update", async () => {
+    let patched = false;
+    const fetchImpl = mockFetch(async (input: RequestInfo, init?: RequestInit) => {
+      const u = String(input);
+      if (u.includes("/api/v1/me/notifications")) return jsonResponse(200, samplePayload);
+      if (u.includes("/api/v1/me/notification-preferences") && init?.method === "PATCH") {
+        patched = true;
+        return jsonResponse(200, samplePrefs);
+      }
+      return jsonResponse(404, {});
+    });
+    const store = new AccessTokenStore();
+    const client = new ApiClient({ tokens: store, fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    render(
+      <AuthProvider client={client} tokens={store} skipRefreshOnMount>
+        <MeNotificationsView />
+      </AuthProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByLabelText("Signal received — ntfy")).toBeInTheDocument());
+    fireEvent.click(screen.getByLabelText("Signal received — ntfy"));
+    await waitFor(() => expect(patched).toBe(true));
+  });
+
+  it("out-of-tier cell disabled with explanation", async () => {
+    const fetchImpl = mockFetch(async (input: RequestInfo) => {
+      const u = String(input);
+      if (u.includes("/api/v1/me/notifications")) return jsonResponse(200, samplePayload);
+      return jsonResponse(404, {});
+    });
+    const store = new AccessTokenStore();
+    const client = new ApiClient({ tokens: store, fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    render(
+      <AuthProvider client={client} tokens={store} skipRefreshOnMount>
+        <MeNotificationsView />
+      </AuthProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByLabelText("Consolidation done — ntfy")).toBeDisabled());
   });
 
   it("renders error state on API failure", async () => {

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
+# syntax=docker/dockerfile:1
 # Multi-stage: node build -> nginx static serve.
 # The container is fronted by Caddy (docker-compose.yml); nginx here
 # only serves /usr/share/nginx/html. Same-origin routing happens at Caddy.
@@ -7,7 +8,7 @@ FROM node:20-alpine AS build
 WORKDIR /app
 
 COPY package.json package-lock.json ./
-RUN npm ci --no-audit --no-fund
+RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
 
 COPY openapi.snapshot.json ./
 COPY scripts/codegen.mjs scripts/codegen.mjs

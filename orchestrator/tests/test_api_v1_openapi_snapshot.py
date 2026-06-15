@@ -75,6 +75,13 @@ REQUIRED_V1_PATHS = frozenset(
         "/api/v1/admin/permissions",
         "/api/v1/admin/diagnostics",
         "/api/v1/admin/diagnostics/stack-status",
+        "/api/v1/admin/diagnostics/backup-status",
+        # Admin Ollama (LUM-451)
+        "/api/v1/admin/ollama/discovery",
+        "/api/v1/admin/ollama/pull/async",
+        "/api/v1/admin/ollama/pull/jobs/active",
+        "/api/v1/admin/ollama/pull/jobs/{job_id}",
+        "/api/v1/admin/ollama/delete",
         # Speech-to-text foundation (STT-1)
         "/api/v1/voice/transcribe",
     }

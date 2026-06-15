@@ -29,7 +29,7 @@ Core is the FastAPI orchestrator: HTTP APIs, business logic, optional in-process
 - **Multi-path ingest compose binds (LUM-401):** admin **`PUT /settings`** can list multiple **`ingest_paths`**; indices **1..n** use **`orchestrator/compose_ingest_binds.py`** to generate tiered **`docker-compose.override.yml`** snippets (stack restart still required) — see **[ADR 072-lum-401](decisions/072-lum-401-compose-multibind-generator.md)** (ADR number collides with client-only overlay — see **`docs/decisions/`** index).
 - **Signals** ingest external or scheduled inputs (feeds, pages, calendars, and similar); monitors poll, score, and persist for downstream use.
 - **Routines** automate trusted **Ask** toward **Do** after repeated clean approvals (threshold from configuration).
-- Notifications include daily digest patterns via connectors such as ntfy alongside other notification paths. A unified in-process dispatcher, per-user routing preferences, and channel adapters are **decided** in **[ADR 077](decisions/077-lum-189-notification-architecture.md)** (**LUM-189**; implementation programme **LUM-93 → LUM-144 → LUM-28 → LUM-174** — **not shipped** in core yet).
+- Notifications route through an **in-process dispatcher** with per-user **routing preferences** (Postgres-backed), **ntfy**, **Web Push**, and **in-app SSE** channel adapters; daily digest and connector-backed paths remain. Household operators edit the per-type × per-channel matrix in **Lumogis Web → Me → Notifications** — see **[ADR 077](decisions/077-lum-189-notification-architecture.md)** and **[ADR 098](decisions/098-lum-93-notification-settings-ui.md)**.
 - Server-sent events are available at **`/events`** for live streams.
 - Legacy OpenAI-style **`/v1/*`** routes remain for compatible clients (for example optional LibreChat); Lumogis Web uses the versioned **`/api/v1/*`** façade.
 
@@ -78,11 +78,13 @@ Enable STT only when you accept extra CPU/RAM (and optional GPU) cost; use the S
 
 The first-party SPA is the primary household UI: chat, search, approvals, and Me/Admin settings on the same origin as Core via Caddy.
 
-- **Me**: profile (including password change), connectors, connector permissions, LLM providers, MCP tokens, notifications, export, tools/capabilities overview.
+- **Me**: profile (including password change), connectors, connector permissions, LLM providers, MCP tokens, **notification routing preferences** (editable matrix), export, tools/capabilities overview.
 - **Conversation history:** browse, continue, and delete past conversations with multi-store purge APIs; server-side transcript sync upserts the `web_conversations` header on `PUT` so active-tab messages persist before `POST /session/end` — see **[ADR 074-lum-162](decisions/074-lum-162-conversation-history-ui.md)** and amendment **[ADR 085](decisions/085-lum-439-conversation-put-upsert-fix.md)**.
 - **First wow moment (LUM-216):** guided first-query and entity-discovery cards with server-owned readiness and dismissal — see **[ADR 075](decisions/075-lum-216-first-wow-moment.md)** and **`CHANGELOG.md`** [Unreleased].
 - **Admin**: users (import/export, password reset), connector credentials (including household and instance-system tiers where exposed), per-user connector permissions, MCP tokens, audit, diagnostics.
 - **Admin stack health (LUM-178):** read-only **System status** panel combining curated admin diagnostics with stack-control service rows (no Docker socket in Core) — see **[ADR 074-lum-178](decisions/074-lum-178-stack-health-dashboard.md)**.
+- **Admin Ollama:** discovery, async model pull with job polling, and model delete via typed **`/api/v1/admin/ollama/*`** routes in the same panel — see **[ADR 088](decisions/088-lum-451-ollama-api-v1-promotion.md)**.
+- **Admin disaster-recovery backup:** last verified snapshot metadata (age, size, store coverage, stale warning) on **System status** — see **[ADR 098](decisions/098-lum-185-backup-restore.md)** and **`docs/guides/backup-restore.md`**.
 - Password change for self-service and admin-led reset are implemented; email-based forgot-password is not part of the shipped surface.
 - Older FastAPI-hosted HTML pages (dashboard, settings, graph views, backup, and similar) still exist for compatibility; full replacement by Lumogis Web is not claimed as finished.
 
@@ -146,11 +148,11 @@ AGPL-3.0-only Tauri 2 overlay at **`clients/lumogis-search/`** — included in t
 **Personas A and B** share the same client-only Search installer (`lumogis-overlay-*`); only the configured server URL differs — localhost for **Persona A** (Docker Compose on the same machine) vs a household URL for **Persona B**. See the [Persona A / B / C distribution matrix](LUMOGIS_REFERENCE_MANUAL.md#persona-a--b--c--distribution-matrix) and [Persona A install steps](../clients/lumogis-search/README.md#persona-a--docker-track-localhost).
 
 - **Memory search (LUM-329 / LUM-430):** global hotkey frameless UI calling **`GET /api/v1/memory/search`** with OS keychain session storage — see **[ADR 069](decisions/069-lum-329-tauri-search-overlay.md)** and **`clients/lumogis-search/README.md`**.
-- **Household onboarding (LUM-398):** in-webview first-run flow (server URL → **`GET /healthz`** → sign-in when auth is on) — see **[ADR 072](decisions/072-lum-398-client-only-overlay.md)**.
-- **Overlay auth and ingest paths (LUM-397):** role-gated admin **`ingest_paths`**, push upload, and session refresh — see **[ADR 071](decisions/071-lum-397-tauri-overlay-auth-ingest.md)**.
+- **System tray:** menu with **Show Lumogis** and **Quit** for summon/recovery when the overlay is hidden (alongside the global hotkey) — see **[ADR 090](decisions/090-lum-457-system-tray-all-personas.md)**.
+- **Settings panel:** persona-aware layout (client-only server URL, library roots, admin ingest paths, push upload, restart-required banner) — see **[ADR 091](decisions/091-lum-463-persona-aware-search-settings.md)** and **[ADR 071](decisions/071-lum-397-tauri-overlay-auth-ingest.md)**.
 - **Build:** **`make search-dev`** / **`make search-build`** (or **`cd clients/lumogis-search && npm run tauri:build`**).
 - **Public release CI (LUM-433):** **`.github/workflows/search-overlay-build.yml`** exports to the AGPL tree; **`search-v*`** tags on **`lumogis/lumogis`** produce installer artefacts — see **[ADR 082](decisions/082-lum-433-search-overlay-public-ci.md)**.
-- **Export boundary (LUM-434):** canonical split between **Lumogis Search** (public) and maintainer-only **Lumogis Hub** — see **[ADR 081](decisions/081-lum-434-export-boundary-reconciliation.md)** (supersedes path framing in **ADR 069** / **072** / **076**).
+- **Export boundary (LUM-434):** **Lumogis Search** ships in the public AGPL tree; proprietary bundled-server sources are excluded from export — see **[ADR 081](decisions/081-lum-434-export-boundary-reconciliation.md)** and **[ADR 100](decisions/100-lum-491-fused-hub-cleanup.md)**.
 
 ---
 
@@ -196,6 +198,19 @@ gh attestation verify oci://ghcr.io/lumogis/lumogis-web@sha256:<digest> -R lumog
 For convenience you can substitute a tag for the `@sha256:…` suffix (for example `@v0.4.0`); prefer digests when you need a stable verifier subject. Advanced consumers may also inspect in-manifest BuildKit provenance with **`cosign`** or **`docker buildx imagetools`**; this section focuses on **`gh attestation verify`**.
 
 Build-from-source deployment (the default developer flow) remains fully supported via `docker compose up --build`.
+
+### Disaster-recovery backups
+
+Instance-scoped **automated snapshots** of Postgres, Qdrant, and (when graph is enabled) FalkorDB run via a optional **`backup`** Compose service and shared **`scripts/backup/`** toolkit:
+
+| Command | Purpose |
+| --- | --- |
+| `make backup` | Run one DR snapshot now |
+| `make backup-verify` | Re-verify the latest snapshot |
+| `make backup-prune` | Apply retention (7 daily + 4 weekly) |
+| `make restore SNAPSHOT=YYYYMMDD-HHMMSS` | Restore a snapshot (requires `--yes`) |
+
+Default host path: **`./ai-workspace/backups`** (`BACKUP_HOST_DIR`). See **`docs/guides/backup-restore.md`**. The legacy **`POST /backup`** JSON zip remains a lightweight logical export, not the canonical DR path.
 
 ### Contributor onboarding
 

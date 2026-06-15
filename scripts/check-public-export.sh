@@ -45,6 +45,18 @@ TARGET="$(cd "$TARGET" && pwd)"
 
 assert_strip_list_paths_absent "$TARGET"
 
+assert_export_has_no_apps_subtree() {
+  local root="$1"
+  local apps_dir="$root/apps"
+  if [[ -d "$apps_dir" ]]; then
+  if find "$apps_dir" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null | grep -q .; then
+      die "export tree must not contain apps/ subtree (private Server tree leak risk): $apps_dir"
+    fi
+  fi
+}
+
+assert_export_has_no_apps_subtree "$TARGET"
+
 check_license_file() {
   local lic="$1"
   [[ -f "$lic" ]] || die "LICENSE missing at $lic"
@@ -282,7 +294,7 @@ assert_search_overlay_ci_export_contract() {
     fi
   done <"$listf"
 
-  local -a forbidden=(apps/lumogis-hub hub-build.yml lumogis-hub)
+  local -a forbidden=(apps/lumogis-hub apps/lumogis-server hub-build.yml lumogis-hub lumogis-server)
   local pat
   for pat in "${forbidden[@]}"; do
     if grep -q "$pat" "$root/$workflow_path"; then

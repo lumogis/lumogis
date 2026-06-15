@@ -633,6 +633,57 @@ def get_notifier():
     return _instances["notifier"]
 
 
+# ---------------------------------------------------------------------------
+# Notification dispatcher + channel adapters (LUM-93 / ADR 077)
+# ---------------------------------------------------------------------------
+
+_notification_channel_instances: dict[str, object] = {}
+_tier_policies_cache: dict | None = None
+
+
+def reset_notification_factories() -> None:
+    """Clear notification singletons between tests."""
+    global _tier_policies_cache
+    _notification_channel_instances.clear()
+    _tier_policies_cache = None
+    _instances.pop("notification_channels", None)
+
+
+def get_tier_policies_cache():
+    return _tier_policies_cache
+
+
+def set_tier_policies_cache(value: dict) -> None:
+    global _tier_policies_cache
+    _tier_policies_cache = value
+
+
+def invalidate_tier_policy_cache() -> None:
+    global _tier_policies_cache
+    _tier_policies_cache = None
+
+
+def get_notification_channels():
+    """Return cached channel adapter singletons keyed by :class:`ChannelId` value."""
+    if "notification_channels" not in _instances:
+        from models.notifications import ChannelId
+        from services.notifications.channels.in_app_channel import InAppChannel
+        from services.notifications.channels.ntfy_channel import NtfyChannel
+        from services.notifications.channels.web_push_channel import WebPushChannel
+
+        channels = {
+            ChannelId.NTFY: NtfyChannel(),
+            ChannelId.WEB_PUSH: WebPushChannel(),
+            ChannelId.IN_APP: InAppChannel(),
+        }
+        _instances["notification_channels"] = channels
+        _log.info(
+            "Notification channels wired: %s",
+            ", ".join(c.value for c in channels),
+        )
+    return _instances["notification_channels"]
+
+
 def is_injection_sanitiser_enabled() -> bool:
     return os.environ.get("INJECTION_SANITISER_ENABLED", "true").strip().lower() in (
         "true",

@@ -11,7 +11,35 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [0.7.1] — 2026-06-06
+## [0.8.0] — 2026-06-15
+
+### Added
+
+- **Automated disaster-recovery backups** — scheduled Postgres, Qdrant, and optional FalkorDB snapshots via a Compose backup sidecar; operator commands **`make backup`**, **`make backup-verify`**, **`make backup-prune`**, and **`make restore SNAPSHOT=…`**; integrity manifests and 7-daily / 4-weekly retention; operator guide **[`docs/guides/backup-restore.md`](docs/guides/backup-restore.md)**.
+- **Admin backup status** — read-only **Disaster recovery backup** panel on **System status** (last verified snapshot, age, size, store coverage, stale warning).
+- **Notification routing (v1)** — in-process dispatcher with per-user preference storage, ntfy / Web Push / in-app SSE channel adapters, and producer migration off ad-hoc notification hooks.
+- **Notification preferences in Lumogis Web** — editable per-notification-type × per-channel matrix under **Me → Notifications** with optimistic saves.
+- **Admin Ollama management (typed v1 API)** — discovery, async model pull with job polling, and model delete from the **System status** panel via **`/api/v1/admin/ollama/*`** (legacy HTML dashboard routes remain as thin delegates).
+- **Lumogis Search overlay** — system tray with **Show Lumogis** and **Quit** for discoverable summon/recovery alongside the global hotkey; refreshed settings panel layout and design tokens; admin ingest-path editing and restart-required banner from the overlay; Playwright and WebdriverIO e2e coverage for overlay flows.
+- **Cold-start embedding readiness** — orchestrator waits for embedding model availability and can bootstrap Qdrant collections after restarts when ingest paths need re-indexing.
+- **Backup integration CI** — compose-backed smoke for backup scripts and retention policy.
+
+### Changed
+
+- **Admin System status** — combines stack health, Ollama pull/delete controls, and DR backup visibility in one panel.
+- **Legacy `POST /backup`** — documented and positioned as a lightweight logical JSON export; **`make backup`** is the canonical disaster-recovery path.
+- **Public export hygiene** — Lumogis Search remains the sole shipped desktop client tree; proprietary server-only sources stay out of the AGPL export.
+
+### Fixed
+
+- **Conversation transcript sync** — further hardening for client-minted thread IDs and purge invariants (carried from prior release line).
+- **Public RC verification** — integration gate tolerates co-located dev stacks when the test Compose project owns host ports; full gate includes Playwright prove mode after Caddy auth readiness.
+
+### Security
+
+- **Backup artefacts** — instance-scoped snapshots live under operator-controlled host paths; restore requires explicit confirmation and quiesces Core before store writes.
+
+---
 
 ### Added
 

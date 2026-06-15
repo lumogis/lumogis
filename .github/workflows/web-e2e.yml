@@ -27,6 +27,12 @@ jobs:
       - name: Validate web-e2e path script syntax
         run: bash -n .github/scripts/web-e2e-paths.sh
 
+      - name: Shellcheck web-e2e path script
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+          shellcheck .github/scripts/web-e2e-paths.sh
+
       - name: Path gate
         id: paths
         shell: bash

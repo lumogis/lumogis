@@ -97,6 +97,11 @@ def _push_to_connections(event_type: str, data: dict, *, user_id: str) -> None:
             pass
 
 
+def enqueue_user_sse(event_type: str, data: dict, *, user_id: str) -> None:
+    """Public wrapper for in-app notification delivery (LUM-93)."""
+    _push_to_connections(event_type, data, user_id=user_id)
+
+
 def on_signal_received(**kwargs) -> None:
     signal = kwargs.get("signal")
     if signal is None:
@@ -189,13 +194,11 @@ def on_wow_readiness_document_ingested(**kwargs) -> None:
 
 
 def register_hooks() -> None:
-    """Register SSE push callbacks on all relevant events. Call from main.py."""
-    hooks.register(Event.SIGNAL_RECEIVED, on_signal_received)
+    """Register SSE push callbacks on relevant events. Call from main.py."""
     hooks.register(Event.ACTION_EXECUTED, on_action_executed)
-    hooks.register(Event.ROUTINE_ELEVATION_READY, on_routine_elevation_ready)
     hooks.register(Event.ENTITY_CREATED, on_wow_readiness_entity_created)
     hooks.register(Event.DOCUMENT_INGESTED, on_wow_readiness_document_ingested)
-    _log.info("SSE hooks registered")
+    _log.info("SSE hooks registered (notification types via InAppChannel)")
 
 
 # ---------------------------------------------------------------------------

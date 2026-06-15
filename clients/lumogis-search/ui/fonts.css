@@ -1,0 +1,33 @@
+/* Self-hosted brand fonts (Search / Hub CSP: font-src 'self'; no Google Fonts). */
+@font-face {
+  font-family: "Syne";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("./fonts/syne-latin-600-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Syne";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("./fonts/syne-latin-700-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Syne";
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+  src: url("./fonts/syne-latin-800-normal.woff2") format("woff2");
+}
+
+/* Variable Martian Mono — weights 100–800 in one file (local-first / privacy). */
+@font-face {
+  font-family: "Martian Mono";
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url("./fonts/martian-mono-latin-wght-normal.woff2") format("woff2");
+}

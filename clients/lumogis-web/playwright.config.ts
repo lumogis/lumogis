@@ -35,6 +35,7 @@ export default defineConfig({
         "**/phase_2b_mobile_surfaces.spec.ts",
         "**/phase_2c_mobile_dense.spec.ts",
         "**/onboarding_dismiss_persists.spec.ts",
+        "**/admin_ollama_mutations.spec.ts",
       ],
     },
     {
@@ -44,6 +45,7 @@ export default defineConfig({
         "**/phase_2b_mobile_surfaces.spec.ts",
         "**/phase_2c_mobile_dense.spec.ts",
         "**/onboarding_dismiss_persists.spec.ts",
+        "**/admin_ollama_mutations.spec.ts",
       ],
       fullyParallel: false,
       workers: 1,

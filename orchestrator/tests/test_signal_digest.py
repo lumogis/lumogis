@@ -87,33 +87,40 @@ def test_send_digest_fans_out_per_user(install_store, monkeypatch):
         }
     )
 
-    notifier = MagicMock()
-    notifier.notify.return_value = True
-    import config as _config
+    emit_mock = MagicMock()
+    from models.notifications import DispatchResult
+    from models.notifications import NotificationTier
+    from models.notifications import NotificationType
 
-    monkeypatch.setattr(_config, "get_notifier", lambda: notifier)
+    emit_mock.return_value = DispatchResult(
+        emit_id="e1",
+        user_id="alice",
+        notification_type=NotificationType.SIGNAL_DIGEST,
+        tier=NotificationTier.INFORMATIONAL,
+        channels=[],
+        outcome="delivered",
+    )
+    monkeypatch.setattr("services.notifications.dispatcher.emit", emit_mock)
 
     from signals import digest
 
     digest._send_digest()
 
-    assert notifier.notify.call_count == 2
-    user_ids = {call.kwargs["user_id"] for call in notifier.notify.call_args_list}
+    assert emit_mock.call_count == 2
+    user_ids = {call.args[0].user_id for call in emit_mock.call_args_list}
     assert user_ids == {"alice", "bob"}
 
 
 def test_send_digest_no_signals_skips(install_store, monkeypatch):
     install_store({})
 
-    notifier = MagicMock()
-    import config as _config
-
-    monkeypatch.setattr(_config, "get_notifier", lambda: notifier)
+    emit_mock = MagicMock()
+    monkeypatch.setattr("services.notifications.dispatcher.emit", emit_mock)
 
     from signals import digest
 
     digest._send_digest()
-    assert notifier.notify.call_count == 0
+    assert emit_mock.call_count == 0
 
 
 def test_send_digest_continues_after_one_user_error(install_store, monkeypatch):
@@ -140,22 +147,31 @@ def test_send_digest_continues_after_one_user_error(install_store, monkeypatch):
         }
     )
 
-    notifier = MagicMock()
+    emit_mock = MagicMock()
 
-    def _flaky(title, message, priority, *, user_id):
-        if user_id == "alice":
+    def _flaky(notification):
+        if notification.user_id == "alice":
             raise RuntimeError("boom")
-        return True
+        from models.notifications import DispatchResult
+        from models.notifications import NotificationTier
+        from models.notifications import NotificationType
 
-    notifier.notify.side_effect = _flaky
-    import config as _config
+        return DispatchResult(
+            emit_id="e1",
+            user_id=notification.user_id,
+            notification_type=NotificationType.SIGNAL_DIGEST,
+            tier=NotificationTier.INFORMATIONAL,
+            channels=[],
+            outcome="delivered",
+        )
 
-    monkeypatch.setattr(_config, "get_notifier", lambda: notifier)
+    emit_mock.side_effect = _flaky
+    monkeypatch.setattr("services.notifications.dispatcher.emit", emit_mock)
 
     from signals import digest
 
     digest._send_digest()
-    assert notifier.notify.call_count == 2
+    assert emit_mock.call_count == 2
 
 
 def test_digest_skips_when_lock_not_acquired(install_store, monkeypatch):
@@ -174,16 +190,14 @@ def test_digest_skips_when_lock_not_acquired(install_store, monkeypatch):
     )
     store.advisory_try_ok = False
 
-    notifier = MagicMock()
-    import config as _config
-
-    monkeypatch.setattr(_config, "get_notifier", lambda: notifier)
+    emit_mock = MagicMock()
+    monkeypatch.setattr("services.notifications.dispatcher.emit", emit_mock)
 
     from signals import digest
 
     digest._send_digest()
 
-    notifier.notify.assert_not_called()
+    emit_mock.assert_not_called()
 
 
 def test_digest_runs_when_lock_acquired(install_store, monkeypatch):
@@ -201,15 +215,24 @@ def test_digest_runs_when_lock_acquired(install_store, monkeypatch):
         }
     )
 
-    notifier = MagicMock()
-    notifier.notify.return_value = True
-    import config as _config
+    emit_mock = MagicMock()
+    from models.notifications import DispatchResult
+    from models.notifications import NotificationTier
+    from models.notifications import NotificationType
 
-    monkeypatch.setattr(_config, "get_notifier", lambda: notifier)
+    emit_mock.return_value = DispatchResult(
+        emit_id="e1",
+        user_id="zoe",
+        notification_type=NotificationType.SIGNAL_DIGEST,
+        tier=NotificationTier.INFORMATIONAL,
+        channels=[],
+        outcome="delivered",
+    )
+    monkeypatch.setattr("services.notifications.dispatcher.emit", emit_mock)
 
     from signals import digest
 
     digest._send_digest()
 
-    assert notifier.notify.call_count == 1
-    assert notifier.notify.call_args.kwargs["user_id"] == "zoe"
+    assert emit_mock.call_count == 1
+    assert emit_mock.call_args.args[0].user_id == "zoe"

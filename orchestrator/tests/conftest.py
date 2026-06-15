@@ -134,6 +134,9 @@ class MockVectorStore:
     def create_collection(self, name: str, vector_size: int) -> None:
         self._collections[name] = []
 
+    def ensure_payload_index(self, collection: str, field: str) -> None:
+        """No-op — in-memory mock has no payload-index API."""
+
     def upsert(self, collection: str, id: str, vector: list[float], payload: dict) -> None:
         self._collections.setdefault(collection, []).append(
             {"id": id, "vector": vector, "payload": payload}
@@ -292,6 +295,7 @@ def _override_config(
     _config.clear_graph_mode_env_cache()
     yield
     _config._instances.clear()
+    _config.reset_notification_factories()
     _config.set_effective_graph_mode_for_process(None)
     _config.clear_graph_mode_env_cache()
     _config._graph_store_import_warning_emitted = False
@@ -349,3 +353,37 @@ def _mock_watcher(monkeypatch):
     monkeypatch.setattr("services.ingest.stop_ingest_path_watchers", lambda: None)
     monkeypatch.setattr("services.ingest.schedule_inbox_poll", lambda: None)
     monkeypatch.setattr("services.ingest.unschedule_inbox_poll", lambda: None)
+
+
+# Suites that exercise real ``batch_queue.enqueue`` or
+# ``enqueue_initial_ingest_scan`` logic must opt out of the lifespan stub.
+_BATCH_QUEUE_REAL_TEST_FILES = frozenset(
+    {
+        "test_batch_queue.py",
+        "test_ingest_paths_watcher.py",
+    }
+)
+
+
+def _pytest_node_basename(request) -> str:
+    node = request.node
+    path = getattr(node, "path", None) or getattr(node, "fspath", None)
+    if path is None:
+        return ""
+    return Path(path).name
+
+
+@pytest.fixture(autouse=True)
+def _stub_lifespan_batch_enqueue(monkeypatch, request):
+    """Prevent TestClient lifespan from enqueueing ingest scans against fake stores.
+
+    When the embedder mock reports ready, ``main.lifespan`` calls
+    ``enqueue_initial_ingest_scan()`` which INSERTs into ``user_batch_jobs``.
+    Route/integration fakes (``_RoutesFakeStore``, etc.) do not model that
+    table, so the INSERT returns no id and startup fails. Real batch-queue
+    behaviour is covered in ``test_batch_queue.py`` and ingest watcher tests.
+    """
+    if _pytest_node_basename(request) in _BATCH_QUEUE_REAL_TEST_FILES:
+        return
+    monkeypatch.setattr("services.ingest.enqueue_initial_ingest_scan", lambda: False)
+    monkeypatch.setattr("services.batch_queue.enqueue", lambda **_kwargs: 1)

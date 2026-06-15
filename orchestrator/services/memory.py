@@ -10,6 +10,7 @@ are retrieved and injected as context.
 
 import json
 import logging
+import os
 import uuid
 from typing import Optional
 
@@ -25,6 +26,31 @@ from visibility import visible_qdrant_filter
 import config
 
 _log = logging.getLogger(__name__)
+
+
+def _rc_session_end_stub_enabled() -> bool:
+    """True when slim RC / web-e2e CI runs without Ollama (ADR-064, LUM-414)."""
+    return os.environ.get("LUMOGIS_RC_SESSION_END_STUB", "").lower() in (
+        "true",
+        "1",
+        "yes",
+    )
+
+
+def _stub_session_summary(messages: list[dict], session_id: str) -> SessionSummary:
+    """Deterministic summary for CI stacks that omit Ollama."""
+    user_text = ""
+    for message in messages:
+        if message.get("role") == "user":
+            content = (message.get("content") or "").strip()
+            if content:
+                user_text = content
+                break
+    summary = user_text or "Ended chat"
+    if len(summary) > 500:
+        summary = summary[:500]
+    return SessionSummary(session_id=session_id, summary=summary, topics=[], entities=[])
+
 
 _COMPACTION_TRUST_PREFIX = (
     "Trust boundary for summarisation:\n"
@@ -61,6 +87,10 @@ def summarize_session(
     here resolves the key per-user. ``llama`` (the current default) has no
     ``api_key_env`` so user_id is a no-op semantically.
     """
+    sid = session_id or str(uuid.uuid4())
+    if _rc_session_end_stub_enabled():
+        return _stub_session_summary(messages, sid)
+
     from services.connector_credentials import ConnectorNotConfigured
     from services.connector_credentials import CredentialUnavailable
     from services.context_budget import get_budget
@@ -73,7 +103,6 @@ def summarize_session(
     )
     conversation_text = truncate_text(conversation_text, max_tokens=budget - 300)
 
-    sid = session_id or str(uuid.uuid4())
     summarise_prompt_body = (
         (_COMPACTION_TRUST_PREFIX + _SUMMARIZE_PROMPT)
         if config.is_injection_sanitiser_enabled()
@@ -142,6 +171,39 @@ def store_session(
         )
         return
 
+    ms = config.get_metadata_store()
+
+    if _rc_session_end_stub_enabled():
+        # Postgres-only path for slim web-e2e / RC stacks without Ollama (LUM-414).
+        try:
+            ms.execute(
+                """
+                INSERT INTO sessions (session_id, summary, topics, entities, entity_ids, user_id, scope)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (session_id) DO UPDATE
+                  SET summary   = EXCLUDED.summary,
+                      topics    = EXCLUDED.topics,
+                      entities  = EXCLUDED.entities,
+                      entity_ids = EXCLUDED.entity_ids,
+                      updated_at = NOW()
+                """,
+                (
+                    summary.session_id,
+                    summary.summary,
+                    summary.topics,
+                    summary.entities,
+                    resolved_entity_ids,
+                    user_id,
+                    scope,
+                ),
+            )
+        except Exception:
+            _log.warning(
+                "store_session: Postgres upsert failed for session_id=%s (RC stub)",
+                summary.session_id,
+            )
+        return
+
     # ---- Qdrant (semantic projection) ----
     embedder = config.get_embedder()
     vs = config.get_vector_store()
@@ -165,7 +227,6 @@ def store_session(
     )
 
     # ---- Postgres (canonical record + entity_ids for reconciliation) ----
-    ms = config.get_metadata_store()
     try:
         ms.execute(
             """

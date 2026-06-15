@@ -6,18 +6,36 @@ authors = ["Lumogis"]
 edition = "2021"
 rust-version = "1.74"
 license = "AGPL-3.0-only"
+default-run = "lumogis-search"
 
 [lib]
 name = "lumogis_search_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[[bin]]
+name = "lumogis-search"
+path = "src/main.rs"
+required-features = ["standalone-app"]
+
 [build-dependencies]
+serde_json = "1"
 tauri-build = { version = "2", features = [] }
 
+[features]
+default = ["standalone-app"]
+standalone-app = []
+wdio-e2e = [
+  "dep:tauri-plugin-wdio",
+  "dep:tauri-plugin-wdio-webdriver",
+  "tauri/custom-protocol",
+]
+
 [dependencies]
-tauri = { version = "2", features = ["macos-private-api"] }
+tauri = { version = "2", features = ["macos-private-api", "tray-icon", "image-png"] }
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-opener = "2"
+tauri-plugin-wdio = { version = "1", optional = true }
+tauri-plugin-wdio-webdriver = { version = "1", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["time", "sync", "macros", "rt-multi-thread"] }

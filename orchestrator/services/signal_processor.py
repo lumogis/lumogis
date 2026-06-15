@@ -262,13 +262,25 @@ def _load_profile(user_id: str) -> RelevanceProfile | None:
 
 def _notify(signal: Signal) -> bool:
     try:
-        notifier = config.get_notifier()
-        return notifier.notify(
-            signal.title,
-            signal.content_summary,
-            signal.importance_score,
-            user_id=signal.user_id,
+        from models.notifications import NotificationType
+        from models.notifications import TypedNotification
+        from services.notifications.dispatcher import emit
+
+        result = emit(
+            TypedNotification(
+                user_id=signal.user_id,
+                notification_type=NotificationType.SIGNAL_RECEIVED,
+                title=signal.title,
+                body=signal.content_summary[:500],
+                metadata={
+                    "signal_id": signal.signal_id,
+                    "url": signal.url,
+                    "importance_score": signal.importance_score,
+                    "relevance_score": signal.relevance_score,
+                },
+            )
         )
+        return result.outcome in ("delivered", "partial", "all_skipped")
     except Exception as exc:
         _log.warning("Notifier error for signal %r: %s", signal.title[:60], exc)
         return False

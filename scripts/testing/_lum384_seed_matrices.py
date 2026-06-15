@@ -36,7 +36,7 @@ LEGEND = """## Legend
 | ✅ | At least one test **asserts** the behaviour (see **Notes**) |
 | 🟡 | Related tests exist; dedicated assertion for this feature not confirmed at seed |
 | ❌ | No matching automated test found in code audit |
-| 🚫 | Not automatable — manual smoke (`MS-TBD` until LUM-385) |
+| 🚫 | Not automatable — manual checklist row (`MS-###` in `docs/RELEASE-MANUAL-CHECKLIST.md`) |
 
 **Maintenance:** v1 baseline **LUM-384**; **LUM-428** strict citations + plan cross-check. Ongoing via **`/verify-plan`**.
 

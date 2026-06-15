@@ -2,6 +2,8 @@
 
 Concise onboarding for AI assistants and contributors working in the **`lumogis/lumogis`** public tree. Summarises **committed evidence** in the checkout — not a live external backlog.
 
+**Maintainer note:** This file is authored under **`docs/public-export/`** in the private product repo and substituted into the AGPL export by **`scripts/create-upstream-export-tree.sh`**. It is **not** the private maintainer context pack.
+
 ---
 
 ## Last refreshed
@@ -9,8 +11,8 @@ Concise onboarding for AI assistants and contributors working in the **`lumogis/
 | Field | Value |
 | --- | --- |
 | **Date** | **2026-06-06** |
-| **Branch / commit** | **`dev`** @ **`d5eb41031`** (maintainer product repo at refresh) |
-| **Evidence consulted** | `README.md`, `ARCHITECTURE.md`, `CONTRIBUTING.md`, `CONTRIBUTING-BEGINNERS.md` (export template), `Makefile`, `docs/testing/automated-test-strategy.md`, `docs/testing/README.md`, `CHANGELOG.md` [Unreleased], `scripts/debug/README.md` |
+| **Branch / commit** | **`main`** @ **`c3c396685`** (maintainer product repo at refresh) |
+| **Evidence consulted** | `README.md`, `ARCHITECTURE.md`, `CONTRIBUTING.md`, `CONTRIBUTING-BEGINNERS.md` (export template), `Makefile`, `docs/capabilities.md`, `docs/testing/automated-test-strategy.md`, `docs/testing/README.md`, `CHANGELOG.md` **[0.7.1]**, `scripts/debug/README.md` |
 
 ---
 
@@ -43,7 +45,7 @@ Published container images (`ghcr.io/lumogis/lumogis-orchestrator`, `ghcr.io/lum
 | `docs/LUMOGIS_REFERENCE_MANUAL.md` | Operator narrative |
 | `docs/testing/` | Test strategy + **TEST-COVERAGE-MATRIX-*** (core/web) |
 | `scripts/` | Doctor, debug runners, fixtures |
-| `.github/workflows/` | CI (including `openapi-check`, coverage-matrix gate on product paths) |
+| `.github/workflows/` | CI — `ci.yml`, `openapi-check`, `search-overlay-build.yml` (Lumogis Search installers), `changelog.yml` |
 
 ---
 
@@ -54,7 +56,8 @@ Published container images (`ghcr.io/lumogis/lumogis-orchestrator`, `ghcr.io/lum
 - **Tool catalog** read-only observation vs execution — `orchestrator/services/unified_tools.py`, **ADR 034** (agent harness terminology).
 - **MCP** = external interoperability layer — `orchestrator/mcp_server.py`, not the internal backbone.
 - **Context building** — hybrid entity selection and budgets — **ADR 051**, env vars in `config/test.env.example`.
-- **Open-core export** — premium KG and private-only trees omitted from this checkout — **ADR 042**.
+- **Conversation history** — browse/continue/delete in Lumogis Web; server transcript sync upserts `web_conversations` on **`PUT`** — **ADR 074**, amendment **ADR 085**.
+- **Lumogis Search export** — public AGPL overlay at `clients/lumogis-search/`; installer CI ships in this tree — **ADR 080**, **ADR 082**; open-core boundary — **ADR 081**, **ADR 042**.
 
 For operator deployment: [`docs/deployment/quickstart.md`](deployment/quickstart.md), [`README.md`](../README.md).
 
@@ -94,5 +97,5 @@ Full strategy: [`docs/testing/automated-test-strategy.md`](testing/automated-tes
 
 - [`docs/README.md`](README.md) — documentation index
 - [`docs/extending/extending-the-stack.md`](extending/extending-the-stack.md) — plugins and extension
-- [`CHANGELOG.md`](../CHANGELOG.md) — shipped and unreleased product changes
+- [`CHANGELOG.md`](../CHANGELOG.md) — shipped product changes (latest: **0.7.1**)
 - [`TELEMETRY.md`](../TELEMETRY.md) — telemetry posture

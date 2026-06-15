@@ -694,6 +694,7 @@ _inbox_containment_violations: int = 0
 _observer: Observer | None = None
 _ingest_paths_observer: Observer | None = None
 _ingest_paths_scheduled_roots: int = 0
+_initial_ingest_scan_enqueued: bool = False
 _INBOX_POLL_JOB_ID = "inbox_poll"
 
 
@@ -1261,30 +1262,74 @@ def start_ingest_path_watchers() -> None:
         owner,
     )
 
+
+def enqueue_initial_ingest_scan() -> bool:
+    """Enqueue the first bulk folder scan for each configured ingest root.
+
+    Separated from :func:`start_ingest_path_watchers` so the bulk scan can be
+    deferred until the embedding model is ready. Embedding every chunk requires
+    a live embedder; running the scan against a cold Ollama (model still being
+    pulled on a Hub first run) would fail every file and leave the index empty
+    with nothing to re-trigger it. Idempotent: only the first successful call
+    enqueues, so the startup path and the embedding-readiness retry can both
+    invoke it safely.
+
+    Returns ``True`` once the initial scan has been enqueued (now or earlier).
+    """
+    global _initial_ingest_scan_enqueued
+    if _initial_ingest_scan_enqueued:
+        return True
+    if not config.get_ingest_paths_watch_enabled():
+        return False
+    owner = config.get_ingest_paths_owner_user_id()
+    if not owner:
+        return False
+
     from services.batch_queue import enqueue
 
     from services import batch_handlers as _batch_handlers_registered  # noqa: F401
+    from services.index_bootstrap import mark_scan_queued
 
-    for root_str in roots:
+    enqueued_any = False
+    for root_str in config.get_effective_ingest_paths():
         root = Path(root_str)
         if not root.is_dir():
             continue
+        mark_scan_queued()
         enqueue(
             user_id=owner,
             kind="ingest_folder",
             payload={"path": str(root.expanduser().resolve(strict=False))},
         )
+        enqueued_any = True
+
+    if enqueued_any:
+        _initial_ingest_scan_enqueued = True
+        _log.info("Initial library scan enqueued for owner_user_id=%s", owner)
+    return _initial_ingest_scan_enqueued
 
 
 def stop_ingest_path_watchers() -> None:
     """Stop ingest-path filesystem observers. Call during shutdown."""
     global _ingest_paths_observer, _ingest_paths_scheduled_roots
+    global _initial_ingest_scan_enqueued
+    _initial_ingest_scan_enqueued = False
     if _ingest_paths_observer is not None:
         _ingest_paths_observer.stop()
         _ingest_paths_observer.join(timeout=5)
         _ingest_paths_observer = None
         _ingest_paths_scheduled_roots = 0
         _log.info("Ingest path watchers stopped")
+
+
+def _count_supported_files(root: Path, supported_exts: set[str]) -> int:
+    total = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        for fname in filenames:
+            if Path(fname).suffix.lower() in supported_exts:
+                total += 1
+    return total
 
 
 def ingest_folder(folder_path: str, *, user_id: str) -> IngestStats:
@@ -1304,6 +1349,16 @@ def ingest_folder(folder_path: str, *, user_id: str) -> IngestStats:
     extractors = config.get_extractors()
     supported_exts = set(extractors.keys())
     guard = _PerformanceGuard()
+
+    from services.index_bootstrap import (
+        begin_folder_scan,
+        complete_folder_scan,
+        report_folder_scan_progress,
+    )
+
+    expected_total = _count_supported_files(root, supported_exts)
+    begin_folder_scan(total_files=expected_total)
+    processed = 0
 
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if not d.startswith(".")]
@@ -1330,5 +1385,14 @@ def ingest_folder(folder_path: str, *, user_id: str) -> IngestStats:
             except Exception:
                 _log.exception("Failed to ingest %s", fpath)
                 errors += 1
+            processed += 1
+            if processed == 1 or processed % 5 == 0 or processed == expected_total:
+                report_folder_scan_progress(done=processed, total=expected_total)
 
+    complete_folder_scan(
+        total_files=total,
+        ingested=ingested,
+        skipped=skipped,
+        errors=errors,
+    )
     return IngestStats(total_files=total, ingested=ingested, skipped=skipped, errors=errors)

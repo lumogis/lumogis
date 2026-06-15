@@ -22,7 +22,7 @@ Programme **LUM-430** required a clear split between the **AGPL household search
 | Bundled Persona C appliance (Core + supervisor + built-in Search UI) | **Lumogis Hub** | **Excluded** |
 | Future full native client | **Lumogis Desktop** | N/A (future) |
 
-Maintainer-only path detail (private docs): bundled appliance tree and CI are outside the public export; see **`docs/private/lumogis-taxonomy.md`** and **`AGENTS.md`** maintainer boundary — not repeated here.
+Maintainer-only path detail (private docs): bundled appliance tree and CI are outside the public export; see **`docs/private/lumogis-taxonomy-final.md`** and **`AGENTS.md`** maintainer boundary — not repeated here.
 
 ### Public-export doc rule
 
@@ -55,7 +55,7 @@ The following ADRs remain useful as **behaviour** and **as-shipped** records; th
 
 - **[ADR 080](080-lum-430-lumogis-search-public-export.md)** — as-shipped export split evidence (**LUM-432**)
 - **[ADR 042](042-kg-public-private-export-boundary.md)** — strip-list export mechanism
-- **`docs/private/lumogis-taxonomy.md`** — canonical product names (private)
+- **`docs/private/lumogis-taxonomy-final.md`** — canonical product names (private)
 
 ## Linear linkage
 

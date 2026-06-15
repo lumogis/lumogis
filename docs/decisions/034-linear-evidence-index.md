@@ -1,9 +1,9 @@
 # ADR 034: Linear ↔ repo evidence index (maintainer register)
 
 > Status: Needs update
-> Last reviewed: 2026-06-06
-> Verified against commit: 4c22088
-> Notes: This register remains the canonical description of the Linear evidence index, but the **ADR number collides** with `docs/decisions/034-agent-harness-foundation-terminology-and-boundaries.md`. Filename prefixes **049–082** are already in use under `docs/decisions/` (including duplicate clusters on **053**, **059**, **060**, **061**, **063**, **064**, **072** (`072-lum-398-*.md` and `072-lum-401-*.md`), **074** (`074-lum-162-*.md` and `074-lum-178-*.md`), plus **`065-lum-320-doctor-v2-shell-fix-remediation.md`** through **`082-lum-433-search-overlay-public-ci.md`**). A coordinated rename must use a **non-colliding** slug (for example **`083-*.md`** or **`083-lum-86-*.md`**) — **not** **053** / **061** / **063** / **064** / **065**–**082**. Coordinate with the **046** / **072** pair renames if multiple new numbers are needed in one pass—see `docs/_librarian/docs-inventory.md`. Paths under **`.cursor/`** and **`scripts/linear/`** exist when **`lumogis-app/.cursor`** is symlinked to **lumogis-devtools** per **`AGENTS.md`** (absent in product-only checkouts).
+> Last reviewed: 2026-06-14
+> Verified against commit: a36f022
+> Notes: This register remains the canonical description of the Linear evidence index, but the **ADR number collides** with `docs/decisions/034-agent-harness-foundation-terminology-and-boundaries.md`. Filename prefixes **049–097** are already in use under `docs/decisions/` (including duplicate clusters on **053**, **059**, **060**, **061**, **063**, **064**, **072** (`072-lum-398-*.md` and `072-lum-401-*.md`), **074** (`074-lum-162-*.md` and `074-lum-178-*.md`), plus **`065-lum-320-doctor-v2-shell-fix-remediation.md`** through **`097-lum-470-pip-dependency-hash-pinning.md`**). A coordinated rename must use a **non-colliding** slug (for example **`098-*.md`** or **`098-lum-91-*.md`**) — **not** **053** / **061** / **063** / **064** / **065**–**097**. Coordinate with the **046** / **072** / **074** pair renames if multiple new numbers are needed in one pass—see `docs/_librarian/docs-inventory.md`. Paths under **`.cursor/`** and **`scripts/linear/`** exist when **`lumogis-app/.cursor`** is symlinked to **lumogis-devtools** per **`AGENTS.md`** (absent in product-only checkouts).
 
 **Status:** Finalised  
 **Created:** 2026-05-07  

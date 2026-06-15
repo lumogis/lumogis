@@ -716,6 +716,16 @@ class MeNotificationsResponse(BaseModel):
     summary: MeNotificationsSummary
 
 
+# LUM-93 — preference matrix DTOs (single source: models.notifications)
+from models.notifications import NotificationPreferenceCell as NotificationPreferenceCell  # noqa: E402,F401
+from models.notifications import NotificationPreferencePatchItem as NotificationPreferencePatchItem  # noqa: E402,F401
+from models.notifications import NotificationPreferencesPatch as NotificationPreferencesPatch  # noqa: E402,F401
+from models.notifications import NotificationPreferencesResponse as NotificationPreferencesResponse  # noqa: E402,F401
+from models.notifications import NotificationTierPolicyPatch as NotificationTierPolicyPatch  # noqa: E402,F401
+from models.notifications import NotificationTierPolicyRow as NotificationTierPolicyRow  # noqa: E402,F401
+from models.notifications import NotificationTypePrefsRow as NotificationTypePrefsRow  # noqa: E402,F401
+
+
 # ── Me / onboarding (LUM-165) ─────────────────────────────────────────
 
 
@@ -1025,6 +1035,33 @@ class StackStatusResponse(BaseModel):
     warnings: List[AdminDiagnosticsWarning] = Field(default_factory=list)
 
 
+class BackupStatusStoreItem(BaseModel):
+    """Per-store coverage in DR backup status (LUM-185)."""
+
+    model_config = _RES
+    id: Literal["postgres", "qdrant", "falkordb"]
+    present: bool
+    skipped: bool = False
+    skip_reason: str | None = None
+
+
+class BackupStatusResponse(BaseModel):
+    """Response for ``GET /api/v1/admin/diagnostics/backup-status``."""
+
+    model_config = _RES
+    enabled: bool
+    backup_dir: str
+    last_snapshot_id: str | None = None
+    last_success_at: str | None = None
+    age_hours: float | None = None
+    stale: bool = False
+    stale_threshold_hours: float
+    total_bytes: int | None = None
+    stores: List[BackupStatusStoreItem] = Field(default_factory=list)
+    last_verify_status: Literal["ok", "failed", "unknown"] | None = None
+    warnings: List[AdminDiagnosticsWarning] = Field(default_factory=list)
+
+
 class AdminDiagnosticsResponse(BaseModel):
     """Response for ``GET /api/v1/admin/diagnostics`` — curated operator diagnostics."""
 
@@ -1043,6 +1080,79 @@ class AdminDiagnosticsResponse(BaseModel):
     warnings: List[AdminDiagnosticsWarning]
     speech_to_text: AdminDiagnosticsSpeechToText
     inbox: AdminDiagnosticsInbox
+
+
+# ── Admin Ollama (LUM-451) ──────────────────────────────────────────
+
+
+class OllamaModelNameRequest(BaseModel):
+    model_config = _REQ
+    name: str
+
+
+class OllamaLocalModel(BaseModel):
+    model_config = _RES
+    name: str
+    size: Optional[int] = None
+    display_name: Optional[str] = None
+    modified_at: Optional[str] = None
+    details: Optional[dict[str, Any]] = None
+
+
+class OllamaCatalogEntry(BaseModel):
+    model_config = _RES
+    name: str
+    installed: bool
+    display_name: str
+    description: Optional[str] = None
+    tags: Optional[list[str]] = None
+
+
+class OllamaDiscoveryResponse(BaseModel):
+    model_config = _RES
+    local: list[OllamaLocalModel]
+    catalog: list[OllamaCatalogEntry]
+    alias_map: dict[str, str]
+    embedding_model: str
+    default_model: Optional[str] = None
+
+
+class OllamaDeleteResponse(BaseModel):
+    model_config = _RES
+    status: Literal["deleted"]
+    name: str
+
+
+class OllamaPullStartResponse(BaseModel):
+    model_config = _RES
+    status: Literal["started"]
+    job_id: str
+
+
+class OllamaPullJobStatus(str, Enum):
+    pending = "pending"
+    running = "running"
+    succeeded = "succeeded"
+    failed = "failed"
+
+
+class OllamaPullJob(BaseModel):
+    model_config = _RES
+    job_id: str
+    model_name: str
+    status: OllamaPullJobStatus
+    progress_pct: Optional[int] = None
+    status_message: Optional[str] = None
+    error_message: Optional[str] = None
+    qdrant_init_warning: Optional[str] = None
+    created_at: Optional[str] = None
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+
+
+class OllamaPullActiveResponse(BaseModel):
+    model_config = _RES
+    job: Optional[OllamaPullJob] = None
 
 
 # ── Ingest ───────────────────────────────────────────────────────────
@@ -1211,6 +1321,8 @@ __all__ = [
     "StackStatusOllamaModel",
     "StackStatusMeta",
     "StackStatusResponse",
+    "BackupStatusStoreItem",
+    "BackupStatusResponse",
     "AdminDiagnosticsResponse",
     "IngestUploadQueuedResponse",
     "ErrorResponse",

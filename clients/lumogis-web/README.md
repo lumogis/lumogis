@@ -77,6 +77,7 @@ cd clients/lumogis-web && npx playwright install chromium
 export LUMOGIS_WEB_SMOKE_EMAIL=... LUMOGIS_WEB_SMOKE_PASSWORD='...'
 make web-e2e                 # skips tests if creds missing (local-friendly)
 make web-e2e-prove           # fails if creds missing — use in CI or release checks
+make web-e2e-ollama-prove    # opt-in Ollama pull/delete e2e (full stack + LUMOGIS_E2E_EXPECT_OLLAMA=1)
 ```
 
 Optional: `PLAYWRIGHT_BASE_URL=https://your.host` if not testing on port 80.

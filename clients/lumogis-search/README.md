@@ -45,6 +45,10 @@ For operators who run Lumogis **Core via Docker Compose** on the same machine as
 
 Same installer as Persona A. Your operator provides the **household server URL** (LAN or remote-access HTTPS). Download the release from **[lumogis/lumogis Releases](https://github.com/lumogis/lumogis/releases)** or use a copy from your operator, then enter their URL in first-run onboarding. See the [Persona A / B / C distribution matrix](../../docs/LUMOGIS_REFERENCE_MANUAL.md#persona-a--b--c--distribution-matrix).
 
+## System tray
+
+Lumogis Search installs an OS tray icon at startup. **Left-click** toggles the overlay (same as the global hotkey). **Right-click** opens a menu with **Show Lumogis** and **Quit**. On Linux with GNOME/Wayland, tray icon visibility may require a StatusNotifier/AppIndicator extension — best-effort per desktop environment.
+
 ## License
 
 Copyright (C) 2026 Thomas Kohlborn, trading as Lumogis. Licensed under [AGPL-3.0-only](https://www.gnu.org/licenses/agpl-3.0.html).

@@ -10,7 +10,9 @@ import { useQuery } from "@tanstack/react-query";
 
 import { ApiError } from "../../api/client";
 import { fetchMeNotifications } from "../../api/meNotifications";
+import { fetchNotificationPreferences } from "../../api/notificationPreferences";
 import { useAuth } from "../../auth/AuthProvider";
+import { NotificationPrefsEditor } from "./NotificationPrefsEditor";
 import { PushOptIn } from "./PushOptIn";
 
 const TIER_LABELS: Record<string, string> = {
@@ -38,6 +40,11 @@ export function MeNotificationsView(): JSX.Element {
   const q = useQuery({
     queryKey: ["me", "notifications"],
     queryFn: () => fetchMeNotifications(client),
+  });
+
+  const prefsQ = useQuery({
+    queryKey: ["me", "notification-preferences"],
+    queryFn: () => fetchNotificationPreferences(client),
   });
 
   const filtered = useMemo(() => {
@@ -79,10 +86,10 @@ export function MeNotificationsView(): JSX.Element {
     <section>
       <h2>Notifications</h2>
       <p style={{ maxWidth: "42rem", opacity: 0.9 }}>
-        Read-only overview of notification channels plus browser Web Push enrolment for this tab.{" "}
-        <strong>ntfy</strong> credentials are edited under{" "}
-        <a href="/me/connectors">Connectors</a>. This page does not send test pushes or reveal tokens outside the
-        redacted push surface.
+        Overview of notification channels, editable per-type routing preferences, and browser Web
+        Push enrolment for this tab. <strong>ntfy</strong> credentials are edited under{" "}
+        <a href="/me/connectors">Connectors</a>. This page does not send test pushes or reveal tokens
+        outside the redacted push surface.
       </p>
 
       <PushOptIn />
@@ -233,6 +240,18 @@ export function MeNotificationsView(): JSX.Element {
           </tbody>
         </table>
       </div>
+
+      {prefsQ.isPending ? (
+        <p aria-busy="true" style={{ marginTop: "1.5rem" }}>
+          Loading preferences…
+        </p>
+      ) : prefsQ.isError ? (
+        <p role="alert" style={{ marginTop: "1.5rem" }}>
+          Could not load notification preferences.
+        </p>
+      ) : prefsQ.data ? (
+        <NotificationPrefsEditor client={client} prefs={prefsQ.data} />
+      ) : null}
     </section>
   );
 }

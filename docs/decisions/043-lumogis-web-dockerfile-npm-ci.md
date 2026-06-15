@@ -1,7 +1,7 @@
 # ADR 043 — lumogis-web Dockerfile: `npm ci` with copied `package-lock.json`
 
-**Status:** Finalised
-**Date:** 2026-05-15 / verified 2026-05-15
+**Status:** Finalised (amended 2026-06-08 — LUM-253 BuildKit npm cache mount)
+**Date:** 2026-05-15 / verified 2026-05-15; amended 2026-06-08
 **Issue:** [LUM-224](https://linear.app/lumogis/issue/LUM-224/lumogis-web-dockerfile-switch-to-npm-ci-copy-package-lockjson)
 **Related:** LUM-223 (OpenAPI codegen before `tsc`); [ADR 036](036-docker-image-ci-ghcr.md); [ADR 037](037-ghcr-publish-public-repo-only.md)
 
@@ -21,9 +21,10 @@ The `clients/lumogis-web` image previously ran `npm install` without copying the
 
 5. **Regression guard:** Root `Makefile` target **`make web-dockerfile-check`** fails unless the Dockerfile contains both the lockfile `COPY` and a `RUN npm ci` line.
 
+6. **BuildKit npm cache (LUM-253):** Declare `# syntax=docker/dockerfile:1` and use `RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund` so repeated image builds reuse npm download cache; lockfile reproducibility unchanged (`docker build --no-cache` still runs full `npm ci`).
+
 ## Alternatives (deferred)
 
-- BuildKit `~/.npm` cache mounts — separate improvement when build time is measured.
 - `pnpm` / Yarn Berry — rejected for this slice.
 
 ## Consequences
@@ -36,3 +37,4 @@ The `clients/lumogis-web` image previously ran `npm install` without copying the
 
 - `docker build --no-cache -f clients/lumogis-web/Dockerfile clients/lumogis-web` — exit 0; log shows `npm ci`, `npm run codegen`, `vite build`.
 - `make web-dockerfile-check` — exit 0.
+- BuildKit cache mount speeds warm rebuilds; poisoned cache → `docker builder prune` or `docker build --no-cache` (see `docs/private/ops/dev-cheatsheet.md`).

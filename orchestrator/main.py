@@ -29,11 +29,12 @@ import hooks
 import mcp_server
 from auth import auth_middleware
 from correlation import correlation_middleware
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from plugins import load_plugins
 from routes.actions import router as actions_router
 from routes.admin import router as admin_router
 from routes.admin_diagnostics import router as admin_diagnostics_router
+from routes.admin_ollama import router as admin_ollama_router
 from routes.admin_users import imports_router as admin_user_imports_router
 from routes.admin_users import router as admin_users_router
 from routes.auth import router as auth_router
@@ -282,43 +283,19 @@ async def lifespan(app: FastAPI):
     config._check_background_model_defaults()
 
     # Embedder is a soft requirement — start in degraded mode if model unavailable.
-    # ping() checks both Ollama liveness AND model presence (via /api/show).
-    # False means "Ollama is down" OR "model not yet pulled" — log covers both.
-    embedder = config.get_embedder()
-    _embedding_ready = False
-    if not embedder.ping():
+    # Bundled Hub may start Core before Ollama is warm; a retry job flips ready later.
+    from services.embedding_readiness import try_activate_embedding
+
+    app.state.embedding_ready = False
+    if not try_activate_embedding(app.state):
         _log.warning(
             "Embedding model not ready at startup (Ollama unreachable or %s not pulled). "
-            "Search and ingest will be unavailable. "
+            "Search and ingest will be unavailable until the model is ready. "
             "Open http://localhost:8000/dashboard → Settings → Models to pull the model, "
             "or check that the Ollama service is running.",
             os.environ.get("EMBEDDING_MODEL", "nomic-embed-text"),
         )
-    else:
-        try:
-            vs = config.get_vector_store()
-            dim = embedder.vector_size
-            for coll in _COLLECTIONS:
-                vs.create_collection(coll, dim)
-                # Payload indexes for the household visibility filter
-                # (`(scope='personal' AND user_id=$me) OR scope IN ('shared','system')`).
-                # Without these, every Qdrant search degrades to a full payload
-                # scan once the household corpus grows. Both calls are idempotent.
-                # See plan §4 (Qdrant pass) + visibility.visible_qdrant_filter.
-                vs.ensure_payload_index(coll, "scope")
-                vs.ensure_payload_index(coll, "user_id")
-            _embedding_ready = True
-            _log.info("Embedder vector size: %d — collections + payload indexes ready", dim)
-        except Exception as exc:
-            _log.warning(
-                "Embedding model not ready (%s). "
-                "Qdrant collections will be created when the model becomes available. "
-                "Pull %s via http://localhost:8000/dashboard → Settings → Models.",
-                exc,
-                os.environ.get("EMBEDDING_MODEL", "nomic-embed-text"),
-            )
-
-    app.state.embedding_ready = _embedding_ready
+    _embedding_ready = app.state.embedding_ready
 
     try:
         reranker = config.get_reranker()
@@ -371,9 +348,33 @@ async def lifespan(app: FastAPI):
     if inbox_mode == "event":
         start_watcher()
 
+    from services.ingest import enqueue_initial_ingest_scan
     from services.ingest import start_ingest_path_watchers
 
     start_ingest_path_watchers()
+    # Hub wizard sets LUMOGIS_DEFER_LIBRARY_INDEX — bulk scan is triggered only
+    # from POST /bundled/start-library-index after models are ready. Otherwise
+    # defer until the embedder is live (warm Docker) or the readiness retry.
+    if _library_index_deferred():
+        from services.index_bootstrap import prior_library_index_exists
+
+        if (
+            _library_resync_on_start()
+            and _embedding_ready
+            and prior_library_index_exists()
+        ):
+            enqueue_initial_ingest_scan()
+            _log.info(
+                "Library index resync enqueued on Hub cold start (prior index present)"
+            )
+        else:
+            _log.info(
+                "Library index scan deferred — Hub wizard will trigger explicitly"
+            )
+    elif _embedding_ready:
+        enqueue_initial_ingest_scan()
+    else:
+        _log.info("Initial library scan deferred until the embedding model is ready")
 
     # APScheduler: start scheduler then load signal sources.
     scheduler = config.get_scheduler()
@@ -387,12 +388,16 @@ async def lifespan(app: FastAPI):
 
     start_signal_monitors()
 
-    # Register SSE hook callbacks and built-in routines.
+    # Register SSE hook callbacks and notification dispatcher.
+    from services.notifications.migrate_webpush_prefs import run_if_needed
+
+    run_if_needed()
+
+    from services.notifications.dispatcher import register_hook_listeners
+
+    register_hook_listeners()
+
     register_sse_hooks()
-
-    from services.webpush import register_web_push_hooks
-
-    register_web_push_hooks()
 
     from services.routines import register_all as register_routines
 
@@ -644,6 +649,49 @@ async def lifespan(app: FastAPI):
         )
         _log.info("Capability service health probe job registered (every 60 seconds)")
 
+        def _embedding_readiness_retry() -> None:
+            if try_activate_embedding(app.state):
+                try:
+                    from services.ingest import enqueue_initial_ingest_scan
+
+                    if not _library_index_deferred():
+                        enqueue_initial_ingest_scan()
+                    else:
+                        from services.index_bootstrap import prior_library_index_exists
+
+                        if (
+                            _library_resync_on_start()
+                            and prior_library_index_exists()
+                        ):
+                            enqueue_initial_ingest_scan()
+                            _log.info(
+                                "Library index resync enqueued after embedding ready "
+                                "(Hub cold start)"
+                            )
+                except Exception:
+                    _log.exception(
+                        "Failed to enqueue initial library scan after embedding ready"
+                    )
+                try:
+                    scheduler.remove_job("embedding_readiness_retry")
+                    _log.info("Embedding readiness retry job removed — embedder active")
+                except Exception:
+                    pass
+
+        if not getattr(app.state, "embedding_ready", False):
+            scheduler.add_job(
+                _embedding_readiness_retry,
+                trigger="interval",
+                seconds=15,
+                id="embedding_readiness_retry",
+                name="Embedding readiness retry",
+                replace_existing=True,
+                misfire_grace_time=30,
+                coalesce=True,
+                max_instances=1,
+            )
+            _log.info("Embedding readiness retry job registered (every 15 seconds)")
+
     from librechat_config import generate_librechat_yaml
 
     if generate_librechat_yaml():
@@ -731,17 +779,58 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Lumogis", description="Personal AI assistant orchestrator", lifespan=lifespan)
 
 
+def _library_index_deferred() -> bool:
+    """When set (Lumogis Hub bundled wizard), skip auto bulk library scan."""
+    return os.environ.get("LUMOGIS_DEFER_LIBRARY_INDEX", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
+def _library_resync_on_start() -> bool:
+    """Hub post-onboarding cold start — resync files added while the app was quit."""
+    return os.environ.get("LUMOGIS_LIBRARY_RESYNC_ON_START", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
+@app.post("/bundled/start-library-index")
+def bundled_start_library_index(request: Request) -> dict[str, str]:
+    """Hub wizard step — enqueue the first bulk ``ingest_folder`` scan.
+
+    Loopback-only bundled mode: requires ``LUMOGIS_DEFER_LIBRARY_INDEX`` and a
+    live embedder. Idempotent once the scan has been queued.
+    """
+    if not _library_index_deferred():
+        raise HTTPException(status_code=404, detail="not_available")
+    if not getattr(request.app.state, "embedding_ready", False):
+        raise HTTPException(status_code=503, detail="embedding_not_ready")
+    from services.ingest import enqueue_initial_ingest_scan
+
+    if not enqueue_initial_ingest_scan():
+        raise HTTPException(status_code=503, detail="library_scan_unavailable")
+    return {"status": "queued"}
+
+
 @app.get("/healthz")
-def healthz() -> dict[str, str]:
+def healthz(request: Request) -> dict[str, str]:
     """Minimal liveness — no JWT (see ``auth._AUTH_BYPASS_PREFIXES``).
 
     Docker healthchecks cannot send a Bearer; ``/admin/health`` requires auth
     when ``AUTH_ENABLED=true``.
     """
+    from services.index_bootstrap import index_bootstrap_status
     from services.ingest import watcher_status
 
     payload: dict[str, str] = {"status": "ok"}
     payload.update(watcher_status())
+    payload.update(index_bootstrap_status())
+    payload["embedding_ready"] = (
+        "true" if getattr(request.app.state, "embedding_ready", False) else "false"
+    )
     return payload
 
 
@@ -766,6 +855,7 @@ app.include_router(connector_credentials_admin_router)
 app.include_router(connector_credentials_household_admin_router)
 app.include_router(connector_credentials_system_admin_router)
 app.include_router(admin_diagnostics_router)
+app.include_router(admin_ollama_router)
 app.include_router(chat_router)
 app.include_router(admin_router)
 app.include_router(data_router)

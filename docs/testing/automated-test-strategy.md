@@ -1,7 +1,7 @@
 # Automated testing strategy
 
-Last reviewed: 2026-06-06
-Verified against commit: 4c22088
+Last reviewed: 2026-06-14
+Verified against commit: a36f022
 
 Lumogis ships a **permanent, layered** automated test setup. **Where** you run the **full** stack matters: see **Dev vs `main` (comprehensive testing)** below.
 
@@ -67,6 +67,10 @@ These Makefile targets are for **maintainers on `main`** (or a `promote/clean-ma
 `verify-public-rc-full` runs the full smoke chain first, then adds `web-e2e-prove` (skippable via `VERIFY_PUBLIC_RC_SKIP_WEB_E2E=1`) and optional `test-graph-parity` (opt-in via `LUMOGIS_RC_GRAPH_PARITY=1`).
 
 Integration tests run via `scripts/integration-public-rc.sh full-cycle` against the triple-merged Compose stack (`docker-compose.yml` + `docker-compose.test.yml` + `docker-compose.public-rc-stack.yml`) using the `integration and public_rc` pytest marker predicate.
+
+## Manual release verification (LUM-385)
+
+Automated RC gates do not replace **operator manual checks** on a real host (fresh GHCR boot, compose health, LLM routing, persistence). After `make verify-public-rc-full` on a release candidate SHA, maintainers record sign-off using [docs/RELEASE-MANUAL-CHECKLIST.md](../RELEASE-MANUAL-CHECKLIST.md) (`MS-001` … `MS-010`). Coverage matrices cite those IDs on 🚫 rows. Rule: no automation **and** no checklist row ⇒ treat as untested for release.
 
 ## Test inventory (canonical)
 

@@ -513,6 +513,7 @@ def chat_completions(body: ChatCompletionsRequest, request: Request) -> Any:
     history = _inject_context(
         question, history, body.model, user_id, auto_rag_point_ids=auto_rag_point_ids
     )
+    # LUM-122 compaction hook: SITE_PRE_REQUEST (context injection today)
 
     if body.stream:
         # Synchronous credential pre-flight — see plan §Modified files

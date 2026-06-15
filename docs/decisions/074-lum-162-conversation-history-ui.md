@@ -1,9 +1,9 @@
 # ADR-074: Conversation history UI — persistence, API, and multi-store purge
 
 > Status: Active (numbering conflict)
-> Last reviewed: 2026-06-06
-> Verified against commit: 4c22088
-> Notes: **`docs/decisions/074-lum-178-stack-health-dashboard.md`** also claims **ADR 074** in its title. Resolve by renumbering one document and sweeping references. Filename prefixes **049–082** are already in use under `docs/decisions/` (duplicate clusters on **053**, **059**, **060**, **061**, **063**, **064**, **072**, **074**, plus **`065-lum-320-*.md`** through **`082-lum-433-search-overlay-public-ci.md`**). Pick a **non-colliding** new slug (for example **`083-*.md`**) when renumbering—coordinate with any **`034-linear-evidence-index.md`** / **046** / **072** rename in the same pass—see `docs/_librarian/docs-inventory.md`.
+> Last reviewed: 2026-06-11
+> Verified against commit: c609ec4
+> Notes: **`docs/decisions/074-lum-178-stack-health-dashboard.md`** also claims **ADR 074** in its title. **[ADR 085](085-lum-439-conversation-put-upsert-fix.md)** amends this record as the canonical **ADR 074** conversation-history programme; renumber **`074-lum-178-*.md`** to **`098+`** in a coordinated pass (**096** is **LUM-477** cold-start resync; **097** is **LUM-470** pip hash-pinning). Filename prefixes **049–097** are already in use under `docs/decisions/` (duplicate clusters on **053**, **059**, **060**, **061**, **063**, **064**, **072**, **074**, plus **`065-lum-320-*.md`** through **`097-lum-470-pip-dependency-hash-pinning.md`**). Pick a **non-colliding** new slug (for example **`098-lum-178-*.md`**) when renumbering—coordinate with any **`034-linear-evidence-index.md`** / **046** / **072** rename in the same pass—see `docs/_librarian/docs-inventory.md`.
 
 **Status:** Finalised
 **Created:** 2026-06-01

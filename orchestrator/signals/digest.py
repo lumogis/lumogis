@@ -95,7 +95,10 @@ def _send_digest() -> None:
             _log.info("signal_digest: no signals in window, skipping")
             return
 
-        notifier = config.get_notifier()
+        from models.notifications import NotificationType
+        from models.notifications import TypedNotification
+        from services.notifications.dispatcher import emit
+
         for user_id in user_ids:
             signals = _fetch_top_signals_for_user(user_id, since)
             if not signals:
@@ -106,7 +109,16 @@ def _send_digest() -> None:
             message = _format_digest(signals)
 
             try:
-                sent = notifier.notify(title, message, priority=0.5, user_id=user_id)
+                result = emit(
+                    TypedNotification(
+                        user_id=user_id,
+                        notification_type=NotificationType.SIGNAL_DIGEST,
+                        title=title,
+                        body=message,
+                        metadata={"signal_count": count, "summary": message},
+                    )
+                )
+                sent = result.outcome in ("delivered", "partial", "all_skipped")
                 if sent:
                     _log.info(
                         "signal_digest: sent digest user_id=%s count=%d",

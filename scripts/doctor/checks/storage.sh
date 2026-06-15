@@ -93,14 +93,20 @@ def main() -> int:
             row("storage", "docker-root", "warn", f"df error: {type(exc).__name__}", "")
 
     dot = read_dotenv(ROOT / ".env")
-    backup = (dot.get("BACKUP_DIR") or os.environ.get("BACKUP_DIR", "") or "").strip()
+    backup = (
+        dot.get("BACKUP_HOST_DIR")
+        or dot.get("BACKUP_DIR")
+        or os.environ.get("BACKUP_HOST_DIR")
+        or os.environ.get("BACKUP_DIR", "")
+        or ""
+    ).strip()
     if not backup:
         row(
             "storage",
-            "BACKUP_DIR",
+            "BACKUP_HOST_DIR",
             "skipped",
-            "BACKUP_DIR not set",
-            "Set BACKUP_DIR in .env if you want backup directory freshness checked.",
+            "BACKUP_HOST_DIR not set",
+            "Set BACKUP_HOST_DIR in .env if you want backup directory freshness checked.",
         )
     else:
         expanded = os.path.expandvars(os.path.expanduser(backup))
@@ -108,31 +114,46 @@ def main() -> int:
         try:
             rp = str(p.resolve())
         except OSError as exc:
-            row("storage", "BACKUP_DIR", "warn", f"Cannot resolve BACKUP_DIR: {exc}", "")
+            row("storage", "BACKUP_HOST_DIR", "warn", f"Cannot resolve BACKUP_HOST_DIR: {exc}", "")
         else:
             if not p.is_dir():
                 row7(
                     "storage",
-                    "BACKUP_DIR",
+                    "BACKUP_HOST_DIR",
                     "warn",
-                    "BACKUP_DIR is not a directory",
-                    "Create the directory or fix BACKUP_DIR in .env",
+                    "BACKUP_HOST_DIR is not a directory",
+                    "Create the directory or fix BACKUP_HOST_DIR in .env",
                     "mkdir_backup_dir",
                     {"path": rp},
                 )
             else:
+                snap_root = p / "snapshots"
+                mtime_source = p
+                msg = f"BACKUP_HOST_DIR exists (dir mtime age seconds ~ "
+                if snap_root.is_dir():
+                    manifests = sorted(
+                        snap_root.glob("*/manifest.json"),
+                        key=lambda m: m.stat().st_mtime,
+                        reverse=True,
+                    )
+                    if manifests:
+                        mtime_source = manifests[0]
+                        msg = (
+                            f"Latest DR manifest {manifests[0].parent.name} "
+                            f"(mtime age seconds ~ "
+                        )
                 try:
-                    m = p.stat().st_mtime
+                    m = mtime_source.stat().st_mtime
                     age = datetime.now(timezone.utc).timestamp() - m
                     row(
                         "storage",
-                        "BACKUP_DIR",
+                        "BACKUP_HOST_DIR",
                         "ok",
-                        f"BACKUP_DIR exists (mtime age seconds ~ {int(age)})",
+                        f"{msg}{int(age)})",
                         "",
                     )
                 except OSError as exc:
-                    row("storage", "BACKUP_DIR", "warn", f"Cannot stat BACKUP_DIR: {exc}", "")
+                    row("storage", "BACKUP_HOST_DIR", "warn", f"Cannot stat BACKUP_HOST_DIR: {exc}", "")
 
     return 0
 

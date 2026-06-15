@@ -28,7 +28,7 @@ Architecture context: **`docs/decisions/037-ghcr-publish-public-repo-only.md`** 
 
 ## Optional CI — web Playwright (LUM-60)
 
-The workflow **`.github/workflows/web-e2e.yml`** starts a **slim** Compose project (PostgreSQL, Qdrant, orchestrator, Lumogis Web, Caddy, stack-control — **no Ollama**) and runs **`make web-e2e-prove`** with Playwright on the runner host.
+The workflow **`.github/workflows/web-e2e.yml`** starts a **slim** Compose project (PostgreSQL, Qdrant, orchestrator, Lumogis Web, Caddy, stack-control — **no Ollama**) and runs **`make web-e2e-prove`** with Playwright on the runner host. The **`docker-compose.web-e2e-ci.yml`** overlay sets **`LUMOGIS_RC_SESSION_END_STUB=true`** on the orchestrator so **`POST /session/end`** → batch **`session_end`** writes Postgres **`sessions`** rows without Ollama (required for **LUM-414** conversation-history e2e on the slim stack).
 
 | Topic | Detail |
 | --- | --- |
@@ -37,6 +37,20 @@ The workflow **`.github/workflows/web-e2e.yml`** starts a **slim** Compose proje
 | **Label (pull requests only)** | Add the repository label **`ci:run-web-e2e`** so cred-gated steps run on same-repo PRs. Path-matched PRs **without** the label **skip** Playwright (they do not fail solely for missing secrets). |
 | **Fork PRs** | When **`github.event.pull_request.head.repo.full_name`** differs from the base repository, the workflow logs **`SKIP_FORK_PR`** and skips cred-gated steps. |
 | **Secrets** | **`LUMOGIS_WEB_SMOKE_EMAIL`** and **`LUMOGIS_WEB_SMOKE_PASSWORD`** (password at least **12** characters). They must match the bootstrap admin injected for the disposable stack (**`LUMOGIS_BOOTSTRAP_ADMIN_EMAIL`** / **`LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD`** — the workflow sets both pairs from the same secrets). Configure them as **repository secrets** under the same trust model as your other CI secrets. |
+
+### Optional — Ollama mutation Playwright (LUM-450)
+
+The slim **`web-e2e.yml`** job does **not** start Ollama (ADR-064). To exercise **real** Ollama pull/delete on **`/admin/system-status`** through Caddy, use the opt-in target **`make web-e2e-ollama-prove`** on a **full** stack (`docker compose up -d` **including** the **`ollama`** service).
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| **`LUMOGIS_WEB_SMOKE_EMAIL`** / **`LUMOGIS_WEB_SMOKE_PASSWORD`** | yes | Admin smoke user (≥12-char password) |
+| **`LUMOGIS_E2E_EXPECT_ADMIN`** | yes (`1`) | Same gate as LUM-413 admin e2e |
+| **`LUMOGIS_E2E_EXPECT_OLLAMA`** | yes (`1`) | Enables **`admin_ollama_mutations.spec.ts`** (skipped when unset) |
+| **`LUMOGIS_E2E_OLLAMA_PULL_MODEL`** | no | Ephemeral pull model (default **`tinyllama:1.1b`**) |
+| **`PLAYWRIGHT_BASE_URL`** | no | Caddy front door (default **`http://127.0.0.1`**) |
+
+The spec pulls then deletes **only** the ephemeral model — never household defaults. It is **not** part of **`make web-e2e-prove`**, **`verify-public-rc`**, or **`verify-public-rc-full`** (Phase 1). Phase 2 optional CI and **`verify-public-rc-full`** auto-wire (after cold-pull timing baseline) are tracked in **LUM-453**.
 
 This job does **not** replace **`make verify-public-rc`** or **`make verify-public-rc-full`**; do not use it as a reason to set **`VERIFY_PUBLIC_RC_SKIP_WEB_E2E`**.
 
@@ -168,6 +182,10 @@ Feature→test evidence lives in [docs/testing/README.md](docs/testing/README.md
 - **Full private tree:** KG and desktop matrices under [docs/private/testing/](docs/private/testing/README.md) follow the same **verify-plan** rule (**Step 7c** in `.cursor/skills/verify-plan/SKILL.md`).
 
 The v1 baseline was seeded in **LUM-384** (code audit). **LUM-428** tightened ✅ rows and cross-checks **active + archived** `.cursor/plans/*.plan.md` for test citations. Re-run `python3 scripts/testing/_lum428_audit_matrix_citations.py` after matrix edits. **LUM-429:** CI runs `make coverage-matrix-check` — row ID format, legend, duplicate IDs, catalog sync (`scripts/feature-ids.json`). After adding or renaming IDs, run `node scripts/check-coverage-matrix.mjs --write-catalog` in the same PR. Do not assign ✅ from `docs/capabilities.md` or CHANGELOG alone; cite `` `test_name` in `file` `` in the matrix **Notes** column.
+
+### Release manual checklist
+
+Before a maintainer release sign-off (after automated RC gates on the release line), complete [docs/RELEASE-MANUAL-CHECKLIST.md](docs/RELEASE-MANUAL-CHECKLIST.md) — human verification items cited as **`MS-###`** in coverage matrix 🚫 rows. See [docs/testing/automated-test-strategy.md](docs/testing/automated-test-strategy.md) for automated vs manual boundaries.
 
 ### OpenAPI snapshot / Lumogis Web typed client
 
@@ -457,7 +475,7 @@ Use `make test-integration-full` to include slow cases (e.g. waiting for RSS pol
 
 Tests cover the full pipeline: ingest → search → entity extraction → session memory → signal source → routine run → audit log → feedback → export.
 
-**CI vs broader automation:** `.github/workflows/ci.yml` runs **orchestrator** and **stack-control unit tests** plus Ruff on every PR. Integration, web, Playwright, KG-image, and parity suites require Docker and/or Node; they are part of the permanent strategy documented in [`docs/testing/automated-test-strategy.md`](docs/testing/automated-test-strategy.md). Run the targets that match your change (e.g. `make compose-test-integration` after HTTP/API work, `make web-test` after web changes).
+**CI vs broader automation:** `.github/workflows/ci.yml` runs **orchestrator** and **stack-control unit tests** plus Ruff on every PR. Path-gated Docker jobs include **doctor integration** (`make compose-test-doctor`) and **backup integration** (`make compose-test-backup`, LUM-486) when backup-related paths change. Integration, web, Playwright, KG-image, and parity suites require Docker and/or Node; they are part of the permanent strategy documented in [`docs/testing/automated-test-strategy.md`](docs/testing/automated-test-strategy.md). Run the targets that match your change (e.g. `make compose-test-integration` after HTTP/API work, `make compose-test-backup` after backup sidecar changes, `make web-test` after web changes).
 
 **New behaviour:** add tests at the right layer (unit for pure logic, integration when the HTTP stack matters, web tests for client regressions). Do not commit secret values or paths that **`scripts/check-public-export.sh`** rejects — see **`docs/release/public-agpl-release-workflow.md`** and **`CONTRIBUTING.md`** for **export hygiene** (paths omitted from the upstream tree must never leak into patches meant for the published repo).
 

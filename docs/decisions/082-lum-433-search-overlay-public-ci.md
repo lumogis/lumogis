@@ -10,14 +10,14 @@
 
 ## Context
 
-**ADR 080** shipped **Lumogis Search** at `clients/lumogis-search/` in the public AGPL export but left **no** public workflow to build installers — only the strip-listed private Hub CI (`hub-build.yml`). **LUM-433** closes ADR 080 revisit condition #1.
+**ADR 080** shipped **Lumogis Search** at `clients/lumogis-search/` in the public AGPL export but left **no** public workflow to build installers — only the strip-listed private Hub CI (`hub-build.yml (retired; see deprecated/lumogis-hub-fused/)`). **LUM-433** closes ADR 080 revisit condition #1.
 
 ## Decision
 
 Add **`.github/workflows/search-overlay-build.yml`** to the product repo so it **exports** to **`lumogis/lumogis`**:
 
 - **Four-target** Tauri matrix (macOS arm64/x64, Linux x64, Windows x64) aligned with the Hub client-only leg; artefact names **`lumogis-overlay-*`**.
-- **SHA-pinned** third-party Actions (precedent: `changelog.yml`, not floating `@v4` from `hub-build.yml`).
+- **SHA-pinned** third-party Actions (precedent: `changelog.yml`, not floating `@v4` from `hub-build.yml (retired; see deprecated/lumogis-hub-fused/)`).
 - **Smoke:** `workflow_dispatch` + path-gated `push` to `dev`/`main` → workflow artefacts only.
 - **Release:** `search-v*` tags on **`lumogis/lumogis` only** (`github.repository` guard) → `tauri-action` find-or-create GitHub Release with unsigned bundles (signing: **LUM-406**).
 - **Export contract:** workflow **not** on `public-export-strip-list.txt`; **`assert_search_overlay_ci_export_contract()`** in `check-public-export.sh` (required presence, strip-list intersection guard, forbidden Hub substring grep).
@@ -30,7 +30,7 @@ See `.cursor/explorations/LUM-433-search-overlay-ci.md` — manual `softprops/ac
 
 - **Easier:** Public consumers can obtain Search installers after export + `search-v*` tag on `lumogis/lumogis`.
 - **Harder:** Dual Tauri CI paths until **LUM-436** removes Hub redundant client-only matrix; artefact naming is a contract for **LUM-406** and release docs.
-- **Future work must:** keep workflow off strip list; never reference `apps/lumogis-hub/` / `hub-build.yml` in the YAML (grep guard includes comments).
+- **Future work must:** keep workflow off strip list; never reference `apps/lumogis-server/` / `hub-build.yml (retired; see deprecated/lumogis-hub-fused/)` in the YAML (grep guard includes comments).
 
 ## Revisit conditions
 

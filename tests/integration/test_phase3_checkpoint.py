@@ -103,6 +103,7 @@ class TestPhase3ValidationCheckpoint:
 
     # -------------------------------------------------------------------
     # Gate 3 — Subjective product checkpoint (manual sign-off)
+    # Release operators: see docs/RELEASE-MANUAL-CHECKLIST.md (MS-### rows).
     # -------------------------------------------------------------------
     #
     # The following three criteria require human evaluation:

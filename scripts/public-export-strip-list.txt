@@ -5,10 +5,10 @@
 
 # Maintainer hygiene (migrated from hard-coded omit lists)
 
-# LUM-329 — proprietary Lumogis Hub (commercial / app-only sources)
-apps/lumogis-hub/
-Makefile.hub.mk
-.github/workflows/hub-build.yml
+# LUM-329 / LUM-491 — proprietary Lumogis Server (commercial / app-only sources)
+apps/lumogis-server/
+Makefile.server.mk
+deprecated/lumogis-hub-fused/
 
 .cursor
 .claude
@@ -48,9 +48,9 @@ docker-compose.parity.yml
 orchestrator/tests/premium/
 
 # LUM-430 hygiene: never export bundled build artefacts
-apps/lumogis-hub/build/
-apps/lumogis-hub/.venv-bundled-build/
-apps/lumogis-hub/src-tauri/binaries/
+apps/lumogis-server/build/
+apps/lumogis-server/.venv-bundled-build/
+apps/lumogis-server/src-tauri/binaries/
 
 docs/decisions/007-graph-plugin-architecture.md
 
@@ -64,3 +64,7 @@ docs/decisions/035-kg-graph-proxy-service-bearer-fail-closed.md
 
 # LUM-434 — bundled appliance architecture (maintainer-only; not public AGPL)
 docs/decisions/076-lum-396-bundled-sidecar-process-manager.md
+
+# LUM-470 — bundled Core pip hash locks (private maintainer build contract)
+orchestrator/locks-bundled/
+orchestrator/requirements-bundled.in

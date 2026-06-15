@@ -3,6 +3,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { clampSnippet, type MemorySearchHit } from "./searchClient";
+import { iconMarkup, scopePillMarkup } from "./primitives";
 
 export type TauriInvoke = typeof invoke;
 
@@ -19,16 +20,21 @@ export function createHitRow(
   hit: MemorySearchHit,
   libraryRoots: string[],
   invokeFn: TauriInvoke = invoke,
-): HTMLDivElement {
-  const row = document.createElement("div");
+  selected = false,
+): HTMLButtonElement {
+  const row = document.createElement("button");
   const disabled = !hit.id || hit.id.length === 0;
-  row.className = `row${disabled ? " disabled" : ""}`;
+  row.type = "button";
+  row.className = `hit-row${disabled ? " hit-row--disabled" : ""}${selected ? " hit-row--selected" : ""}`;
   const title = hit.title?.trim() || hit.id || "Untitled";
   row.innerHTML = `
-    <span class="score">${hit.score.toFixed(2)}</span>
-    <div class="title">${escapeHtml(title)}</div>
-    <div class="meta">${escapeHtml(hit.scope)}${hit.source ? ` · ${escapeHtml(hit.source)}` : ""}</div>
-    <div class="snippet">${escapeHtml(clampSnippet(hit.snippet))}</div>
+    <div class="hit-row__head">
+      <span style="color:var(--accent-ink)">${iconMarkup("doc", 14)}</span>
+      <span class="hit-row__title">${escapeHtml(title)}</span>
+      ${scopePillMarkup(hit.scope)}
+      ${hit.source ? `<span class="hit-row__source">${escapeHtml(hit.source)}</span>` : ""}
+    </div>
+    <span class="hit-row__snippet">${escapeHtml(clampSnippet(hit.snippet))}</span>
   `;
   if (!disabled) {
     row.addEventListener("click", async (ev) => {
@@ -48,6 +54,7 @@ export function createHitRow(
     });
     row.title = hit.id || title;
   } else {
+    row.disabled = true;
     row.title = hit.owner_user_id
       ? `${hit.id || "Path unavailable"} (${hit.owner_user_id})`
       : hit.id || "Path unavailable";

@@ -44,6 +44,7 @@ ai-workspace/approved/*
 ai-workspace/review/*
 !ai-workspace/review/.gitkeep
 ai-workspace/backups/*.zip
+ai-workspace/backups-test/
 
 # LibreChat — regenerated at runtime from models.yaml + Ollama; do not commit.
 # Tracked template: config/librechat.coldstart.yaml
@@ -72,6 +73,7 @@ docker-compose.test-policy-*-local*.yml
 docker-compose.test-policy-*.local.yml
 
 lumogis-data/
+.qdrant-initialized
 .venv-pytest-run/
 .verify-venv/
 .merge-venv/

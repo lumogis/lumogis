@@ -60,6 +60,23 @@ def test_search_returns_hits_from_semantic_search(client, monkeypatch):
     assert h["title"] == "File"
 
 
+def test_search_title_falls_back_to_filename(client, monkeypatch):
+    fake_hit = SimpleNamespace(
+        file_path="/data/reports/Q1-summary.pdf",
+        score=0.5,
+        chunk_text="quarterly figures",
+        metadata={"file_path": "/data/reports/Q1-summary.pdf"},
+    )
+
+    import services.search as ss
+
+    monkeypatch.setattr(ss, "semantic_search", lambda *a, **kw: [fake_hit])
+
+    resp = client.get("/api/v1/memory/search", params={"q": "quarterly"})
+    assert resp.status_code == 200
+    assert resp.json()["hits"][0]["title"] == "Q1-summary.pdf"
+
+
 def test_search_degrades_when_embedder_not_ready(client):
     client.app.state.embedding_ready = False
     resp = client.get("/api/v1/memory/search", params={"q": "x"})

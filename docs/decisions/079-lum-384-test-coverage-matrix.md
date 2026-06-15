@@ -53,3 +53,4 @@ Index: `docs/testing/README.md`; private maintainer note: `docs/private/testing/
 - 2026-06-03: Finalised by /verify-plan — four matrices shipped on `dev`; code-audit v1 seed
 - 2026-06-04: **LUM-428** — strict citations + active/archived plan cross-check (`_lum384_plan_audit.py`, `_lum428_audit_matrix_citations.py`); supplemental rows scoped to owning plan file only
 - 2026-06-04: **LUM-427** — verify-plan **Step 7c** documents per-chunk matrix row updates; **LUM-429** format CI (`make coverage-matrix-check`)
+- 2026-06-06: **LUM-385** — `docs/RELEASE-MANUAL-CHECKLIST.md` shipped with **MS-001…MS-010**; core/web/kg matrix 🚫 stubs cite concrete **MS-###**; parser accepts `MS-\d{3}` or `MS-TBD`; Hub signing rows remain **MS-TBD pending LUM-408**

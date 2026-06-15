@@ -43,7 +43,15 @@ from settings_store import get_setting
 from settings_store import put_settings
 
 import config
+from services import admin_ollama as admin_ollama_svc
 from services import connector_credentials
+from services.ollama_pull_jobs import JobAlreadyRunning
+from services.ollama_pull_jobs import QDRANT_INIT_WARNING_MSG
+from services.ollama_pull_jobs import create_job
+from services.ollama_pull_jobs import get_active_job
+from services.ollama_pull_jobs import get_job
+from services.ollama_pull_jobs import job_to_response
+from services.ollama_pull_jobs import run_pull_job
 
 _DASHBOARD_HTML = Path(__file__).parent.parent / "dashboard" / "index.html"
 _GRAPH_MGM_HTML = Path(__file__).parent.parent / "static" / "graph_mgm.html"
@@ -107,7 +115,7 @@ _BACKUP_TABLES = [
     "kg_settings",
 ]
 
-_BACKUP_DIR = Path(os.environ.get("BACKUP_DIR", "/workspace/backups"))
+_BACKUP_DIR = Path("/workspace/backups")
 _BACKUP_RETENTION_DAYS = 7
 
 
@@ -1304,70 +1312,64 @@ class OllamaPullRequest(BaseModel):
 @router.get("/settings/ollama-discovery", dependencies=[Depends(require_admin)])
 def ollama_discovery():
     """Return local Ollama models and the public catalog for the dashboard."""
-    import ollama_client
-    from ollama_client import _prettify_name
-
-    local = ollama_client.list_local_models()
-    catalog = ollama_client.fetch_catalog()
-    local_names = {m.get("name", "").split(":")[0] for m in local}
-    for entry in catalog:
-        entry["installed"] = entry["name"].split(":")[0] in local_names
-        entry["display_name"] = _prettify_name(entry["name"])
-
-    for m in local:
-        base = (m.get("name") or "").split(":")[0]
-        m["display_name"] = _prettify_name(base) if base else "Unknown model"
-
-    all_models = config.get_all_models_config()
-    alias_map: dict[str, str] = {}
-    for alias, cfg in all_models.items():
-        ollama_model = cfg.get("model", "")
-        base_url = (cfg.get("base_url") or "").lower()
-        if "ollama" in base_url or cfg.get("dynamic_ollama"):
-            alias_map[ollama_model] = alias
-
-    return {"local": local, "catalog": catalog, "alias_map": alias_map}
+    return admin_ollama_svc.build_ollama_discovery()
 
 
 @router.post("/settings/ollama-pull", dependencies=[Depends(require_admin)])
 def ollama_pull(request: Request, body: OllamaPullRequest):
     """Trigger a pull for a specific Ollama model name."""
-    import re as _re
+    return admin_ollama_svc.sync_pull_model(body.name, request.app.state)
 
-    import ollama_client
 
-    name = body.name.strip()
-    if not name or not _re.match(r"^[a-zA-Z0-9_\-.:]+$", name):
-        raise HTTPException(status_code=400, detail="Invalid model name.")
+def _validate_ollama_model_name(name: str) -> str:
+    return admin_ollama_svc.validate_model_name(name)
 
+
+@router.post(
+    "/settings/ollama-pull/async",
+    status_code=202,
+    dependencies=[Depends(require_admin)],
+)
+def ollama_pull_async(
+    request: Request,
+    body: OllamaPullRequest,
+    background_tasks: BackgroundTasks,
+):
+    """Start an async Ollama pull; poll job status for progress (LUM-449)."""
+    name = _validate_ollama_model_name(body.name)
     try:
-        ollama_client.pull_model(name)
+        job_id = create_job(name)
+    except JobAlreadyRunning:
+        raise HTTPException(status_code=409, detail="ollama pull already in progress") from None
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Ollama pull failed: {exc}")
+        raise HTTPException(status_code=502, detail=f"Could not create pull job: {exc}") from exc
 
-    _sync_librechat_config()
+    background_tasks.add_task(run_pull_job, job_id, request.app.state)
+    return JSONResponse(status_code=202, content={"status": "started", "job_id": job_id})
 
-    # If this was the embedding model and collections are not yet initialized, do it now.
-    # _EMBED_COLLECTIONS is inlined here to avoid importing from main.py (wrong direction).
-    _EMBED_COLLECTIONS = ["documents", "conversations", "entities", "signals"]
-    if name.split(":")[0] == os.environ.get("EMBEDDING_MODEL", "nomic-embed-text").split(":")[0]:
-        try:
-            embedder = config.get_embedder()
-            if embedder.ping():
-                dim = embedder.vector_size
-                vs = config.get_vector_store()
-                for coll in _EMBED_COLLECTIONS:
-                    vs.create_collection(coll, dim)
-                request.app.state.embedding_ready = True
-                _log.info("Qdrant collections initialized after embedding model pull.")
-        except Exception as exc:
-            _log.warning(
-                "Could not initialize Qdrant collections after pull (%s). "
-                "Restart the orchestrator to retry.",
-                exc,
-            )
 
-    return {"status": "pulled", "name": name}
+@router.get(
+    "/settings/ollama-pull/jobs/active",
+    dependencies=[Depends(require_admin)],
+)
+def ollama_pull_job_active():
+    """Return the latest pending or running pull job, if any."""
+    row = get_active_job()
+    if row is None:
+        return {"job": None}
+    return {"job": job_to_response(row)}
+
+
+@router.get(
+    "/settings/ollama-pull/jobs/{job_id}",
+    dependencies=[Depends(require_admin)],
+)
+def ollama_pull_job_get(job_id: str):
+    """Poll async Ollama pull job status."""
+    row = get_job(job_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Unknown pull job.")
+    return job_to_response(row)
 
 
 def _browse_root_info() -> tuple[Path, str, str | None]:
@@ -1539,20 +1541,7 @@ def browse_mkdir(body: MkdirRequest):
 @router.post("/settings/ollama-delete", dependencies=[Depends(require_admin)])
 def ollama_delete(body: OllamaPullRequest):
     """Remove a locally pulled Ollama model."""
-    import re as _re
-
-    import ollama_client
-
-    name = body.name.strip()
-    if not name or not _re.match(r"^[a-zA-Z0-9_\-.:]+$", name):
-        raise HTTPException(status_code=400, detail="Invalid model name.")
-
-    try:
-        ollama_client.delete_model(name)
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Ollama delete failed: {exc}")
-    _sync_librechat_config()
-    return {"status": "deleted", "name": name}
+    return admin_ollama_svc.delete_model(body.name)
 
 
 # ---------------------------------------------------------------------------
@@ -2766,22 +2755,13 @@ def _prune_old_backups(backup_dir: Path, retention_days: int) -> None:
     dependencies=[Depends(require_admin), Depends(require_same_origin)],
 )
 def backup():
-    """Create a timestamped backup zip in ai-workspace/backups/.
+    """Create a timestamped logical export zip in ai-workspace/backups/.
 
-    Contains:
-      - postgres/<table>.json — all Postgres tables as JSON rows
-      - qdrant/<collection>.json — all Qdrant point payloads (no vectors)
-      - manifest.json — metadata about this backup
+    **Not disaster recovery** — lossy JSON export (no FalkorDB, Qdrant vectors omitted).
+    For instance-scoped DR snapshots use ``make backup``; see ``docs/guides/backup-restore.md``.
 
-    Vectors are omitted to keep file size small; restore re-embeds text from
-    saved payloads.  7-day retention is applied automatically.
-
-    Restore procedure:
-      1. Stop services: ``docker compose stop``
-      2. Delete volumes: ``docker volume rm <project>_postgres_data <project>_qdrant_data``
-      3. Restart services: ``docker compose up -d``  (init.sql re-creates schema)
-      4. Call ``POST /restore`` with ``{"zip_path": "<path to zip>"}``
-      5. Verify: ``curl /search?q=test``
+    Contains postgres JSON tables, Qdrant payloads (no vectors), and manifest.json.
+    7-day zip retention is applied automatically.
     """
     _BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 

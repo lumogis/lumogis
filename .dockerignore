@@ -21,8 +21,12 @@ ai-workspace/backups/
 branding/
 docs/
 docker/
+!docker/backup/
+!docker/backup/**
 mcp-servers/
 postgres/
 scripts/
+!scripts/backup/
+!scripts/backup/**
 stack-control/
 tests/

@@ -1,4 +1,4 @@
-<!-- Last audited: 2026-06-05 against agent/lum-433 — LUM-433 verify-plan -->
+<!-- Last audited: 2026-06-15 against dev — LUM-128 verify-plan -->
 
 # TEST-COVERAGE-MATRIX — Core (orchestrator & platform)
 
@@ -9,7 +9,7 @@
 | ✅ | At least one test **asserts** the behaviour (see **Notes**) |
 | 🟡 | Related tests exist; dedicated assertion for this feature not confirmed at seed |
 | ❌ | No matching automated test found in code audit |
-| 🚫 | Not automatable — manual smoke (`MS-TBD` until LUM-385) |
+| 🚫 | Not automatable — manual checklist (`MS-###` in [RELEASE-MANUAL-CHECKLIST.md](../RELEASE-MANUAL-CHECKLIST.md)) |
 
 **Maintenance:** v1 baseline **LUM-384**; **LUM-428** strict citations + plan cross-check. Ongoing via **`/verify-plan`**.
 
@@ -41,7 +41,8 @@
 | 1.3.2 | Signal profile + feedback | — | unit | ❌ | code audit: no test match |
 | 1.3.3 | Routines approve/run | orchestrator/tests/test_routines_per_user_scheduling.py | unit | ✅ | `test_maybe_schedule_uses_per_user_job_id` in `orchestrator/tests/test_routines_per_user_scheduling.py`; plan `plan` (plan path) |
 | 1.3.4 | SSE `/events` stream | clients/lumogis-web/tests/features/wow/useWowReadinessSse.test.tsx | unit | ✅ | LUM-44; `useWowReadinessSse.test` in `clients/lumogis-web/tests/features/wow/useWowReadinessSse.test.tsx`; code audit |
-| 1.3.5 | Notifications API | — | unit | ❌ | code audit: no test match |
+| 1.3.5 | Unified notification dispatcher (ADR 077 / LUM-93) + in-app SSE payload allowlists (LUM-488) | orchestrator/tests/test_notification_dispatcher.py, orchestrator/tests/test_notification_taxonomy.py, orchestrator/tests/test_events_sse_notification_compat.py | unit | ✅ | LUM-93 + LUM-488; `test_emit_assigns_emit_id_when_missing`, `test_quiet_hours_skips_push_not_in_app` in dispatcher; `test_sse_payload_credential_key_guard`, `test_sse_payload_no_top_level_metadata_key`, `test_sse_payload_action_executed_allowlists_audit_id` in `test_events_sse_notification_compat.py` |
+| 1.3.6 | Notification preferences API + tier policy (LUM-93) | orchestrator/tests/test_notification_preferences.py | unit | ✅ | LUM-93; `test_patch_upserts_sparse_row`, `test_webpush_pref_seeder_preserves_opt_out`, `test_orphan_pref_after_tier_shrink` in `orchestrator/tests/test_notification_preferences.py` |
 
 ### §1.4
 
@@ -81,7 +82,8 @@
 
 ### §1.8
 
-| 1.8.1 | Chat ask + tool loop | orchestrator/tests/test_chat_memory_hint.py | unit | 🟡 | LUM-124, LUM-308; `test_memory_hint_appended_when_enabled` in `orchestrator/tests/test_chat_memory_hint.py`; plan partial — weak path/name match (LUM-428) |
+| 1.8.1 | Chat ask + tool loop | orchestrator/tests/test_session_loop_transitions.py, orchestrator/tests/test_chat_memory_hint.py | unit | ✅ | LUM-124, LUM-128, LUM-308; `test_ask_and_ask_stream_same_message_outcome` in `orchestrator/tests/test_session_loop_transitions.py`; `test_memory_hint_appended_when_enabled` in `orchestrator/tests/test_chat_memory_hint.py` |
+| 1.8.7 | Continue Site session state / atomic tool-loop transitions (LUM-128) | orchestrator/tests/test_session_loop_transitions.py | unit | ✅ | LUM-128; `test_tool_round_single_replace_message_count`, `test_loop_event_ordering_two_tool_rounds`, `test_tool_chain_cap_still_trips` in `orchestrator/tests/test_session_loop_transitions.py`; parent LUM-122 |
 | 1.8.2 | OpenAI-compatible `/v1/chat/completions` | orchestrator/tests/test_chat_route_llm_credential_errors.py | unit | ✅ | `test_chat_completions_424_on_missing_credential` in `orchestrator/tests/test_chat_route_llm_credential_errors.py`; code audit |
 | 1.8.3 | Conversations history API (LUM-162) | orchestrator/tests/test_api_v1_conversations.py | unit | ✅ | LUM-162; `test_list_returns_only_visible_sessions` in `orchestrator/tests/test_api_v1_conversations.py`; plan `plan` (plan path) |
 | 1.8.4 | Approvals pending API | orchestrator/tests/test_api_v1_approvals.py | unit | ✅ | LUM-44, LUM-76, LUM-123; `test_pending_returns_empty_when_no_data` in `orchestrator/tests/test_api_v1_approvals.py`; plan `plan` (plan path) |
@@ -93,10 +95,11 @@
 | 1.9.1 | Doctor CLI | orchestrator/tests/test_doctor_cli.py | unit | ✅ | LUM-199, LUM-319, LUM-320; `test_doctor_json_schema_version` in `orchestrator/tests/test_doctor_cli.py`; plan `plan` (plan path) |
 | 1.9.2 | Admin diagnostics + stack status (LUM-178) | orchestrator/tests/test_stack_status_service.py | unit | ✅ | LUM-178; `test_stack_status_maps_compose_running_to_healthy` in `orchestrator/tests/test_stack_status_service.py`; plan `plan` (plan path) |
 | 1.9.3 | OpenAPI snapshot + codegen gate | orchestrator/tests/test_api_v1_openapi_snapshot.py | unit | ✅ | LUM-44, LUM-76, LUM-123; `test_openapi_snapshot_exists` in `orchestrator/tests/test_api_v1_openapi_snapshot.py`; plan `plan` (plan path) |
-| 1.9.4 | Public export hygiene (strip list, OpenAPI + Search overlay CI contracts) | orchestrator/tests/test_check_public_export_script.py | unit, integration | ✅ | LUM-199, LUM-303, **LUM-433**; `test_lum433_minimal_export_passes_with_search_workflow`, `test_export_tree_includes_search_overlay_workflow` in `orchestrator/tests/test_check_public_export_script.py` |
+| 1.9.4 | Public export hygiene (strip list, OpenAPI + Search overlay CI contracts; LUM-491 rename guards) | orchestrator/tests/test_check_public_export_script.py; scripts/check-rename-export-atomic.sh | unit, integration | ✅ | LUM-199, LUM-303, **LUM-433**, **LUM-460**, **LUM-491**; `test_export_tree_has_no_apps_subtree`, `test_lum433_fails_when_workflow_references_server`, `test_export_tree_omits_hub_build_workflow` in `orchestrator/tests/test_check_public_export_script.py`; `check-rename-export-atomic.sh` |
+| 1.9.19 | Layered orchestrator requirements profiles (LUM-460) | orchestrator/tests/test_requirements_profiles.py | unit | ✅ | LUM-460; `test_requirements_core_exists`, `test_dockerfile_copies_both_requirements_files` in `orchestrator/tests/test_requirements_profiles.py`; PyInstaller sidecar guard retired with fused Hub (LUM-491) |
 | 1.9.5 | Phase-3 grep security gate | orchestrator/tests/test_phase3_grep_gate.py | unit | 🟡 | `test_no_default_user_id_in_hot_paths` in `orchestrator/tests/test_phase3_grep_gate.py`; weak path/name match (LUM-428) |
-| 1.9.6 | verify-public-rc release umbrella | — | release-rc | 🚫 | MS-TBD |
-| 1.9.7 | GHCR publish smoke | — | release-rc | 🚫 | MS-TBD |
+| 1.9.6 | verify-public-rc release umbrella | — | release-rc | 🚫 | MS-001–MS-010 |
+| 1.9.7 | GHCR publish smoke | — | release-rc | 🚫 | MS-001 |
 | 1.9.8 | LUM-101: Compose-test COMPOSE_FILE defaults + docker-compose.test.yml | stack-control/test_main.py | unit | ✅ | LUM-101; `test_health_ok` in `stack-control/test_main.py`; plan `.cursor/plans/archived/LUM-101-compose-test-compose-file-defaults.plan.md` (plan path) |
 | 1.9.9 | LUM-199: make doctor v1 — read-only operator health CLI | orchestrator/tests/test_doctor_cli.py | unit | ✅ | LUM-199; `test_doctor_json_schema_version` in `orchestrator/tests/test_doctor_cli.py`; plan `.cursor/plans/archived/LUM-199-make-doctor-v1.plan.md` (plan path) |
 | 1.9.10 | LUM-209: Sessions recency index (updated_at already shipped) | orchestrator/tests/test_mcp_tools.py | unit | ✅ | LUM-209; `test_recent_sessions_returns_empty_when_table_empty` in `orchestrator/tests/test_mcp_tools.py`; plan `.cursor/plans/archived/LUM-209-sessions-updated-at-index.plan.md` (plan path) |
@@ -104,3 +107,10 @@
 | 1.9.12 | LUM-281: Paperless-ngx → Lumogis ingest (v0.1 Docker) | orchestrator/tests/test_caldav_connector_credentials.py | unit | ✅ | LUM-281; `test_caldav_is_registered` in `orchestrator/tests/test_caldav_connector_credentials.py`; plan `.cursor/plans/archived/LUM-281-paperless-ngx-v01-docker-ingest.plan.md` (plan path) |
 | 1.9.13 | LUM-308: Document auto-RAG in chat | orchestrator/tests/test_auto_rag.py | unit | ✅ | LUM-308; `test_auto_rag_disabled_returns_empty` in `orchestrator/tests/test_auto_rag.py`; plan `.cursor/plans/archived/LUM-308-document-auto-rag-chat.plan.md` (plan path) |
 | 1.9.14 | LUM-319: Doctor CI integration (lumogis-test) | orchestrator/tests/test_doctor_cli.py | unit | ✅ | LUM-319; `test_doctor_json_schema_version` in `orchestrator/tests/test_doctor_cli.py`; plan `.cursor/plans/archived/LUM-319-doctor-ci-integration.plan.md` (plan path) |
+| 1.9.15 | Ollama discovery extension — embedding_model + default_model (LUM-423) | orchestrator/tests/test_ollama_discovery.py | unit | ✅ | LUM-423; `test_ollama_discovery_includes_embedding_and_default_model` in `orchestrator/tests/test_ollama_discovery.py` |
+| 1.9.16 | Ollama pull qdrant_init_warning (LUM-452) | orchestrator/tests/test_ollama_pull_qdrant_warning.py | unit | ✅ | LUM-452; `test_embedding_pull_qdrant_init_failure_returns_warning`, `test_non_embedding_pull_no_warning` in `orchestrator/tests/test_ollama_pull_qdrant_warning.py` |
+| 1.9.17 | Async Ollama pull jobs (LUM-449) | orchestrator/tests/test_ollama_pull_jobs.py | unit | ✅ | LUM-449; `test_iter_pull_progress_parses_ndjson`, `test_create_job_409_when_running`, `test_run_pull_job_success_updates_row` in `orchestrator/tests/test_ollama_pull_jobs.py` |
+| 1.9.18 | Ollama admin v1 routes (LUM-451) | orchestrator/tests/test_api_v1_admin_ollama.py | unit | ✅ | LUM-451; `test_discovery_200_admin`, `test_v1_discovery_json_matches_legacy`, `test_pull_async_202_returns_job_id` in `orchestrator/tests/test_api_v1_admin_ollama.py` |
+| 1.9.20 | lumogis.ai static capabilities + changelog generator (LUM-226) | orchestrator/tests/test_render_lumogis_site_pages_script.py | release-rc | ✅ | LUM-226; `test_render_site_pages_writes_capabilities_and_changelog`, `test_omit_unreleased_excludes_section`, `test_forbidden_substrings_fail_render` in `orchestrator/tests/test_render_lumogis_site_pages_script.py` |
+| 1.9.21 | DR backup sidecar + toolkit (LUM-185 / LUM-484 / LUM-485) | scripts/integration-backup-roundtrip.sh, tests/integration/test_backup_restore_roundtrip.sh, tests/unit/test_backup_retention.sh | integration + unit | ✅ | `make compose-test-backup` — seed postgres+qdrant+falkordb, backup, wipe data volumes, restore, assert entity row + Qdrant point + one FalkorDB graph read; daily verify enforces FalkorDB RDB envelope via vended `redis-check-rdb-v13` (FalkorDB image pin); `make test-backup-retention` — 7 daily + 4 ISO weekly retention + failed/orphan preservation (`test_retention_keeps_seven_daily_and_four_weekly`) |
+| 1.9.22 | Admin backup-status API (LUM-185) | orchestrator/tests/test_api_v1_admin_backup_status.py, orchestrator/tests/test_backup_status_service.py | unit | ✅ | LUM-185; `test_backup_status_200_admin_contract`, `test_backup_status_reads_latest_manifest`, `test_backup_status_stale_when_age_gt_threshold` in cited files |

@@ -3,7 +3,7 @@
 
 //! Shared Tauri commands.
 //!
-//! These are the 19 commands listed in [`super::SHARED_COMMAND_NAMES`] — the
+//! These are the 20 commands listed in [`super::SHARED_COMMAND_NAMES`] — the
 //! cross-client contract consumed by Search's `run()` and other embedding binaries.
 //! They live in this submodule rather than the crate root because
 //! `#[tauri::command]` on a `pub fn` cannot be defined in `lib.rs`/`main.rs`
@@ -21,7 +21,7 @@ use super::auth::{
     AuthSessionPublic, IngestUploadQueuedPublic,
 };
 use super::{
-    is_path_allowed, reregister_hotkey, save_overlay_json, validate_theme, AppState,
+    is_path_allowed, reregister_hotkey_best_effort, save_overlay_json, validate_theme, AppState,
     MemorySearchResponseDto, OverlayConfig, SCHEMA_VERSION,
 };
 use serde::Serialize;
@@ -106,7 +106,7 @@ pub fn save_overlay_settings(
     g.config.theme = theme;
     save_overlay_json(&g.config_path, &g.config)?;
     drop(g);
-    reregister_hotkey(&app)?;
+    reregister_hotkey_best_effort(&app);
     let _ = app.emit("settings-saved", ());
     Ok(())
 }
@@ -281,7 +281,7 @@ pub fn complete_onboarding(
     g.config.schema_version = SCHEMA_VERSION;
     save_overlay_json(&g.config_path, &g.config)?;
     drop(g);
-    reregister_hotkey(&app)?;
+    reregister_hotkey_best_effort(&app);
     let _ = app.emit("settings-saved", ());
     Ok(())
 }
@@ -413,13 +413,24 @@ pub fn reveal_if_allowed(app: AppHandle, state: tauri::State<'_, AppState>, path
 }
 
 #[tauri::command]
+pub fn take_pending_summon_hint(state: tauri::State<'_, AppState>) -> Result<bool, String> {
+    let mut g = state.inner.lock().map_err(|_| "state poisoned".to_string())?;
+    if g.pending_summon_hint {
+        g.pending_summon_hint = false;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+#[tauri::command]
 pub fn reset_overlay_config_to_defaults(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
     {
         let mut g = state.inner.lock().expect("state poisoned");
         g.config = OverlayConfig::default();
         save_overlay_json(&g.config_path, &g.config)?;
     }
-    reregister_hotkey(&app)?;
+    reregister_hotkey_best_effort(&app);
     let path = {
         let g = state.inner.lock().expect("state poisoned");
         g.config_path.to_string_lossy().to_string()

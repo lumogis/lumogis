@@ -11,27 +11,27 @@ import { describe, expect, it } from "vitest";
 import { getContrastRatio } from "../../src/design/theme";
 
 const LIGHT = {
-  bg: "#f7f7f9",
-  fg: "#0b1020",
-  fgMuted: "#4a5168",
+  bg: "#faf7f1",
+  fg: "#1a1510",
+  fgMuted: "#6c6358",
   surface: "#ffffff",
-  surfaceAlt: "#eef0f5",
-  border: "#d6dae4",
-  accent: "#2747d3",
-  accentFg: "#ffffff",
+  surfaceAlt: "#f3eee4",
+  border: "#d6ccbb",
+  accent: "#f5a623",
+  accentFg: "#14110b",
   danger: "#b3261e",
   dangerFg: "#ffffff",
 };
 
 const DARK = {
-  bg: "#0b1020",
-  fg: "#f7f7f9",
-  fgMuted: "#b3b9cc",
-  surface: "#161c30",
-  surfaceAlt: "#1f2640",
-  border: "#2a3354",
-  accent: "#8aa3ff",
-  accentFg: "#0b1020",
+  bg: "#0d0d0f",
+  fg: "#f4f1ea",
+  fgMuted: "#a59c8c",
+  surface: "#17171b",
+  surfaceAlt: "#1f1f25",
+  border: "#2e2e36",
+  accent: "#f5a623",
+  accentFg: "#14110b",
   danger: "#ff8a82",
   dangerFg: "#0b1020",
 };

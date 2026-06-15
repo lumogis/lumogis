@@ -19,6 +19,7 @@ Degradation contract (plan §Error handling):
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Optional
 
 from auth import get_user
@@ -84,11 +85,15 @@ def search(
     hits: list[MemorySearchHit] = []
     for r in results:
         meta = getattr(r, "metadata", None) or {}
+        file_path = str(getattr(r, "file_path", meta.get("file_path", meta.get("id", ""))))
+        title = meta.get("title")
+        if not title and file_path:
+            title = Path(file_path).name or None
         hits.append(
             MemorySearchHit(
-                id=str(getattr(r, "file_path", meta.get("id", ""))),
+                id=file_path,
                 score=float(getattr(r, "score", 0.0)),
-                title=meta.get("title"),
+                title=title,
                 snippet=getattr(r, "chunk_text", "")[:2_000],
                 source=meta.get("source"),
                 created_at=_coerce_datetime(meta.get("created_at")),

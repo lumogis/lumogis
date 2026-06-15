@@ -82,6 +82,13 @@ def conversation_purge_target_exists(*, user_id: str, session_id: str) -> bool:
     )
     if row:
         return True
+    wc = ms.fetch_one(
+        "SELECT conversation_id FROM web_conversations "
+        "WHERE conversation_id = %s::uuid AND user_id = %s",
+        (session_id, user_id),
+    )
+    if wc:
+        return True
     return is_conversation_purged(user_id=user_id, session_id=session_id)
 
 
@@ -132,6 +139,25 @@ def purge_session_memory(*, user_id: str, session_id: str) -> PurgeResult:
         except Exception as exc:
             result.errors.append(f"postgres: {exc}")
             _log.warning("purge_session_memory: Postgres arm failed session_id=%s", session_id)
+            return result
+    elif tombstone:
+        try:
+            with ms.transaction():
+                ms.execute(
+                    "DELETE FROM web_messages WHERE conversation_id = %s::uuid AND user_id = %s",
+                    (session_id, user_id),
+                )
+                ms.execute(
+                    "DELETE FROM web_conversations WHERE conversation_id = %s::uuid AND user_id = %s",
+                    (session_id, user_id),
+                )
+            result.postgres_deleted = True
+        except Exception as exc:
+            result.errors.append(f"postgres: {exc}")
+            _log.warning(
+                "purge_session_memory: tombstone web cleanup failed session_id=%s",
+                session_id,
+            )
             return result
     else:
         result.postgres_deleted = True

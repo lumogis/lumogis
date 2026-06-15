@@ -276,18 +276,28 @@ def test_tool_chain_cap_streaming_loop(monkeypatch):
             yield LLMEvent(type="tool_call", tool_call=LLMToolCall("3", "search_files", {"q": 3}))
             yield LLMEvent(type="end")
 
+    from models.session_state import SessionParams
+    from models.session_state import initial_session_state
+
     budget = loop_mod.ToolChainBudget(cap=2)
-    events = list(
-        loop_mod._stream_loop(
-            StreamStub(),
-            [{"role": "user", "content": "hi"}],
-            tools=[],
-            system="sys",
-            user_id="u3",
-            chain_budget=budget,
+    loop_mod._finish_session_loop(
+        loop_mod._run_session_loop(
+            initial_session_state(
+                messages=[{"role": "user", "content": "hi"}],
+                chain_budget=budget,
+            ),
+            SessionParams(
+                user_id="u3",
+                system="sys",
+                tools=[],
+                use_tools=True,
+                model="claude",
+                auto_rag_point_ids=None,
+            ),
+            provider=StreamStub(),
+            stream=True,
         )
     )
-    assert any(isinstance(e, StreamEvent) for e in events)
     assert len(calls) == 2
 
 

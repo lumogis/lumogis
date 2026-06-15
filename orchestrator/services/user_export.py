@@ -65,7 +65,7 @@ _log = logging.getLogger(__name__)
 
 # ─── Constants ──────────────────────────────────────────────────────────────
 
-_BACKUP_DIR = Path(os.environ.get("BACKUP_DIR", "/workspace/backups"))
+_BACKUP_DIR = Path("/workspace/backups")
 _USER_EXPORT_DIR = Path(os.environ.get("USER_EXPORT_DIR", str(_BACKUP_DIR / "users")))
 _USER_EXPORT_KEEP_MIN = int(os.environ.get("USER_EXPORT_KEEP_MIN", "3"))
 _USER_EXPORT_MAX_AGE_DAYS = int(os.environ.get("USER_EXPORT_MAX_AGE_DAYS", "30"))
@@ -125,6 +125,9 @@ _USER_EXPORT_TABLES: tuple[str, ...] = (
     "captures",
     "capture_attachments",
     "capture_transcripts",
+    # Notification prefs (migration 031) — per-user routing settings, no scope column.
+    "notification_preferences",
+    "notification_user_settings",
 )
 
 # Tables with a `user_id` column that are deliberately omitted from

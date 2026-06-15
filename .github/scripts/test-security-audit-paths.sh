@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # LUM-190 — contract tests for security-audit-paths.sh (synthetic git repos).
+# shellcheck disable=SC2030,SC2031  # subshell env isolation is intentional in contract tests
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"

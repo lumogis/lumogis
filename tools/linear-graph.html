@@ -1,0 +1,1903 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lumogis Linear Backlog Graph</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-size: 13px;
+      background: #f5f5f5;
+      color: #1a1a1a;
+    }
+
+    /* ── Filter bar ── */
+    #filter-bar {
+      height: 48px;
+      min-height: 48px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 12px;
+      background: #fff;
+      border-bottom: 1px solid #ddd;
+      flex-wrap: nowrap;
+      overflow: visible;
+      z-index: 10;
+      position: relative;
+    }
+
+    #filter-bar label { white-space: nowrap; color: #555; font-size: 11px; }
+
+    #filter-bar input[type="text"],
+    #filter-bar input[type="password"],
+    #filter-bar select {
+      background: #fff;
+      border: 1px solid #ccc;
+      color: #1a1a1a;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+    }
+
+    #filter-bar input[type="text"] { width: 140px; }
+    #filter-bar input[type="password"] { width: 180px; }
+
+    .filter-dropdown {
+      position: relative;
+      flex-shrink: 0;
+    }
+
+    .dropdown-btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 120px;
+      max-width: 180px;
+      justify-content: space-between;
+      text-align: left;
+      font-size: 12px;
+      padding: 5px 10px;
+    }
+
+    .dropdown-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .dropdown-btn .caret {
+      color: #666;
+      font-size: 10px;
+      flex-shrink: 0;
+    }
+
+    .dropdown-menu {
+      display: none;
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
+      min-width: 180px;
+      max-width: 260px;
+      max-height: 280px;
+      overflow-y: auto;
+      background: #fff;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+      z-index: 100;
+      padding: 6px 0;
+    }
+
+    .dropdown-menu.open { display: block; }
+
+    .dropdown-actions {
+      display: flex;
+      gap: 8px;
+      padding: 4px 10px 8px;
+      border-bottom: 1px solid #eee;
+      margin-bottom: 4px;
+    }
+
+    .dropdown-actions button {
+      background: none;
+      border: none;
+      padding: 0;
+      color: #2563eb;
+      font-size: 11px;
+      cursor: pointer;
+    }
+
+    .dropdown-actions button:hover { text-decoration: underline; }
+
+    .dropdown-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 10px;
+      cursor: pointer;
+      font-size: 12px;
+      color: #333;
+    }
+
+    .dropdown-item:hover { background: #f0f4ff; }
+
+    .dropdown-item input { cursor: pointer; flex-shrink: 0; }
+
+    #filter-bar .sep {
+      width: 1px;
+      height: 24px;
+      background: #ddd;
+      flex-shrink: 0;
+    }
+
+    .status-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    .status-group label {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      cursor: pointer;
+      color: #444;
+      font-size: 11px;
+    }
+
+    .edge-toggles {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .edge-toggles label {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      cursor: pointer;
+      color: #444;
+      font-size: 11px;
+    }
+
+    button {
+      background: #eee;
+      border: 1px solid #ccc;
+      color: #1a1a1a;
+      padding: 5px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    button:hover { background: #e0e0e0; }
+    button.primary { background: #2563eb; border-color: #2563eb; }
+    button.primary:hover { background: #1d4ed8; }
+
+    /* ── Main layout ── */
+    #main {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    #graph-container {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+      background: #fafafa;
+    }
+
+    #graph-container svg {
+      display: block;
+      width: 100%;
+      height: 100%;
+      cursor: grab;
+    }
+
+    #graph-container svg:active { cursor: grabbing; }
+
+    /* ── Overlays ── */
+    #loading-overlay, #error-banner {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 20;
+      padding: 10px 20px;
+      border-radius: 6px;
+      font-size: 13px;
+      pointer-events: none;
+    }
+
+    #loading-overlay {
+      top: 16px;
+      background: rgba(255, 255, 255, 0.95);
+      border: 1px solid #ccc;
+      color: #333;
+      display: none;
+    }
+
+    #error-banner {
+      top: 16px;
+      background: rgba(180, 30, 30, 0.95);
+      border: 1px solid #f44;
+      color: #fff;
+      display: none;
+      max-width: 80%;
+      text-align: center;
+    }
+
+    /* ── Legend ── */
+    #legend {
+      position: absolute;
+      bottom: 12px;
+      right: 12px;
+      left: auto;
+      background: rgba(255, 255, 255, 0.96);
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      padding: 8px 10px;
+      max-width: 260px;
+      max-height: calc(100% - 24px);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      z-index: 5;
+      font-size: 11px;
+      color: #333;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    }
+
+    #legend-static {
+      flex-shrink: 0;
+      overflow-y: auto;
+      max-height: 42%;
+      scrollbar-gutter: stable;
+    }
+
+    #legend-projects {
+      flex: 1 1 0;
+      min-height: 72px;
+      overflow-x: hidden;
+      overflow-y: auto;
+      margin-top: 2px;
+      padding-right: 2px;
+      scrollbar-gutter: stable;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    #legend-projects::-webkit-scrollbar,
+    #legend-static::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    #legend-projects::-webkit-scrollbar-thumb,
+    #legend-static::-webkit-scrollbar-thumb {
+      background: #bbb;
+      border-radius: 3px;
+    }
+
+    #legend h4 {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      color: #666;
+      margin: 10px 0 5px;
+      font-weight: 600;
+    }
+
+    #legend-static h4:first-child { margin-top: 0; }
+
+    #legend > h4 {
+      flex-shrink: 0;
+      margin: 8px 0 4px;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 4px;
+      line-height: 1.25;
+    }
+
+    .legend-item span:last-child { flex: 1; }
+
+    .legend-icon {
+      width: 22px;
+      height: 22px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .legend-icon svg { display: block; }
+
+    .legend-swatch {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    #legend-projects .legend-item { gap: 6px; }
+
+    /* ── Side panel ── */
+    #side-panel {
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 280px;
+      height: 100%;
+      background: #fff;
+      color: #1a1a1a;
+      border-left: 1px solid #ddd;
+      padding: 16px;
+      overflow-y: auto;
+      transform: translateX(100%);
+      transition: transform 0.2s ease;
+      z-index: 15;
+      box-shadow: -2px 0 8px rgba(0,0,0,0.3);
+    }
+
+    #side-panel.open { transform: translateX(0); }
+
+    #side-panel .close-btn {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      background: none;
+      border: none;
+      font-size: 18px;
+      color: #666;
+      cursor: pointer;
+      padding: 4px 8px;
+    }
+
+    #side-panel h2 {
+      font-size: 14px;
+      font-weight: 700;
+      margin-bottom: 4px;
+      padding-right: 24px;
+      line-height: 1.3;
+    }
+
+    #side-panel h2 a {
+      color: #2563eb;
+      text-decoration: none;
+    }
+
+    #side-panel h2 a:hover { text-decoration: underline; }
+
+    #side-panel .meta { margin-bottom: 12px; }
+    #side-panel .meta-row {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 4px;
+      font-size: 12px;
+    }
+
+    #side-panel .meta-label {
+      color: #666;
+      min-width: 56px;
+      flex-shrink: 0;
+    }
+
+    .pill {
+      display: inline-block;
+      background: #e8e8e8;
+      color: #333;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 11px;
+      margin: 2px 2px 2px 0;
+    }
+
+    #side-panel section {
+      margin-top: 14px;
+      border-top: 1px solid #eee;
+      padding-top: 10px;
+    }
+
+    #side-panel section h3 {
+      font-size: 11px;
+      text-transform: uppercase;
+      color: #888;
+      margin-bottom: 6px;
+      letter-spacing: 0.5px;
+    }
+
+    .focus-link {
+      display: block;
+      color: #2563eb;
+      cursor: pointer;
+      font-size: 12px;
+      padding: 2px 0;
+      text-decoration: none;
+    }
+
+    .focus-link:hover { text-decoration: underline; }
+
+    .focus-link.hidden-link { color: #888; font-style: italic; }
+
+    #audit-banner {
+      position: absolute;
+      top: 16px;
+      left: 12px;
+      z-index: 20;
+      background: rgba(255, 255, 255, 0.96);
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-size: 12px;
+      color: #444;
+      display: none;
+      max-width: 640px;
+    }
+
+    #audit-banner .dismiss {
+      float: right;
+      background: none;
+      border: none;
+      font-size: 16px;
+      color: #888;
+      padding: 0 4px;
+      cursor: pointer;
+    }
+
+    /* ── Graph elements ── */
+    .link-parent { stroke: #888; stroke-width: 1; }
+    .link-blocks { stroke: #e44; stroke-width: 1.5; fill: none; }
+
+    .node-group { cursor: pointer; }
+    .node-group.dimmed { opacity: 0.15; }
+    .node-group.neighbour-dim { opacity: 0.4; }
+    .node-group.link-target { opacity: 0.45; }
+    .node-group.link-target circle,
+    .node-group.link-target .diamond-shape {
+      stroke-dasharray: 4 3;
+    }
+    .node-group.pinned circle, .node-group.pinned .diamond-shape {
+      stroke-dasharray: 3 2;
+    }
+
+    .node-label {
+      fill: #333;
+      font-size: 10px;
+      pointer-events: none;
+      text-anchor: middle;
+      dominant-baseline: central;
+    }
+
+    @keyframes pulse-ring {
+      0% { stroke-opacity: 1; stroke-width: 3; }
+      100% { stroke-opacity: 0; stroke-width: 12; }
+    }
+
+    .pulse-ring {
+      fill: none;
+      stroke: #2563eb;
+      animation: pulse-ring 1s ease-out 2;
+      pointer-events: none;
+    }
+
+    .auth-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    .auth-menu {
+      min-width: 280px;
+      max-width: 320px;
+      padding: 10px 12px;
+    }
+
+    .auth-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .auth-panel label {
+      font-size: 11px;
+      color: #555;
+    }
+
+    .auth-panel input[type="password"] {
+      width: 100%;
+    }
+
+    .auth-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .auth-hint {
+      font-size: 10px;
+      color: #666;
+      line-height: 1.35;
+    }
+
+    #auth-toggle {
+      min-width: auto;
+      max-width: none;
+    }
+
+    #auth-toggle.connected {
+      border-color: #86efac;
+      background: #f0fdf4;
+    }
+  </style>
+</head>
+<body>
+  <div id="main">
+    <div id="filter-bar">
+      <div class="filter-dropdown" id="auth-dropdown">
+        <button type="button" class="dropdown-btn" id="auth-toggle" title="Linear API key">
+          <span id="auth-toggle-label">API</span>
+          <span class="caret">▾</span>
+        </button>
+        <div class="dropdown-menu auth-menu" id="auth-menu">
+          <div class="auth-panel">
+            <label for="api-key">API key</label>
+            <input type="password" id="api-key" value="" placeholder="lin_api_…" autocomplete="off">
+            <div class="auth-actions">
+              <button id="load-btn" class="primary">Load</button>
+              <button type="button" id="clear-key-btn" title="Remove key from this browser">Clear</button>
+            </div>
+            <span class="auth-hint" id="auth-hint" title="Stored in this browser only — never in the repo">Paste key and Load — saved locally until you clear</span>
+          </div>
+        </div>
+      </div>
+      <div class="sep"></div>
+      <label>Project</label>
+      <div class="filter-dropdown" id="project-dropdown">
+        <button type="button" class="dropdown-btn" id="project-btn" disabled>
+          <span id="project-btn-label">All projects</span>
+          <span class="caret">▾</span>
+        </button>
+        <div class="dropdown-menu" id="project-menu">
+          <div class="dropdown-actions">
+            <button type="button" data-dropdown="project" data-action="all">All</button>
+            <button type="button" data-dropdown="project" data-action="none">None</button>
+          </div>
+          <div id="project-options"></div>
+        </div>
+      </div>
+      <label>Milestone</label>
+      <div class="filter-dropdown" id="milestone-dropdown">
+        <button type="button" class="dropdown-btn" id="milestone-btn" disabled>
+          <span id="milestone-btn-label">All milestones</span>
+          <span class="caret">▾</span>
+        </button>
+        <div class="dropdown-menu" id="milestone-menu">
+          <div class="dropdown-actions">
+            <button type="button" data-dropdown="milestone" data-action="all">All</button>
+            <button type="button" data-dropdown="milestone" data-action="none">None</button>
+          </div>
+          <div id="milestone-options"></div>
+        </div>
+      </div>
+      <label>Product</label>
+      <div class="filter-dropdown" id="product-dropdown">
+        <button type="button" class="dropdown-btn" id="product-btn" disabled>
+          <span id="product-btn-label">All products</span>
+          <span class="caret">▾</span>
+        </button>
+        <div class="dropdown-menu" id="product-menu">
+          <div class="dropdown-actions">
+            <button type="button" data-dropdown="product" data-action="all">All</button>
+            <button type="button" data-dropdown="product" data-action="none">None</button>
+          </div>
+          <div id="product-options"></div>
+        </div>
+      </div>
+      <label>Persona</label>
+      <div class="filter-dropdown" id="persona-dropdown">
+        <button type="button" class="dropdown-btn" id="persona-btn" disabled>
+          <span id="persona-btn-label">All personas</span>
+          <span class="caret">▾</span>
+        </button>
+        <div class="dropdown-menu" id="persona-menu">
+          <div class="dropdown-actions">
+            <button type="button" data-dropdown="persona" data-action="all">All</button>
+            <button type="button" data-dropdown="persona" data-action="none">None</button>
+          </div>
+          <div id="persona-options"></div>
+        </div>
+      </div>
+      <label>Exec</label>
+      <div class="filter-dropdown" id="exec-dropdown">
+        <button type="button" class="dropdown-btn" id="exec-btn" disabled>
+          <span id="exec-btn-label">All exec</span>
+          <span class="caret">▾</span>
+        </button>
+        <div class="dropdown-menu" id="exec-menu">
+          <div class="dropdown-actions">
+            <button type="button" data-dropdown="exec" data-action="all">All</button>
+            <button type="button" data-dropdown="exec" data-action="none">None</button>
+          </div>
+          <div id="exec-options"></div>
+        </div>
+      </div>
+      <div class="status-group">
+        <label><input type="checkbox" id="st-backlog" checked> Backlog</label>
+        <label><input type="checkbox" id="st-progress" checked> In Progress</label>
+        <label><input type="checkbox" id="st-review" checked> In Review</label>
+        <label><input type="checkbox" id="st-done"> Done</label>
+        <label><input type="checkbox" id="st-cancelled"> Cancelled</label>
+      </div>
+      <div class="sep"></div>
+      <div class="edge-toggles">
+        <label><input type="checkbox" id="edge-parent" checked> Parent-child</label>
+        <label><input type="checkbox" id="edge-blocks" checked> Blocks</label>
+        <label><input type="checkbox" id="include-linked" checked> Linked targets</label>
+      </div>
+      <div class="sep"></div>
+      <label for="search-input">Search</label>
+      <input type="text" id="search-input" placeholder="LUM-40 or keyword" disabled>
+      <button id="refresh-btn" disabled>Refresh</button>
+    </div>
+
+    <div id="graph-container">
+      <div id="loading-overlay"></div>
+      <div id="error-banner"></div>
+      <div id="audit-banner"><button type="button" class="dismiss" id="audit-dismiss" title="Dismiss">&times;</button><span id="audit-text"></span></div>
+      <div id="legend">
+        <div id="legend-static">
+          <h4>Nodes</h4>
+          <div id="legend-nodes"></div>
+          <h4>Edges</h4>
+          <div id="legend-edges"></div>
+          <h4>Fill colour</h4>
+          <div id="legend-fill"></div>
+        </div>
+        <h4>Projects</h4>
+        <div id="legend-projects" aria-label="Project colours"></div>
+      </div>
+      <div id="side-panel">
+        <button class="close-btn" id="panel-close" title="Close">&times;</button>
+        <div id="panel-content"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+  <script>
+(function () {
+  "use strict";
+
+  const API_URL = "https://api.linear.app/graphql";
+  const TEAM_KEY = "LUM";
+  const MILESTONE_PREFIX = "milestone:";
+  const PRODUCT_PREFIX = "product:";
+  const PERSONA_PREFIX = "persona:";
+  const EXEC_PREFIX = "exec:";
+  const API_KEY_STORAGE = "lumogis-linear-graph-api-key";
+
+  const PRODUCT_CANONICAL = ["core", "web", "search", "mobile", "kg", "site"];
+  const PERSONA_CANONICAL = ["a", "b", "c"];
+  const EXEC_CANONICAL = ["human", "cursor", "guided", "workflow"];
+
+  function sortMilestones(values) {
+    return values.sort((a, b) => {
+      const parse = (s) => s.replace(/^v/i, "").split(".").map(n => parseInt(n, 10) || 0);
+      const pa = parse(a);
+      const pb = parse(b);
+      for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+        const diff = (pa[i] || 0) - (pb[i] || 0);
+        if (diff) return diff;
+      }
+      return a.localeCompare(b);
+    });
+  }
+
+  function sortCanonical(values, canonicalOrder) {
+    const present = new Set(values);
+    return canonicalOrder.filter(v => present.has(v));
+  }
+
+  const ISSUES_QUERY = `
+    query Issues($after: String) {
+      issues(
+        filter: { team: { key: { eq: "${TEAM_KEY}" } }, archivedAt: { null: true } }
+        first: 250
+        after: $after
+      ) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          id
+          identifier
+          title
+          state { name type }
+          priority
+          labels { nodes { name } }
+          project { name }
+          parent { identifier }
+          relations(first: 100) {
+            nodes { type issue { identifier } relatedIssue { identifier } }
+          }
+          inverseRelations(first: 100) {
+            nodes { type issue { identifier } relatedIssue { identifier } }
+          }
+        }
+      }
+    }
+  `;
+
+  const PRIORITY_RADIUS = { 1: 14, 2: 11, 3: 9, 4: 7, 0: 7 };
+  const PRIORITY_NAMES = { 0: "None", 1: "Urgent", 2: "High", 3: "Medium", 4: "Low" };
+
+  const STATUS_MAP = {
+    backlog: "backlog",
+    unstarted: "backlog",
+    started: "progress",
+    completed: "done",
+    canceled: "cancelled",
+    cancelled: "cancelled",
+  };
+
+  const STATUS_FILTER_IDS = {
+    backlog: "st-backlog",
+    progress: "st-progress",
+    review: "st-review",
+    done: "st-done",
+    cancelled: "st-cancelled",
+  };
+
+  /* ── State ── */
+  let apiKey = null;
+  let allIssues = [];
+  let graphData = { nodes: [], rawLinks: [] };
+  let simulation = null;
+  let svg, g, zoomBehavior;
+  let width, height;
+  let selectedNodeId = null;
+  let pinnedNodes = new Set();
+
+  /* ── DOM refs ── */
+  const container = document.getElementById("graph-container");
+  const loadingEl = document.getElementById("loading-overlay");
+  const errorEl = document.getElementById("error-banner");
+  const sidePanel = document.getElementById("side-panel");
+  const panelContent = document.getElementById("panel-content");
+  const legendNodes = document.getElementById("legend-nodes");
+  const legendEdges = document.getElementById("legend-edges");
+  const legendFill = document.getElementById("legend-fill");
+  const legendProjects = document.getElementById("legend-projects");
+  const projectBtn = document.getElementById("project-btn");
+  const projectMenu = document.getElementById("project-menu");
+  const projectOptions = document.getElementById("project-options");
+  const projectBtnLabel = document.getElementById("project-btn-label");
+  const milestoneBtn = document.getElementById("milestone-btn");
+  const milestoneMenu = document.getElementById("milestone-menu");
+  const milestoneOptions = document.getElementById("milestone-options");
+  const milestoneBtnLabel = document.getElementById("milestone-btn-label");
+  const productBtn = document.getElementById("product-btn");
+  const productMenu = document.getElementById("product-menu");
+  const productOptions = document.getElementById("product-options");
+  const productBtnLabel = document.getElementById("product-btn-label");
+  const personaBtn = document.getElementById("persona-btn");
+  const personaMenu = document.getElementById("persona-menu");
+  const personaOptions = document.getElementById("persona-options");
+  const personaBtnLabel = document.getElementById("persona-btn-label");
+  const execBtn = document.getElementById("exec-btn");
+  const execMenu = document.getElementById("exec-menu");
+  const execOptions = document.getElementById("exec-options");
+  const execBtnLabel = document.getElementById("exec-btn-label");
+  const searchInput = document.getElementById("search-input");
+  const apiKeyInput = document.getElementById("api-key");
+  const authHint = document.getElementById("auth-hint");
+  const authToggle = document.getElementById("auth-toggle");
+  const authMenu = document.getElementById("auth-menu");
+  const authToggleLabel = document.getElementById("auth-toggle-label");
+
+  function updateAuthToggle() {
+    const hasKey = !!apiKeyInput.value.trim();
+    authToggleLabel.textContent = hasKey ? "API ✓" : "API";
+    authToggle.classList.toggle("connected", hasKey);
+  }
+
+  function closeAuthMenu() {
+    authMenu.classList.remove("open");
+  }
+
+  function loadStoredApiKey() {
+    try {
+      let stored = localStorage.getItem(API_KEY_STORAGE);
+      if (!stored) {
+        const legacy = sessionStorage.getItem(API_KEY_STORAGE);
+        if (legacy) {
+          localStorage.setItem(API_KEY_STORAGE, legacy);
+          sessionStorage.removeItem(API_KEY_STORAGE);
+          stored = legacy;
+        }
+      }
+      if (stored) {
+        apiKeyInput.value = stored;
+        authHint.textContent = "Key restored — loads automatically";
+        updateAuthToggle();
+        return true;
+      }
+    } catch (_) {
+      authHint.textContent = "Local storage unavailable — paste key each time";
+    }
+    return false;
+  }
+
+  function persistApiKey(key) {
+    try {
+      localStorage.setItem(API_KEY_STORAGE, key);
+      sessionStorage.removeItem(API_KEY_STORAGE);
+      authHint.textContent = "Key saved on this laptop (Clear to remove)";
+    } catch (_) {
+      authHint.textContent = "Could not save key in this browser";
+    }
+    updateAuthToggle();
+  }
+
+  function clearStoredApiKey() {
+    apiKey = null;
+    apiKeyInput.value = "";
+    try {
+      localStorage.removeItem(API_KEY_STORAGE);
+      sessionStorage.removeItem(API_KEY_STORAGE);
+    } catch (_) { /* ignore */ }
+    authHint.textContent = "Key cleared — paste a new one to load";
+    document.getElementById("refresh-btn").disabled = true;
+    searchInput.disabled = true;
+    projectBtn.disabled = true;
+    milestoneBtn.disabled = true;
+    productBtn.disabled = true;
+    personaBtn.disabled = true;
+    execBtn.disabled = true;
+    updateAuthToggle();
+  }
+
+  /* ── Multi-select dropdown helpers ── */
+  function buildDropdownOptions(container, values, name) {
+    container.innerHTML = "";
+    for (const value of values) {
+      const label = document.createElement("label");
+      label.className = "dropdown-item";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.value = value;
+      cb.name = name;
+      cb.checked = true;
+      cb.addEventListener("change", onFilterChange);
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode(value));
+      container.appendChild(label);
+    }
+  }
+
+  function getCheckedValues(container) {
+    return [...container.querySelectorAll('input[type="checkbox"]:checked')].map(cb => cb.value);
+  }
+
+  function setAllChecked(container, checked) {
+    container.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = checked; });
+  }
+
+  function updateDropdownLabel(container, labelEl, allLabel, unit) {
+    const boxes = [...container.querySelectorAll('input[type="checkbox"]')];
+    const checked = boxes.filter(cb => cb.checked);
+    if (checked.length === 0) labelEl.textContent = `No ${unit}`;
+    else if (checked.length === boxes.length) labelEl.textContent = allLabel;
+    else if (checked.length === 1) labelEl.textContent = checked[0].value;
+    else labelEl.textContent = `${checked.length} ${unit}`;
+  }
+
+  function initDropdown(btn, menu) {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (btn.disabled) return;
+      const opening = !menu.classList.contains("open");
+      document.querySelectorAll(".dropdown-menu.open").forEach(m => m.classList.remove("open"));
+      if (opening) menu.classList.add("open");
+    });
+    menu.addEventListener("click", (e) => e.stopPropagation());
+  }
+
+  function onFilterChange() {
+    updateDropdownLabel(projectOptions, projectBtnLabel, "All projects", "projects");
+    updateDropdownLabel(milestoneOptions, milestoneBtnLabel, "All milestones", "milestones");
+    updateDropdownLabel(productOptions, productBtnLabel, "All products", "products");
+    updateDropdownLabel(personaOptions, personaBtnLabel, "All personas", "personas");
+    updateDropdownLabel(execOptions, execBtnLabel, "All exec", "exec");
+    if (graphData.nodes.length) renderGraph();
+  }
+
+  const DROPDOWN_OPTION_CONTAINERS = {
+    project: projectOptions,
+    milestone: milestoneOptions,
+    product: productOptions,
+    persona: personaOptions,
+    exec: execOptions,
+  };
+
+  document.addEventListener("click", () => {
+    document.querySelectorAll(".dropdown-menu.open").forEach(m => m.classList.remove("open"));
+  });
+
+  document.querySelectorAll("[data-dropdown]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const container = DROPDOWN_OPTION_CONTAINERS[btn.dataset.dropdown];
+      if (!container) return;
+      setAllChecked(container, btn.dataset.action === "all");
+      onFilterChange();
+    });
+  });
+
+  initDropdown(projectBtn, projectMenu);
+  initDropdown(milestoneBtn, milestoneMenu);
+  initDropdown(productBtn, productMenu);
+  initDropdown(personaBtn, personaMenu);
+  initDropdown(execBtn, execMenu);
+  initDropdown(authToggle, authMenu);
+  updateAuthToggle();
+
+  /* ── Helpers ── */
+  function showLoading(msg) {
+    loadingEl.textContent = msg;
+    loadingEl.style.display = "block";
+  }
+
+  function hideLoading() {
+    loadingEl.style.display = "none";
+  }
+
+  function showError(msg) {
+    errorEl.textContent = msg;
+    errorEl.style.display = "block";
+    setTimeout(() => { errorEl.style.display = "none"; }, 12000);
+  }
+
+  function hideError() {
+    errorEl.style.display = "none";
+  }
+
+  async function gqlFetch(query, variables) {
+    const resp = await fetch(API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": apiKey,
+      },
+      body: JSON.stringify({ query, variables }),
+    });
+
+    let json = {};
+    try { json = await resp.json(); } catch (_) { /* non-JSON body */ }
+
+    if (!resp.ok) {
+      const detail = json.errors?.map(e => e.message).join("; ") || resp.statusText;
+      throw new Error(`HTTP ${resp.status}: ${detail}`);
+    }
+
+    if (json.errors && json.errors.length) {
+      throw new Error(json.errors.map(e => e.message).join("; "));
+    }
+    return json.data;
+  }
+
+  async function paginateAll(query, dataKey, label) {
+    let after = null;
+    let allNodes = [];
+    let page = 0;
+
+    while (true) {
+      page++;
+      const data = await gqlFetch(query, { after });
+      const conn = data[dataKey];
+      allNodes = allNodes.concat(conn.nodes);
+      showLoading(`Loading ${label}… ${allNodes.length}${conn.pageInfo.hasNextPage ? "+" : ""}`);
+
+      if (!conn.pageInfo.hasNextPage) break;
+      after = conn.pageInfo.endCursor;
+    }
+
+    return allNodes;
+  }
+
+  function getMilestone(labels) {
+    for (const l of labels) {
+      if (l.startsWith(MILESTONE_PREFIX)) {
+        return l.slice(MILESTONE_PREFIX.length);
+      }
+    }
+    return null;
+  }
+
+  function getAxisLabel(labels, prefix) {
+    for (const l of labels) {
+      if (l.startsWith(prefix)) {
+        return l.slice(prefix.length);
+      }
+    }
+    return null;
+  }
+
+  function getPersonas(labels) {
+    const personas = [];
+    for (const l of labels) {
+      if (l.startsWith(PERSONA_PREFIX)) {
+        personas.push(l.slice(PERSONA_PREFIX.length));
+      }
+    }
+    return personas;
+  }
+
+  function statusCategory(status) {
+    const name = (status.name || "").toLowerCase();
+    if (name.includes("review")) return "review";
+    if (name.includes("cancel")) return "cancelled";
+    if (name.includes("done") || name === "completed") return "done";
+    if (name.includes("progress") || name.includes("started")) return "progress";
+    const t = (status.type || "").toLowerCase();
+    return STATUS_MAP[t] || "backlog";
+  }
+
+  function extractBlocksFromIssues(issues) {
+    const relations = [];
+    const seen = new Set();
+    for (const issue of issues) {
+      const relNodes = [
+        ...(issue.relations?.nodes || []),
+        ...(issue.inverseRelations?.nodes || []),
+      ];
+      for (const rel of relNodes) {
+        if (rel.type !== "blocks") continue;
+        const from = rel.issue?.identifier;
+        const to = rel.relatedIssue?.identifier;
+        if (!from || !to) continue;
+        const key = `${from}|${to}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        relations.push({ type: "blocks", issue: { identifier: from }, relatedIssue: { identifier: to } });
+      }
+    }
+    return relations;
+  }
+
+  function buildGraphData(issues) {
+    const idSet = new Set(issues.map(i => i.identifier));
+    const childCounts = {};
+    const childrenMap = {};
+    const blocksMap = {};
+    const blockedByMap = {};
+    const relatedMap = {};
+
+    for (const issue of issues) {
+      if (issue.parent?.identifier) {
+        const pid = issue.parent.identifier;
+        childCounts[pid] = (childCounts[pid] || 0) + 1;
+        if (idSet.has(pid)) {
+          if (!childrenMap[pid]) childrenMap[pid] = [];
+          childrenMap[pid].push(issue.identifier);
+        }
+      }
+    }
+
+    for (const rel of extractBlocksFromIssues(issues)) {
+      const from = rel.issue.identifier;
+      const to = rel.relatedIssue.identifier;
+      if (idSet.has(from) && idSet.has(to)) {
+        if (!blocksMap[from]) blocksMap[from] = [];
+        if (!blocksMap[from].includes(to)) blocksMap[from].push(to);
+        if (!blockedByMap[to]) blockedByMap[to] = [];
+        if (!blockedByMap[to].includes(from)) blockedByMap[to].push(from);
+      }
+    }
+
+    for (const issue of issues) {
+      const relNodes = [
+        ...(issue.relations?.nodes || []),
+        ...(issue.inverseRelations?.nodes || []),
+      ];
+      for (const rel of relNodes) {
+        if (rel.type !== "related") continue;
+        const peer = rel.issue?.identifier === issue.identifier
+          ? rel.relatedIssue?.identifier
+          : rel.relatedIssue?.identifier === issue.identifier
+            ? rel.issue?.identifier
+            : rel.relatedIssue?.identifier || rel.issue?.identifier;
+        if (!peer || peer === issue.identifier || !idSet.has(peer)) continue;
+        if (!relatedMap[issue.identifier]) relatedMap[issue.identifier] = [];
+        if (!relatedMap[issue.identifier].includes(peer)) relatedMap[issue.identifier].push(peer);
+      }
+    }
+
+    const nodes = issues.map(issue => {
+      const labels = (issue.labels?.nodes || []).map(l => l.name);
+      return {
+        id: issue.identifier,
+        identifier: issue.identifier,
+        title: issue.title,
+        state: issue.state,
+        statusCat: statusCategory(issue.state),
+        priority: issue.priority ?? 0,
+        labels,
+        milestone: getMilestone(labels),
+        product: getAxisLabel(labels, PRODUCT_PREFIX),
+        personas: getPersonas(labels),
+        exec: getAxisLabel(labels, EXEC_PREFIX),
+        project: issue.project?.name || "(no project)",
+        parentId: issue.parent?.identifier || null,
+        children: (childrenMap[issue.identifier] || []).sort(),
+        isParent: (childCounts[issue.identifier] || 0) > 0,
+        blocks: blocksMap[issue.identifier] || [],
+        blockedBy: blockedByMap[issue.identifier] || [],
+        related: relatedMap[issue.identifier] || [],
+        pinned: false,
+      };
+    });
+
+    const links = [];
+
+    for (const node of nodes) {
+      if (node.parentId && idSet.has(node.parentId)) {
+        links.push({ source: node.parentId, target: node.id, type: "parent" });
+      }
+    }
+
+    for (const rel of extractBlocksFromIssues(issues)) {
+      const from = rel.issue.identifier;
+      const to = rel.relatedIssue.identifier;
+      if (idSet.has(from) && idSet.has(to)) {
+        links.push({ source: from, target: to, type: "blocks" });
+      }
+    }
+
+    const rawLinks = links.map(l => ({ source: l.source, target: l.target, type: l.type }));
+    return { nodes, rawLinks };
+  }
+
+  function nodePassesFilters(node, projects, milestones, products, personas, execs, term) {
+    if (!projects.has(node.project)) return false;
+    if (milestones && node.milestone && !milestones.has(node.milestone)) return false;
+    if (milestones && !node.milestone) return false;
+    if (products && node.product && !products.has(node.product)) return false;
+    if (products && !node.product) return false;
+    if (personas && node.personas.length > 0 && !node.personas.some(p => personas.has(p))) return false;
+    if (personas && node.personas.length === 0) return false;
+    if (execs && node.exec && !execs.has(node.exec)) return false;
+    if (execs && !node.exec) return false;
+    if (!isStatusVisible(node.statusCat)) return false;
+    if (term) {
+      return node.identifier.toLowerCase().includes(term) ||
+        node.title.toLowerCase().includes(term);
+    }
+    return true;
+  }
+
+  function auditRelationships() {
+    const nodeMap = new Map(graphData.nodes.map(n => [n.id, n]));
+    const projects = getSelectedProjects();
+    const milestones = getSelectedMilestones();
+    const products = getSelectedProducts();
+    const personas = getSelectedPersonas();
+    const execs = getSelectedExecs();
+    let trulyIsolated = 0;
+    let relatedOnly = 0;
+    let hiddenLinkOrphans = 0;
+    const hiddenExamples = [];
+
+    for (const node of graphData.nodes) {
+      const hasParent = !!node.parentId;
+      const hasChildren = node.children.length > 0;
+      const hasBlocks = node.blocks.length > 0 || node.blockedBy.length > 0;
+      const hasRelated = node.related.length > 0;
+      const passes = nodePassesFilters(node, projects, milestones, products, personas, execs, "");
+
+      if (!hasParent && !hasChildren && !hasBlocks && !hasRelated) trulyIsolated++;
+      else if (!hasParent && !hasChildren && !hasBlocks && hasRelated) relatedOnly++;
+
+      if (!passes) continue;
+
+      const visParent = node.parentId && nodeMap.has(node.parentId) &&
+        nodePassesFilters(nodeMap.get(node.parentId), projects, milestones, products, personas, execs, "");
+      const visChildren = node.children.some(id =>
+        nodeMap.has(id) && nodePassesFilters(nodeMap.get(id), projects, milestones, products, personas, execs, ""));
+      const visBlocksOut = node.blocks.filter(id =>
+        nodeMap.has(id) && nodePassesFilters(nodeMap.get(id), projects, milestones, products, personas, execs, ""));
+      const visBlocksIn = node.blockedBy.filter(id =>
+        nodeMap.has(id) && nodePassesFilters(nodeMap.get(id), projects, milestones, products, personas, execs, ""));
+
+      if (!visParent && !visChildren && visBlocksOut.length === 0 && visBlocksIn.length === 0) {
+        if (hasParent || hasChildren || hasBlocks) {
+          hiddenLinkOrphans++;
+          if (hiddenExamples.length < 5) hiddenExamples.push(node.id);
+        }
+      }
+    }
+
+    const stats = { trulyIsolated, relatedOnly, hiddenLinkOrphans, total: graphData.nodes.length };
+    console.log("[linear-graph] relationship audit", stats, hiddenExamples.length ? { examples: hiddenExamples } : {});
+    return stats;
+  }
+
+  function showAuditBanner(stats) {
+    const el = document.getElementById("audit-banner");
+    const text = document.getElementById("audit-text");
+    text.textContent =
+      `Loaded ${stats.total} issues — ${stats.trulyIsolated} with no links, ` +
+      `${stats.relatedOnly} related-only (not graphed), ` +
+      `${stats.hiddenLinkOrphans} look isolated because parent/blocker is hidden by status filter. ` +
+      `Enable "Linked targets" or show Done/Cancelled to reveal them.`;
+    el.style.display = "block";
+  }
+
+  function populateProjectSelect(nodes) {
+    const projects = [...new Set(nodes.map(n => n.project))].sort();
+    buildDropdownOptions(projectOptions, projects, "project");
+    updateDropdownLabel(projectOptions, projectBtnLabel, "All projects", "projects");
+    projectBtn.disabled = false;
+  }
+
+  function populateMilestoneSelect(nodes) {
+    const milestones = sortMilestones([...new Set(nodes.map(n => n.milestone).filter(Boolean))]);
+    buildDropdownOptions(milestoneOptions, milestones, "milestone");
+    updateDropdownLabel(milestoneOptions, milestoneBtnLabel, "All milestones", "milestones");
+    milestoneBtn.disabled = milestones.length > 0;
+    if (milestones.length === 0) milestoneBtnLabel.textContent = "No milestones";
+  }
+
+  function populateAxisSelect(nodes, optionsEl, btnEl, btnLabelEl, allLabel, unit, canonicalOrder, getValue) {
+    const present = new Set();
+    for (const node of nodes) {
+      const value = getValue(node);
+      if (Array.isArray(value)) {
+        for (const v of value) present.add(v);
+      } else if (value) {
+        present.add(value);
+      }
+    }
+    const values = sortCanonical([...present], canonicalOrder);
+    buildDropdownOptions(optionsEl, values, unit);
+    updateDropdownLabel(optionsEl, btnLabelEl, allLabel, unit);
+    btnEl.disabled = values.length > 0;
+    if (values.length === 0) btnLabelEl.textContent = `No ${unit}`;
+  }
+
+  function populateProductSelect(nodes) {
+    populateAxisSelect(
+      nodes, productOptions, productBtn, productBtnLabel,
+      "All products", "products", PRODUCT_CANONICAL, n => n.product,
+    );
+  }
+
+  function populatePersonaSelect(nodes) {
+    populateAxisSelect(
+      nodes, personaOptions, personaBtn, personaBtnLabel,
+      "All personas", "personas", PERSONA_CANONICAL, n => n.personas,
+    );
+  }
+
+  function populateExecSelect(nodes) {
+    populateAxisSelect(
+      nodes, execOptions, execBtn, execBtnLabel,
+      "All exec", "exec", EXEC_CANONICAL, n => n.exec,
+    );
+  }
+
+  function enableFilters() {
+    searchInput.disabled = false;
+    document.getElementById("refresh-btn").disabled = false;
+    projectBtn.disabled = false;
+    milestoneBtn.disabled = false;
+    productBtn.disabled = false;
+    personaBtn.disabled = false;
+    execBtn.disabled = false;
+  }
+
+  /* ── Filtering ── */
+  function getSelectedProjects() {
+    const values = getCheckedValues(projectOptions);
+    return values.length ? new Set(values) : new Set(["__none__"]);
+  }
+
+  function getSelectedMilestones() {
+    const values = getCheckedValues(milestoneOptions);
+    const total = milestoneOptions.querySelectorAll('input[type="checkbox"]').length;
+    if (values.length === 0 || total === 0) return new Set(["__none__"]);
+    if (values.length === total) return null;
+    return new Set(values);
+  }
+
+  function getAxisSelection(optionsEl) {
+    const values = getCheckedValues(optionsEl);
+    const total = optionsEl.querySelectorAll('input[type="checkbox"]').length;
+    if (values.length === 0 || total === 0) return new Set(["__none__"]);
+    if (values.length === total) return null;
+    return new Set(values);
+  }
+
+  function getSelectedProducts() {
+    return getAxisSelection(productOptions);
+  }
+
+  function getSelectedPersonas() {
+    return getAxisSelection(personaOptions);
+  }
+
+  function getSelectedExecs() {
+    return getAxisSelection(execOptions);
+  }
+
+  function isStatusVisible(cat) {
+    const id = STATUS_FILTER_IDS[cat];
+    if (!id) return true;
+    const el = document.getElementById(id);
+    return el ? el.checked : true;
+  }
+
+  function getSearchTerm() {
+    return searchInput.value.trim().toLowerCase();
+  }
+
+  function computeVisibility() {
+    const projects = getSelectedProjects();
+    const milestones = getSelectedMilestones();
+    const products = getSelectedProducts();
+    const personas = getSelectedPersonas();
+    const execs = getSelectedExecs();
+    const term = getSearchTerm();
+    const showParent = document.getElementById("edge-parent").checked;
+    const showBlocks = document.getElementById("edge-blocks").checked;
+    const includeLinked = document.getElementById("include-linked").checked;
+    const nodeMap = new Map(graphData.nodes.map(n => [n.id, n]));
+
+    const visibleNodes = new Set();
+    const linkTargets = new Set();
+    const searchMatch = new Set();
+    const neighbourDim = new Set();
+
+    for (const node of graphData.nodes) {
+      if (!nodePassesFilters(node, projects, milestones, products, personas, execs, term ? "" : "")) continue;
+
+      if (term) {
+        const match = node.identifier.toLowerCase().includes(term) ||
+          node.title.toLowerCase().includes(term);
+        if (match) searchMatch.add(node.id);
+      } else {
+        visibleNodes.add(node.id);
+      }
+    }
+
+    if (term) {
+      for (const id of searchMatch) visibleNodes.add(id);
+      for (const link of graphData.rawLinks) {
+        if (searchMatch.has(link.source) && !searchMatch.has(link.target)) neighbourDim.add(link.target);
+        if (searchMatch.has(link.target) && !searchMatch.has(link.source)) neighbourDim.add(link.source);
+      }
+    }
+
+    if (includeLinked && !term) {
+      for (const id of [...visibleNodes]) {
+        const node = nodeMap.get(id);
+        if (!node) continue;
+        const peers = [
+          ...(node.parentId ? [node.parentId] : []),
+          ...node.children,
+          ...node.blocks,
+          ...node.blockedBy,
+        ];
+        for (const pid of peers) {
+          if (nodeMap.has(pid) && !visibleNodes.has(pid)) {
+            visibleNodes.add(pid);
+            linkTargets.add(pid);
+          }
+        }
+      }
+    }
+
+    const visibleLinks = graphData.rawLinks.filter(link => {
+      if (!visibleNodes.has(link.source) || !visibleNodes.has(link.target)) return false;
+      if (link.type === "parent" && !showParent) return false;
+      if (link.type === "blocks" && !showBlocks) return false;
+      return true;
+    });
+
+    return { visibleNodes, linkTargets, searchMatch, neighbourDim, visibleLinks, hasSearch: !!term };
+  }
+
+  /* ── D3 rendering ── */
+  function initSvg() {
+    d3.select("#graph-container svg").remove();
+    width = container.clientWidth;
+    height = container.clientHeight;
+
+    svg = d3.select("#graph-container")
+      .insert("svg", "#loading-overlay")
+      .attr("width", width)
+      .attr("height", height);
+
+    const defs = svg.append("defs");
+    defs.append("marker")
+      .attr("id", "arrow-blocks")
+      .attr("viewBox", "0 -5 10 10")
+      .attr("refX", 16)
+      .attr("refY", 0)
+      .attr("markerWidth", 6)
+      .attr("markerHeight", 6)
+      .attr("orient", "auto")
+      .append("path")
+      .attr("d", "M0,-5L10,0L0,5")
+      .attr("fill", "#e44");
+
+    g = svg.append("g");
+
+    zoomBehavior = d3.zoom()
+      .scaleExtent([0.1, 8])
+      .on("zoom", (event) => {
+        g.attr("transform", event.transform);
+      });
+
+    svg.call(zoomBehavior)
+      .on("click", (event) => {
+        if (event.target === svg.node() || event.target.tagName === "rect") {
+          deselectNode();
+        }
+      });
+
+    svg.insert("rect", ":first-child")
+      .attr("width", "100%")
+      .attr("height", "100%")
+      .attr("fill", "#fafafa");
+  }
+
+  function legendItem(iconHtml, labelText) {
+    const div = document.createElement("div");
+    div.className = "legend-item";
+    const icon = document.createElement("div");
+    icon.className = "legend-icon";
+    icon.innerHTML = iconHtml;
+    const label = document.createElement("span");
+    label.textContent = labelText;
+    div.appendChild(icon);
+    div.appendChild(label);
+    return div;
+  }
+
+  function buildStaticLegend() {
+    legendNodes.innerHTML = "";
+    legendEdges.innerHTML = "";
+    legendFill.innerHTML = "";
+
+    const sampleFill = "#4e79a7";
+
+    legendNodes.appendChild(legendItem(
+      `<svg width="20" height="20" viewBox="-10 -10 20 20"><circle r="7" fill="${sampleFill}" stroke="#555" stroke-width="1"/></svg>`,
+      "Issue (no sub-issues)"
+    ));
+    legendNodes.appendChild(legendItem(
+      `<svg width="20" height="20" viewBox="-10 -10 20 20"><rect x="-6" y="-6" width="12" height="12" transform="rotate(45)" fill="${sampleFill}" stroke="#555" stroke-width="1"/></svg>`,
+      "Parent (has sub-issues)"
+    ));
+    legendNodes.appendChild(legendItem(
+      `<svg width="20" height="20" viewBox="-10 -10 20 20"><circle r="9" fill="${sampleFill}" stroke="#e44" stroke-width="2"/></svg>`,
+      "Urgent priority (red border)"
+    ));
+    legendNodes.appendChild(legendItem(
+      `<svg width="20" height="20" viewBox="-10 -10 20 20"><circle r="5" fill="${sampleFill}" stroke="#555" stroke-width="1"/><circle r="8" fill="none" stroke="#555" stroke-width="1" opacity="0.5"/></svg>`,
+      "Size = priority (larger = more urgent)"
+    ));
+    legendNodes.appendChild(legendItem(
+      `<svg width="20" height="20" viewBox="-10 -10 20 20"><circle r="7" fill="${sampleFill}" stroke="#555" stroke-width="1" stroke-dasharray="4 3"/></svg>`,
+      "Dashed outline — linked target (peer hidden by filters; shown when “Linked targets” is on)"
+    ));
+    legendNodes.appendChild(legendItem(
+      `<svg width="20" height="20" viewBox="-10 -10 20 20"><circle r="7" fill="${sampleFill}" stroke="#555" stroke-width="1" stroke-dasharray="3 2"/></svg>`,
+      "Dashed outline — pinned (dragged; double-click to unpin)"
+    ));
+    legendNodes.appendChild(legendItem(
+      `<svg width="20" height="20" viewBox="-10 -10 20 20"><circle r="7" fill="${sampleFill}" stroke="#555" stroke-width="1" opacity="0.4"/></svg>`,
+      "Faded — search neighbour of a match"
+    ));
+    legendNodes.appendChild(legendItem(
+      `<svg width="20" height="20" viewBox="-10 -10 20 20"><circle r="7" fill="${sampleFill}" stroke="#555" stroke-width="1" opacity="0.15"/></svg>`,
+      "Very faint — visible but not a search match"
+    ));
+
+    legendEdges.appendChild(legendItem(
+      `<svg width="22" height="14" viewBox="0 0 22 14"><line x1="2" y1="7" x2="20" y2="7" stroke="#888" stroke-width="1.5" opacity="0.6"/></svg>`,
+      "Grey line — parent → child"
+    ));
+    legendEdges.appendChild(legendItem(
+      `<svg width="22" height="14" viewBox="0 0 22 14"><defs><marker id="leg-arr" viewBox="0 -5 10 10" refX="8" refY="0" markerWidth="5" markerHeight="5" orient="auto"><path d="M0,-4L8,0L0,4" fill="#e44"/></marker></defs><line x1="2" y1="7" x2="18" y2="7" stroke="#e44" stroke-width="1.5" marker-end="url(#leg-arr)"/></svg>`,
+      "Red arrow — blocks (blocker → blocked)"
+    ));
+
+    legendFill.appendChild(legendItem(
+      `<div class="legend-swatch" style="background:${sampleFill}"></div>`,
+      "Node fill = Linear project (palette below)"
+    ));
+  }
+
+  function buildProjectLegend(projects, colorScale) {
+    legendProjects.innerHTML = "";
+    for (const p of projects) {
+      const div = document.createElement("div");
+      div.className = "legend-item";
+      const swatch = document.createElement("div");
+      swatch.className = "legend-swatch";
+      swatch.style.background = colorScale(p);
+      const label = document.createElement("span");
+      label.textContent = p;
+      div.appendChild(swatch);
+      div.appendChild(label);
+      legendProjects.appendChild(div);
+    }
+  }
+
+  function renderGraph() {
+    initSvg();
+
+    const projects = [...new Set(graphData.nodes.map(n => n.project))].sort();
+    const colorScale = d3.scaleOrdinal(d3.schemeTableau10).domain(projects);
+    buildStaticLegend();
+    buildProjectLegend(projects, colorScale);
+
+    const { visibleNodes, linkTargets, searchMatch, neighbourDim, visibleLinks, hasSearch } = computeVisibility();
+
+    const filteredNodes = graphData.nodes.filter(n => visibleNodes.has(n.id));
+    const nodeById = new Map(filteredNodes.map(n => [n.id, n]));
+
+    const resolvedLinks = visibleLinks.map(link => ({
+      source: nodeById.get(link.source),
+      target: nodeById.get(link.target),
+      type: link.type,
+    })).filter(l => l.source && l.target);
+
+    if (simulation) simulation.stop();
+
+    simulation = d3.forceSimulation(filteredNodes)
+      .force("link", d3.forceLink(resolvedLinks)
+        .id(d => d.id)
+        .distance(d => d.type === "parent" ? 40 : 80)
+        .strength(d => d.type === "parent" ? 0.4 : 0.6))
+      .force("charge", d3.forceManyBody().strength(-120))
+      .force("center", d3.forceCenter(width / 2, height / 2))
+      .force("collide", d3.forceCollide().radius(d => PRIORITY_RADIUS[d.priority] + 4));
+
+    for (const node of filteredNodes) {
+      if (pinnedNodes.has(node.id)) {
+        node.fx = node.x;
+        node.fy = node.y;
+      }
+    }
+
+    const linkG = g.append("g").attr("class", "links");
+
+    const link = linkG.selectAll("line")
+      .data(resolvedLinks, d => `${d.source.id}-${d.target.id}-${d.type}`)
+      .join("line")
+      .attr("class", d => d.type === "blocks" ? "link-blocks" : "link-parent")
+      .attr("opacity", d => d.type === "parent" ? 0.3 : 1)
+      .attr("marker-end", d => d.type === "blocks" ? "url(#arrow-blocks)" : null);
+
+    const nodeG = g.append("g").attr("class", "nodes");
+
+    const node = nodeG.selectAll("g")
+      .data(filteredNodes, d => d.id)
+      .join("g")
+      .attr("class", d => {
+        let cls = "node-group";
+        if (linkTargets.has(d.id)) cls += " link-target";
+        if (hasSearch && !searchMatch.has(d.id)) {
+          cls += neighbourDim.has(d.id) ? " neighbour-dim" : " dimmed";
+        }
+        if (pinnedNodes.has(d.id)) cls += " pinned";
+        return cls;
+      })
+      .call(d3.drag()
+        .on("start", dragStarted)
+        .on("drag", dragged)
+        .on("end", dragEnded))
+      .on("click", (event, d) => {
+        event.stopPropagation();
+        selectNode(d);
+      })
+      .on("dblclick", (event, d) => {
+        event.stopPropagation();
+        unpinNode(d);
+      });
+
+    node.each(function (d) {
+      const el = d3.select(this);
+      const r = PRIORITY_RADIUS[d.priority];
+      const fill = colorScale(d.project);
+      const stroke = d.priority === 1 ? "#e44" : "#555";
+      const sw = d.priority === 1 ? 2 : 1;
+
+      el.selectAll("*").remove();
+
+      if (d.isParent) {
+        const size = r * 1.4;
+        el.append("rect")
+          .attr("class", "diamond-shape")
+          .attr("width", size)
+          .attr("height", size)
+          .attr("x", -size / 2)
+          .attr("y", -size / 2)
+          .attr("transform", "rotate(45)")
+          .attr("fill", fill)
+          .attr("stroke", stroke)
+          .attr("stroke-width", sw);
+      } else {
+        el.append("circle")
+          .attr("r", r)
+          .attr("fill", fill)
+          .attr("stroke", stroke)
+          .attr("stroke-width", sw);
+      }
+
+      el.append("text")
+        .attr("class", "node-label")
+        .attr("opacity", 0)
+        .text(d.identifier);
+    });
+
+    node.on("mouseenter", function (event, d) {
+      d3.select(this).select(".node-label").attr("opacity", 1);
+    }).on("mouseleave", function () {
+      d3.select(this).select(".node-label").attr("opacity", 0);
+    });
+
+    simulation.on("tick", () => {
+      link
+        .attr("x1", d => d.source.x)
+        .attr("y1", d => d.source.y)
+        .attr("x2", d => d.target.x)
+        .attr("y2", d => d.target.y);
+
+      node.attr("transform", d => `translate(${d.x},${d.y})`);
+    });
+  }
+
+  function dragStarted(event, d) {
+    if (!event.active) simulation.alphaTarget(0.3).restart();
+    d.fx = d.x;
+    d.fy = d.y;
+    pinnedNodes.add(d.id);
+    d.pinned = true;
+  }
+
+  function dragged(event, d) {
+    d.fx = event.x;
+    d.fy = event.y;
+  }
+
+  function dragEnded(event, d) {
+    if (!event.active) simulation.alphaTarget(0);
+  }
+
+  function unpinNode(d) {
+    pinnedNodes.delete(d.id);
+    d.fx = null;
+    d.fy = null;
+    d.pinned = false;
+    d3.selectAll(".node-group").filter(n => n.id === d.id).classed("pinned", false);
+    simulation.alpha(0.3).restart();
+  }
+
+  /* ── Side panel ── */
+  function linkLabel(id) {
+    const node = graphData.nodes.find(n => n.id === id);
+    if (!node) {
+      return `<a class="focus-link" data-focus="${id}">${escapeHtml(id)}</a>`;
+    }
+    const projects = getSelectedProjects();
+    const milestones = getSelectedMilestones();
+    const products = getSelectedProducts();
+    const personas = getSelectedPersonas();
+    const execs = getSelectedExecs();
+    const visible = nodePassesFilters(node, projects, milestones, products, personas, execs, "");
+    const suffix = visible ? "" : ` (${node.state?.name || "hidden"})`;
+    return `<a class="focus-link${visible ? "" : " hidden-link"}" data-focus="${id}">${escapeHtml(id)}${escapeHtml(suffix)}</a>`;
+  }
+
+  function selectNode(d) {
+    selectedNodeId = d.id;
+    sidePanel.classList.add("open");
+
+    const linearUrl = `https://linear.app/lumogis/issue/${d.identifier}`;
+    const priorityName = PRIORITY_NAMES[d.priority] ?? "None";
+
+    let html = `<h2><a href="${linearUrl}" target="_blank" rel="noopener">${d.identifier}</a></h2>`;
+    html += `<p style="font-size:12px;margin-bottom:8px;line-height:1.4">${escapeHtml(d.title)}</p>`;
+    html += `<div class="meta">`;
+    html += metaRow("Status", escapeHtml(d.state?.name || "—"));
+    html += metaRow("Priority", priorityName);
+    html += metaRow("Project", escapeHtml(d.project));
+    html += `</div>`;
+
+    if (d.labels.length) {
+      html += `<div>${d.labels.map(l => `<span class="pill">${escapeHtml(l)}</span>`).join("")}</div>`;
+    }
+
+    if (d.parentId) {
+      html += `<section><h3>Parent</h3>${linkLabel(d.parentId)}</section>`;
+    }
+
+    if (d.children.length) {
+      html += `<section><h3>Sub-issues</h3>`;
+      for (const id of d.children) html += linkLabel(id);
+      html += `</section>`;
+    }
+
+    if (d.blocks.length) {
+      html += `<section><h3>Blocks</h3>`;
+      for (const id of d.blocks) html += linkLabel(id);
+      html += `</section>`;
+    }
+
+    if (d.blockedBy.length) {
+      html += `<section><h3>Blocked by</h3>`;
+      for (const id of d.blockedBy) html += linkLabel(id);
+      html += `</section>`;
+    }
+
+    if (d.related.length) {
+      html += `<section><h3>Related</h3>`;
+      for (const id of d.related) html += linkLabel(id);
+      html += `<p style="font-size:11px;color:#888;margin-top:6px">Related links are not drawn on the graph.</p></section>`;
+    }
+
+    if (!d.parentId && !d.children.length && !d.blocks.length && !d.blockedBy.length && !d.related.length) {
+      html += `<section><p style="font-size:12px;color:#888">No parent, blocks, or related links in Linear.</p></section>`;
+    }
+
+    panelContent.innerHTML = html;
+
+    panelContent.querySelectorAll(".focus-link").forEach(el => {
+      el.addEventListener("click", (e) => {
+        e.preventDefault();
+        focusNode(el.dataset.focus);
+      });
+    });
+  }
+
+  function metaRow(label, value) {
+    return `<div class="meta-row"><span class="meta-label">${label}</span><span>${value}</span></div>`;
+  }
+
+  function escapeHtml(str) {
+    const div = document.createElement("div");
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  function deselectNode() {
+    selectedNodeId = null;
+    sidePanel.classList.remove("open");
+  }
+
+  function focusNode(identifier) {
+    const node = graphData.nodes.find(n => n.id === identifier);
+    if (!node || node.x == null) return;
+
+    selectNode(node);
+
+    const scale = 1.5;
+    const tx = width / 2 - node.x * scale;
+    const ty = height / 2 - node.y * scale;
+
+    svg.transition().duration(600).call(
+      zoomBehavior.transform,
+      d3.zoomIdentity.translate(tx, ty).scale(scale)
+    );
+
+    const nodeEl = g.selectAll(".node-group").filter(d => d.id === identifier);
+    nodeEl.selectAll(".pulse-ring").remove();
+    const r = PRIORITY_RADIUS[node.priority] + 2;
+    nodeEl.append("circle")
+      .attr("class", "pulse-ring")
+      .attr("r", r)
+      .on("end", function () { d3.select(this).remove(); });
+  }
+
+  /* ── Data loading ── */
+  async function loadData() {
+    hideError();
+    showLoading("Starting…");
+    pinnedNodes.clear();
+    deselectNode();
+
+    try {
+      allIssues = await paginateAll(ISSUES_QUERY, "issues", "issues");
+      graphData = buildGraphData(allIssues);
+      populateProjectSelect(graphData.nodes);
+      populateMilestoneSelect(graphData.nodes);
+      populateProductSelect(graphData.nodes);
+      populatePersonaSelect(graphData.nodes);
+      populateExecSelect(graphData.nodes);
+      enableFilters();
+      renderGraph();
+      showAuditBanner(auditRelationships());
+    } catch (err) {
+      showError(`Failed to load data: ${err.message}`);
+    } finally {
+      hideLoading();
+    }
+  }
+
+  /* ── Event listeners ── */
+  function startLoad() {
+    const key = apiKeyInput.value.trim();
+    if (!key) {
+      showError("Please enter your Linear API key.");
+      return;
+    }
+    apiKey = key.replace(/^Bearer\s+/i, "").trim();
+    persistApiKey(apiKey);
+    closeAuthMenu();
+    loadData();
+  }
+
+  document.getElementById("load-btn").addEventListener("click", startLoad);
+  document.getElementById("clear-key-btn").addEventListener("click", clearStoredApiKey);
+  apiKeyInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") startLoad();
+  });
+
+  document.getElementById("refresh-btn").addEventListener("click", () => {
+    if (!apiKey) return;
+    loadData();
+  });
+
+  if (loadStoredApiKey()) {
+    startLoad();
+  }
+
+  document.getElementById("panel-close").addEventListener("click", deselectNode);
+  document.getElementById("audit-dismiss").addEventListener("click", () => {
+    document.getElementById("audit-banner").style.display = "none";
+  });
+
+  const filterEls = [
+    document.getElementById("st-backlog"),
+    document.getElementById("st-progress"),
+    document.getElementById("st-review"),
+    document.getElementById("st-done"),
+    document.getElementById("st-cancelled"),
+    document.getElementById("edge-parent"),
+    document.getElementById("edge-blocks"),
+    document.getElementById("include-linked"),
+    searchInput,
+  ];
+
+  for (const el of filterEls) {
+    el.addEventListener("change", () => {
+      if (graphData.nodes.length) renderGraph();
+    });
+    el.addEventListener("input", () => {
+      if (graphData.nodes.length) renderGraph();
+    });
+  }
+
+  window.addEventListener("resize", () => {
+    if (graphData.nodes.length) renderGraph();
+  });
+
+  buildStaticLegend();
+
+})();
+  </script>
+</body>
+</html>

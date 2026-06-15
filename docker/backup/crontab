@@ -1,0 +1,2 @@
+# Default schedule — overridden at container start from BACKUP_SCHEDULE_CRON.
+0 3 * * * root /scripts/backup/backup.sh run && /scripts/backup/backup.sh prune

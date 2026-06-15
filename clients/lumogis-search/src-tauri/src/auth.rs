@@ -215,6 +215,13 @@ pub fn http_client() -> Result<reqwest::Client, String> {
         .map_err(|e| e.to_string())
 }
 
+fn upload_http_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .build()
+        .map_err(|e| e.to_string())
+}
+
 fn map_reqwest_error(e: reqwest::Error) -> String {
     if e.is_timeout() {
         "timeout".into()
@@ -671,7 +678,7 @@ pub async fn upload_ingest_file(
         "{}/api/v1/ingest/upload",
         normalise_base_url(base.to_string())
     );
-    let client = http_client()?;
+    let client = upload_http_client()?;
 
     let send_multipart = |token: Option<&str>| {
         let part = reqwest::multipart::Part::bytes(bytes.clone()).file_name(file_name.clone());

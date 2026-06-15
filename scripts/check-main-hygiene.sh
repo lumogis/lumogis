@@ -165,4 +165,20 @@ if [[ "${#missing_versions[@]}" -gt 0 ]]; then
   die "CHANGELOG.md missing release-log version(s): ${missing_versions[*]}"
 fi
 
+# --- On private main, [Unreleased] must be empty (release entries live in versioned sections)
+if [[ "$current_branch" == "main" ]]; then
+  unreleased_body="$(
+    awk '
+      /^## \[Unreleased\]/ { in_unreleased=1; next }
+      in_unreleased && /^## \[/ { exit }
+      in_unreleased { print }
+    ' "$CHANGELOG"
+  )"
+  # Strip horizontal rules and whitespace; any remaining prose means draft release notes leaked onto main.
+  unreleased_stripped="$(echo "$unreleased_body" | sed -E '/^[[:space:]]*---[[:space:]]*$/d' | sed '/^[[:space:]]*$/d')"
+  if [[ -n "$unreleased_stripped" ]]; then
+    die "CHANGELOG.md [Unreleased] on main must be empty after publish — move draft notes to dev or cut a versioned section"
+  fi
+fi
+
 echo "check-main-hygiene.sh: OK"

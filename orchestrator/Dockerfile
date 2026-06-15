@@ -3,7 +3,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr poppler-utils curl git nodejs && rm -rf /var/lib/apt/lists/* \
     && git config --global --add safe.directory '*'
 WORKDIR /app
-COPY orchestrator/requirements.txt .
+COPY orchestrator/requirements-core.txt orchestrator/requirements.txt .
 RUN pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
 COPY orchestrator/ .
 COPY config/ /opt/lumogis/config/

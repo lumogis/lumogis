@@ -28,6 +28,8 @@ services:
       - .:/project
       # ai-workspace/inbox → /workspace/inbox (auto-ingest); see .env.example (LUMOGIS_INBOX_*).
       - ./ai-workspace:/workspace
+      # DR backup mount — relocation via BACKUP_HOST_DIR on host (LUM-185).
+      - ${BACKUP_HOST_DIR:-./ai-workspace/backups}:/workspace/backups
       # HuggingFace model cache — persists BGE reranker weights across container rebuilds
       - hf_cache:/root/.cache/huggingface
     depends_on:
@@ -232,6 +234,38 @@ services:
   #   environment:
   #     NTFY_BASE_URL: http://localhost:8088
   #     NTFY_CACHE_FILE: /var/cache/ntfy/cache.db
+
+  backup:
+    build:
+      context: .
+      dockerfile: docker/backup/Dockerfile
+      args:
+        # Bump together with FALKORDB_IMAGE in docker-compose.falkordb.yml (.env.example).
+        FALKORDB_IMAGE: ${FALKORDB_IMAGE:-falkordb/falkordb:v4.18.1}
+    env_file: .env
+    environment:
+      BACKUP_DIR: /backups
+      BACKUP_ENABLED: ${BACKUP_ENABLED:-true}
+      BACKUP_SCHEDULE_CRON: ${BACKUP_SCHEDULE_CRON:-0 3 * * *}
+      BACKUP_KEEP_DAILY: ${BACKUP_KEEP_DAILY:-7}
+      BACKUP_KEEP_WEEKLY: ${BACKUP_KEEP_WEEKLY:-4}
+      BACKUP_MAX_FAILED_SNAPSHOTS: ${BACKUP_MAX_FAILED_SNAPSHOTS:-3}
+      BACKUP_STALE_HOURS: ${BACKUP_STALE_HOURS:-24}
+      BACKUP_INCLUDE_FALKORDB: ${BACKUP_INCLUDE_FALKORDB:-}
+      POSTGRES_HOST: postgres
+      QDRANT_URL: http://qdrant:6333
+      GRAPH_MODE: ${GRAPH_MODE:-disabled}
+      FALKORDB_URL: ${FALKORDB_URL:-}
+      LUMOGIS_VERSION: ${LUMOGIS_VERSION:-dev}
+      TZ: ${TZ:-UTC}
+    volumes:
+      - ${BACKUP_HOST_DIR:-./ai-workspace/backups}:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   caddy_data:

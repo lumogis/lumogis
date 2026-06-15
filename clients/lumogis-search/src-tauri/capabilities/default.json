@@ -6,6 +6,8 @@
   "permissions": [
     "core:window:default",
     "core:window:allow-close",
+    "core:window:allow-start-dragging",
+    "core:window:allow-set-focus",
     "core:event:default",
     "core:webview:default",
     "global-shortcut:allow-register",

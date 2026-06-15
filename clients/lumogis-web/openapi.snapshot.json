@@ -732,6 +732,149 @@
         "title": "AuditReverseResponse",
         "type": "object"
       },
+      "BackupStatusResponse": {
+        "description": "Response for ``GET /api/v1/admin/diagnostics/backup-status``.",
+        "properties": {
+          "age_hours": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Age Hours"
+          },
+          "backup_dir": {
+            "title": "Backup Dir",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "last_snapshot_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Snapshot Id"
+          },
+          "last_success_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Success At"
+          },
+          "last_verify_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "ok",
+                  "failed",
+                  "unknown"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Verify Status"
+          },
+          "stale": {
+            "default": false,
+            "title": "Stale",
+            "type": "boolean"
+          },
+          "stale_threshold_hours": {
+            "title": "Stale Threshold Hours",
+            "type": "number"
+          },
+          "stores": {
+            "items": {
+              "$ref": "#/components/schemas/BackupStatusStoreItem"
+            },
+            "title": "Stores",
+            "type": "array"
+          },
+          "total_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Bytes"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/AdminDiagnosticsWarning"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "enabled",
+          "backup_dir",
+          "stale_threshold_hours"
+        ],
+        "title": "BackupStatusResponse",
+        "type": "object"
+      },
+      "BackupStatusStoreItem": {
+        "description": "Per-store coverage in DR backup status (LUM-185).",
+        "properties": {
+          "id": {
+            "enum": [
+              "postgres",
+              "qdrant",
+              "falkordb"
+            ],
+            "title": "Id",
+            "type": "string"
+          },
+          "present": {
+            "title": "Present",
+            "type": "boolean"
+          },
+          "skip_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skip Reason"
+          },
+          "skipped": {
+            "default": false,
+            "title": "Skipped",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "present"
+        ],
+        "title": "BackupStatusStoreItem",
+        "type": "object"
+      },
       "Body_transcribe_voice_api_v1_voice_transcribe_post": {
         "properties": {
           "file": {
@@ -1458,6 +1601,15 @@
         ],
         "title": "CaptureTranscriptSummary",
         "type": "object"
+      },
+      "ChannelId": {
+        "enum": [
+          "ntfy",
+          "web_push",
+          "in_app"
+        ],
+        "title": "ChannelId",
+        "type": "string"
       },
       "ChatCompletionRequest": {
         "additionalProperties": false,
@@ -3574,68 +3726,6 @@
         "title": "MeOnboardingResponse",
         "type": "object"
       },
-      "MeWowPatchRequest": {
-        "additionalProperties": false,
-        "description": "Body for ``PATCH /api/v1/me/wow-state`` — v1 only records dismissal.",
-        "properties": {
-          "dismissed": {
-            "const": true,
-            "title": "Dismissed",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "dismissed"
-        ],
-        "title": "MeWowPatchRequest",
-        "type": "object"
-      },
-      "MeWowStateResponse": {
-        "description": "Wow-moment readiness and dismissal state for the authenticated user.",
-        "properties": {
-          "entities_ready": {
-            "title": "Entities Ready",
-            "type": "boolean"
-          },
-          "onboarding_completed_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Onboarding Completed At"
-          },
-          "top_entities": {
-            "items": {
-              "$ref": "#/components/schemas/WowTopEntity"
-            },
-            "maxItems": 5,
-            "title": "Top Entities",
-            "type": "array"
-          },
-          "wow_dismissed_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Wow Dismissed At"
-          }
-        },
-        "required": [
-          "entities_ready"
-        ],
-        "title": "MeWowStateResponse",
-        "type": "object"
-      },
       "MePasswordChangeRequest": {
         "description": "Body for ``POST /api/v1/me/password`` — policy enforced again in :mod:`services.users`.",
         "properties": {
@@ -3814,6 +3904,68 @@
           "by_source"
         ],
         "title": "MeToolsSummary",
+        "type": "object"
+      },
+      "MeWowPatchRequest": {
+        "additionalProperties": false,
+        "description": "Body for ``PATCH /api/v1/me/wow-state`` — v1 only records dismissal.",
+        "properties": {
+          "dismissed": {
+            "const": true,
+            "title": "Dismissed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "dismissed"
+        ],
+        "title": "MeWowPatchRequest",
+        "type": "object"
+      },
+      "MeWowStateResponse": {
+        "description": "Wow-moment readiness and dismissal state for the authenticated user.",
+        "properties": {
+          "entities_ready": {
+            "title": "Entities Ready",
+            "type": "boolean"
+          },
+          "onboarding_completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Onboarding Completed At"
+          },
+          "top_entities": {
+            "items": {
+              "$ref": "#/components/schemas/WowTopEntity"
+            },
+            "maxItems": 5,
+            "title": "Top Entities",
+            "type": "array"
+          },
+          "wow_dismissed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wow Dismissed At"
+          }
+        },
+        "required": [
+          "entities_ready"
+        ],
+        "title": "MeWowStateResponse",
         "type": "object"
       },
       "MemorySearchHit": {
@@ -4078,6 +4230,543 @@
         "title": "NewUserSpec",
         "type": "object"
       },
+      "NotificationPreferenceCell": {
+        "properties": {
+          "channel": {
+            "$ref": "#/components/schemas/ChannelId"
+          },
+          "effective": {
+            "title": "Effective",
+            "type": "boolean"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "mutable": {
+            "title": "Mutable",
+            "type": "boolean"
+          },
+          "tier_default": {
+            "title": "Tier Default",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "channel",
+          "enabled",
+          "effective",
+          "mutable",
+          "tier_default"
+        ],
+        "title": "NotificationPreferenceCell",
+        "type": "object"
+      },
+      "NotificationPreferencePatchItem": {
+        "additionalProperties": false,
+        "properties": {
+          "channel": {
+            "$ref": "#/components/schemas/ChannelId"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "notification_type": {
+            "$ref": "#/components/schemas/NotificationType"
+          }
+        },
+        "required": [
+          "notification_type",
+          "channel",
+          "enabled"
+        ],
+        "title": "NotificationPreferencePatchItem",
+        "type": "object"
+      },
+      "NotificationPreferencesPatch": {
+        "additionalProperties": false,
+        "properties": {
+          "preferences": {
+            "items": {
+              "$ref": "#/components/schemas/NotificationPreferencePatchItem"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Preferences",
+            "type": "array"
+          }
+        },
+        "required": [
+          "preferences"
+        ],
+        "title": "NotificationPreferencesPatch",
+        "type": "object"
+      },
+      "NotificationPreferencesResponse": {
+        "properties": {
+          "quiet_hours_end": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quiet Hours End"
+          },
+          "quiet_hours_start": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quiet Hours Start"
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone"
+          },
+          "types": {
+            "items": {
+              "$ref": "#/components/schemas/NotificationTypePrefsRow"
+            },
+            "title": "Types",
+            "type": "array"
+          }
+        },
+        "required": [
+          "types"
+        ],
+        "title": "NotificationPreferencesResponse",
+        "type": "object"
+      },
+      "NotificationTier": {
+        "enum": [
+          "urgent",
+          "action_required",
+          "informational",
+          "background"
+        ],
+        "title": "NotificationTier",
+        "type": "string"
+      },
+      "NotificationTierPolicyPatch": {
+        "additionalProperties": false,
+        "properties": {
+          "bypass_quiet_hours": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bypass Quiet Hours"
+          },
+          "default_channels": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ChannelId"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Channels"
+          }
+        },
+        "title": "NotificationTierPolicyPatch",
+        "type": "object"
+      },
+      "NotificationTierPolicyRow": {
+        "properties": {
+          "bypass_quiet_hours": {
+            "title": "Bypass Quiet Hours",
+            "type": "boolean"
+          },
+          "default_channels": {
+            "items": {
+              "$ref": "#/components/schemas/ChannelId"
+            },
+            "title": "Default Channels",
+            "type": "array"
+          },
+          "tier": {
+            "$ref": "#/components/schemas/NotificationTier"
+          }
+        },
+        "required": [
+          "tier",
+          "bypass_quiet_hours",
+          "default_channels"
+        ],
+        "title": "NotificationTierPolicyRow",
+        "type": "object"
+      },
+      "NotificationType": {
+        "enum": [
+          "routine_elevation",
+          "signal_received",
+          "signal_digest",
+          "action_executed",
+          "security_alert",
+          "consolidation_done"
+        ],
+        "title": "NotificationType",
+        "type": "string"
+      },
+      "NotificationTypePrefsRow": {
+        "properties": {
+          "channels": {
+            "items": {
+              "$ref": "#/components/schemas/NotificationPreferenceCell"
+            },
+            "title": "Channels",
+            "type": "array"
+          },
+          "notification_type": {
+            "$ref": "#/components/schemas/NotificationType"
+          },
+          "tier": {
+            "$ref": "#/components/schemas/NotificationTier"
+          }
+        },
+        "required": [
+          "notification_type",
+          "tier",
+          "channels"
+        ],
+        "title": "NotificationTypePrefsRow",
+        "type": "object"
+      },
+      "OllamaCatalogEntry": {
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "installed": {
+            "title": "Installed",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
+          }
+        },
+        "required": [
+          "name",
+          "installed",
+          "display_name"
+        ],
+        "title": "OllamaCatalogEntry",
+        "type": "object"
+      },
+      "OllamaDeleteResponse": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "status": {
+            "const": "deleted",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "name"
+        ],
+        "title": "OllamaDeleteResponse",
+        "type": "object"
+      },
+      "OllamaDiscoveryResponse": {
+        "properties": {
+          "alias_map": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Alias Map",
+            "type": "object"
+          },
+          "catalog": {
+            "items": {
+              "$ref": "#/components/schemas/OllamaCatalogEntry"
+            },
+            "title": "Catalog",
+            "type": "array"
+          },
+          "default_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Model"
+          },
+          "embedding_model": {
+            "title": "Embedding Model",
+            "type": "string"
+          },
+          "local": {
+            "items": {
+              "$ref": "#/components/schemas/OllamaLocalModel"
+            },
+            "title": "Local",
+            "type": "array"
+          }
+        },
+        "required": [
+          "local",
+          "catalog",
+          "alias_map",
+          "embedding_model"
+        ],
+        "title": "OllamaDiscoveryResponse",
+        "type": "object"
+      },
+      "OllamaLocalModel": {
+        "properties": {
+          "details": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Details"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "modified_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modified At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "OllamaLocalModel",
+        "type": "object"
+      },
+      "OllamaModelNameRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "OllamaModelNameRequest",
+        "type": "object"
+      },
+      "OllamaPullActiveResponse": {
+        "properties": {
+          "job": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OllamaPullJob"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "OllamaPullActiveResponse",
+        "type": "object"
+      },
+      "OllamaPullJob": {
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "model_name": {
+            "title": "Model Name",
+            "type": "string"
+          },
+          "progress_pct": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Progress Pct"
+          },
+          "qdrant_init_warning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Qdrant Init Warning"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "$ref": "#/components/schemas/OllamaPullJobStatus"
+          },
+          "status_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Message"
+          }
+        },
+        "required": [
+          "job_id",
+          "model_name",
+          "status"
+        ],
+        "title": "OllamaPullJob",
+        "type": "object"
+      },
+      "OllamaPullJobStatus": {
+        "enum": [
+          "pending",
+          "running",
+          "succeeded",
+          "failed"
+        ],
+        "title": "OllamaPullJobStatus",
+        "type": "string"
+      },
       "OllamaPullRequest": {
         "properties": {
           "name": {
@@ -4089,6 +4778,25 @@
           "name"
         ],
         "title": "OllamaPullRequest",
+        "type": "object"
+      },
+      "OllamaPullStartResponse": {
+        "properties": {
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "status": {
+            "const": "started",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "job_id"
+        ],
+        "title": "OllamaPullStartResponse",
         "type": "object"
       },
       "PendingApprovalsResponse": {
@@ -5155,47 +5863,6 @@
         "title": "UserPublic",
         "type": "object"
       },
-      "WowTopEntity": {
-        "description": "Top entity row for the wow discovery card.",
-        "properties": {
-          "entity_id": {
-            "description": "UUID PK — wire for LUM-161 row keys / future detail links; slice-1 UI uses name for askAboutEntity only",
-            "title": "Entity Id",
-            "type": "string"
-          },
-          "entity_type": {
-            "title": "Entity Type",
-            "type": "string"
-          },
-          "mention_count": {
-            "minimum": 0.0,
-            "title": "Mention Count",
-            "type": "integer"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "scope": {
-            "enum": [
-              "personal",
-              "shared",
-              "system"
-            ],
-            "title": "Scope",
-            "type": "string"
-          }
-        },
-        "required": [
-          "entity_id",
-          "name",
-          "entity_type",
-          "mention_count",
-          "scope"
-        ],
-        "title": "WowTopEntity",
-        "type": "object"
-      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -5515,6 +6182,47 @@
           "subscriptions"
         ],
         "title": "WebPushSubscriptionsListResponse",
+        "type": "object"
+      },
+      "WowTopEntity": {
+        "description": "Top entity row for the wow discovery card.",
+        "properties": {
+          "entity_id": {
+            "description": "UUID PK — wire for LUM-161 row keys / future detail links; slice-1 UI uses name for askAboutEntity only",
+            "title": "Entity Id",
+            "type": "string"
+          },
+          "entity_type": {
+            "title": "Entity Type",
+            "type": "string"
+          },
+          "mention_count": {
+            "minimum": 0.0,
+            "title": "Mention Count",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "scope": {
+            "enum": [
+              "personal",
+              "shared",
+              "system"
+            ],
+            "title": "Scope",
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id",
+          "name",
+          "entity_type",
+          "mention_count",
+          "scope"
+        ],
+        "title": "WowTopEntity",
         "type": "object"
       },
       "models__api_v1__ElevateRequest": {
@@ -5921,6 +6629,28 @@
         ]
       }
     },
+    "/api/v1/admin/diagnostics/backup-status": {
+      "get": {
+        "description": "Read-only DR backup snapshot status (admin-only).",
+        "operationId": "admin_backup_status_api_v1_admin_diagnostics_backup_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Admin Backup Status",
+        "tags": [
+          "admin-diagnostics"
+        ]
+      }
+    },
     "/api/v1/admin/diagnostics/credential-key-fingerprint": {
       "get": {
         "description": "Return the current household-key fingerprint + per-tier row counts.\n\nWire shape (BREAKING CHANGE per ADR\n``credential_scopes_shared_system``)::\n\n    {\n        \"current_key_version\": <int>,\n        \"rows_by_key_version\": {\n            \"user\":      {\"<int-as-string>\": <count>, ...},\n            \"household\": {\"<int-as-string>\": <count>, ...},\n            \"system\":    {\"<int-as-string>\": <count>, ...}\n        }\n    }\n\n* All three tier keys (``user``, ``household``, ``system``) are\n  **always present**, even when their inner dict is empty (``{}``).\n  Clients should branch on inner-dict emptiness, not on key\n  presence.\n* Inner keys are JSON strings (object keys); the int is the same\n  stable per-key fingerprint stored in each tier table's\n  ``key_version`` column.\n* ``current_key_version`` is a SINGLE int (the current primary key\n  fingerprint). All three tier tables seal under the same\n  ``LUMOGIS_CREDENTIAL_KEY[S]`` family, so \"current key version\"\n  is unambiguous across tiers.\n* Counts include rows whose ``connector`` is no longer in the\n  canonical :data:`connectors.registry.CONNECTORS` mapping.\n\nFailure modes (PINNED by plan §`admin_diagnostics.py` D4.1):\n\n* No usable ``LUMOGIS_CREDENTIAL_KEY[S]`` ⇒\n  ``503 credential_unavailable``.\n* Any per-tier ``count_rows_by_key_version()`` raises (transient\n  DB error, missing table mid-rollout on a multi-instance deploy,\n  etc.) ⇒ ``503 diagnostic_unavailable`` with ``{\"tier\": \"<failing tier>\"}``.\n  The endpoint does **not** return a partial response — fail-fast\n  is the safer ops posture for the rotation-progress decision the\n  operator is making.\n\nNEVER returns ciphertext, plaintext, or key bytes.",
@@ -5964,6 +6694,255 @@
         "summary": "Admin Stack Status",
         "tags": [
           "admin-diagnostics"
+        ]
+      }
+    },
+    "/api/v1/admin/notification-tier-policy": {
+      "get": {
+        "operationId": "get_notification_tier_policies_api_v1_admin_notification_tier_policy_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/NotificationTierPolicyRow"
+                  },
+                  "title": "Response Get Notification Tier Policies Api V1 Admin Notification Tier Policy Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Notification Tier Policies",
+        "tags": [
+          "v1",
+          "v1-notification-tier-policy"
+        ]
+      }
+    },
+    "/api/v1/admin/notification-tier-policy/{tier}": {
+      "patch": {
+        "operationId": "patch_notification_tier_policy_api_v1_admin_notification_tier_policy__tier__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tier",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/NotificationTier"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationTierPolicyPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationTierPolicyRow"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Notification Tier Policy",
+        "tags": [
+          "v1",
+          "v1-notification-tier-policy"
+        ]
+      }
+    },
+    "/api/v1/admin/ollama/delete": {
+      "post": {
+        "description": "Remove a locally pulled Ollama model.",
+        "operationId": "ollama_delete_v1_api_v1_admin_ollama_delete_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OllamaModelNameRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OllamaDeleteResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ollama Delete V1",
+        "tags": [
+          "admin-ollama"
+        ]
+      }
+    },
+    "/api/v1/admin/ollama/discovery": {
+      "get": {
+        "description": "Return local Ollama models and the public catalog (typed v1).",
+        "operationId": "ollama_discovery_v1_api_v1_admin_ollama_discovery_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OllamaDiscoveryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Ollama Discovery V1",
+        "tags": [
+          "admin-ollama"
+        ]
+      }
+    },
+    "/api/v1/admin/ollama/pull/async": {
+      "post": {
+        "description": "Start an async Ollama pull; poll job status for progress.",
+        "operationId": "ollama_pull_async_v1_api_v1_admin_ollama_pull_async_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OllamaModelNameRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OllamaPullStartResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ollama Pull Async V1",
+        "tags": [
+          "admin-ollama"
+        ]
+      }
+    },
+    "/api/v1/admin/ollama/pull/jobs/active": {
+      "get": {
+        "description": "Return the latest pending or running pull job, if any.",
+        "operationId": "ollama_pull_job_active_v1_api_v1_admin_ollama_pull_jobs_active_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OllamaPullActiveResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Ollama Pull Job Active V1",
+        "tags": [
+          "admin-ollama"
+        ]
+      }
+    },
+    "/api/v1/admin/ollama/pull/jobs/{job_id}": {
+      "get": {
+        "description": "Poll async Ollama pull job status.",
+        "operationId": "ollama_pull_job_get_v1_api_v1_admin_ollama_pull_jobs__job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OllamaPullJob"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ollama Pull Job Get V1",
+        "tags": [
+          "admin-ollama"
         ]
       }
     },
@@ -9310,6 +10289,68 @@
         ]
       }
     },
+    "/api/v1/me/notification-preferences": {
+      "get": {
+        "operationId": "get_my_notification_preferences_api_v1_me_notification_preferences_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationPreferencesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get My Notification Preferences",
+        "tags": [
+          "v1",
+          "v1-notification-preferences"
+        ]
+      },
+      "patch": {
+        "operationId": "patch_my_notification_preferences_api_v1_me_notification_preferences_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationPreferencesPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationPreferencesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch My Notification Preferences",
+        "tags": [
+          "v1",
+          "v1-notification-preferences"
+        ]
+      }
+    },
     "/api/v1/me/notifications": {
       "get": {
         "description": "Curated ntfy + Web Push status for the current user.\n\nDoes **not** return credential payloads, tokens, or subscription endpoints.\nSee :func:`services.me_notifications.build_me_notifications_response`.",
@@ -9389,68 +10430,6 @@
           }
         },
         "summary": "Mark first-run onboarding complete",
-        "tags": [
-          "me"
-        ]
-      }
-    },
-    "/api/v1/me/wow-state": {
-      "get": {
-        "description": "Return wow card eligibility inputs for the caller (LUM-216).\n\n``AUTH_ENABLED=false`` returns synthetic readiness for QA.",
-        "operationId": "get_my_wow_state_api_v1_me_wow_state_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MeWowStateResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "First wow-moment path readiness and dismissal state",
-        "tags": [
-          "me"
-        ]
-      },
-      "patch": {
-        "description": "Idempotently record wow-path dismissal (LUM-216).",
-        "operationId": "patch_my_wow_state_api_v1_me_wow_state_patch",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/MeWowPatchRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MeWowStateResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Dismiss the first wow-moment path",
         "tags": [
           "me"
         ]
@@ -9741,6 +10720,68 @@
           }
         },
         "summary": "Unified tool catalog (read-only)",
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/wow-state": {
+      "get": {
+        "description": "Return wow card eligibility inputs for the caller (LUM-216).\n\n``AUTH_ENABLED=false`` returns synthetic readiness for QA.",
+        "operationId": "get_my_wow_state_api_v1_me_wow_state_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeWowStateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "First wow-moment path readiness and dismissal state",
+        "tags": [
+          "me"
+        ]
+      },
+      "patch": {
+        "description": "Idempotently record wow-path dismissal (LUM-216).",
+        "operationId": "patch_my_wow_state_api_v1_me_wow_state_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MeWowPatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeWowStateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Dismiss the first wow-moment path",
         "tags": [
           "me"
         ]
@@ -10538,7 +11579,7 @@
     },
     "/backup": {
       "post": {
-        "description": "Create a timestamped backup zip in ai-workspace/backups/.\n\nContains:\n  - postgres/<table>.json — all Postgres tables as JSON rows\n  - qdrant/<collection>.json — all Qdrant point payloads (no vectors)\n  - manifest.json — metadata about this backup\n\nVectors are omitted to keep file size small; restore re-embeds text from\nsaved payloads.  7-day retention is applied automatically.\n\nRestore procedure:\n  1. Stop services: ``docker compose stop``\n  2. Delete volumes: ``docker volume rm <project>_postgres_data <project>_qdrant_data``\n  3. Restart services: ``docker compose up -d``  (init.sql re-creates schema)\n  4. Call ``POST /restore`` with ``{\"zip_path\": \"<path to zip>\"}``\n  5. Verify: ``curl /search?q=test``",
+        "description": "Create a timestamped logical export zip in ai-workspace/backups/.\n\n**Not disaster recovery** — lossy JSON export (no FalkorDB, Qdrant vectors omitted).\nFor instance-scoped DR snapshots use ``make backup``; see ``docs/guides/backup-restore.md``.\n\nContains postgres JSON tables, Qdrant payloads (no vectors), and manifest.json.\n7-day zip retention is applied automatically.",
         "operationId": "backup_backup_post",
         "responses": {
           "200": {
@@ -10627,6 +11668,29 @@
           }
         },
         "summary": "Browse Mkdir"
+      }
+    },
+    "/bundled/start-library-index": {
+      "post": {
+        "description": "Hub wizard step — enqueue the first bulk ``ingest_folder`` scan.\n\nLoopback-only bundled mode: requires ``LUMOGIS_DEFER_LIBRARY_INDEX`` and a\nlive embedder. Idempotent once the scan has been queued.",
+        "operationId": "bundled_start_library_index_bundled_start_library_index_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Bundled Start Library Index Bundled Start Library Index Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Bundled Start Library Index"
       }
     },
     "/capabilities": {
@@ -11880,6 +12944,98 @@
           }
         },
         "summary": "Ollama Pull"
+      }
+    },
+    "/settings/ollama-pull/async": {
+      "post": {
+        "description": "Start an async Ollama pull; poll job status for progress (LUM-449).",
+        "operationId": "ollama_pull_async_settings_ollama_pull_async_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OllamaPullRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ollama Pull Async"
+      }
+    },
+    "/settings/ollama-pull/jobs/active": {
+      "get": {
+        "description": "Return the latest pending or running pull job, if any.",
+        "operationId": "ollama_pull_job_active_settings_ollama_pull_jobs_active_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Ollama Pull Job Active"
+      }
+    },
+    "/settings/ollama-pull/jobs/{job_id}": {
+      "get": {
+        "description": "Poll async Ollama pull job status.",
+        "operationId": "ollama_pull_job_get_settings_ollama_pull_jobs__job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ollama Pull Job Get"
       }
     },
     "/settings/prune": {

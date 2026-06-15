@@ -225,6 +225,171 @@ def test_put_then_append_message_persists_transcript(client, sessions_ms):
     assert mid in sessions_ms.web_messages
 
 
+def test_get_and_continue_web_only_transcript_before_session_end(client, sessions_ms):
+    """Slice-2 sync must be readable before POST /session/end creates a sessions row."""
+    sid = str(uuid.uuid4())
+    assert client.put(
+        f"/api/v1/conversations/{sid}",
+        json={"title": "Live chat", "model": "m"},
+    ).status_code == 200
+    mid = str(uuid.uuid4())
+    assert client.post(
+        f"/api/v1/conversations/{sid}/messages",
+        json={
+            "message_id": mid,
+            "role": "user",
+            "content": "persisted before end",
+            "model": "m",
+        },
+    ).status_code == 201
+
+    detail = client.get(f"/api/v1/conversations/{sid}")
+    assert detail.status_code == 200
+    body = detail.json()
+    assert body["messages"][0]["content"] == "persisted before end"
+
+    cont = client.post(f"/api/v1/conversations/{sid}/continue")
+    assert cont.status_code == 200
+    seeds = cont.json()["seed_messages"]
+    assert seeds[0]["role"] == "user"
+    assert seeds[0]["content"] == "persisted before end"
+
+
+def test_continue_uses_verbatim_transcript_when_user_messages_present(client, sessions_ms):
+    sid = _insert_session(sessions_ms)
+    key = f"{sid}:default"
+    sessions_ms.web_conversations[key] = {
+        "conversation_id": uuid.UUID(sid),
+        "user_id": "default",
+        "title": "Chat",
+        "model": "m",
+        "message_count": 2,
+        "updated_at": datetime.now(timezone.utc),
+    }
+    for role, content in (("user", "What did the roofer quote?"), ("assistant", "2400")):
+        mid = str(uuid.uuid4())
+        sessions_ms.web_messages[mid] = {
+            "message_id": uuid.UUID(mid),
+            "conversation_id": uuid.UUID(sid),
+            "user_id": "default",
+            "role": role,
+            "content": content,
+            "model": "m",
+            "created_at": datetime.now(timezone.utc),
+        }
+    resp = client.post(f"/api/v1/conversations/{sid}/continue")
+    assert resp.status_code == 200
+    seeds = resp.json()["seed_messages"]
+    assert len(seeds) == 2
+    assert seeds[0]["role"] == "user"
+    assert seeds[0]["content"] == "What did the roofer quote?"
+    assert seeds[1]["role"] == "assistant"
+    assert seeds[1]["content"] == "2400"
+
+
+def test_continue_falls_back_to_summary_when_transcript_has_no_user_messages(
+    client, sessions_ms
+):
+    """Assistant-only slice-2 rows must not shadow the slice-1 summary on continue."""
+    sid = _insert_session(sessions_ms)
+    key = f"{sid}:default"
+    sessions_ms.web_conversations[key] = {
+        "conversation_id": uuid.UUID(sid),
+        "user_id": "default",
+        "title": "Chat",
+        "model": "m",
+        "message_count": 1,
+        "updated_at": datetime.now(timezone.utc),
+    }
+    mid = str(uuid.uuid4())
+    sessions_ms.web_messages[mid] = {
+        "message_id": uuid.UUID(mid),
+        "conversation_id": uuid.UUID(sid),
+        "user_id": "default",
+        "role": "assistant",
+        "content": "partial assistant-only sync",
+        "model": "m",
+        "created_at": datetime.now(timezone.utc),
+    }
+    resp = client.post(f"/api/v1/conversations/{sid}/continue")
+    assert resp.status_code == 200
+    seeds = resp.json()["seed_messages"]
+    assert len(seeds) == 1
+    assert seeds[0]["role"] == "user"
+    assert "Prior conversation context" in seeds[0]["content"]
+    assert "partial assistant-only sync" not in seeds[0]["content"]
+
+
+def test_put_cross_user_does_not_corrupt_existing_header(client, sessions_ms):
+    sid = str(uuid.uuid4())
+    sessions_ms.web_conversations[f"{sid}:alice"] = {
+        "conversation_id": uuid.UUID(sid),
+        "user_id": "alice",
+        "title": "Alice chat",
+        "model": "alice-model",
+        "message_count": 0,
+        "updated_at": datetime.now(timezone.utc),
+    }
+    resp = client.put(
+        f"/api/v1/conversations/{sid}",
+        json={"title": "Hijacked", "model": "evil"},
+    )
+    assert resp.status_code == 404
+    assert sessions_ms.web_conversations[f"{sid}:alice"]["title"] == "Alice chat"
+
+
+def test_append_message_id_conflict_other_user_returns_404(client, sessions_ms):
+    sid_a = str(uuid.uuid4())
+    sid_b = str(uuid.uuid4())
+    mid = str(uuid.uuid4())
+    sessions_ms.web_conversations[f"{sid_a}:alice"] = {
+        "conversation_id": uuid.UUID(sid_a),
+        "user_id": "alice",
+        "title": "A",
+        "model": "m",
+        "message_count": 1,
+        "updated_at": datetime.now(timezone.utc),
+    }
+    sessions_ms.web_messages[mid] = {
+        "message_id": uuid.UUID(mid),
+        "conversation_id": uuid.UUID(sid_a),
+        "user_id": "alice",
+        "role": "user",
+        "content": "alice secret",
+        "model": "m",
+        "created_at": datetime.now(timezone.utc),
+    }
+    assert client.put(
+        f"/api/v1/conversations/{sid_b}",
+        json={"title": "B", "model": "m"},
+    ).status_code == 200
+    resp = client.post(
+        f"/api/v1/conversations/{sid_b}/messages",
+        json={
+            "message_id": mid,
+            "role": "user",
+            "content": "bob attempt",
+            "model": "m",
+        },
+    )
+    assert resp.status_code == 404
+
+
+def test_delete_web_only_conversation(client, sessions_ms, monkeypatch):
+    sid = str(uuid.uuid4())
+    assert client.put(
+        f"/api/v1/conversations/{sid}",
+        json={"title": "Web only", "model": "m"},
+    ).status_code == 200
+    with patch(
+        "services.conversations.purge_session_memory",
+        return_value=PurgeResult(postgres_deleted=True, qdrant_deleted=True, graph_deleted=True),
+    ) as mock_purge:
+        resp = client.delete(f"/api/v1/conversations/{sid}")
+    assert resp.status_code == 200
+    mock_purge.assert_called_once()
+
+
 def test_put_and_append_blocked_after_purge_tombstone(client, sessions_ms):
     sid = str(uuid.uuid4())
     sessions_ms.purged_conversations.add(("default", sid))

@@ -40,20 +40,29 @@ The Lumogis mark is a **node constellation** — a dominant central node connect
 
 ## Typography
 
+Two fonts only — no third typeface, no runtime Google Fonts. All UI surfaces self-host woff2 files locally.
+
 ### Syne — Wordmark & Headings
 
+- **Syne SemiBold (600)** — subheadings, nav emphasis
 - **Syne Bold (700)** — wordmark, section headings
 - **Syne ExtraBold (800)** — hero headings, large display text
-- Letter spacing: `-0.02em` for large sizes, `0` for body
-- Google Fonts: `https://fonts.google.com/specimen/Syne`
+- Letter spacing: `-0.02em` at large sizes
+- Self-hosted woff2 (weights 600, 700, 800)
 
-### DM Mono — Body, Labels, Code
+### Martian Mono — Body, Labels, UI, Code
 
-- **DM Mono Regular (400)** — body copy, descriptions
-- **DM Mono Light (300)** — taglines, secondary text
-- **DM Mono Medium (500)** — labels, badges, UI elements
-- Letter spacing: `0.01em` for body, `0.15em` for uppercase labels
-- Google Fonts: `https://fonts.google.com/specimen/DM+Mono`
+- **Martian Mono Light (300)** — taglines, secondary text
+- **Martian Mono Regular (400)** — body copy, descriptions
+- **Martian Mono Medium (500)** — labels, badges, UI elements
+- **Martian Mono SemiBold (600)** / **Bold (700)** — emphasis, strong UI
+- Body/prose: letter-spacing `-0.03em`, line-height `~1.6`, size ~1px smaller than a typical sans (15px base)
+- UI labels: letter-spacing `-0.02em`
+- Self-hosted woff2 (weights 300–700; variable font acceptable when available)
+
+### Retired
+
+- **DM Mono** — replaced by Martian Mono (March 2026 typography refresh)
 
 ---
 
@@ -63,14 +72,14 @@ The Lumogis mark is a **node constellation** — a dominant central node connect
 - Use the dark background version as the primary
 - Maintain the square aspect ratio of the mark at all times
 - Use Syne for all heading-level text
-- Use DM Mono for all monospace, label, and code contexts
+- Use Martian Mono for body, labels, UI, counts, and code
 - Keep a minimum clear space of 0.5× the mark width on all sides
 
 ### Don't
 - Don't stretch or skew the mark
 - Don't use the mark below 32×32px — use the favicon (central node only) instead
 - Don't place the amber mark on a yellow or light orange background
-- Don't use any fonts other than Syne and DM Mono in official assets
+- Don't use any fonts other than Syne and Martian Mono in official assets
 - Don't add drop shadows to the mark on light backgrounds
 
 ### Minimum sizes

@@ -544,6 +544,7 @@ _AUTH_BYPASS_PREFIXES: tuple[str, ...] = (
     "/api/v1/auth/refresh",
     "/api/v1/auth/logout",
     "/healthz",
+    "/bundled/start-library-index",
     "/web",
 )
 

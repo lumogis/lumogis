@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Lumogis
 //
 // LUM-178 / LUM-413 — admin System status panel (read-only stack health).
+// LUM-487 — DR backup card on system status (Playwright).
 // Requires smoke admin user and a running stack (orchestrator + optional stack-control).
 //
 //   export LUMOGIS_WEB_SMOKE_EMAIL=...
@@ -48,6 +49,26 @@ test.describe("LUM-178 admin system status", () => {
       ).toBeVisible();
       await expect(section.getByRole("table").first()).toBeVisible();
     }
+  });
+
+  test("shows DR backup panel for admin", async ({ page }) => {
+    await loginWithSmokeCredentials(page);
+
+    await page.goto("/admin/system-status");
+    await expect(page).toHaveURL(/\/admin\/system-status/);
+
+    const section = page.locator("section").filter({
+      has: page.getByRole("heading", { name: /^system status$/i, level: 2 }),
+    });
+    await expect(section).toBeVisible();
+
+    await expect(section.getByText(/^loading/i)).toHaveCount(0, { timeout: 60_000 });
+
+    await expect(
+      section.getByRole("heading", { name: /^disaster recovery backup$/i, level: 3 }),
+    ).toBeVisible({ timeout: 15_000 });
+
+    await expect(section.getByText(/^enabled:/i)).toBeVisible();
   });
 
   test("admin nav links to system status", async ({ page }) => {

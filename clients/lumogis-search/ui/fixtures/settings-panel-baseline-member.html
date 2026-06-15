@@ -1,0 +1,42 @@
+
+    <div class="settings-panel" id="settings">
+      <aside class="settings-paths-guide" aria-label="How paths work">
+    <p class="settings-heading">How paths work</p>
+    <p class="hint"><strong>Library roots</strong> — folders on <em>this computer</em>. Search hits use them for Open / Shift+click reveal only. They do not control indexing.</p><p class="hint"><strong>Push upload</strong> — send one file from this computer to your personal queue on the server, without adding an ingest folder.</p>
+  </aside>
+      
+    <div class="settings-field">
+      <span class="settings-field__label">Theme</span>
+      <div class="segmented" role="group" aria-label="Theme"><button type="button" class="segmented__btn theme-option" data-theme-value="system" aria-pressed="true">System</button><button type="button" class="segmented__btn theme-option" data-theme-value="light" aria-pressed="false"><svg class="lg-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.5M12 19v2.5M2.5 12H5M19 12h2.5M5.1 5.1l1.8 1.8M17.1 17.1l1.8 1.8M5.1 18.9l1.8-1.8M17.1 6.9l1.8-1.8"/></svg>Light</button><button type="button" class="segmented__btn theme-option" data-theme-value="dark" aria-pressed="false"><svg class="lg-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 13.5A8 8 0 1 1 10.5 4 6.3 6.3 0 0 0 20 13.5z"/></svg>Dark</button></div>
+    </div>
+      <div class="settings-field">
+        <label class="settings-field__label" for="set-base">Orchestrator base URL</label>
+        <input id="set-base" class="field" type="url" />
+      </div>
+      <div class="settings-field">
+        <label class="settings-field__label" for="set-hotkey">Global hotkey</label>
+        <input id="set-hotkey" class="field" type="text" spellcheck="false" />
+        <p class="hint">Default <code>CommandOrControl+Shift+L</code>. Invalid values are not saved.</p>
+      </div>
+      <div class="settings-field">
+        <label class="settings-field__label" for="set-roots">Library roots — on this computer (one folder per line)</label>
+        <textarea id="set-roots" class="field" rows="3" spellcheck="false"></textarea>
+        
+        <p class="hint">When you pick a search result, Lumogis opens or reveals the file under these folders. They do <strong>not</strong> tell the server what to index.</p>
+      </div>
+      
+      
+    <section class="settings-section">
+      <h2 class="settings-heading">Push upload (one-off file to server)</h2>
+      <p class="hint">Send a single file from this computer into your <strong>personal ingest queue</strong> on the household server. It will be indexed like a file dropped into an ingest folder — useful when you do not want to add a whole directory.</p>
+      <input type="file" id="ingest-upload-input" class="field" style="min-height:auto;padding:var(--sp-2)" />
+      <p class="hint" id="upload-hint"></p>
+    </section>
+      <p class="hint" id="session-hint"></p>
+      <div class="settings-footer">
+        <button type="button" class="btn btn--primary btn--sm" id="btn-save">Save settings</button>
+        <button type="button" class="btn btn--ghost btn--sm" id="btn-logout" >Sign out</button>
+        <span class="settings-footer__status"></span>
+      </div>
+      <p class="hint" id="keychain-hint"></p>
+    </div>

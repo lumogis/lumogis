@@ -1,4 +1,37 @@
 /* SPDX-License-Identifier: AGPL-3.0-only */
+/* Self-hosted brand fonts (no Google Fonts CDN at runtime). */
+@font-face {
+  font-family: "Syne";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("./fonts/syne-latin-600-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Syne";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("./fonts/syne-latin-700-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Syne";
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+  src: url("./fonts/syne-latin-800-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Martian Mono";
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url("./fonts/martian-mono-latin-wght-normal.woff2") format("woff2");
+}
+
 /*
  * Lumogis Web design tokens (Phase 1 Pass 1.1).
  *
@@ -14,10 +47,20 @@
  */
 
 :root {
-  --lumogis-font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-    "Helvetica Neue", Arial, sans-serif;
-  --lumogis-font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
-    monospace;
+  --lg-font-display: "Syne", system-ui, sans-serif;
+  --lg-font-mono: "Martian Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  --lg-track-body: -0.03em;
+  --lg-track-label: -0.02em;
+
+  --lumogis-font-display: var(--lg-font-display);
+  --lumogis-font-mono: var(--lg-font-mono);
+
+  /* Martian Mono readability tuning (wide glyphs). */
+  --lumogis-tracking-display: -0.02em;
+  --lumogis-tracking-body: var(--lg-track-body);
+  --lumogis-tracking-ui: var(--lg-track-label);
+  --lumogis-leading-body: 1.6;
+  --lumogis-size-body: 0.9375rem;
 
   --lumogis-space-1: 0.25rem;
   --lumogis-space-2: 0.5rem;
@@ -27,46 +70,47 @@
   --lumogis-space-6: 2rem;
   --lumogis-space-7: 3rem;
 
-  --lumogis-radius-sm: 0.25rem;
-  --lumogis-radius-md: 0.5rem;
-  --lumogis-radius-lg: 0.75rem;
+  --lumogis-radius-sm: 0.375rem;
+  --lumogis-radius-md: 0.625rem;
+  --lumogis-radius-lg: 0.875rem;
 
   --lumogis-tap-target-min: 44px;
-  --lumogis-shell-sidebar-w: 240px;
-  --lumogis-shell-bottomnav-h: 56px;
-  --lumogis-shell-header-h: 56px;
+  --lumogis-shell-sidebar-w: 248px;
+  --lumogis-shell-bottomnav-h: 60px;
+  --lumogis-shell-header-h: 60px;
 
-  /* Light palette — WCAG-AA against fg (#0b1020 on #f7f7f9 ≈ 17.6:1). */
-  --lumogis-bg: #f7f7f9;
-  --lumogis-fg: #0b1020;
-  --lumogis-fg-muted: #4a5168;
+  /* Brand amber palette — WCAG-AA (see tests/design/contrast.test.ts). */
+  --lumogis-bg: #faf7f1;
+  --lumogis-fg: #1a1510;
+  --lumogis-fg-muted: #6c6358;
   --lumogis-surface: #ffffff;
-  --lumogis-surface-alt: #eef0f5;
-  --lumogis-border: #d6dae4;
-  --lumogis-accent: #2747d3;
-  --lumogis-accent-fg: #ffffff;
+  --lumogis-surface-alt: #f3eee4;
+  --lumogis-border: #d6ccbb;
+  --lumogis-accent: #f5a623;
+  --lumogis-accent-fg: #14110b;
   --lumogis-danger: #b3261e;
   --lumogis-danger-fg: #ffffff;
-  --lumogis-warn: #b76e00;
+  --lumogis-warn: #92670c;
   --lumogis-success: #1b6e2c;
 
-  --lumogis-focus-ring: 2px solid var(--lumogis-accent);
+  --lumogis-focus-ring: 2px solid #9a5b00;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --lumogis-bg: #0b1020;
-    --lumogis-fg: #f7f7f9;
-    --lumogis-fg-muted: #b3b9cc;
-    --lumogis-surface: #161c30;
-    --lumogis-surface-alt: #1f2640;
-    --lumogis-border: #2a3354;
-    --lumogis-accent: #8aa3ff;
-    --lumogis-accent-fg: #0b1020;
+    --lumogis-bg: #0d0d0f;
+    --lumogis-fg: #f4f1ea;
+    --lumogis-fg-muted: #a59c8c;
+    --lumogis-surface: #17171b;
+    --lumogis-surface-alt: #1f1f25;
+    --lumogis-border: #2e2e36;
+    --lumogis-accent: #f5a623;
+    --lumogis-accent-fg: #14110b;
     --lumogis-danger: #ff8a82;
     --lumogis-danger-fg: #0b1020;
     --lumogis-warn: #ffc266;
     --lumogis-success: #7fdb95;
+    --lumogis-focus-ring: 2px solid #ffbe54;
   }
 }
 
@@ -75,33 +119,35 @@
  * the prefers-color-scheme defaults above.
  */
 :root[data-theme="light"] {
-  --lumogis-bg: #f7f7f9;
-  --lumogis-fg: #0b1020;
-  --lumogis-fg-muted: #4a5168;
+  --lumogis-bg: #faf7f1;
+  --lumogis-fg: #1a1510;
+  --lumogis-fg-muted: #6c6358;
   --lumogis-surface: #ffffff;
-  --lumogis-surface-alt: #eef0f5;
-  --lumogis-border: #d6dae4;
-  --lumogis-accent: #2747d3;
-  --lumogis-accent-fg: #ffffff;
+  --lumogis-surface-alt: #f3eee4;
+  --lumogis-border: #d6ccbb;
+  --lumogis-accent: #f5a623;
+  --lumogis-accent-fg: #14110b;
   --lumogis-danger: #b3261e;
   --lumogis-danger-fg: #ffffff;
-  --lumogis-warn: #b76e00;
+  --lumogis-warn: #92670c;
   --lumogis-success: #1b6e2c;
+  --lumogis-focus-ring: 2px solid #9a5b00;
 }
 
 :root[data-theme="dark"] {
-  --lumogis-bg: #0b1020;
-  --lumogis-fg: #f7f7f9;
-  --lumogis-fg-muted: #b3b9cc;
-  --lumogis-surface: #161c30;
-  --lumogis-surface-alt: #1f2640;
-  --lumogis-border: #2a3354;
-  --lumogis-accent: #8aa3ff;
-  --lumogis-accent-fg: #0b1020;
+  --lumogis-bg: #0d0d0f;
+  --lumogis-fg: #f4f1ea;
+  --lumogis-fg-muted: #a59c8c;
+  --lumogis-surface: #17171b;
+  --lumogis-surface-alt: #1f1f25;
+  --lumogis-border: #2e2e36;
+  --lumogis-accent: #f5a623;
+  --lumogis-accent-fg: #14110b;
   --lumogis-danger: #ff8a82;
   --lumogis-danger-fg: #0b1020;
   --lumogis-warn: #ffc266;
   --lumogis-success: #7fdb95;
+  --lumogis-focus-ring: 2px solid #ffbe54;
 }
 
 html,
@@ -114,9 +160,22 @@ body,
   overflow-x: clip;
   background: var(--lumogis-bg);
   color: var(--lumogis-fg);
-  font-family: var(--lumogis-font-sans);
+  font-family: var(--lumogis-font-mono);
+  font-size: var(--lumogis-size-body);
+  line-height: var(--lumogis-leading-body);
+  letter-spacing: var(--lumogis-tracking-body);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--lumogis-font-display);
+  letter-spacing: var(--lumogis-tracking-display);
 }
 
 *,

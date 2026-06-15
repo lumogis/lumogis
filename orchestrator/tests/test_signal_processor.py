@@ -202,13 +202,24 @@ class TestProcessSignal:
         llm = _mock_llm_response(llm_data)
         monkeypatch.setattr(_config, "get_llm_provider", lambda name, *, user_id=None: llm)
 
-        mock_notifier = MagicMock()
-        mock_notifier.notify.return_value = True
-        monkeypatch.setattr(_config, "get_notifier", lambda: mock_notifier)
+        mock_emit = MagicMock()
+        from models.notifications import DispatchResult
+        from models.notifications import NotificationTier
+        from models.notifications import NotificationType
+
+        mock_emit.return_value = DispatchResult(
+            emit_id="e1",
+            user_id="alice",
+            notification_type=NotificationType.SIGNAL_RECEIVED,
+            tier=NotificationTier.INFORMATIONAL,
+            channels=[],
+            outcome="delivered",
+        )
+        monkeypatch.setattr("services.notifications.dispatcher.emit", mock_emit)
 
         monkeypatch.setattr("services.signal_processor._load_profile", lambda uid: None)
         monkeypatch.setattr("services.signal_processor._persist", lambda sig: None)
-        return mock_notifier
+        return mock_emit
 
     def test_returns_signal_with_llm_fields(self, monkeypatch):
         llm_data = {
@@ -233,14 +244,12 @@ class TestProcessSignal:
             "topics": [],
             "entities": [],
         }
-        notifier = self._setup(monkeypatch, llm_data, relevance_threshold="0.0")
+        emit_mock = self._setup(monkeypatch, llm_data, relevance_threshold="0.0")
         raw = _make_signal()
         result = process_signal(raw, user_id="alice")
-        assert notifier.notify.called
-        # ADR 018 / ntfy migration: notify() must be called with the
-        # signal's user_id so per-user credential resolution works.
-        _, kwargs = notifier.notify.call_args
-        assert kwargs.get("user_id") == "alice"
+        assert emit_mock.called
+        notification = emit_mock.call_args.args[0]
+        assert notification.user_id == "alice"
         assert result.notified is True
 
     def test_notifier_not_called_below_threshold(self, monkeypatch):
@@ -250,10 +259,10 @@ class TestProcessSignal:
             "topics": [],
             "entities": [],
         }
-        notifier = self._setup(monkeypatch, llm_data, relevance_threshold="0.9")
+        emit_mock = self._setup(monkeypatch, llm_data, relevance_threshold="0.9")
         raw = _make_signal()
         result = process_signal(raw)
-        assert not notifier.notify.called
+        assert not emit_mock.called
         assert result.notified is False
 
     def test_relevance_score_computed_when_profile_present(self, monkeypatch):

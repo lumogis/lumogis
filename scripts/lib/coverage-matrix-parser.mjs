@@ -67,9 +67,9 @@ export function parseMatrix(markdown, opts = {}) {
       continue;
     }
 
-    if (status === "🚫" && !notes.includes("MS-TBD")) {
+    if (status === "🚫" && !/MS-TBD|MS-\d{3}/.test(notes)) {
       errors.push(
-        `Line ${lineNo} (${id}): 🚫 rows must mention MS-TBD in Notes (LUM-385 stub)`,
+        `Line ${lineNo} (${id}): 🚫 rows must cite MS-TBD or MS-### in Notes (see docs/RELEASE-MANUAL-CHECKLIST.md)`,
       );
     }
 

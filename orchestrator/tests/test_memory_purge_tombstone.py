@@ -105,6 +105,28 @@ def test_purge_after_delete_allows_qdrant_retry(sessions_ms, mock_vector_store, 
     assert mock_vector_store.count("conversations") == 0
 
 
+def test_purge_tombstone_retry_cleans_orphaned_web_rows(
+    sessions_ms, mock_vector_store, monkeypatch
+):
+    """Retry after partial purge must delete web_* rows even without a sessions row."""
+    monkeypatch.setitem(config._instances, "graph_store", None)
+    sid = str(uuid.uuid4())
+    uid = "alice"
+    sessions_ms.purged_conversations.add((uid, sid))
+    sessions_ms.web_conversations[f"{sid}:{uid}"] = {
+        "conversation_id": uuid.UUID(sid),
+        "user_id": uid,
+        "title": "orphan",
+        "model": "m",
+        "message_count": 0,
+        "updated_at": None,
+    }
+    with patch("services.batch_queue.cancel_pending_session_end_jobs", return_value=0):
+        result = purge_session_memory(user_id=uid, session_id=sid)
+    assert result.postgres_deleted is True
+    assert f"{sid}:{uid}" not in sessions_ms.web_conversations
+
+
 def test_purge_resurrection_race_blocked(sessions_ms, mock_vector_store, monkeypatch):
     """Simulate delete then in-flight session_end: tombstone blocks store_session."""
     monkeypatch.setitem(config._instances, "graph_store", None)

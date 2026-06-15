@@ -38,7 +38,7 @@ Evidence commits on **`dev`:** `fe6a29a48` (crate), `f2e22f10d` (doc scrub), `8e
 
 - **ADR 069 / 072 / 076** filenames and primary paths not rewritten in this slice (see **Revisit conditions**).
 - ~~**No** shared maintainer dependency from bundled appliance → **`lumogis-search`** yet~~ — **satisfied by LUM-435** (bundled tree path-depends on `lumogis_search_lib`; UI via `@search-ui` factory).
-- ~~**No** public **`.github/workflows/search-overlay-build.yml`**~~ — **satisfied (LUM-433 / ADR 082):** public Search build workflow exports; private `hub-build.yml` remains strip-listed.
+- ~~**No** public **`.github/workflows/search-overlay-build.yml`**~~ — **satisfied (LUM-433 / ADR 082):** public Search build workflow exports; private `hub-build.yml (retired; see deprecated/lumogis-hub-fused/)` remains strip-listed.
 - **No** Tauri identifier rename to `com.lumogis.search`.
 
 ## Alternatives considered

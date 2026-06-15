@@ -106,7 +106,7 @@ jobs:
 
 
 def _write_minimal_public_agent_docs(tmp_path: Path) -> None:
-    """LUM-376 / LUM-378 stubs — must avoid forbidden maintainer patterns in check-public-export.sh."""
+    """LUM-376 / LUM-378 stubs — avoid forbidden maintainer patterns in export check."""
     (tmp_path / "AGENTS.md").write_text(
         "# SPDX-License-Identifier: AGPL-3.0-only\n"
         "Public agent orientation stub for export contract tests.\n",
@@ -277,6 +277,20 @@ def test_lum433_fails_when_workflow_references_hub(tmp_path):
     assert "LUM-433" in combined
 
 
+def test_lum433_fails_when_workflow_references_server(tmp_path):
+    _minimal_passing_export_search_overlay_contract(tmp_path)
+    workflow = tmp_path / SEARCH_OVERLAY_CI_CANONICAL_PATHS[0]
+    workflow.write_text(
+        workflow.read_text(encoding="utf-8") + "apps/lumogis-server\n",
+        encoding="utf-8",
+    )
+    proc = _run_check(tmp_path)
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode != 0
+    assert "search-overlay-ci-export-contract" in combined
+    assert "LUM-433" in combined
+
+
 def test_search_overlay_required_path_disjoint_from_strip_list():
     text = STRIP_LIST.read_text(encoding="utf-8")
     strip_entries: set[str] = set()
@@ -318,6 +332,28 @@ def test_export_tree_includes_search_overlay_workflow(tmp_path):
     assert check.returncode == 0, check.stdout + check.stderr
 
 
+def test_export_tree_includes_layered_requirements(tmp_path):
+    """LUM-460: public export must ship orchestrator/requirements-core.txt for layered profiles."""
+    if not _repo_has_git():
+        pytest.skip("needs git checkout")
+    out = tmp_path / "export"
+    export_script = REPO / "scripts" / "create-upstream-export-tree.sh"
+    proc = subprocess.run(
+        ["bash", str(export_script), str(out)],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO),
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    core = out / "orchestrator" / "requirements-core.txt"
+    full = out / "orchestrator" / "requirements.txt"
+    assert core.is_file(), "orchestrator/requirements-core.txt missing from export tree"
+    assert full.is_file()
+    assert "-r requirements-core.txt" in full.read_text(encoding="utf-8")
+    check = _run_check(out)
+    assert check.returncode == 0, check.stdout + check.stderr
+
+
 def test_export_tree_omits_hub_build_workflow(tmp_path):
     """LUM-329: Hub CI must not ship on lumogis/lumogis (no Hub tree in export)."""
     if not _repo_has_git():
@@ -333,6 +369,30 @@ def test_export_tree_omits_hub_build_workflow(tmp_path):
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert not (out / ".github/workflows/hub-build.yml").exists()
     assert not (out / "apps/lumogis-hub").exists()
+    assert not (out / "apps/lumogis-server").exists()
+    check = _run_check(out)
+    assert check.returncode == 0, check.stdout + check.stderr
+
+
+def test_export_tree_has_no_apps_subtree(tmp_path):
+    """LUM-491: public export must not ship any apps/ subtree (private Server leak guard)."""
+    if not _repo_has_git():
+        pytest.skip("needs git checkout")
+    out = tmp_path / "export"
+    export_script = REPO / "scripts" / "create-upstream-export-tree.sh"
+    proc = subprocess.run(
+        ["bash", str(export_script), str(out)],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO),
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    apps_dir = out / "apps"
+    if apps_dir.is_dir():
+        children = list(apps_dir.iterdir())
+        assert children == [], f"export tree must not contain apps/ entries: {children}"
+    assert not (out / "apps/lumogis-hub").exists()
+    assert not (out / "apps/lumogis-server").exists()
     check = _run_check(out)
     assert check.returncode == 0, check.stdout + check.stderr
 

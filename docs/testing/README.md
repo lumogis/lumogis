@@ -11,7 +11,7 @@ Lumogis maps **product behaviours** to automated tests (or manual smoke) in four
 | **KG** | `docs/private/testing/TEST-COVERAGE-MATRIX-kg.md` | Private checkout only (not in public AGPL export) |
 | **Private appliance** | `docs/private/testing/TEST-COVERAGE-MATRIX-hub.md` | Private checkout only (not in public AGPL export) |
 
-**Legend:** ✅ tested with cited assertion · 🟡 partial · ❌ gap · 🚫 manual (`MS-TBD` until [LUM-385](https://linear.app/lumogis/issue/LUM-385) manual smoke doc).
+**Legend:** ✅ tested with cited assertion · 🟡 partial · ❌ gap · 🚫 manual ([RELEASE-MANUAL-CHECKLIST.md](../RELEASE-MANUAL-CHECKLIST.md) — `MS-###` IDs).
 
 **v1 baseline:** **LUM-384** code audit + **LUM-428** strict ✅ rules and **active + archived plan** cross-check (`.cursor/plans/` and `archived/`). Re-seed: `python3 scripts/testing/_lum384_seed_matrices.py`. Citation audit: `python3 scripts/testing/_lum428_audit_matrix_citations.py`. Structure/ID gate: `make coverage-matrix-check` (or `node scripts/check-coverage-matrix.mjs`; catalog `scripts/feature-ids.json` — regenerate with `--write-catalog` after ID changes).
 
@@ -19,6 +19,7 @@ Lumogis maps **product behaviours** to automated tests (or manual smoke) in four
 
 **Related:**
 
+- [RELEASE-MANUAL-CHECKLIST.md](../RELEASE-MANUAL-CHECKLIST.md) — operator manual verification at release (complements automated gates)
 - [automated-test-strategy.md](automated-test-strategy.md) — *how to run* test layers
 - `scripts/debug/inventory.tsv` — command index (LUM-377); not a feature matrix
 

@@ -35,3 +35,6 @@ Add job **`web-docker-build`** to `.github/workflows/ci.yml` that runs **`docker
 
 - 2026-05-16: Draft in `.cursor/adrs/lum_254_web_docker_build_ci.md` from `/explore` + `/review-plan` R1.
 - 2026-05-16: Finalised in-repo — CI job + path script + Makefile target shipped; canonical copy this file.
+- 2026-06-08: **LUM-274** — ShellCheck static analysis added on `.github/scripts/web-docker-build-paths.sh` (CI step + `make shellcheck-web-docker-build-paths`); no change to path contract or decision above.
+- 2026-06-08: **LUM-444** — ShellCheck extended to remaining CI **`*-paths.sh`** gates (`web-e2e`, `openapi-check`, `doctor-integration`, `security-audit`, contract-test harness); **`make shellcheck-ci-paths`**; path contracts unchanged.
+- 2026-06-08: **LUM-445** — `web-docker-build` uses `docker/setup-buildx-action` + `docker/bake-action` with `type=gha` cache import/export so repeat CI runs reuse BuildKit layers (same `docker-compose.yml` build definition; still no registry push).

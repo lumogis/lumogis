@@ -28,6 +28,7 @@ class CapturesMemoryMetadataStore:
         self.attachments: dict[str, dict[str, Any]] = {}
         self.transcripts: dict[str, dict[str, Any]] = {}
         self.notes: dict[str, dict[str, Any]] = {}
+        self.app_settings: dict[str, str] = {}
 
     def ping(self) -> bool:
         return True
@@ -122,6 +123,11 @@ class CapturesMemoryMetadataStore:
                 row["tags"] = tags
                 row["capture_type"] = capture_type
                 row["updated_at"] = _now()
+            return
+        ql = q.lower()
+        if "insert into app_settings" in ql and "on conflict" in ql:
+            key, value = str(p[0]), str(p[1])
+            self.app_settings[key] = value
             return
         raise NotImplementedError(f"CapturesMemoryMetadataStore.execute not implemented: {q[:80]}")
 
@@ -390,6 +396,17 @@ class CapturesMemoryMetadataStore:
                     return {"x": 1}
             return None
 
+        ql = q.lower()
+        if "select value from app_settings where key" in ql:
+            v = self.app_settings.get(str(p[0]))
+            return {"value": v} if v is not None else None
+
+        if "select count(*) as n from users" in ql:
+            return {"n": 0}
+
+        if "select 1 from notification_preferences" in ql:
+            return None
+
         raise NotImplementedError(
             f"CapturesMemoryMetadataStore.fetch_one not implemented: {q[:120]}"
         )
@@ -452,6 +469,9 @@ class CapturesMemoryMetadataStore:
                 d["transcript_count"] = tc
                 out.append(d)
             return out
+
+        if "select distinct user_id from webpush_subscriptions" in q.lower():
+            return []
 
         raise NotImplementedError(
             f"CapturesMemoryMetadataStore.fetch_all not implemented: {q[:120]}"
