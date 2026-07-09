@@ -11,6 +11,14 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.9.5] — 2026-07-09
+
+### Fixed
+
+- **CI (private and public)** — lumogis-graph stats privacy tests mock `fetch_one` for LUM-577 `allows_shared` DB lookups; purge sweeper graph projection test skips when the premium `plugins.graph.writer` module is absent on the AGPL export.
+
+---
+
 ## [0.9.4] — 2026-07-09
 
 ### Fixed

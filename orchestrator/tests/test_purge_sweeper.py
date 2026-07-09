@@ -245,6 +245,11 @@ def test_sweep_handles_multiple_partial_tombstones(sessions_ms, mock_vector_stor
 
 def test_sweep_graph_arm_deletes_session_projections(sessions_ms, mock_vector_store, monkeypatch):
     """Sweeper must mirror sync purge and remove published Session projections (LUM-419)."""
+    # Graph writer is the premium plugin, stripped from the public AGPL export.
+    pytest.importorskip(
+        "plugins.graph.writer",
+        reason="premium graph plugin absent (public AGPL export)",
+    )
     mock_graph = object()
     monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), mock_graph)
     uid = "alice"
