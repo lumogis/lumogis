@@ -11,6 +11,14 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.9.2] — 2026-07-09
+
+### Fixed
+
+- **Public repository CI** — pytest collection on the AGPL export tree no longer imports premium-only graph integration tests; doctor integration startup is more reliable on slow CI hosts (graph disabled in the doctor overlay, extended compose wait); Lumogis MCP stdio integration tests tolerate slower uvicorn bind on GitHub Actions.
+
+---
+
 ## [0.9.1] — 2026-07-09
 
 ### Fixed

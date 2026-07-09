@@ -106,7 +106,7 @@ def start_uvicorn(app, port: int) -> uvicorn.Server:
 
     thread = threading.Thread(target=_run, daemon=True)
     thread.start()
-    for _ in range(200):
+    for _ in range(1200):
         try:
             with socket.create_connection(("127.0.0.1", port), timeout=0.1):
                 return server

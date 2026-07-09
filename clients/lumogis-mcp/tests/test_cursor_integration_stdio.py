@@ -101,11 +101,7 @@ class _StdioIntegrationStore:
                 and (m.get("valid_until") is None or m["valid_until"] >= as_of)
             ]
             return hits[:20]
-        if (
-            "select id, content" in q
-            and "valid_from, valid_until" in q
-            and "id = any" in q
-        ):
+        if "select id, content" in q and "valid_from, valid_until" in q and "id = any" in q:
             ids, user_id, as_of = p[0], p[1], p[2]
             id_set = {str(i) for i in ids}
             rows = []
@@ -145,15 +141,17 @@ class _StdioFakeVS:
         self._hits = []
         for bank_name, bank in fixture["banks"].items():
             for mem in bank["memories"]:
-                self._hits.append({
-                    "id": f"pt-{mem['memory_id']}",
-                    "score": 0.9,
-                    "payload": {
-                        "memory_id": mem["memory_id"],
-                        "user_id": user_id,
-                        "bank": bank_name,
-                    },
-                })
+                self._hits.append(
+                    {
+                        "id": f"pt-{mem['memory_id']}",
+                        "score": 0.9,
+                        "payload": {
+                            "memory_id": mem["memory_id"],
+                            "user_id": user_id,
+                            "bank": bank_name,
+                        },
+                    }
+                )
 
     def ping(self) -> bool:
         return True
@@ -212,14 +210,16 @@ def core_app(monkeypatch):
     config_dir = REPO_ROOT / "config"
     monkeypatch.setenv("MODELS_CONFIG", str(config_dir / "models.yaml"))
     monkeypatch.setenv("OLLAMA_CATALOG_FALLBACK", str(config_dir / "ollama_catalog_fallback.json"))
-    monkeypatch.setenv(
-        "_LUMOGIS_TEST_SKIP_AUTH_CONSISTENCY_DO_NOT_SET_IN_PRODUCTION", "true"
-    )
+    monkeypatch.setenv("_LUMOGIS_TEST_SKIP_AUTH_CONSISTENCY_DO_NOT_SET_IN_PRODUCTION", "true")
     monkeypatch.delenv("MCP_AUTH_TOKEN", raising=False)
     monkeypatch.setenv("MCP_DEFAULT_USER_ID", TEST_USER)
     monkeypatch.setenv("AUTH_ENABLED", "false")
     monkeypatch.setenv("LUMOGIS_INBOX_MODE", "off")
     monkeypatch.setenv("INGEST_PATHS_WATCH_MODE", "off")
+    monkeypatch.setenv("GRAPH_MODE", "disabled")
+    monkeypatch.setenv("RERANKER_BACKEND", "none")
+    monkeypatch.setenv("LUMOGIS_DEFER_LIBRARY_INDEX", "1")
+    monkeypatch.setenv("CAPABILITY_SERVICE_URLS", "")
 
     import config
     import services.mcp_write as mw
@@ -257,8 +257,12 @@ def test_stdio_bridge_preserves_readOnlyHint(core_app):
     responses = _roundtrip(env, list_req)
     tools = responses[-1]["result"]["tools"]
     read_tools = {
-        "memory.search", "memory.get_recent", "entity.lookup", "entity.search",
-        "context.build", "recall",
+        "memory.search",
+        "memory.get_recent",
+        "entity.lookup",
+        "entity.search",
+        "context.build",
+        "recall",
     }
     for tool in tools:
         if tool["name"] in read_tools:

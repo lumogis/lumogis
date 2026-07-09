@@ -365,7 +365,7 @@ jobs:
 
   doctor-integration:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     concurrency:
       group: doctor-integration-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: true

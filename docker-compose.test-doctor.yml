@@ -7,3 +7,11 @@ services:
   orchestrator:
     env_file:
       - config/test.env.example
+    environment:
+      # Fast, public-export-safe doctor stack (no premium graph plugin / sidecars).
+      GRAPH_MODE: disabled
+      RERANKER_BACKEND: none
+      LUMOGIS_INBOX_MODE: off
+      INGEST_PATHS_WATCH_MODE: off
+      LUMOGIS_DEFER_LIBRARY_INDEX: "1"
+      CAPABILITY_SERVICE_URLS: ""

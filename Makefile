@@ -83,7 +83,7 @@ compose-test-doctor:
 	export COMPOSE_PROJECT_NAME=lumogis-test; \
 	export COMPOSE_FILE=docker-compose.yml:docker-compose.test-doctor.yml; \
 	cd "$$REPO"; \
-	docker compose --env-file config/test.env.example up -d --wait --wait-timeout 360; \
+	docker compose --env-file config/test.env.example up -d --wait --wait-timeout 480; \
 	$(MAKE) --no-print-directory doctor ARGS="--json" > "$$REPO/doctor.json"; \
 	jq -e '.version == 1 and (.checks | type == "array")' < "$$REPO/doctor.json"; \
 	rm -f "$$REPO/doctor.json"; \

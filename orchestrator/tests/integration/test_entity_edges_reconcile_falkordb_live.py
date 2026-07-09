@@ -13,10 +13,18 @@ Skips when FalkorDB is not configured. Primary gate:
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import uuid
 
 import pytest
+
+if importlib.util.find_spec("plugins.graph") is None:
+    pytest.skip(
+        "plugins.graph not in tree (public AGPL export — premium graph plugin omitted)",
+        allow_module_level=True,
+    )
+
 from plugins.graph.reconcile import reconcile_entity_edges
 
 import config
