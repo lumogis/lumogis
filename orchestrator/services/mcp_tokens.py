@@ -237,9 +237,7 @@ def _emit_audit(
 # ---------------------------------------------------------------------------
 
 
-def mint(
-    user_id: str, label: str, scopes: list[str] | None = None
-) -> tuple[InternalMcpToken, str]:
+def mint(user_id: str, label: str, scopes: list[str] | None = None) -> tuple[InternalMcpToken, str]:
     """Mint a fresh `lmcp_…` token for ``user_id``. Returns the row + plaintext.
 
     ``scopes`` (LUM-291): ``None`` (default) = unrestricted (the historical v1

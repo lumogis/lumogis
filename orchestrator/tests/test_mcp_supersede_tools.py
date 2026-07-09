@@ -14,8 +14,9 @@ from unittest.mock import Mock
 import pytest
 from models.mcp_write import CheckpointInput
 from models.mcp_write import ForgetInput
-from models.mcp_write import UpdateObservationInput
 from models.mcp_write import MemoryRow
+from models.mcp_write import UpdateObservationInput
+
 from services import entity_edges
 from services import mcp_write
 from services import memories
@@ -24,12 +25,20 @@ from services import memories
 def _memrow(mid="m1", user_id="u", bank="coding", valid_until=None) -> MemoryRow:
     now = datetime.now(timezone.utc)
     return MemoryRow(
-        id=mid, user_id=user_id, bank=bank, content="c", tags=[], metadata={},
-        valid_from=now, valid_until=valid_until, created_at=now,
+        id=mid,
+        user_id=user_id,
+        bank=bank,
+        content="c",
+        tags=[],
+        metadata={},
+        valid_from=now,
+        valid_until=valid_until,
+        created_at=now,
     )
 
 
 # --- archive helpers ---------------------------------------------------------
+
 
 def test_archive_memory_sets_valid_until():
     ms = Mock()
@@ -66,6 +75,7 @@ def test_archive_edges_for_memory_by_evidence_id():
 
 
 # --- forget ------------------------------------------------------------------
+
 
 def test_forget_archives_memory_and_edges(monkeypatch):
     monkeypatch.setattr(mcp_write.memories, "get_memory", lambda *a, **k: _memrow())
@@ -126,25 +136,30 @@ def test_forget_other_user_memory_denied(monkeypatch):
     # get_memory is user-scoped → returns None for a non-owner → not found.
     monkeypatch.setattr(mcp_write.memories, "get_memory", lambda *a, **k: None)
     archived = []
-    monkeypatch.setattr(mcp_write.memories, "archive_memory",
-                        lambda *a, **k: archived.append(1))
+    monkeypatch.setattr(mcp_write.memories, "archive_memory", lambda *a, **k: archived.append(1))
     with pytest.raises(ValueError):
         mcp_write.forget(user_id="bob", memory_id="alices-mem")
     assert archived == []  # nothing archived
 
 
 def test_forget_idempotent_on_already_archived(monkeypatch):
-    monkeypatch.setattr(mcp_write.memories, "get_memory",
-                        lambda *a, **k: _memrow(valid_until=datetime.now(timezone.utc)))
+    monkeypatch.setattr(
+        mcp_write.memories,
+        "get_memory",
+        lambda *a, **k: _memrow(valid_until=datetime.now(timezone.utc)),
+    )
     monkeypatch.setattr(mcp_write.memories, "archive_memory", lambda *a, **k: False)
     monkeypatch.setattr(mcp_write.entity_edges, "fetch_active_edges_for_memory", lambda *a, **k: [])
     monkeypatch.setattr(mcp_write.entity_edges, "archive_edges_for_memory", lambda *a, **k: None)
-    monkeypatch.setattr(mcp_write.entity_edges, "purge_graph_projections_for_edges", lambda *a, **k: None)
+    monkeypatch.setattr(
+        mcp_write.entity_edges, "purge_graph_projections_for_edges", lambda *a, **k: None
+    )
     out = mcp_write.forget(user_id="u", memory_id="m1")
     assert out == {"memory_id": "m1", "archived": True}
 
 
 # --- update_observation ------------------------------------------------------
+
 
 def test_update_observation_adds_before_archiving(monkeypatch):
     order = []
@@ -163,10 +178,14 @@ def test_update_observation_adds_before_archiving(monkeypatch):
         "fetch_active_edges_for_memory",
         lambda *a, **k: order.append("fetch_edges") or [],
     )
-    monkeypatch.setattr(mcp_write.memories, "archive_memory",
-                        lambda *a, **k: order.append("archive_mem"))
-    monkeypatch.setattr(mcp_write.entity_edges, "archive_edges_for_memory",
-                        lambda *a, **k: order.append("archive_edges"))
+    monkeypatch.setattr(
+        mcp_write.memories, "archive_memory", lambda *a, **k: order.append("archive_mem")
+    )
+    monkeypatch.setattr(
+        mcp_write.entity_edges,
+        "archive_edges_for_memory",
+        lambda *a, **k: order.append("archive_edges"),
+    )
     monkeypatch.setattr(
         mcp_write.entity_edges,
         "purge_graph_projections_for_edges",
@@ -174,8 +193,12 @@ def test_update_observation_adds_before_archiving(monkeypatch):
     )
 
     out = mcp_write.update_observation(user_id="u", memory_id="m1", content="new")
-    assert out == {"old_memory_id": "m1", "new_memory_id": "new1",
-                   "entity_ids": ["e"], "relation_ids": ["r"]}
+    assert out == {
+        "old_memory_id": "m1",
+        "new_memory_id": "new1",
+        "entity_ids": ["e"],
+        "relation_ids": ["r"],
+    }
     assert order[0] == "add"  # add BEFORE any archive
     assert order.index("fetch_edges") < order.index("archive_mem")
     assert "archive_mem" in order and order.index("add") < order.index("archive_mem")
@@ -184,8 +207,11 @@ def test_update_observation_adds_before_archiving(monkeypatch):
 
 
 def test_update_observation_refuses_already_archived(monkeypatch):
-    monkeypatch.setattr(mcp_write.memories, "get_memory",
-                        lambda *a, **k: _memrow(valid_until=datetime.now(timezone.utc)))
+    monkeypatch.setattr(
+        mcp_write.memories,
+        "get_memory",
+        lambda *a, **k: _memrow(valid_until=datetime.now(timezone.utc)),
+    )
     added = []
     monkeypatch.setattr(mcp_write, "add_memory", lambda **k: added.append(1))
     with pytest.raises(ValueError):
@@ -225,10 +251,10 @@ def test_update_observation_metadata_overflow_after_supersedes_rejected(monkeypa
 
 # --- checkpoint --------------------------------------------------------------
 
+
 def test_checkpoint_writes_kind_marker(monkeypatch):
     captured = {}
-    monkeypatch.setattr(mcp_write.memories, "store_memory",
-                        lambda **k: captured.update(k) or "cp1")
+    monkeypatch.setattr(mcp_write.memories, "store_memory", lambda **k: captured.update(k) or "cp1")
     # checkpoint must NOT go through the extraction path (add_memory) — assert on
     # the real collaborator it would call, not extract_entities (which is only
     # reachable via add_memory and so unreachable from checkpoint anyway).
@@ -238,8 +264,11 @@ def test_checkpoint_writes_kind_marker(monkeypatch):
     # store_entities so the test doesn't reach the embedder, and assert the new
     # return shape carries entity_id.
     sess = {}
-    monkeypatch.setattr(mcp_write, "store_entities",
-                        lambda entities, **k: sess.update(entity=entities[0], kw=k) or ["sess1"])
+    monkeypatch.setattr(
+        mcp_write,
+        "store_entities",
+        lambda entities, **k: sess.update(entity=entities[0], kw=k) or ["sess1"],
+    )
     out = mcp_write.checkpoint(user_id="u", bank="coding", summary="end of session")
     assert out["memory_id"] == "cp1" and out["entity_id"] == "sess1"
     assert captured["metadata"] == {"kind": "checkpoint", "source": "mcp"}
@@ -250,15 +279,19 @@ def test_checkpoint_writes_kind_marker(monkeypatch):
 
 # --- scope enforcement (tool handlers) ---------------------------------------
 
+
 def test_supersede_tools_denied_without_write_scope(monkeypatch):
     """Read-scoped tokens are denied AND the underlying writers never run."""
     import mcp_server
 
     called = {"n": 0}
     monkeypatch.setattr(mcp_write, "forget", lambda **k: called.__setitem__("n", called["n"] + 1))
-    monkeypatch.setattr(mcp_write, "update_observation",
-                        lambda **k: called.__setitem__("n", called["n"] + 1))
-    monkeypatch.setattr(mcp_write, "checkpoint", lambda **k: called.__setitem__("n", called["n"] + 1))
+    monkeypatch.setattr(
+        mcp_write, "update_observation", lambda **k: called.__setitem__("n", called["n"] + 1)
+    )
+    monkeypatch.setattr(
+        mcp_write, "checkpoint", lambda **k: called.__setitem__("n", called["n"] + 1)
+    )
 
     tok = mcp_server._set_current_mcp_scopes(["mcp:read"])
     try:
@@ -274,6 +307,7 @@ def test_supersede_tools_denied_without_write_scope(monkeypatch):
 
 
 # --- input model bounds ------------------------------------------------------
+
 
 def test_input_models_bounds():
     assert ForgetInput(memory_id="m1").memory_id == "m1"

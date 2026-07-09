@@ -11,8 +11,9 @@ from datetime import datetime
 from typing import Any
 from typing import Literal
 
-import config
 from services.documents import _sanitize_error_message
+
+import config
 
 _log = logging.getLogger(__name__)
 

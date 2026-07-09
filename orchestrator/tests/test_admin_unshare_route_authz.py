@@ -7,6 +7,7 @@ convenience only. These tests drive the real `require_admin` (via a patched
 auth context) so a member's forged call is refused at the gate — no teardown,
 no audit. The owner-only path in `routes/scope.py` is asserted untouched.
 """
+
 from __future__ import annotations
 
 import authz
@@ -194,9 +195,10 @@ class _OwnerScopedStore:
 
 
 def test_owner_route_still_owner_only(monkeypatch):
-    import config
     from authz import require_user
     from routes.scope import router as scope_router
+
+    import config
 
     # The note is owned by alice; the row genuinely EXISTS in the store.
     store = _OwnerScopedStore(owner="alice")

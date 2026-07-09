@@ -22,9 +22,7 @@ import pytest
 psycopg2 = pytest.importorskip("psycopg2")
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-_MIGRATION_PATH = (
-    _REPO_ROOT / "postgres" / "migrations" / "037-drop-users-refresh-token-jti.sql"
-)
+_MIGRATION_PATH = _REPO_ROOT / "postgres" / "migrations" / "037-drop-users-refresh-token-jti.sql"
 
 
 def _conn_kwargs() -> dict:

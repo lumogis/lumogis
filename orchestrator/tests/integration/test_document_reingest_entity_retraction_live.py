@@ -152,14 +152,10 @@ def test_reingest_retracts_dropped_document_entity(live_stores):
         assert _shared_entity_row(ms, keep) is not None
         assert _shared_entity_row(ms, drop) is not None
 
-        removed = cascade.prune_stale_document_entity_relations(
-            ms, file_path, owner, [keep]
-        )
+        removed = cascade.prune_stale_document_entity_relations(ms, file_path, owner, [keep])
         assert removed == [drop]
 
-        projection.reproject_shared_on_reingest(
-            owner, file_path, removed_entity_ids=removed
-        )
+        projection.reproject_shared_on_reingest(owner, file_path, removed_entity_ids=removed)
 
         assert _shared_entity_row(ms, keep) is not None
         assert _shared_point_exists(vs, keep)
@@ -192,9 +188,7 @@ def test_reingest_keeps_entity_justified_by_other_shared_doc(live_stores):
         removed = cascade.prune_stale_document_entity_relations(ms, doc_a, owner, [])
         assert removed == [e]
 
-        projection.reproject_shared_on_reingest(
-            owner, doc_a, removed_entity_ids=removed
-        )
+        projection.reproject_shared_on_reingest(owner, doc_a, removed_entity_ids=removed)
 
         assert _shared_entity_row(ms, e) is not None, (
             "entity wrongly retracted while doc B still justifies it"

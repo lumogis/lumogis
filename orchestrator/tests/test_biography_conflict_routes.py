@@ -16,6 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 from models.biography_conflict import ConflictContribution
 from models.biography_conflict import DetectedConflict
+
 from services import biography_conflict_store as store
 
 _TS = datetime(2026, 6, 30, 12, 0, tzinfo=timezone.utc)
@@ -32,7 +33,9 @@ def _auth_header(
     return {"Authorization": f"Bearer {tok}"}
 
 
-def _sample_detected(*, fact_group_key: str = "logistics|household|dinner time") -> DetectedConflict:
+def _sample_detected(
+    *, fact_group_key: str = "logistics|household|dinner time"
+) -> DetectedConflict:
     pin_a, pin_b = uuid.uuid4(), uuid.uuid4()
     return DetectedConflict(
         fact_group_key=fact_group_key,
@@ -93,7 +96,11 @@ class _BiographyConflictMemoryStore:
             else:
                 cid = uuid.uuid4()
 
-            pin_ids = [UUID(x) for x in params[4]] if "COALESCE" not in q else [UUID(x) for x in params[5]]
+            pin_ids = (
+                [UUID(x) for x in params[4]]
+                if "COALESCE" not in q
+                else [UUID(x) for x in params[5]]
+            )
             snapshot_raw = params[5] if "COALESCE" not in q else params[6]
             requires_review = params[6] if "COALESCE" not in q else params[7]
             fact_key = params[1] if "COALESCE" not in q else params[2]

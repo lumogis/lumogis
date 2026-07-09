@@ -169,9 +169,7 @@ def test_unpublish_document_queued(client):
 
     with patch(
         "services.documents.unshare_document",
-        return_value=ShareQueuedResponse(
-            document_id=1, job_id=88, share_status="unsharing"
-        ),
+        return_value=ShareQueuedResponse(document_id=1, job_id=88, share_status="unsharing"),
     ):
         resp = client.delete("/api/v1/documents/1/publish")
     assert resp.status_code == 202

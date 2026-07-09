@@ -86,14 +86,14 @@ os.environ.setdefault("OLLAMA_CATALOG_FALLBACK", str(_CONFIG_DIR / "ollama_catal
 for _stack_only_env in ("GRAPH_MODE", "CAPABILITY_SERVICE_URLS"):
     os.environ.pop(_stack_only_env, None)
 
-import config as _config  # noqa: E402 — after env/path bootstrap; see module docstring above.
-
 # Test doubles live in tests/_fakes.py so they can be imported without the heavy
 # conftest import chain; re-exported here for back-compat (test_entities,
 # test_adapters, test_recall_legs import these names).
 from tests._fakes import MockVectorStore  # noqa: E402,F401
 from tests._fakes import _match_clause  # noqa: E402,F401
 from tests._fakes import _matches_qdrant_filter  # noqa: E402,F401
+
+import config as _config  # noqa: E402 — after env/path bootstrap; see module docstring above.
 
 
 def graph_store_cache_key(bank: str = "personal") -> str:

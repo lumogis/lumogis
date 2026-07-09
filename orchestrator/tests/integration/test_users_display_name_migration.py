@@ -6,6 +6,7 @@ Ensures the admin-managed ``users.display_name`` column lands nullable, is
 idempotent (``ADD COLUMN IF NOT EXISTS`` re-runs as a no-op), and does not
 disturb existing ``users`` reads. Skips when no Postgres is reachable.
 """
+
 from __future__ import annotations
 
 import os

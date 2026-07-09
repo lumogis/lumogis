@@ -11,6 +11,7 @@ SQL, the real Qdrant point / chunk teardown, and the post-teardown
 ``count_where`` verification are all exercised together (review finding P2:
 the real SQL/teardown path was previously never run through admin_unshare).
 """
+
 from __future__ import annotations
 
 import pytest

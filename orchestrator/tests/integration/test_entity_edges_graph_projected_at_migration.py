@@ -7,6 +7,7 @@ is idempotent (``ADD COLUMN IF NOT EXISTS`` re-runs as a no-op), leaves existing
 rows reading NULL (so the first reconcile pass self-heals them), and round-trips
 a timestamp. Skips when no Postgres is reachable.
 """
+
 from __future__ import annotations
 
 import os
@@ -18,9 +19,7 @@ import pytest
 psycopg2 = pytest.importorskip("psycopg2")
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_MIGRATION_PATH = (
-    _REPO_ROOT / "postgres" / "migrations" / "049-entity-edges-graph-projected-at.sql"
-)
+_MIGRATION_PATH = _REPO_ROOT / "postgres" / "migrations" / "049-entity-edges-graph-projected-at.sql"
 
 
 def _conn_kwargs() -> dict:

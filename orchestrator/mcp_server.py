@@ -141,9 +141,7 @@ _current_mcp_token_id: ContextVar[str | None] = ContextVar("lumogis_mcp_token_id
 _current_mcp_user_id: ContextVar[str | None] = ContextVar("lumogis_mcp_user_id", default=None)
 # LUM-291 — per-request token scopes. None = unrestricted (JWT/legacy/unscoped
 # tokens); a non-empty list = allowlist; [] = no access.
-_current_mcp_scopes: ContextVar[list[str] | None] = ContextVar(
-    "lumogis_mcp_scopes", default=None
-)
+_current_mcp_scopes: ContextVar[list[str] | None] = ContextVar("lumogis_mcp_scopes", default=None)
 
 
 def _current_bearer_token() -> str | None:
@@ -414,7 +412,7 @@ MCP_TOOLS_FOR_MANIFEST: list[CapabilityTool] = [
                     "type": "string",
                     "default": "coding",
                     "description": (
-                        "Memory bank / context. Use bank=\"*\" to search across all "
+                        'Memory bank / context. Use bank="*" to search across all '
                         "banks for the same user_id (read-only opt-in)."
                     ),
                 },
@@ -606,7 +604,8 @@ def recall_tool(
     valid at ``as_of`` (default now), so archived/superseded memories (LUM-526)
     are excluded. Each result carries ``source_strategies`` for observability.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
+    from datetime import timezone
 
     from services.recall import recall as recall_service
 
@@ -700,6 +699,7 @@ def add_memory_tool(
 ) -> dict:
     """Persist a memory + extract entities/relations (LUM-291). Requires mcp:write."""
     from models.mcp_write import AddMemoryInput
+
     from services import mcp_write
 
     _require_scope("mcp:write")
@@ -724,6 +724,7 @@ def add_entity_tool(
 ) -> dict:
     """Create a single explicit entity (LUM-291). Requires mcp:write."""
     from models.mcp_write import AddEntityInput
+
     from services import mcp_write
 
     _require_scope("mcp:write")
@@ -752,6 +753,7 @@ def add_relation_tool(
 ) -> dict:
     """Create a typed directed relation between two entities (LUM-291). Requires mcp:write."""
     from models.mcp_write import AddRelationInput
+
     from services import mcp_write
 
     _require_scope("mcp:write")
@@ -770,6 +772,7 @@ def add_relation_tool(
 def forget_tool(memory_id: str) -> dict:
     """Soft-archive a memory + its edges (LUM-526). Reversible. Requires mcp:write."""
     from models.mcp_write import ForgetInput
+
     from services import mcp_write
 
     _require_scope("mcp:write")
@@ -785,6 +788,7 @@ def update_observation_tool(
 ) -> dict:
     """Supersede a memory (archive old, add new) (LUM-526). Requires mcp:write."""
     from models.mcp_write import UpdateObservationInput
+
     from services import mcp_write
 
     _require_scope("mcp:write")
@@ -803,6 +807,7 @@ def update_observation_tool(
 def checkpoint_tool(summary: str, bank: str | None = None) -> dict:
     """Write a session-boundary marker memory (kind=checkpoint) (LUM-526). Requires mcp:write."""
     from models.mcp_write import CheckpointInput
+
     from services import mcp_write
 
     _require_scope("mcp:write")

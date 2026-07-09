@@ -42,7 +42,13 @@ def test_leg_semantic_when_hit_then_reads_payload_memory_id_not_point_id():
 
         def search(self, collection, vector, limit, threshold, filter=None, sparse_query=None):
             self.call = {"collection": collection, "threshold": threshold, "filter": filter}
-            return [{"id": "qpoint", "score": 0.9, "payload": {"memory_id": "m1", "user_id": "u", "bank": "coding"}}]
+            return [
+                {
+                    "id": "qpoint",
+                    "score": 0.9,
+                    "payload": {"memory_id": "m1", "user_id": "u", "bank": "coding"},
+                }
+            ]
 
     vs = FakeVS()
     out = R._leg_semantic("q", user_id="u", bank="coding", embedder=FakeEmbedder(), vs=vs)
@@ -67,8 +73,18 @@ def test_leg_semantic_cross_user_isolation_through_mock_vector_store():
 
     vs = MockVectorStore()
     vs.create_collection("memories", 3)
-    vs.upsert("memories", "p-mine", [0.1, 0.2, 0.3], {"memory_id": "mine", "user_id": "u", "bank": "coding"})
-    vs.upsert("memories", "p-other", [0.1, 0.2, 0.3], {"memory_id": "other", "user_id": "intruder", "bank": "coding"})
+    vs.upsert(
+        "memories",
+        "p-mine",
+        [0.1, 0.2, 0.3],
+        {"memory_id": "mine", "user_id": "u", "bank": "coding"},
+    )
+    vs.upsert(
+        "memories",
+        "p-other",
+        [0.1, 0.2, 0.3],
+        {"memory_id": "other", "user_id": "intruder", "bank": "coding"},
+    )
 
     out = R._leg_semantic("q", user_id="u", bank="coding", embedder=FakeEmbedder(), vs=vs)
     assert out == ["mine"]  # the intruder's memory is filtered out by the must-filter
@@ -169,7 +185,9 @@ def test_memories_for_entities_when_no_seeds_then_empty_without_query():
     from services import entity_edges
 
     ms = FakeMS([])
-    assert entity_edges.memories_for_entities([], user_id="u", bank="coding", as_of=AS_OF, ms=ms) == []
+    assert (
+        entity_edges.memories_for_entities([], user_id="u", bank="coding", as_of=AS_OF, ms=ms) == []
+    )
     assert ms.calls == []
 
 

@@ -9,11 +9,10 @@ import os
 import socket
 
 import pytest
-
+from tests.cursor_integration.fixture_loader import load_coding_bank
 from tests.cursor_integration.full_stack_client import build_mcp_http_client
 from tests.cursor_integration.full_stack_client import mcp_call_tool
 from tests.cursor_integration.full_stack_client import mcp_initialize
-from tests.cursor_integration.fixture_loader import load_coding_bank
 from tests.cursor_integration.p95 import measure_recall_p95_ms
 
 pytestmark = pytest.mark.integration
@@ -69,7 +68,10 @@ def _require_full_gate_env() -> tuple[str, str]:
         pytest.skip("lumogis-test compose stack not reachable")
     token = os.environ.get("LUMOGIS_CURSOR_INTEGRATION_MCP_TOKEN")
     if not token:
-        pytest.skip("run make seed-cursor-integration-fixture first (or source ai-workspace/mcp/cursor-integration-full.env)")
+        pytest.skip(
+            "run make seed-cursor-integration-fixture first "
+            "(or source ai-workspace/mcp/cursor-integration-full.env)"
+        )
     count = _coding_memory_count(DEFAULT_USER)
     if count is None:
         pytest.skip("Postgres not reachable for memory count probe")

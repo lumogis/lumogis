@@ -22,17 +22,18 @@ import logging
 import os
 import uuid
 
-import config
 from models.entities import ExtractedEntity
-from models.mcp_write import RELATION_TYPES
-from models.mcp_write import ExtractedRelation
 from models.mcp_write import _MAX_METADATA_BYTES
 from models.mcp_write import _MAX_NAME
-from services import entity_edges
-from services import memories
+from models.mcp_write import RELATION_TYPES
+from models.mcp_write import ExtractedRelation
 from services.banks import MCP_MEMORY_SOURCE
 from services.entities import extract_entities
 from services.entities import store_entities
+
+import config
+from services import entity_edges
+from services import memories
 
 _log = logging.getLogger(__name__)
 
@@ -170,7 +171,9 @@ def extract_relations(
         provider = config.get_llm_provider(job_model, user_id=user_id)
         names = ", ".join(e.name for e in entities)
         response = provider.chat(
-            messages=[{"role": "user", "content": _EXTRACT_RELATIONS_PROMPT + names + "\n\n" + text}],
+            messages=[
+                {"role": "user", "content": _EXTRACT_RELATIONS_PROMPT + names + "\n\n" + text}
+            ],
             system="You are a precise relation extractor. Respond only with a valid JSON array.",
             max_tokens=512,
         )
@@ -254,18 +257,14 @@ def update_observation(
     if old is None:
         raise ValueError("memory not found")
     if old.valid_until is not None:
-        raise ValueError(
-            "cannot supersede an already-superseded memory; update the current one"
-        )
+        raise ValueError("cannot supersede an already-superseded memory; update the current one")
     new_metadata = dict(metadata or {})
     new_metadata["supersedes"] = memory_id
     # The input model bounds caller metadata at _MAX_METADATA_BYTES *before* the
     # supersedes pointer is added; re-check so the injected pointer can't push a
     # near-limit payload over the cap (Postgres jsonb would store it silently).
     if len(json.dumps(new_metadata)) > _MAX_METADATA_BYTES:
-        raise ValueError(
-            f"metadata + supersedes pointer exceeds {_MAX_METADATA_BYTES}-byte limit"
-        )
+        raise ValueError(f"metadata + supersedes pointer exceeds {_MAX_METADATA_BYTES}-byte limit")
     new = add_memory(
         user_id=user_id, bank=old.bank, content=content, tags=tags, metadata=new_metadata
     )

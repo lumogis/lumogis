@@ -1135,11 +1135,7 @@ def update_settings(body: SettingsUpdate, user: UserContext = Depends(get_user))
         from services.privacy_mode import validate_instance_privacy_patch
 
         current = effective_privacy_mode(None)
-        new_mode = (
-            InstancePrivacyMode(body.privacy_mode)
-            if body.privacy_mode is not None
-            else None
-        )
+        new_mode = InstancePrivacyMode(body.privacy_mode) if body.privacy_mode is not None else None
         validate_instance_privacy_patch(
             current_mode=current.instance_mode,
             current_locked=current.instance_locked,

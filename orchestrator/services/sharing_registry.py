@@ -28,6 +28,7 @@ Consumers:
   * ``services.shared_items``  — the member's own shared-items list (needs
                                  table + label_col only).
 """
+
 from __future__ import annotations
 
 from typing import Any

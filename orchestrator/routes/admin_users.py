@@ -57,8 +57,8 @@ from models.user_invite import InviteMintRequest
 from models.user_invite import InviteMintResponse
 
 from services import auth_sessions as auth_sessions_service
-from services import user_invites as user_invites_service
 from services import user_export as user_export_service
+from services import user_invites as user_invites_service
 from services import users as users_service
 
 _log = logging.getLogger(__name__)
@@ -250,9 +250,7 @@ def patch_user(user_id: str, body: UserPatchRequest, request: Request) -> UserAd
         # LUM-585 — admin-managed attribution label; "" / whitespace clears it
         # (→ NULL → email local-part fallback). Audited below with the acting admin.
         users_service.set_display_name(user_id, body.display_name)
-        _log.info(
-            "admin: set display_name user_id=%s by=%s", user_id, caller.user_id
-        )
+        _log.info("admin: set display_name user_id=%s by=%s", user_id, caller.user_id)
 
     updated = users_service.get_user_by_id(user_id)
     if updated is None:

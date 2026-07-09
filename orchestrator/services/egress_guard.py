@@ -16,10 +16,11 @@ import re
 import time
 from urllib.parse import urlparse
 
-import config
 import features
 from models.privacy_mode import InstancePrivacyMode
 from services.privacy_mode import effective_privacy_mode
+
+import config
 
 _log = logging.getLogger(__name__)
 
@@ -199,9 +200,7 @@ class EgressGuardingLLMProvider:
             label="EgressGuardingLLMProvider.chat",
         ):
             try:
-                return self._inner.chat(
-                    messages, tools=tools, system=system, max_tokens=max_tokens
-                )
+                return self._inner.chat(messages, tools=tools, system=system, max_tokens=max_tokens)
             except Exception as exc:
                 _reraise_if_egress_blocked(exc, user_id=self._user_id)
                 raise

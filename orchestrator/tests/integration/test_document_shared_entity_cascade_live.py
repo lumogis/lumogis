@@ -209,9 +209,7 @@ def test_refcount_survives_until_last_shared_doc(live_stores):
         assert _shared_entity_row(ms, e) is not None
 
         # Unshare doc A (owner path deletes the shared file_index row, then retracts).
-        ms.execute(
-            "DELETE FROM file_index WHERE published_from = %s AND scope = 'shared'", (pk_a,)
-        )
+        ms.execute("DELETE FROM file_index WHERE published_from = %s AND scope = 'shared'", (pk_a,))
         cascade.retract_document_entities(file_path=doc_a, owner_user_id=owner)
         assert _shared_entity_row(ms, e) is not None, (
             "entity retracted while doc B still justifies it"
@@ -219,9 +217,7 @@ def test_refcount_survives_until_last_shared_doc(live_stores):
         assert _shared_point_exists(vs, e)
 
         # Unshare doc B — now the last justification is gone → retract.
-        ms.execute(
-            "DELETE FROM file_index WHERE published_from = %s AND scope = 'shared'", (pk_b,)
-        )
+        ms.execute("DELETE FROM file_index WHERE published_from = %s AND scope = 'shared'", (pk_b,))
         cascade.retract_document_entities(file_path=doc_b, owner_user_id=owner)
         assert _shared_entity_row(ms, e) is None, "entity not retracted on last unshare"
         assert not _shared_point_exists(vs, e), "shared Qdrant point orphaned after retraction"
@@ -252,9 +248,7 @@ def test_user_shared_entity_survives_document_unshare_via_downgrade(live_stores)
         assert _shared_entity_row(ms, e)["share_origin"] == "multiple"
 
         # Document unshare: no other shared doc → downgrade, NOT delete.
-        ms.execute(
-            "DELETE FROM file_index WHERE published_from = %s AND scope = 'shared'", (pk_a,)
-        )
+        ms.execute("DELETE FROM file_index WHERE published_from = %s AND scope = 'shared'", (pk_a,))
         cascade.retract_document_entities(file_path=doc_a, owner_user_id=owner)
         row = _shared_entity_row(ms, e)
         assert row is not None, "user-shared entity wrongly deleted on document unshare"

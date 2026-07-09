@@ -638,9 +638,7 @@ def get_recall_reranker():
         if backend == "none":
             _instances["recall_reranker"] = None
         elif backend == "cross_encoder":
-            model = os.environ.get(
-                "RECALL_RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2"
-            )
+            model = os.environ.get("RECALL_RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
             try:
                 from adapters.bge_reranker import BGEReranker
 
@@ -876,7 +874,9 @@ def get_graph_store(bank: str | None = None):
 
     from services import banks
 
-    resolved_bank = banks.falkordb_graph_name(bank) if bank is not None else _resolve_default_graph_bank()
+    resolved_bank = (
+        banks.falkordb_graph_name(bank) if bank is not None else _resolve_default_graph_bank()
+    )
     cache_key = _graph_store_cache_key(resolved_bank)
 
     if cache_key not in _instances:

@@ -16,9 +16,7 @@ falkordb = pytest.importorskip("falkordb")
 @pytest.fixture
 def falkordb_url():
     if not os.environ.get("RUN_FALKORDB_BANK_ISOLATION"):
-        pytest.skip(
-            "Set RUN_FALKORDB_BANK_ISOLATION=1 for live FalkorDB bank isolation tests"
-        )
+        pytest.skip("Set RUN_FALKORDB_BANK_ISOLATION=1 for live FalkorDB bank isolation tests")
     url = os.environ.get("FALKORDB_URL")
     if not url:
         pytest.skip("FALKORDB_URL not set")

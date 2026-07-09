@@ -17,7 +17,6 @@ from urllib.parse import urlparse
 import psycopg2
 import psycopg2.extras
 import pytest
-
 from signals.digest import ADVISORY_LOCK_KEY1
 from signals.digest import ADVISORY_LOCK_KEY2
 

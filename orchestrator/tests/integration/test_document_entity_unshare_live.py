@@ -239,9 +239,7 @@ def test_admin_unshare_document_preserves_user_shared_entity(live_stores):
         )
         assert _shared_entity_row(ms, e)["share_origin"] == "multiple"
 
-        result = admin_unshare_svc.admin_unshare(
-            actor=ADMIN, resource="files", pk=str(doc_id)
-        )
+        result = admin_unshare_svc.admin_unshare(actor=ADMIN, resource="files", pk=str(doc_id))
         assert result["unshared"] is True
         assert result["source_owner_id"] == owner
         assert _shared_doc_chunks(vs, owner, doc_id) == []

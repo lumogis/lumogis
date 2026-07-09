@@ -90,7 +90,6 @@ def extract_entities(session_text: str, *, user_id: str | None = None) -> list[E
 
     from services.connector_credentials import ConnectorNotConfigured
     from services.connector_credentials import CredentialUnavailable
-
     from services.privacy_mode import resolve_job_model
 
     try:

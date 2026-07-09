@@ -24,12 +24,12 @@ import json
 import os
 import uuid
 
+import hooks
 import pytest
 from auth import UserContext
+from events import Event
 
 import config
-import hooks
-from events import Event
 from services import document_entity_cascade as cascade
 from services import shared_items as shared_items_svc
 
@@ -89,8 +89,8 @@ def _live_stack_or_skip(monkeypatch):
     monkeypatch.setitem(config._instances, "metadata_store", ms)
 
     # Lumogis-graph sources resolve through orchestrator ``config`` (in-process wiring).
-    import plugins.graph  # noqa: F401 — sys.path for graph.*
     import graph.writer as graph_writer
+    import plugins.graph  # noqa: F401 — sys.path for graph.*
 
     hooks.register(Event.DOCUMENT_SHARED, graph_writer.on_document_shared)
     monkeypatch.setattr(hooks, "fire_background", hooks.fire)
@@ -188,10 +188,14 @@ def test_publish_doc_projects_entities_to_shared_graph(live_graph_e2e):
         assert (projected, failed) == (2, 0)
 
         entity_items = [
-            i for i in shared_items_svc.list_my_shared_items(owner) if i["resource_type"] == "entities"
+            i
+            for i in shared_items_svc.list_my_shared_items(owner)
+            if i["resource_type"] == "entities"
         ]
         shared_src_ids = {i["resource_id"] for i in entity_items}
-        assert {e1, e2}.issubset(shared_src_ids), "owner shared-items list missing cascaded entities"
+        assert {e1, e2}.issubset(shared_src_ids), (
+            "owner shared-items list missing cascaded entities"
+        )
 
         post = json.loads(
             graph_query.query_graph_tool(

@@ -4,8 +4,9 @@
 
 from unittest.mock import Mock
 
-import config
 import pytest
+
+import config
 from services import entity_edges
 
 
@@ -15,8 +16,12 @@ def test_store_edge_rejects_off_allowlist():
     ms = Mock()
     with pytest.raises(ValueError):
         entity_edges.store_edge(
-            user_id="u", bank="b", src_entity_id="1", dst_entity_id="2",
-            relation_type="DROP ALL", ms=ms,
+            user_id="u",
+            bank="b",
+            src_entity_id="1",
+            dst_entity_id="2",
+            relation_type="DROP ALL",
+            ms=ms,
         )
     ms.execute.assert_not_called()
 
@@ -26,8 +31,12 @@ def test_store_edge_inserts_uppercases_and_graph_off(monkeypatch):
     ms.fetch_one.return_value = {"id": "edge1"}
     monkeypatch.setattr(config, "get_graph_store", lambda bank=None: None)
     eid = entity_edges.store_edge(
-        user_id="u", bank="coding", src_entity_id="s", dst_entity_id="d",
-        relation_type="depends_on", ms=ms,
+        user_id="u",
+        bank="coding",
+        src_entity_id="s",
+        dst_entity_id="d",
+        relation_type="depends_on",
+        ms=ms,
     )
     assert eid == "edge1"
     sql, params = ms.execute.call_args.args
@@ -41,8 +50,12 @@ def test_store_edge_graph_enabled_projects_allowlisted_reltype(monkeypatch):
     gs = Mock()
     monkeypatch.setattr(config, "get_graph_store", lambda bank=None: gs)
     entity_edges.store_edge(
-        user_id="u", bank="personal", src_entity_id="s", dst_entity_id="d",
-        relation_type="RELATES_TO", ms=ms,
+        user_id="u",
+        bank="personal",
+        src_entity_id="s",
+        dst_entity_id="d",
+        relation_type="RELATES_TO",
+        ms=ms,
     )
     gs.query.assert_called_once()
     cypher = gs.query.call_args.args[0]
@@ -64,14 +77,19 @@ def test_store_edge_graph_projection_failure_is_swallowed(monkeypatch):
     gs.query.side_effect = RuntimeError("falkordb down")
     monkeypatch.setattr(config, "get_graph_store", lambda bank=None: gs)
     eid = entity_edges.store_edge(
-        user_id="u", bank="personal", src_entity_id="s", dst_entity_id="d",
-        relation_type="PART_OF", ms=ms,
+        user_id="u",
+        bank="personal",
+        src_entity_id="s",
+        dst_entity_id="d",
+        relation_type="PART_OF",
+        ms=ms,
     )
     assert eid == "e"
 
 
 def test_store_edge_upsert_idempotent():
     """Same (user,bank,src,dst,rel) twice → one row, same durable id (ON CONFLICT)."""
+
     class _FakeStore:
         def __init__(self):
             self.rows = {}
@@ -87,16 +105,30 @@ def test_store_edge_upsert_idempotent():
             return {"id": self.rows[key]} if key in self.rows else None
 
     import config as _cfg
+
     ms = _FakeStore()
     # graph off
     import pytest as _pytest
+
     monkeypatch = _pytest.MonkeyPatch()
     monkeypatch.setattr(_cfg, "get_graph_store", lambda bank=None: None)
     try:
-        a = entity_edges.store_edge(user_id="u", bank="coding", src_entity_id="s",
-                                    dst_entity_id="d", relation_type="DEPENDS_ON", ms=ms)
-        b = entity_edges.store_edge(user_id="u", bank="coding", src_entity_id="s",
-                                    dst_entity_id="d", relation_type="DEPENDS_ON", ms=ms)
+        a = entity_edges.store_edge(
+            user_id="u",
+            bank="coding",
+            src_entity_id="s",
+            dst_entity_id="d",
+            relation_type="DEPENDS_ON",
+            ms=ms,
+        )
+        b = entity_edges.store_edge(
+            user_id="u",
+            bank="coding",
+            src_entity_id="s",
+            dst_entity_id="d",
+            relation_type="DEPENDS_ON",
+            ms=ms,
+        )
     finally:
         monkeypatch.undo()
     assert a == b
@@ -222,18 +254,13 @@ class _NodeAwareGraph:
 
     def _match_node(self, cypher, lumogis_id, user_id):
         # A node keyed on a property other than lumogis_id binds nothing.
-        return (
-            self._node_key(cypher) == "lumogis_id"
-            and (lumogis_id, user_id) in self.nodes
-        )
+        return self._node_key(cypher) == "lumogis_id" and (lumogis_id, user_id) in self.nodes
 
     def query(self, cypher, params=None):
         params = params or {}
         src, dst, uid = params.get("src"), params.get("dst"), params.get("user_id")
         rel = self._rel_type(cypher)
-        both_nodes = self._match_node(cypher, src, uid) and self._match_node(
-            cypher, dst, uid
-        )
+        both_nodes = self._match_node(cypher, src, uid) and self._match_node(cypher, dst, uid)
         if "DELETE r" in cypher:  # purge
             if not both_nodes:
                 return []
@@ -283,8 +310,12 @@ def test_project_edge_creates_edge_on_lumogis_id_nodes(monkeypatch):
     fake.add_node("d", "u")
     monkeypatch.setattr(config, "get_graph_store", lambda bank=None: fake)
     entity_edges.store_edge(
-        user_id="u", bank="personal", src_entity_id="s", dst_entity_id="d",
-        relation_type="RELATES_TO", ms=_fake_ms(),
+        user_id="u",
+        bank="personal",
+        src_entity_id="s",
+        dst_entity_id="d",
+        relation_type="RELATES_TO",
+        ms=_fake_ms(),
     )
     assert ("s", "d", "RELATES_TO") in fake.rels
     assert fake.rels[("s", "d", "RELATES_TO")]["user_id"] == "u"
@@ -296,8 +327,12 @@ def test_project_edge_skips_when_endpoint_node_absent(monkeypatch):
     fake.add_node("s", "u")  # dst node deliberately absent
     monkeypatch.setattr(config, "get_graph_store", lambda bank=None: fake)
     entity_edges.store_edge(
-        user_id="u", bank="personal", src_entity_id="s", dst_entity_id="d",
-        relation_type="RELATES_TO", ms=_fake_ms(),
+        user_id="u",
+        bank="personal",
+        src_entity_id="s",
+        dst_entity_id="d",
+        relation_type="RELATES_TO",
+        ms=_fake_ms(),
     )
     assert fake.rels == {}
     assert fake.nodes == {("s", "u")}  # no node created by projection
@@ -315,8 +350,12 @@ def test_store_edge_stamps_graph_projected_at_on_attach(monkeypatch):
     monkeypatch.setattr(config, "get_graph_store", lambda bank=None: fake)
     ms = _fake_ms()  # fetch_one -> {"id": "e"} (the durable edge id)
     entity_edges.store_edge(
-        user_id="u", bank="personal", src_entity_id="s", dst_entity_id="d",
-        relation_type="IMPLEMENTS", ms=ms,
+        user_id="u",
+        bank="personal",
+        src_entity_id="s",
+        dst_entity_id="d",
+        relation_type="IMPLEMENTS",
+        ms=ms,
     )
     stamps = _stamp_calls(ms)
     assert len(stamps) == 1
@@ -331,8 +370,12 @@ def test_store_edge_does_not_stamp_when_node_absent(monkeypatch):
     monkeypatch.setattr(config, "get_graph_store", lambda bank=None: fake)
     ms = _fake_ms()
     entity_edges.store_edge(
-        user_id="u", bank="personal", src_entity_id="s", dst_entity_id="d",
-        relation_type="IMPLEMENTS", ms=ms,
+        user_id="u",
+        bank="personal",
+        src_entity_id="s",
+        dst_entity_id="d",
+        relation_type="IMPLEMENTS",
+        ms=ms,
     )
     assert _stamp_calls(ms) == []
 
@@ -342,8 +385,12 @@ def test_store_edge_does_not_stamp_when_graph_disabled(monkeypatch):
     monkeypatch.setattr(config, "get_graph_store", lambda bank=None: None)
     ms = _fake_ms()
     entity_edges.store_edge(
-        user_id="u", bank="personal", src_entity_id="s", dst_entity_id="d",
-        relation_type="IMPLEMENTS", ms=ms,
+        user_id="u",
+        bank="personal",
+        src_entity_id="s",
+        dst_entity_id="d",
+        relation_type="IMPLEMENTS",
+        ms=ms,
     )
     assert _stamp_calls(ms) == []
 
@@ -355,8 +402,14 @@ def test_purge_deletes_pure_typed_projection(monkeypatch):
     fake.add_rel("s", "d", "RELATES_TO", user_id="u")  # no co_occurrence_count
     monkeypatch.setattr(config, "get_graph_store", lambda bank=None: fake)
     entity_edges.purge_graph_projections_for_edges(
-        [{"bank": "personal", "src_entity_id": "s", "dst_entity_id": "d",
-          "relation_type": "RELATES_TO"}],
+        [
+            {
+                "bank": "personal",
+                "src_entity_id": "s",
+                "dst_entity_id": "d",
+                "relation_type": "RELATES_TO",
+            }
+        ],
         user_id="u",
     )
     assert fake.rels == {}
@@ -371,8 +424,14 @@ def test_purge_is_user_scoped(monkeypatch):
     fake.add_rel("s", "d", "RELATES_TO", user_id="owner")
     monkeypatch.setattr(config, "get_graph_store", lambda bank=None: fake)
     entity_edges.purge_graph_projections_for_edges(
-        [{"bank": "personal", "src_entity_id": "s", "dst_entity_id": "d",
-          "relation_type": "RELATES_TO"}],
+        [
+            {
+                "bank": "personal",
+                "src_entity_id": "s",
+                "dst_entity_id": "d",
+                "relation_type": "RELATES_TO",
+            }
+        ],
         user_id="attacker",
     )
     assert fake.rels[("s", "d", "RELATES_TO")]["user_id"] == "owner"
@@ -389,10 +448,18 @@ def test_purge_preserves_cooccurrence_relates_to(monkeypatch):
     monkeypatch.setattr(config, "get_graph_store", lambda bank=None: fake)
     entity_edges.purge_graph_projections_for_edges(
         [
-            {"bank": "personal", "src_entity_id": "s", "dst_entity_id": "d",
-             "relation_type": "RELATES_TO"},
-            {"bank": "personal", "src_entity_id": "x", "dst_entity_id": "y",
-             "relation_type": "RELATES_TO"},
+            {
+                "bank": "personal",
+                "src_entity_id": "s",
+                "dst_entity_id": "d",
+                "relation_type": "RELATES_TO",
+            },
+            {
+                "bank": "personal",
+                "src_entity_id": "x",
+                "dst_entity_id": "y",
+                "relation_type": "RELATES_TO",
+            },
         ],
         user_id="u",
     )

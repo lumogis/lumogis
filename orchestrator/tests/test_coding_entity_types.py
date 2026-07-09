@@ -11,7 +11,6 @@ honour the Cypher charset, the relation-extraction prompt auto-expands, and
 import re
 
 import pytest
-
 from models.mcp_write import ENTITY_TYPES
 from models.mcp_write import RELATION_TYPES
 from models.mcp_write import AddEntityInput
@@ -19,13 +18,25 @@ from models.mcp_write import AddRelationInput
 from models.mcp_write import CheckpointResult
 
 _CODING_ENTITY_TYPES = [
-    "CODING_DECISION", "CODING_CONVENTION", "COMPONENT", "FAILURE",
-    "SESSION", "TASK", "LIBRARY",
+    "CODING_DECISION",
+    "CODING_CONVENTION",
+    "COMPONENT",
+    "FAILURE",
+    "SESSION",
+    "TASK",
+    "LIBRARY",
 ]
 # The issue's 9 relation types (wire tokens — snake/upper, not CamelCase).
 _ISSUE_RELATIONS = [
-    "decided_by", "implements", "depends_on", "replaces", "supersedes",
-    "caused_by", "discussed_in_session", "blocked_by", "references_issue",
+    "decided_by",
+    "implements",
+    "depends_on",
+    "replaces",
+    "supersedes",
+    "caused_by",
+    "discussed_in_session",
+    "blocked_by",
+    "references_issue",
 ]
 
 
@@ -104,8 +115,15 @@ def test_relation_extraction_prompt_includes_new_tokens():
     from services import mcp_write
 
     prompt = mcp_write._EXTRACT_RELATIONS_PROMPT
-    for tok in ("DECIDED_BY", "IMPLEMENTS", "CAUSED_BY", "DISCUSSED_IN_SESSION",
-                "BLOCKED_BY", "REFERENCES_ISSUE", "REPLACES"):
+    for tok in (
+        "DECIDED_BY",
+        "IMPLEMENTS",
+        "CAUSED_BY",
+        "DISCUSSED_IN_SESSION",
+        "BLOCKED_BY",
+        "REFERENCES_ISSUE",
+        "REPLACES",
+    ):
         assert tok in prompt, tok
 
 
@@ -118,7 +136,8 @@ def test_checkpoint_creates_unique_session_entity(monkeypatch):
     monkeypatch.setattr(mcp_write.memories, "store_memory", lambda **k: "cp1")
     captured = {}
     monkeypatch.setattr(
-        mcp_write, "store_entities",
+        mcp_write,
+        "store_entities",
         lambda entities, **k: captured.update(entity=entities[0], kwargs=k) or ["sess1"],
     )
     out = mcp_write.checkpoint(user_id="u", bank="coding", summary="chose FalkorDB over Neo4j")

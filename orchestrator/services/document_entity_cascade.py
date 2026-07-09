@@ -404,9 +404,7 @@ def retract_document_entities(*, file_path: str, owner_user_id: str) -> int:
         return 0
 
     ms = config.get_metadata_store()
-    retract_ids, downgrade_ids = plan_document_entity_retraction(
-        ms, file_path, owner_user_id
-    )
+    retract_ids, downgrade_ids = plan_document_entity_retraction(ms, file_path, owner_user_id)
     return _apply_entity_retraction_plan(
         file_path=file_path,
         owner_user_id=owner_user_id,
@@ -424,12 +422,7 @@ def retract_removed_entities_on_reingest(
     Called from :func:`services.projection.reproject_shared_on_reingest` with
     the personal entity ids pruned from ``entity_relations`` during ingest.
     """
-    if (
-        not _graph_feature_enabled()
-        or not file_path
-        or not owner_user_id
-        or not removed_entity_ids
-    ):
+    if not _graph_feature_enabled() or not file_path or not owner_user_id or not removed_entity_ids:
         return 0
 
     ms = config.get_metadata_store()

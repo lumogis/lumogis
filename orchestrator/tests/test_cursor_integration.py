@@ -10,7 +10,6 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-
 from tests.cursor_integration.annotations import READ_TOOLS
 from tests.cursor_integration.annotations import WRITE_TOOLS
 from tests.cursor_integration.annotations import assert_annotation_matrix
@@ -36,16 +35,15 @@ def harness(monkeypatch):
     config_dir = REPO_ROOT / "config"
     monkeypatch.setenv("MODELS_CONFIG", str(config_dir / "models.yaml"))
     monkeypatch.setenv("OLLAMA_CATALOG_FALLBACK", str(config_dir / "ollama_catalog_fallback.json"))
-    monkeypatch.setenv(
-        "_LUMOGIS_TEST_SKIP_AUTH_CONSISTENCY_DO_NOT_SET_IN_PRODUCTION", "true"
-    )
+    monkeypatch.setenv("_LUMOGIS_TEST_SKIP_AUTH_CONSISTENCY_DO_NOT_SET_IN_PRODUCTION", "true")
     monkeypatch.delenv("MCP_AUTH_TOKEN", raising=False)
     monkeypatch.setenv("MCP_DEFAULT_USER_ID", TEST_USER)
     monkeypatch.setenv("AUTH_ENABLED", "false")
 
+    import services.mcp_write as mw
+
     import config
     from services import mcp_tokens as mcp_tokens_mod
-    import services.mcp_write as mw
 
     store, vs, embedder = build_fake_stores_from_fixture(FIXTURE, user_id=TEST_USER)
     config._instances["metadata_store"] = store
@@ -117,8 +115,13 @@ def _memory_ids_in_recall(resp: dict) -> set[str]:
 def test_fixture_loads_and_covers_entity_types():
     types = FIXTURE.coding_entity_types_present()
     assert types == {
-        "CODING_DECISION", "CODING_CONVENTION", "COMPONENT", "FAILURE",
-        "SESSION", "TASK", "LIBRARY",
+        "CODING_DECISION",
+        "CODING_CONVENTION",
+        "COMPONENT",
+        "FAILURE",
+        "SESSION",
+        "TASK",
+        "LIBRARY",
     }
     assert len(FIXTURE.memory_ids("coding")) >= 45
     assert len(FIXTURE.memory_ids("personal")) >= 3
@@ -339,11 +342,13 @@ def test_recall_bm25_temporal_params_include_bank(harness):
         },
     )
     bm25_calls = [
-        p for method, p in store.calls
+        p
+        for method, p in store.calls
         if method.startswith("fetch_all:") and p and "content_tsv" in method
     ]
     temporal_calls = [
-        p for method, p in store.calls
+        p
+        for method, p in store.calls
         if method.startswith("fetch_all:") and p and "valid_from desc" in method
     ]
     assert bm25_calls, "expected bm25 fetch_all invocations"
@@ -415,9 +420,10 @@ def test_read_scoped_token_denied_on_add_memory(monkeypatch):
     monkeypatch.delenv("MCP_AUTH_TOKEN", raising=False)
     monkeypatch.setenv("MCP_DEFAULT_USER_ID", TEST_USER)
 
+    import services.mcp_write as mw
+
     import config
     from services import mcp_tokens as mcp_tokens_mod
-    import services.mcp_write as mw
 
     store, vs, embedder = build_fake_stores_from_fixture(FIXTURE, user_id=TEST_USER)
     config._instances["metadata_store"] = store
@@ -437,8 +443,6 @@ def test_read_scoped_token_denied_on_add_memory(monkeypatch):
 
     with TestClient(main.app) as client:
         mcp_post(client, initialize_payload(), headers)
-        resp = call_tool(
-            client, headers, "add_memory", {"content": "denied", "bank": "coding"}
-        )
+        resp = call_tool(client, headers, "add_memory", {"content": "denied", "bank": "coding"})
     assert resp.get("result", {}).get("isError") is True
     assert called["n"] == 0

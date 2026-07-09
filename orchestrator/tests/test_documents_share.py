@@ -60,9 +60,12 @@ class _ShareStore:
                 and r.get("user_id") == uid
                 and r.get("published_from") is not None
             ]
-        if "from user_batch_jobs" in q and (
-            "'share_document'" in q or "share_document" in q
-        ) and "pending" in q and "dead" not in q:
+        if (
+            "from user_batch_jobs" in q
+            and ("'share_document'" in q or "share_document" in q)
+            and "pending" in q
+            and "dead" not in q
+        ):
             return [
                 j
                 for j in self.batch_jobs
@@ -81,11 +84,7 @@ class _ShareStore:
         if "from file_index" in q and "scope = 'personal'" in q:
             doc_id, uid = p[0], p[1]
             for r in self.file_rows:
-                if (
-                    r["id"] == doc_id
-                    and r["user_id"] == uid
-                    and r.get("scope") == "personal"
-                ):
+                if r["id"] == doc_id and r["user_id"] == uid and r.get("scope") == "personal":
                     return {"id": r["id"]}
             return None
         if "published_from = %s" in q and "scope = 'shared'" in q:
@@ -133,9 +132,7 @@ def _patch_enqueue(monkeypatch: pytest.MonkeyPatch, job_id: int = 77) -> list[di
         return job_id
 
     monkeypatch.setattr("services.batch_queue.enqueue", _enqueue)
-    monkeypatch.setattr(
-        "services.ingest_progress.update_ingest_job_progress", lambda **kw: kw
-    )
+    monkeypatch.setattr("services.ingest_progress.update_ingest_job_progress", lambda **kw: kw)
     return enqueued
 
 

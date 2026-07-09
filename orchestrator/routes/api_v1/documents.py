@@ -7,6 +7,7 @@ from __future__ import annotations
 from auth import UserContext
 from authz import require_user
 from fastapi import APIRouter
+from fastapi import Body
 from fastapi import Depends
 from fastapi import HTTPException
 from fastapi import status
@@ -19,8 +20,6 @@ from models.api_v1 import ShareQueuedResponse
 from services.document_purge import DocumentNotFoundError
 from services.documents import DocumentNotSharedError
 from services.documents import SourceUnavailableError
-
-from fastapi import Body
 
 from services import documents as doc_svc
 

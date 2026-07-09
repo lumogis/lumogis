@@ -18,7 +18,6 @@ from models.biography_conflict import BiographyConflictListResponse
 from models.biography_conflict import ConflictResolution
 from models.biography_conflict import ConflictResolutionRequest
 from models.biography_conflict import DetectedConflict
-
 from services.biography_conflict_store import ConflictAlreadyClosedError
 from services.biography_conflict_store import get_conflict
 from services.biography_conflict_store import get_conflict_detail

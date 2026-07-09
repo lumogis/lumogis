@@ -16,9 +16,10 @@ import logging
 import zlib
 from typing import Literal
 
-import config
 import psycopg2
 import psycopg2.extras
+
+import config
 
 _log = logging.getLogger(__name__)
 

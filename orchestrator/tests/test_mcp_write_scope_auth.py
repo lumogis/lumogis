@@ -51,7 +51,8 @@ def test_add_memory_tool_allowed_with_write_scope(monkeypatch):
     import services.mcp_write as mw
 
     monkeypatch.setattr(
-        mw, "add_memory",
+        mw,
+        "add_memory",
         lambda **k: {"memory_id": "m", "entity_ids": [], "relation_ids": []},
     )
     monkeypatch.setattr(mcp_server, "_resolve_user_id", lambda: "u")
@@ -82,10 +83,16 @@ def test_mint_supports_scopes(monkeypatch):
 
     ms.execute.side_effect = _exec
     ms.fetch_one.return_value = {
-        "id": "t1", "user_id": "u", "token_prefix": "lmcp_aaaaaaaaaaaa",
-        "token_hash": "h", "label": "x", "scopes": ["mcp:write"],
-        "created_at": datetime.now(timezone.utc), "last_used_at": None,
-        "revoked_at": None, "expires_at": None,
+        "id": "t1",
+        "user_id": "u",
+        "token_prefix": "lmcp_aaaaaaaaaaaa",
+        "token_hash": "h",
+        "label": "x",
+        "scopes": ["mcp:write"],
+        "created_at": datetime.now(timezone.utc),
+        "last_used_at": None,
+        "revoked_at": None,
+        "expires_at": None,
     }
     monkeypatch.setattr(config, "get_metadata_store", lambda: ms)
 

@@ -3,6 +3,7 @@
 """LUM-585 — "Shared by {member}" attribution: label precedence + the
 non-owner-only, single-lookup, never-full-email derivation on get_document.
 """
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -10,11 +11,11 @@ from datetime import timezone
 
 import pytest
 from auth import UserContext
+from services.documents import get_document
+from services.documents import list_documents
 
 import config
 from services import users as users_svc
-from services.documents import get_document
-from services.documents import list_documents
 
 NOW = datetime(2026, 6, 1, tzinfo=timezone.utc)
 

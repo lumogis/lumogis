@@ -9,6 +9,7 @@ from models.entities import ExtractedEntity
 from models.mcp_write import AddEntityInput
 from models.mcp_write import AddMemoryInput
 from models.mcp_write import ExtractedRelation
+
 from services import mcp_write
 
 
@@ -23,13 +24,17 @@ def test_add_memory_degrades_when_no_extraction(monkeypatch):
 def test_add_memory_stores_entities_and_edges(monkeypatch):
     monkeypatch.setattr(mcp_write.memories, "store_memory", lambda **k: "mem1")
     monkeypatch.setattr(
-        mcp_write, "extract_entities",
-        lambda *a, **k: [ExtractedEntity(name="A", entity_type="CONCEPT"),
-                         ExtractedEntity(name="B", entity_type="CONCEPT")],
+        mcp_write,
+        "extract_entities",
+        lambda *a, **k: [
+            ExtractedEntity(name="A", entity_type="CONCEPT"),
+            ExtractedEntity(name="B", entity_type="CONCEPT"),
+        ],
     )
     monkeypatch.setattr(mcp_write, "store_entities", lambda *a, **k: ["a", "b"])
     monkeypatch.setattr(
-        mcp_write, "extract_relations",
+        mcp_write,
+        "extract_relations",
         lambda *a, **k: [ExtractedRelation(src_name="A", dst_name="B", relation_type="DEPENDS_ON")],
     )
     monkeypatch.setattr(mcp_write, "_resolve_or_create_entity", lambda name, **k: f"id-{name}")
@@ -59,10 +64,13 @@ def test_add_relation_resolves_and_stores(monkeypatch):
     monkeypatch.setattr(mcp_write, "_resolve_or_create_entity", lambda name, **k: f"id-{name}")
     captured = {}
     monkeypatch.setattr(
-        mcp_write.entity_edges, "store_edge",
+        mcp_write.entity_edges,
+        "store_edge",
         lambda **k: captured.update(k) or "edge1",
     )
-    out = mcp_write.add_relation(user_id="u", bank="coding", src="A", dst="B", relation_type="DEPENDS_ON")
+    out = mcp_write.add_relation(
+        user_id="u", bank="coding", src="A", dst="B", relation_type="DEPENDS_ON"
+    )
     assert out == {"relation_id": "edge1"}
     assert captured["src_entity_id"] == "id-A" and captured["dst_entity_id"] == "id-B"
 
@@ -85,7 +93,9 @@ def test_memory_evidence_maps_to_mentioned_in_memory(monkeypatch):
 
     ids = entities.store_entities(
         [ExtractedEntity(name="FalkorDB", entity_type="PROJECT")],
-        evidence_id="m1", evidence_type="MEMORY", skip_quality_gate=True,
+        evidence_id="m1",
+        evidence_type="MEMORY",
+        skip_quality_gate=True,
     )
     assert len(ids) == 1
     rel_inserts = [c for c in ms.execute.call_args_list if "entity_relations" in c.args[0]]
@@ -113,7 +123,9 @@ def test_explicit_entity_with_low_quality_name_not_discarded(monkeypatch):
     # "the" would normally be discarded by the quality gate's stop-list.
     ids = entities.store_entities(
         [ExtractedEntity(name="the", entity_type="CONCEPT")],
-        evidence_id="e1", evidence_type="MEMORY", skip_quality_gate=True,
+        evidence_id="e1",
+        evidence_type="MEMORY",
+        skip_quality_gate=True,
     )
     assert len(ids) == 1  # written despite the low-quality name
 
@@ -144,7 +156,8 @@ def test_add_memory_extracted_entities_still_gated(monkeypatch):
 
     monkeypatch.setattr(mcp_write.memories, "store_memory", lambda **k: "mem1")
     monkeypatch.setattr(
-        mcp_write, "extract_entities",
+        mcp_write,
+        "extract_entities",
         lambda *a, **k: [ExtractedEntity(name="A", entity_type="CONCEPT")],
     )
     monkeypatch.setattr(mcp_write, "store_entities", spy_store)

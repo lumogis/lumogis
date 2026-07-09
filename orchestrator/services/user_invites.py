@@ -18,7 +18,6 @@ from datetime import timedelta
 from datetime import timezone
 from urllib.parse import quote
 
-import config
 from actions.audit import write_audit
 from models.actions import AuditEntry
 from models.auth import InternalUser
@@ -29,6 +28,8 @@ from models.user_invite import InternalInvite
 from models.user_invite import InviteAdminRow
 from models.user_invite import InviteInvalidError
 from models.user_invite import InvitePeekPublic
+
+import config
 from services import users as users_service
 
 _log = logging.getLogger(__name__)
@@ -171,7 +172,8 @@ def mint_invite(*, role: Role, allows_shared: bool, created_by: str) -> tuple[In
         )
         return internal, plaintext
     raise RuntimeError(
-        f"invite mint collision retry budget exhausted ({_MINT_COLLISION_BUDGET}); last: {last_exc!r}"
+        "invite mint collision retry budget exhausted "
+        f"({_MINT_COLLISION_BUDGET}); last: {last_exc!r}"
     )
 
 
@@ -259,7 +261,11 @@ def redeem_invite(plaintext: str, email: str, password: str) -> RedeemResult:
         "__user_invite__.redeemed",
         user_id=user_id,
         input_summary={"invite_id": invite_id},
-        result_summary={"email": normalised_email, "role": invite_role, "allows_shared": allows_shared},
+        result_summary={
+            "email": normalised_email,
+            "role": invite_role,
+            "allows_shared": allows_shared,
+        },
     )
     return RedeemResult(
         user=users_service._row_to_internal(user_row),

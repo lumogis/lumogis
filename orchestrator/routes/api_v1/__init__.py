@@ -20,8 +20,8 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from .approvals import router as approvals_router
-from .biography_conflicts import router as biography_conflicts_router
 from .audit import router as audit_router
+from .biography_conflicts import router as biography_conflicts_router
 from .captures import router as captures_router
 from .chat import router as chat_router
 from .conversations import router as conversations_router

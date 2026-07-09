@@ -271,8 +271,8 @@ def _run_weekly_review(*, user_id: str) -> str:
                     {
                         "role": "user",
                         "content": (
-                            "Write a concise 3-5 sentence weekly review summary based on this data:\n\n"
-                            + review_json_trimmed
+                            "Write a concise 3-5 sentence weekly review summary "
+                            "based on this data:\n\n" + review_json_trimmed
                         ),
                     }
                 ],

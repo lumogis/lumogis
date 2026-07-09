@@ -342,9 +342,7 @@ class AdminSharedItem(BaseModel):
     """
 
     model_config = _RES
-    resource_type: Literal[
-        "notes", "audio_memos", "sessions", "files", "entities", "signals"
-    ]
+    resource_type: Literal["notes", "audio_memos", "sessions", "files", "entities", "signals"]
     resource_id: str
     source_owner_id: Optional[str] = None
     label: Optional[str] = None
@@ -377,9 +375,7 @@ class SharedItem(BaseModel):
     """
 
     model_config = _RES
-    resource_type: Literal[
-        "notes", "audio_memos", "sessions", "files", "entities", "signals"
-    ]
+    resource_type: Literal["notes", "audio_memos", "sessions", "files", "entities", "signals"]
     resource_id: str
     label: Optional[str] = None
     shared_at: Optional[datetime] = None
@@ -1427,9 +1423,7 @@ class DocumentSummary(BaseModel):
     # ``share_status`` is the first-class transient/partial state; ``is_shared``
     # is a derived convenience (share_status in {shared, partial}); ``is_owner``
     # gates the interactive toggle (server enforcement is the fetch guard).
-    share_status: Literal[
-        "personal", "sharing", "shared", "unsharing", "partial"
-    ] = "personal"
+    share_status: Literal["personal", "sharing", "shared", "unsharing", "partial"] = "personal"
     in_flight_share_job_id: int | None = None
     is_owner: bool = True
     # LUM-585 — "Shared by {member}" attribution label. Service-computed,

@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Lumogis
 """LUM-583 — GET /api/v1/me/shared-items route: auth, shape, owner-scoping."""
+
 from __future__ import annotations
 
 import routes.me as me_mod

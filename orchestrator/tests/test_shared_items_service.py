@@ -9,6 +9,7 @@ registry (the feature's stated highest risk) makes the arm raise, the item
 vanishes, and the test fails. It also records the emitted SQL so the owner
 predicate can be asserted directly (not just modelled in the fake).
 """
+
 from __future__ import annotations
 
 import re
@@ -16,10 +17,10 @@ from datetime import datetime
 from datetime import timezone
 
 import pytest
+from services.sharing_registry import SHAREABLE_RESOURCES
 
 import config
 from services import shared_items as svc
-from services.sharing_registry import SHAREABLE_RESOURCES
 
 # The REAL columns each shareable table exposes (verified against
 # postgres/init.sql + migration 003). Seeding rows under these names lets the
@@ -86,12 +87,24 @@ def _install(monkeypatch, store):
 def _one_row_per_type(owner="alice"):
     """A shared row for every one of the six types, keyed by real columns."""
     return {
-        "notes": [{"published_from": "n-1", "user_id": owner, "text": "grocery list", "created_at": None}],
-        "audio_memos": [{"published_from": "a-1", "user_id": owner, "transcript": "memo", "created_at": None}],
-        "sessions": [{"published_from": "s-1", "user_id": owner, "summary": "chat", "created_at": None}],
-        "file_index": [{"published_from": 7, "user_id": owner, "file_path": "tax.pdf", "updated_at": None}],
-        "entities": [{"published_from": "e-1", "user_id": owner, "name": "Acme", "created_at": None}],
-        "signals": [{"published_from": "g-1", "user_id": owner, "title": "alert", "created_at": None}],
+        "notes": [
+            {"published_from": "n-1", "user_id": owner, "text": "grocery list", "created_at": None}
+        ],
+        "audio_memos": [
+            {"published_from": "a-1", "user_id": owner, "transcript": "memo", "created_at": None}
+        ],
+        "sessions": [
+            {"published_from": "s-1", "user_id": owner, "summary": "chat", "created_at": None}
+        ],
+        "file_index": [
+            {"published_from": 7, "user_id": owner, "file_path": "tax.pdf", "updated_at": None}
+        ],
+        "entities": [
+            {"published_from": "e-1", "user_id": owner, "name": "Acme", "created_at": None}
+        ],
+        "signals": [
+            {"published_from": "g-1", "user_id": owner, "title": "alert", "created_at": None}
+        ],
     }
 
 
@@ -132,7 +145,11 @@ def test_resource_id_is_source_pk_not_projection_pk(monkeypatch):
 
 def test_files_resource_id_stringified(monkeypatch):
     store = _ColumnAwareStore(
-        {"file_index": [{"published_from": 7, "user_id": "alice", "file_path": "x.pdf", "updated_at": None}]}
+        {
+            "file_index": [
+                {"published_from": 7, "user_id": "alice", "file_path": "x.pdf", "updated_at": None}
+            ]
+        }
     )
     _install(monkeypatch, store)
     items = svc.list_my_shared_items("alice")
@@ -182,9 +199,20 @@ def test_global_recency_sort_across_types(monkeypatch):
 
     store = _ColumnAwareStore(
         {
-            "notes": [{"published_from": "n-old", "user_id": "alice", "text": "n", "created_at": ts(1)}],
-            "file_index": [{"published_from": 9, "user_id": "alice", "file_path": "f.pdf", "updated_at": ts(20)}],
-            "entities": [{"published_from": "e-mid", "user_id": "alice", "name": "E", "created_at": ts(10)}],
+            "notes": [
+                {"published_from": "n-old", "user_id": "alice", "text": "n", "created_at": ts(1)}
+            ],
+            "file_index": [
+                {
+                    "published_from": 9,
+                    "user_id": "alice",
+                    "file_path": "f.pdf",
+                    "updated_at": ts(20),
+                }
+            ],
+            "entities": [
+                {"published_from": "e-mid", "user_id": "alice", "name": "E", "created_at": ts(10)}
+            ],
         }
     )
     _install(monkeypatch, store)
@@ -195,7 +223,11 @@ def test_global_recency_sort_across_types(monkeypatch):
 
 def test_label_truncated(monkeypatch):
     store = _ColumnAwareStore(
-        {"notes": [{"published_from": "n-1", "user_id": "alice", "text": "x" * 300, "created_at": None}]}
+        {
+            "notes": [
+                {"published_from": "n-1", "user_id": "alice", "text": "x" * 300, "created_at": None}
+            ]
+        }
     )
     _install(monkeypatch, store)
     items = svc.list_my_shared_items("alice")

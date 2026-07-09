@@ -177,7 +177,9 @@ def _cleanup(ms, vs, *user_ids: str, file_path: str | None = None) -> None:
         except Exception:
             pass
     try:
-        ms.execute("DELETE FROM audit_log WHERE connector = 'admin' AND action_name = 'admin_unshare'")
+        ms.execute(
+            "DELETE FROM audit_log WHERE connector = 'admin' AND action_name = 'admin_unshare'"
+        )
     except Exception:
         pass
 

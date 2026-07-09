@@ -16,8 +16,9 @@ import uuid
 from datetime import datetime
 from datetime import timezone
 
-import config
 from models.mcp_write import MemoryRow
+
+import config
 
 _log = logging.getLogger(__name__)
 

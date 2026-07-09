@@ -185,7 +185,6 @@ def is_privacy_or_cloud_row(event_type: str, action_name: str) -> bool:
     return event_type.startswith("privacy.") or action_name == PRIVACY_MODE_BLOCK
 
 
-
 def _all_exact_event_types() -> dict[str, AuditFilterPredicate]:
     mapping: dict[str, AuditFilterPredicate] = {
         "privacy.external_call.denied": AuditFilterPredicate(action_names=(PRIVACY_MODE_BLOCK,)),

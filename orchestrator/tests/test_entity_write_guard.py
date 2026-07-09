@@ -7,12 +7,12 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
-
-import config
 from auth import UserContext
-from services import entity_write_guard as guard
 from services.consolidation_lock import advisory_key2
 from services.consolidation_lock import resolve_scope_owner
+
+import config
+from services import entity_write_guard as guard
 
 
 class FakeMetadataStore:

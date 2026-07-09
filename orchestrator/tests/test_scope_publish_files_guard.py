@@ -8,6 +8,7 @@ routed to the background ``share_document`` job (202-style ``queued`` response);
 small documents keep the fast inline projection path. Scope validation (400) and
 owner/personal fetch (404) still fail-fast before either path.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -68,9 +69,7 @@ def test_large_document_routes_to_background_job(app, monkeypatch):
 
     def fake_share(user_id, document_id):
         called["args"] = (user_id, document_id)
-        return ShareQueuedResponse(
-            document_id=document_id, job_id=777, share_status="sharing"
-        )
+        return ShareQueuedResponse(document_id=document_id, job_id=777, share_status="sharing")
 
     monkeypatch.setattr(doc_svc, "share_document", fake_share)
     monkeypatch.setattr(

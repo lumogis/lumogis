@@ -339,6 +339,7 @@ def _emit_document_ingested_and_entities(
     try:
         from services.entities import extract_entities
         from services.entities import store_entities
+
         from services import document_entity_cascade
 
         entities = extract_entities(text, user_id=user_id)

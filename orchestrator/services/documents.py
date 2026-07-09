@@ -17,7 +17,6 @@ from models.api_v1 import DocumentEntityLink
 from models.api_v1 import DocumentStatus
 from models.api_v1 import DocumentSummary
 from models.api_v1 import ReingestQueuedResponse
-from services import users as users_service
 from services.document_purge import DocumentNotFoundError
 from services.document_purge import purge_document
 from services.entities import resolve_relation_source_id
@@ -25,6 +24,7 @@ from services.memory_purge import PurgeResult
 from visibility import visible_filter
 
 import config
+from services import users as users_service
 
 _log = logging.getLogger(__name__)
 
@@ -548,8 +548,7 @@ def _fetch_personal_source(user_id: str, document_id: int) -> dict[str, Any] | N
     """Owner-only, personal-source-only fetch (mirrors routes/scope.py guard)."""
     ms = config.get_metadata_store()
     return ms.fetch_one(
-        "SELECT id FROM file_index "
-        "WHERE id = %s AND user_id = %s AND scope = 'personal'",
+        "SELECT id FROM file_index WHERE id = %s AND user_id = %s AND scope = 'personal'",
         (document_id, user_id),
     )
 
@@ -582,17 +581,16 @@ def _enqueue_share_job(user_id: str, document_id: int, *, kind: str, share_statu
             share_status=existing["direction"],
         )
 
-    from services import batch_handlers as _batch_handlers_registered  # noqa: F401
     from services.batch_queue import enqueue
+
+    from services import batch_handlers as _batch_handlers_registered  # noqa: F401
 
     job_id = enqueue(user_id=user_id, kind=kind, payload={"document_id": document_id})
 
     from services import ingest_progress as ip
 
     ip.update_ingest_job_progress(job_id=job_id, user_id=user_id, stage="queued")
-    return ShareQueuedResponse(
-        document_id=document_id, job_id=job_id, share_status=share_status
-    )
+    return ShareQueuedResponse(document_id=document_id, job_id=job_id, share_status=share_status)
 
 
 def share_document(user_id: str, document_id: int):
@@ -604,9 +602,7 @@ def share_document(user_id: str, document_id: int):
     """
     if _fetch_personal_source(user_id, document_id) is None:
         raise DocumentNotFoundError(document_id)
-    return _enqueue_share_job(
-        user_id, document_id, kind="share_document", share_status="sharing"
-    )
+    return _enqueue_share_job(user_id, document_id, kind="share_document", share_status="sharing")
 
 
 def unshare_document(user_id: str, document_id: int):

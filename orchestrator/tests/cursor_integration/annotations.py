@@ -4,15 +4,27 @@
 
 from __future__ import annotations
 
-READ_TOOLS = frozenset({
-    "memory.search", "memory.get_recent", "entity.lookup", "entity.search",
-    "context.build", "recall",
-})
+READ_TOOLS = frozenset(
+    {
+        "memory.search",
+        "memory.get_recent",
+        "entity.lookup",
+        "entity.search",
+        "context.build",
+        "recall",
+    }
+)
 
-WRITE_TOOLS = frozenset({
-    "add_memory", "add_entity", "add_relation", "forget",
-    "update_observation", "checkpoint",
-})
+WRITE_TOOLS = frozenset(
+    {
+        "add_memory",
+        "add_entity",
+        "add_relation",
+        "forget",
+        "update_observation",
+        "checkpoint",
+    }
+)
 
 ALL_TOOLS = READ_TOOLS | WRITE_TOOLS
 

@@ -128,9 +128,9 @@ async def upload_ingest_file(
 
     try:
         from services.batch_queue import enqueue
-        from services import ingest_progress as ip
 
         from services import batch_handlers as _batch_handlers_registered  # noqa: F401
+        from services import ingest_progress as ip
 
         batch_id: str | None = None
         if batch_id_header is not None:

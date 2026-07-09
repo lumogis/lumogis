@@ -45,7 +45,8 @@ def _route_has_dep(route, names: set[str]) -> bool:
 
 
 def test_member_is_forbidden_from_admin_users(users_store, auth_env):
-    from tests.test_auth_phase2 import _client, _user_headers
+    from tests.test_auth_phase2 import _client
+    from tests.test_auth_phase2 import _user_headers
 
     with _client(users_store) as client:
         headers = _user_headers(users_store)
@@ -62,7 +63,8 @@ def test_member_is_forbidden_from_admin_users(users_store, auth_env):
 
 
 def test_admin_reaches_admin_users_list(users_store, auth_env):
-    from tests.test_auth_phase2 import _admin_headers, _client
+    from tests.test_auth_phase2 import _admin_headers
+    from tests.test_auth_phase2 import _client
 
     with _client(users_store) as client:
         resp = client.get("/api/v1/admin/users", headers=_admin_headers(users_store))
@@ -84,8 +86,7 @@ def test_scope_publish_routes_require_user(users_store, auth_env):
     publish_routes = [
         r
         for r in _iter_api_routes(main.app)
-        if getattr(r, "dependant", None) is not None
-        and getattr(r, "path", "").endswith("/publish")
+        if getattr(r, "dependant", None) is not None and getattr(r, "path", "").endswith("/publish")
     ]
     assert publish_routes, "expected scope publish/unpublish routes to be registered"
     ungated = [

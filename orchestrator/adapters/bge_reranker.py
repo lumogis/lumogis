@@ -24,7 +24,9 @@ def _resolve_device(device: str | None) -> str | None:
 
 
 class BGEReranker:
-    def __init__(self, model_name: str = "BAAI/bge-reranker-base", device: str | None = None) -> None:
+    def __init__(
+        self, model_name: str = "BAAI/bge-reranker-base", device: str | None = None
+    ) -> None:
         # Lazy import: keeps the heavy sentence-transformers/torch stack off the module import
         # path (only paid when a BGE reranker is actually constructed).
         from sentence_transformers import CrossEncoder

@@ -29,11 +29,11 @@ import uuid
 
 import pytest
 from auth import UserContext
-from services import projection
 from services.document_purge import purge_document
 from visibility import visible_qdrant_filter
 
 import config
+from services import projection
 
 pytestmark = pytest.mark.integration
 
@@ -241,10 +241,7 @@ def test_second_member_document_chat_http_returns_shared_citations(live_stores, 
     # A distinctive sentence: querying it back embeds to (near) the stored vector,
     # so real retrieval deterministically surfaces the single shared chunk.
     marker = uuid.uuid4().hex
-    sentence = (
-        f"The household budget code word is {marker}; "
-        "sphinx of black quartz, judge my vow."
-    )
+    sentence = f"The household budget code word is {marker}; sphinx of black quartz, judge my vow."
 
     try:
         embedder = config.get_embedder()
@@ -327,9 +324,9 @@ def test_second_member_document_chat_http_returns_shared_citations(live_stores, 
         assert lumogis, f"member chat must carry the lumogis extension block: {body}"
         citations = lumogis.get("context_citations") or []
         assert citations, "member scoped chat returned no document citations"
-        assert any(
-            (c.get("file_path") or "") == file_path for c in citations
-        ), f"member citations did not reference the owner's shared document: {citations}"
+        assert any((c.get("file_path") or "") == file_path for c in citations), (
+            f"member citations did not reference the owner's shared document: {citations}"
+        )
     finally:
         _cleanup(ms, vs, owner, file_path)
 

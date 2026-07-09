@@ -10,7 +10,6 @@ import threading
 import uuid
 from datetime import datetime
 from datetime import timezone
-from typing import Any
 
 from tests.cursor_integration.fixture_loader import CodingBankFixture
 from tests.test_mcp_tokens_routes import _RoutesFakeStore
@@ -69,12 +68,14 @@ class _CursorIntegrationFakeStore(_RoutesFakeStore):
                     "published_from": None,
                 }
             for edge in bank.get("edges") or []:
-                self._edges.append({
-                    **edge,
-                    "user_id": self._user_id,
-                    "bank": bank_name,
-                    "valid_until": None,
-                })
+                self._edges.append(
+                    {
+                        **edge,
+                        "user_id": self._user_id,
+                        "bank": bank_name,
+                        "valid_until": None,
+                    }
+                )
 
     def _all_memories(self) -> dict[str, dict]:
         return {**self._memories, **self._written_memories}
@@ -108,7 +109,9 @@ class _CursorIntegrationFakeStore(_RoutesFakeStore):
                 "bank": bank,
                 "content": content,
                 "tags": list(tags) if tags else [],
-                "metadata": json.loads(metadata_json) if isinstance(metadata_json, str) else (metadata_json or {}),
+                "metadata": json.loads(metadata_json)
+                if isinstance(metadata_json, str)
+                else (metadata_json or {}),
                 "valid_from": datetime.now(timezone.utc),
                 "valid_until": None,
                 "created_at": datetime.now(timezone.utc),
@@ -144,16 +147,18 @@ class _CursorIntegrationFakeStore(_RoutesFakeStore):
 
         if q.startswith("insert into entity_edges"):
             edge_id = str(p[0])
-            self._written_edges.append({
-                "id": edge_id,
-                "user_id": p[1],
-                "bank": p[2],
-                "src_entity_id": p[3],
-                "dst_entity_id": p[4],
-                "relation_type": p[5],
-                "evidence_id": p[6],
-                "valid_until": None,
-            })
+            self._written_edges.append(
+                {
+                    "id": edge_id,
+                    "user_id": p[1],
+                    "bank": p[2],
+                    "src_entity_id": p[3],
+                    "dst_entity_id": p[4],
+                    "relation_type": p[5],
+                    "evidence_id": p[6],
+                    "valid_until": None,
+                }
+            )
             return
 
         if q.startswith("update entity_edges set valid_until"):
@@ -277,11 +282,7 @@ class _CursorIntegrationFakeStore(_RoutesFakeStore):
                 hits.append({"id": mem["id"]})
             return hits[:20]
 
-        if (
-            "select id, content" in q
-            and "valid_from, valid_until" in q
-            and "id = any" in q
-        ):
+        if "select id, content" in q and "valid_from, valid_until" in q and "id = any" in q:
             ids, user_id, as_of = p[0], p[1], p[2]
             id_set = {str(i) for i in ids}
             rows = []
@@ -316,10 +317,7 @@ class _CursorIntegrationFakeStore(_RoutesFakeStore):
                 grouped.setdefault(eid, set()).update(
                     [edge["src_entity_id"], edge["dst_entity_id"]]
                 )
-            return [
-                {"evidence_id": eid, "entity_ids": list(eids)}
-                for eid, eids in grouped.items()
-            ]
+            return [{"evidence_id": eid, "entity_ids": list(eids)} for eid, eids in grouped.items()]
 
         if "select entity_id from entities" in q and "name ilike any" in q:
             user_id, patterns, limit = p[0], p[1], p[2]
@@ -330,10 +328,12 @@ class _CursorIntegrationFakeStore(_RoutesFakeStore):
                     continue
                 name_l = ent["name"].lower()
                 if any(pat in name_l for pat in pats):
-                    hits.append({
-                        "entity_id": ent["entity_id"],
-                        "mention_count": ent.get("mention_count", 1),
-                    })
+                    hits.append(
+                        {
+                            "entity_id": ent["entity_id"],
+                            "mention_count": ent.get("mention_count", 1),
+                        }
+                    )
             hits.sort(key=lambda r: r.get("mention_count", 0), reverse=True)
             return hits[: int(limit)]
 
@@ -343,14 +343,16 @@ class _CursorIntegrationFakeStore(_RoutesFakeStore):
             hits = []
             for ent in {**self._entities, **self._written_entities}.values():
                 if pattern in ent["name"].lower():
-                    hits.append({
-                        "name": ent["name"],
-                        "entity_type": ent["entity_type"],
-                        "mention_count": ent.get("mention_count", 1),
-                        "aliases": ent.get("aliases") or [],
-                        "context_tags": ent.get("context_tags") or [],
-                        "scope": ent.get("scope", "personal"),
-                    })
+                    hits.append(
+                        {
+                            "name": ent["name"],
+                            "entity_type": ent["entity_type"],
+                            "mention_count": ent.get("mention_count", 1),
+                            "aliases": ent.get("aliases") or [],
+                            "context_tags": ent.get("context_tags") or [],
+                            "scope": ent.get("scope", "personal"),
+                        }
+                    )
             hits.sort(key=lambda r: r["mention_count"], reverse=True)
             return hits[:limit]
 
@@ -409,15 +411,17 @@ class FakeVS:
         hits: list[dict] = []
         for bank_name, bank in self._fixture.raw["banks"].items():
             for mem in bank["memories"]:
-                hits.append({
-                    "id": f"pt-{mem['memory_id']}",
-                    "score": 0.9,
-                    "payload": {
-                        "memory_id": mem["memory_id"],
-                        "user_id": self._user_id,
-                        "bank": bank_name,
-                    },
-                })
+                hits.append(
+                    {
+                        "id": f"pt-{mem['memory_id']}",
+                        "score": 0.9,
+                        "payload": {
+                            "memory_id": mem["memory_id"],
+                            "user_id": self._user_id,
+                            "bank": bank_name,
+                        },
+                    }
+                )
         return hits
 
     def ping(self) -> bool:
@@ -433,11 +437,13 @@ class FakeVS:
         pass
 
     def upsert(self, collection: str, id: str, vector: list, payload: dict) -> None:
-        self._hits.append({
-            "id": id,
-            "score": 0.85,
-            "payload": payload,
-        })
+        self._hits.append(
+            {
+                "id": id,
+                "score": 0.85,
+                "payload": payload,
+            }
+        )
 
     def search(
         self,

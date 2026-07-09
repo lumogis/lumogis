@@ -12,6 +12,7 @@ regression (LUM-157 review R3).
 These are port-level unit tests (no real Qdrant); the two-user retrieval and
 migration paths are covered by the integration suite.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -66,11 +67,13 @@ class FakeVectorStore:
         must = filter.get("must", []) if "should" not in filter else None
         if must is None:
             raise AssertionError("should-filters not expected in unshare cleanup")
+
         def matches(payload):
             for cond in must:
                 if payload.get(cond["key"]) != cond["match"]["value"]:
                     return False
             return True  # empty must -> True for every point (match-all)
+
         for pid in [p for p, pt in self.points.items() if matches(pt["payload"])]:
             del self.points[pid]
 
@@ -121,8 +124,9 @@ def test_unproject_deletes_only_the_shared_copies_not_the_collection(fake_vs):
     fake_vs.add_personal_chunk("p0", "dad", "/m.pdf", 0, [0.1], "c0")
     fake_vs.add_personal_chunk("p1", "dad", "/m.pdf", 1, [0.2], "c1")
     fake_vs.add_personal_chunk("q0", "dad", "/other.pdf", 0, [0.9], "other")
-    projection._project_file_chunks({"id": 101, "user_id": "dad", "file_path": "/m.pdf"},
-                                    target_scope="shared")
+    projection._project_file_chunks(
+        {"id": 101, "user_id": "dad", "file_path": "/m.pdf"}, target_scope="shared"
+    )
     assert sum(pt["payload"]["scope"] == "shared" for pt in fake_vs.points.values()) == 2
 
     projection._unproject_file_chunks(101, "dad", "shared")
@@ -134,8 +138,9 @@ def test_unproject_deletes_only_the_shared_copies_not_the_collection(fake_vs):
 
 def test_project_skips_non_personal_and_missing_ids(fake_vs):
     # no owner/file_path -> no-op
-    assert projection._project_file_chunks({"id": 5, "user_id": "", "file_path": ""},
-                                           target_scope="shared") == (0, 0)
+    assert projection._project_file_chunks(
+        {"id": 5, "user_id": "", "file_path": ""}, target_scope="shared"
+    ) == (0, 0)
 
 
 def test_project_reports_failed_chunks_as_partial(fake_vs, monkeypatch):
@@ -197,8 +202,13 @@ def test_project_skips_missing_chunk_index_no_collision(fake_vs):
     _add_raw_chunk(
         fake_vs,
         "p0",
-        {"user_id": "dad", "file_path": "/m.pdf", "chunk_index": None,
-         "text": "a", "scope": "personal"},
+        {
+            "user_id": "dad",
+            "file_path": "/m.pdf",
+            "chunk_index": None,
+            "text": "a",
+            "scope": "personal",
+        },
         [0.1],
     )
     _add_raw_chunk(
@@ -221,8 +231,13 @@ def test_project_mixed_valid_and_missing_chunk_index(fake_vs):
     _add_raw_chunk(
         fake_vs,
         "p1",
-        {"user_id": "dad", "file_path": "/m.pdf", "chunk_index": None,
-         "text": "b", "scope": "personal"},
+        {
+            "user_id": "dad",
+            "file_path": "/m.pdf",
+            "chunk_index": None,
+            "text": "b",
+            "scope": "personal",
+        },
         [0.2],
     )
     projected, failed = projection._project_file_chunks(
@@ -252,9 +267,7 @@ def test_project_file_owner_must_match_actor(fake_vs):
             actor=UserContext(user_id="mum", is_authenticated=True),
         )
     # nothing was projected before the guard tripped
-    assert not any(
-        pt["payload"].get("scope") == "shared" for pt in fake_vs.points.values()
-    )
+    assert not any(pt["payload"].get("scope") == "shared" for pt in fake_vs.points.values())
 
 
 # ---------------------------------------------------------------------------

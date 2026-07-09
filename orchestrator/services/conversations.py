@@ -188,8 +188,7 @@ def list_conversations(
         return []
 
     return [
-        _row_to_summary(r, caller_user_id=caller, shared_source_ids=shared_source_ids)
-        for r in rows
+        _row_to_summary(r, caller_user_id=caller, shared_source_ids=shared_source_ids) for r in rows
     ]
 
 
@@ -283,9 +282,7 @@ def get_conversation(user: UserContext, conversation_id: str) -> ConversationDet
     # it directly rather than a second ``_fetch_shared_session_ids`` round-trip.
     has_projection = row.get("proj_summary") is not None
     shared_source_ids = {str(row["session_id"])} if has_projection else set()
-    summary = _row_to_summary(
-        row, caller_user_id=caller, shared_source_ids=shared_source_ids
-    )
+    summary = _row_to_summary(row, caller_user_id=caller, shared_source_ids=shared_source_ids)
     # A non-owner can never share; ``can_share`` is meaningful only for the owner.
     can_share = can_share and summary.is_owner
     # Resolve the household-facing summary: the projected row's own text for a

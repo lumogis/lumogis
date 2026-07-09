@@ -37,10 +37,10 @@ from routes.actions import router as actions_router
 from routes.admin import router as admin_router
 from routes.admin_diagnostics import router as admin_diagnostics_router
 from routes.admin_ollama import router as admin_ollama_router
+from routes.admin_sharing import router as admin_sharing_router
 from routes.admin_users import imports_router as admin_user_imports_router
 from routes.admin_users import router as admin_users_router
 from routes.auth import router as auth_router
-from routes.invites import router as invites_router
 from routes.capabilities import router as capabilities_router
 from routes.chat import router as chat_router
 from routes.connector_credentials import admin_router as connector_credentials_admin_router
@@ -54,7 +54,7 @@ from routes.connector_credentials import (
 from routes.data import router as data_router
 from routes.events import register_hooks as register_sse_hooks
 from routes.events import router as events_router
-from routes.admin_sharing import router as admin_sharing_router
+from routes.invites import router as invites_router
 from routes.mcp_tokens import admin_router as mcp_tokens_admin_router
 from routes.mcp_tokens import router as mcp_tokens_router
 from routes.me import router as me_router

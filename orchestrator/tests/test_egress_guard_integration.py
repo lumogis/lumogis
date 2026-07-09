@@ -11,8 +11,9 @@ import main
 import pytest
 from auth import UserContext
 from fastapi.testclient import TestClient
-from services import egress_guard as eg
 from services.egress_guard import EgressBlockedError
+
+from services import egress_guard as eg
 
 _ALICE = UserContext(user_id="alice", role="user", is_authenticated=True)
 

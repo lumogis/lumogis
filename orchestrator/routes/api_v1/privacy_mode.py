@@ -11,6 +11,7 @@ from fastapi import Depends
 from fastapi import HTTPException
 from models.privacy_mode import MePrivacyModePatch
 from models.privacy_mode import MePrivacyModeResponse
+
 from services import privacy_mode as privacy_svc
 
 router = APIRouter(

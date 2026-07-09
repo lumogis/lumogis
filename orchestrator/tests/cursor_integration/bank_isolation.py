@@ -17,8 +17,8 @@ def random_isolation_queries(
 ) -> list[tuple[str, str, str]]:
     """Return ``(query, target_bank, forbidden_bank)`` tuples."""
     rng = random.Random(seed)
-    coding_ids = set(fixture.memory_ids("coding"))
-    personal_ids = set(fixture.memory_ids("personal"))
+    _coding_ids = set(fixture.memory_ids("coding"))
+    _personal_ids = set(fixture.memory_ids("personal"))
     pairs: list[tuple[str, str, str]] = []
     mappings = fixture.raw.get("recall_mappings") or []
     coding_maps = [m for m in mappings if m["bank"] == "coding"]

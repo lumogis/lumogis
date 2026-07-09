@@ -29,6 +29,7 @@ from datetime import datetime
 from datetime import timezone
 
 from models.recall import RecalledMemory
+
 from services import banks
 
 _log = logging.getLogger(__name__)
@@ -285,7 +286,9 @@ def recall(
         requested = list(_VALID_STRATEGIES)
 
     leg_thunks = {
-        "semantic": lambda: _leg_semantic(query, user_id=user_id, bank=bank, embedder=embedder, vs=vs),
+        "semantic": lambda: _leg_semantic(
+            query, user_id=user_id, bank=bank, embedder=embedder, vs=vs
+        ),
         "bm25": lambda: _leg_bm25(query, user_id=user_id, bank=bank, as_of=as_of, ms=ms),
         "graph": lambda: _leg_graph(query, user_id=user_id, bank=bank, as_of=as_of, ms=ms),
         "temporal": lambda: _leg_temporal(user_id=user_id, bank=bank, as_of=as_of, ms=ms),

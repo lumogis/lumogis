@@ -3,6 +3,7 @@
 """LUM-585 — admin PATCH of users.display_name: persist, normalize, gate, audit,
 and the _to_admin_view projection (so the admin UI reads back the written value).
 """
+
 from __future__ import annotations
 
 from datetime import datetime

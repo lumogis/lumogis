@@ -7,7 +7,6 @@ from __future__ import annotations
 import json
 
 import httpx
-
 from tests.cursor_integration.mcp_jsonrpc import initialize_payload
 
 

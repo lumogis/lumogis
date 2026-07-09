@@ -335,9 +335,10 @@ def test_derive_share_fields_owner_personal_no_projection():
     from routes.api_v1.kg import _derive_entity_share_fields
 
     row = {"entity_id": ALICE_SRC, "user_id": "default", "scope": "personal"}
-    assert _derive_entity_share_fields(
-        row, caller_user_id="default", shared_source_ids=set()
-    ) == ("personal", True)
+    assert _derive_entity_share_fields(row, caller_user_id="default", shared_source_ids=set()) == (
+        "personal",
+        True,
+    )
 
 
 def test_derive_share_fields_owner_personal_with_projection():
@@ -353,15 +354,17 @@ def test_derive_share_fields_member_views_foreign_projection():
     from routes.api_v1.kg import _derive_entity_share_fields
 
     row = {"entity_id": BOB_PROJ, "user_id": "bob", "scope": "shared"}
-    assert _derive_entity_share_fields(
-        row, caller_user_id="default", shared_source_ids=set()
-    ) == ("shared", False)
+    assert _derive_entity_share_fields(row, caller_user_id="default", shared_source_ids=set()) == (
+        "shared",
+        False,
+    )
 
 
 def test_derive_share_fields_owner_views_own_projection_directly():
     from routes.api_v1.kg import _derive_entity_share_fields
 
     row = {"entity_id": ALICE_PROJ, "user_id": "default", "scope": "shared"}
-    assert _derive_entity_share_fields(
-        row, caller_user_id="default", shared_source_ids=set()
-    ) == ("shared", True)
+    assert _derive_entity_share_fields(row, caller_user_id="default", shared_source_ids=set()) == (
+        "shared",
+        True,
+    )

@@ -220,7 +220,8 @@ def _iter_api_routes(app):
     """Yield all :class:`APIRoute` instances, including under FastAPI
     ``_IncludedRouter`` wrappers (route table flattening broke in newer
     FastAPI — top-level ``app.routes`` no longer exposes nested paths)."""
-    from fastapi.routing import APIRoute, APIRouter
+    from fastapi.routing import APIRoute
+    from fastapi.routing import APIRouter
 
     def _walk(routes):
         for route in routes:

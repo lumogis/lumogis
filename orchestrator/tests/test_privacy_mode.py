@@ -82,7 +82,11 @@ def privacy_store(monkeypatch):
         "get_model_config",
         lambda name: dict(_FAKE_MODELS[name]),
     )
-    monkeypatch.setattr(config, "is_local_model", lambda name: "ollama" in (_FAKE_MODELS.get(name, {}).get("base_url") or "").lower())
+    monkeypatch.setattr(
+        config,
+        "is_local_model",
+        lambda name: "ollama" in (_FAKE_MODELS.get(name, {}).get("base_url") or "").lower(),
+    )
     monkeypatch.setattr("auth.auth_enabled", lambda: False)
     yield store
 
@@ -179,7 +183,7 @@ def test_post_migration_allow_cloud_seed_preserves_cloud_access(privacy_store, m
 
 
 def test_fresh_install_stays_local_only_even_with_legacy_api_key_row(privacy_store):
-    """Absent privacy_mode row defaults local-only (migration would not seed without cloud signals)."""
+    """Absent privacy_mode row defaults local-only (no cloud signals in migration)."""
     privacy_store.app_settings["OPENAI_API_KEY"] = "sk-test"
     pol = effective_privacy_mode("default")
     assert pol.effective == InstancePrivacyMode.LOCAL_ONLY
@@ -216,7 +220,9 @@ def test_validate_instance_privacy_patch_rejects_allow_cloud_while_instance_lock
 def test_privacy_gate_precedes_credential_resolution(privacy_store):
     with patch("services.privacy_mode.record_privacy_block"):
         with patch("services.llm_connector_map.effective_api_key") as mock_key:
-            mock_key.side_effect = AssertionError("credentials must not resolve before privacy gate")
+            mock_key.side_effect = AssertionError(
+                "credentials must not resolve before privacy gate"
+            )
             with pytest.raises(PrivacyModeBlocked):
                 config.get_llm_provider("claude", user_id="default")
             mock_key.assert_not_called()

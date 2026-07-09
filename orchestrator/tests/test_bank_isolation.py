@@ -8,9 +8,10 @@ from datetime import datetime
 from datetime import timezone
 from unittest.mock import Mock
 
-import config
 import pytest
 from models.mcp_write import AddMemoryInput
+
+import config
 from services import banks
 from services import entity_edges
 from services import recall as R
@@ -56,7 +57,14 @@ def test_recall_invalid_bank(caplog):
     import logging
 
     with caplog.at_level(logging.WARNING, logger="services.recall"):
-        out = R.recall(user_id="u", bank="BAD BANK", query="q", ms=FakeMS([]), embedder=FakeEmbedder(), vs=Mock())
+        out = R.recall(
+            user_id="u",
+            bank="BAD BANK",
+            query="q",
+            ms=FakeMS([]),
+            embedder=FakeEmbedder(),
+            vs=Mock(),
+        )
     assert out == []
     assert any("invalid bank" in rec.message for rec in caplog.records)
 
@@ -67,11 +75,15 @@ def test_recall_semantic_bank_filter():
     vs = MockVectorStore()
     vs.create_collection("memories", 3)
     vs.upsert(
-        "memories", "p-c", [0.1, 0.2, 0.3],
+        "memories",
+        "p-c",
+        [0.1, 0.2, 0.3],
         {"memory_id": "mc", "user_id": "u", "bank": "coding"},
     )
     vs.upsert(
-        "memories", "p-p", [0.1, 0.2, 0.3],
+        "memories",
+        "p-p",
+        [0.1, 0.2, 0.3],
         {"memory_id": "mp", "user_id": "u", "bank": "personal"},
     )
     out = R._leg_semantic("q", user_id="u", bank="coding", embedder=FakeEmbedder(), vs=vs)
@@ -84,11 +96,15 @@ def test_recall_semantic_cross_bank():
     vs = MockVectorStore()
     vs.create_collection("memories", 3)
     vs.upsert(
-        "memories", "p-c", [0.1, 0.2, 0.3],
+        "memories",
+        "p-c",
+        [0.1, 0.2, 0.3],
         {"memory_id": "mc", "user_id": "u", "bank": "coding"},
     )
     vs.upsert(
-        "memories", "p-p", [0.1, 0.2, 0.3],
+        "memories",
+        "p-p",
+        [0.1, 0.2, 0.3],
         {"memory_id": "mp", "user_id": "u", "bank": "personal"},
     )
     out = R._leg_semantic("q", user_id="u", bank="*", embedder=FakeEmbedder(), vs=vs)
@@ -101,18 +117,34 @@ def test_recall_fused_cross_bank():
     vs = MockVectorStore()
     vs.create_collection("memories", 3)
     vs.upsert(
-        "memories", "p-c", [0.1, 0.2, 0.3],
+        "memories",
+        "p-c",
+        [0.1, 0.2, 0.3],
         {"memory_id": "mc", "user_id": "u", "bank": "coding"},
     )
     vs.upsert(
-        "memories", "p-p", [0.1, 0.2, 0.3],
+        "memories",
+        "p-p",
+        [0.1, 0.2, 0.3],
         {"memory_id": "mp", "user_id": "u", "bank": "personal"},
     )
     ms = FakeMS(
         [
             [
-                {"id": "mc", "content": "c", "bank": "coding", "valid_from": AS_OF, "valid_until": None},
-                {"id": "mp", "content": "p", "bank": "personal", "valid_from": AS_OF, "valid_until": None},
+                {
+                    "id": "mc",
+                    "content": "c",
+                    "bank": "coding",
+                    "valid_from": AS_OF,
+                    "valid_until": None,
+                },
+                {
+                    "id": "mp",
+                    "content": "p",
+                    "bank": "personal",
+                    "valid_from": AS_OF,
+                    "valid_until": None,
+                },
             ],
             [{"evidence_id": "mc", "entity_ids": []}, {"evidence_id": "mp", "entity_ids": []}],
         ]
@@ -144,25 +176,49 @@ def test_coding_memory_not_in_personal_recall():
     vs = MockVectorStore()
     vs.create_collection("memories", 3)
     vs.upsert(
-        "memories", "p-c", [0.1, 0.2, 0.3],
+        "memories",
+        "p-c",
+        [0.1, 0.2, 0.3],
         {"memory_id": "only-coding", "user_id": "u", "bank": "coding"},
     )
     ms_coding = FakeMS(
         [
-            [{"id": "only-coding", "content": "x", "bank": "coding", "valid_from": AS_OF, "valid_until": None}],
+            [
+                {
+                    "id": "only-coding",
+                    "content": "x",
+                    "bank": "coding",
+                    "valid_from": AS_OF,
+                    "valid_until": None,
+                }
+            ],
             [{"evidence_id": "only-coding", "entity_ids": []}],
         ]
     )
     found = R.recall(
-        user_id="u", bank="coding", query="q", retrieval_strategies=["semantic"],
-        as_of=AS_OF, rerank=False, ms=ms_coding, embedder=FakeEmbedder(), vs=vs,
+        user_id="u",
+        bank="coding",
+        query="q",
+        retrieval_strategies=["semantic"],
+        as_of=AS_OF,
+        rerank=False,
+        ms=ms_coding,
+        embedder=FakeEmbedder(),
+        vs=vs,
     )
     assert [m.id for m in found] == ["only-coding"]
 
     ms_personal = FakeMS([])
     empty = R.recall(
-        user_id="u", bank="personal", query="q", retrieval_strategies=["semantic"],
-        as_of=AS_OF, rerank=False, ms=ms_personal, embedder=FakeEmbedder(), vs=vs,
+        user_id="u",
+        bank="personal",
+        query="q",
+        retrieval_strategies=["semantic"],
+        as_of=AS_OF,
+        rerank=False,
+        ms=ms_personal,
+        embedder=FakeEmbedder(),
+        vs=vs,
     )
     assert empty == []
 
@@ -197,7 +253,7 @@ def test_ensure_tenant_index_idempotent():
     store.ensure_tenant_payload_index("memories", "bank")
     store.ensure_tenant_payload_index("memories", "bank")
     assert client.create_payload_index.call_count == 2
-    second_exc = client.create_payload_index.call_args_list[1]
+    _second_exc = client.create_payload_index.call_args_list[1]
     # second call may swallow "already exists" — no raise from our method
     store.ensure_tenant_payload_index("memories", "bank")
 

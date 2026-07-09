@@ -45,10 +45,10 @@ _VALID_SCOPES: frozenset[str] = frozenset({"personal", "shared", "system"})
 def _effective_allows_shared(user: UserContext) -> bool:
     """Admins always see the household union; members honour ``allows_shared``.
 
-    Only *authenticated* admins bypass ``allows_shared``. ``UserContext`` defaults
-  ``role='admin'`` for dev ergonomics, so call sites that reconstruct context with
-    only ``user_id`` must not inherit admin read privileges (LUM-577 / KG, memory,
-    chat RAG paths).
+      Only *authenticated* admins bypass ``allows_shared``. ``UserContext`` defaults
+    ``role='admin'`` for dev ergonomics, so call sites that reconstruct context with
+      only ``user_id`` must not inherit admin read privileges (LUM-577 / KG, memory,
+      chat RAG paths).
     """
     if user.role == "admin" and user.is_authenticated:
         return True
@@ -260,7 +260,8 @@ def visible_cypher_fragment(
         return (f"({a}.scope = 'system')", {})
     if allows_shared:
         return (
-            f"(({a}.scope = 'personal' AND {a}.user_id = $vis_me) OR {a}.scope IN ['shared','system'])",
+            f"(({a}.scope = 'personal' AND {a}.user_id = $vis_me) "
+            f"OR {a}.scope IN ['shared','system'])",
             {"vis_me": me},
         )
     return (

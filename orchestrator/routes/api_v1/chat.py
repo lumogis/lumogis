@@ -42,10 +42,10 @@ from models.api_v1 import DocumentCitationDTO
 from models.api_v1 import LumogisChatExtensions
 from models.api_v1 import ModelDescriptor
 from models.api_v1 import ModelsResponse
+from routes.chat import _privacy_mode_blocked_response
 from routes.chat import build_injected_context
 from routes.chat import should_prepend_local_loading_note
 from routes.chat import stream_completion
-from routes.chat import _privacy_mode_blocked_response
 from services.connector_credentials import ConnectorNotConfigured
 from services.connector_credentials import CredentialUnavailable
 from services.document_scope import DocumentNotFoundError

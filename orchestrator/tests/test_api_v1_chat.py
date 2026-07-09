@@ -27,8 +27,9 @@ def client():
 
 @pytest.fixture
 def fake_models(monkeypatch):
-    import config as _config
     import services.privacy_mode as privacy_mode
+
+    import config as _config
 
     monkeypatch.setattr(privacy_mode, "blocks_remote_models", lambda user_id: False)
     monkeypatch.setattr(

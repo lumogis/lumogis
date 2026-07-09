@@ -18,8 +18,9 @@ from __future__ import annotations
 import logging
 import uuid
 
-import config
 from models.mcp_write import RELATION_TYPES
+
+import config
 from services import banks
 
 _log = logging.getLogger(__name__)

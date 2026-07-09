@@ -78,7 +78,15 @@ def test_rrf_when_single_list_then_preserves_that_order():
 def test_hydrate_when_id_archived_then_dropped_and_entity_ids_populated():
     ms = FakeMS(
         [
-            [{"id": "m1", "content": "hello", "bank": "coding", "valid_from": AS_OF, "valid_until": None}],
+            [
+                {
+                    "id": "m1",
+                    "content": "hello",
+                    "bank": "coding",
+                    "valid_from": AS_OF,
+                    "valid_until": None,
+                }
+            ],
             [{"evidence_id": "m1", "entity_ids": ["e1", "e2"]}],
         ]
     )
@@ -103,7 +111,15 @@ def _ms_for_single_memory(content="the answer", entity_ids=("e1",)):
         [
             [{"id": "m1"}],  # bm25
             [{"id": "m1"}],  # temporal
-            [{"id": "m1", "content": content, "bank": "coding", "valid_from": AS_OF, "valid_until": None}],  # hydrate q1
+            [
+                {
+                    "id": "m1",
+                    "content": content,
+                    "bank": "coding",
+                    "valid_from": AS_OF,
+                    "valid_until": None,
+                }
+            ],  # hydrate q1
             [{"evidence_id": "m1", "entity_ids": list(entity_ids)}],  # hydrate q2
         ]
     )
@@ -113,7 +129,15 @@ def _ms_hydrate_only(content="the answer", entity_ids=("e1",)):
     """For semantic-only runs: no bm25/temporal queries, just the two hydrate queries."""
     return FakeMS(
         [
-            [{"id": "m1", "content": content, "bank": "coding", "valid_from": AS_OF, "valid_until": None}],  # hydrate q1
+            [
+                {
+                    "id": "m1",
+                    "content": content,
+                    "bank": "coding",
+                    "valid_from": AS_OF,
+                    "valid_until": None,
+                }
+            ],  # hydrate q1
             [{"evidence_id": "m1", "entity_ids": list(entity_ids)}],  # hydrate q2
         ]
     )
@@ -121,15 +145,28 @@ def _ms_hydrate_only(content="the answer", entity_ids=("e1",)):
 
 def _semantic_vs(memory_id="m1"):
     return FakeVS(
-        [{"id": "p", "score": 0.9, "payload": {"memory_id": memory_id, "user_id": "u", "bank": "coding"}}]
+        [
+            {
+                "id": "p",
+                "score": 0.9,
+                "payload": {"memory_id": memory_id, "user_id": "u", "bank": "coding"},
+            }
+        ]
     )
 
 
 def test_recall_when_query_matches_then_returns_fused_memory_with_sources():
     res = R.recall(
-        user_id="u", bank="coding", query="the answer", limit=5,
-        retrieval_strategies=["semantic", "bm25", "temporal"], as_of=AS_OF, rerank=False,
-        ms=_ms_for_single_memory(), embedder=FakeEmbedder(), vs=_semantic_vs(),
+        user_id="u",
+        bank="coding",
+        query="the answer",
+        limit=5,
+        retrieval_strategies=["semantic", "bm25", "temporal"],
+        as_of=AS_OF,
+        rerank=False,
+        ms=_ms_for_single_memory(),
+        embedder=FakeEmbedder(),
+        vs=_semantic_vs(),
     )
     assert len(res) == 1
     assert res[0].id == "m1"
@@ -140,21 +177,36 @@ def test_recall_when_query_matches_then_returns_fused_memory_with_sources():
 
 
 def test_recall_when_query_blank_then_returns_empty():
-    assert R.recall(user_id="u", query="   ", ms=FakeMS([]), embedder=FakeEmbedder(), vs=FakeVS([])) == []
+    assert (
+        R.recall(user_id="u", query="   ", ms=FakeMS([]), embedder=FakeEmbedder(), vs=FakeVS([]))
+        == []
+    )
 
 
 def test_recall_when_unknown_strategy_then_ignored():
     res = R.recall(
-        user_id="u", query="x", retrieval_strategies=["semantic", "bogus"], as_of=AS_OF,
-        rerank=False, ms=_ms_hydrate_only(), embedder=FakeEmbedder(), vs=_semantic_vs(),
+        user_id="u",
+        query="x",
+        retrieval_strategies=["semantic", "bogus"],
+        as_of=AS_OF,
+        rerank=False,
+        ms=_ms_hydrate_only(),
+        embedder=FakeEmbedder(),
+        vs=_semantic_vs(),
     )
     assert len(res) == 1  # ran semantic only; "bogus" ignored, no crash
 
 
 def test_recall_when_all_legs_empty_then_returns_empty():
     res = R.recall(
-        user_id="u", query="x", retrieval_strategies=["semantic", "bm25", "temporal"], as_of=AS_OF,
-        rerank=False, ms=FakeMS([]), embedder=FakeEmbedder(), vs=FakeVS([]),
+        user_id="u",
+        query="x",
+        retrieval_strategies=["semantic", "bm25", "temporal"],
+        as_of=AS_OF,
+        rerank=False,
+        ms=FakeMS([]),
+        embedder=FakeEmbedder(),
+        vs=FakeVS([]),
     )
     assert res == []
 
@@ -162,8 +214,15 @@ def test_recall_when_all_legs_empty_then_returns_empty():
 def test_recall_when_limit_over_max_then_clamped():
     # Clamp is observable via the constant; a huge limit must not error.
     res = R.recall(
-        user_id="u", query="the answer", limit=9999, retrieval_strategies=["semantic"],
-        as_of=AS_OF, rerank=False, ms=_ms_hydrate_only(), embedder=FakeEmbedder(), vs=_semantic_vs(),
+        user_id="u",
+        query="the answer",
+        limit=9999,
+        retrieval_strategies=["semantic"],
+        as_of=AS_OF,
+        rerank=False,
+        ms=_ms_hydrate_only(),
+        embedder=FakeEmbedder(),
+        vs=_semantic_vs(),
     )
     assert len(res) <= R._MAX_LIMIT
 
@@ -171,8 +230,16 @@ def test_recall_when_limit_over_max_then_clamped():
 def test_recall_when_rerank_enabled_then_reorders_and_passes_content_text():
     vs = FakeVS(
         [
-            {"id": "p1", "score": 0.9, "payload": {"memory_id": "m1", "user_id": "u", "bank": "coding"}},
-            {"id": "p2", "score": 0.8, "payload": {"memory_id": "m2", "user_id": "u", "bank": "coding"}},
+            {
+                "id": "p1",
+                "score": 0.9,
+                "payload": {"memory_id": "m1", "user_id": "u", "bank": "coding"},
+            },
+            {
+                "id": "p2",
+                "score": 0.8,
+                "payload": {"memory_id": "m2", "user_id": "u", "bank": "coding"},
+            },
         ]
     )
     ms = FakeMS(
@@ -180,16 +247,36 @@ def test_recall_when_rerank_enabled_then_reorders_and_passes_content_text():
             [{"id": "m1"}, {"id": "m2"}],  # bm25
             [{"id": "m1"}, {"id": "m2"}],  # temporal
             [
-                {"id": "m1", "content": "first", "bank": "coding", "valid_from": AS_OF, "valid_until": None},
-                {"id": "m2", "content": "second", "bank": "coding", "valid_from": AS_OF, "valid_until": None},
+                {
+                    "id": "m1",
+                    "content": "first",
+                    "bank": "coding",
+                    "valid_from": AS_OF,
+                    "valid_until": None,
+                },
+                {
+                    "id": "m2",
+                    "content": "second",
+                    "bank": "coding",
+                    "valid_from": AS_OF,
+                    "valid_until": None,
+                },
             ],  # hydrate q1
             [],  # hydrate q2
         ]
     )
     rr = ReverseReranker()
     res = R.recall(
-        user_id="u", query="q", limit=5, retrieval_strategies=["semantic", "bm25", "temporal"],
-        as_of=AS_OF, rerank=True, ms=ms, embedder=FakeEmbedder(), vs=vs, reranker=rr,
+        user_id="u",
+        query="q",
+        limit=5,
+        retrieval_strategies=["semantic", "bm25", "temporal"],
+        as_of=AS_OF,
+        rerank=True,
+        ms=ms,
+        embedder=FakeEmbedder(),
+        vs=vs,
+        reranker=rr,
     )
     assert {c["text"] for c in rr.received} == {"first", "second"}  # rerank got content text
     assert res[0].id == "m2"  # reversed order applied
@@ -197,8 +284,14 @@ def test_recall_when_rerank_enabled_then_reorders_and_passes_content_text():
 
 def test_recall_when_rerank_disabled_then_keeps_rrf_order():
     res = R.recall(
-        user_id="u", query="the answer", retrieval_strategies=["semantic"], as_of=AS_OF,
-        rerank=False, ms=_ms_hydrate_only(), embedder=FakeEmbedder(), vs=_semantic_vs(),
+        user_id="u",
+        query="the answer",
+        retrieval_strategies=["semantic"],
+        as_of=AS_OF,
+        rerank=False,
+        ms=_ms_hydrate_only(),
+        embedder=FakeEmbedder(),
+        vs=_semantic_vs(),
     )
     assert [m.id for m in res] == ["m1"]
 
@@ -209,8 +302,14 @@ def test_recall_when_semantic_leg_raises_then_degrades_to_other_legs():
             raise RuntimeError("qdrant 404 collection absent")
 
     res = R.recall(
-        user_id="u", query="the answer", retrieval_strategies=["semantic", "bm25", "temporal"],
-        as_of=AS_OF, rerank=False, ms=_ms_for_single_memory(), embedder=FakeEmbedder(), vs=BoomVS(),
+        user_id="u",
+        query="the answer",
+        retrieval_strategies=["semantic", "bm25", "temporal"],
+        as_of=AS_OF,
+        rerank=False,
+        ms=_ms_for_single_memory(),
+        embedder=FakeEmbedder(),
+        vs=BoomVS(),
     )
     assert len(res) == 1  # bm25+temporal still fuse; semantic degraded to []
     assert "semantic" not in res[0].source_strategies

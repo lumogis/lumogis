@@ -32,9 +32,14 @@ class _InvitesFakeStore(FakeUsersStore):
         if q.startswith("insert into user_invites"):
             iid, prefix, thash, role, allows, created_by, expires = p
             for row in self.invites.values():
-                if row["used_at"] is None and row["revoked_at"] is None and row["token_prefix"] == prefix:
+                if (
+                    row["used_at"] is None
+                    and row["revoked_at"] is None
+                    and row["token_prefix"] == prefix
+                ):
                     raise RuntimeError(
-                        "duplicate key value violates unique constraint user_invites_active_prefix_uniq"
+                        "duplicate key value violates unique constraint "
+                        "user_invites_active_prefix_uniq"
                     )
             self.invites[iid] = {
                 "id": iid,
@@ -274,10 +279,13 @@ def test_revoked_invite_peek_404(auth_env, store):
     admin_id, admin_jwt = _seed_admin(store)
     token, invite_id = _mint_invite(admin_id)
     with _client() as client:
-        assert client.delete(
-            f"/api/v1/admin/users/invites/{invite_id}",
-            headers={"Authorization": f"Bearer {admin_jwt}"},
-        ).status_code == 200
+        assert (
+            client.delete(
+                f"/api/v1/admin/users/invites/{invite_id}",
+                headers={"Authorization": f"Bearer {admin_jwt}"},
+            ).status_code
+            == 200
+        )
         r = client.get(f"/api/v1/invites/{token}")
     assert r.status_code == 404
 

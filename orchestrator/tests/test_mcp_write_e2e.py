@@ -15,7 +15,9 @@ from fastapi.testclient import TestClient
 
 def _initialize_payload() -> dict:
     return {
-        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
         "params": {
             "protocolVersion": "2025-06-18",
             "capabilities": {},
@@ -39,6 +41,7 @@ def test_add_memory_callable_end_to_end(monkeypatch):
     monkeypatch.setenv("MCP_DEFAULT_USER_ID", "e2e-user")
     # Stub extraction so the tool does not reach a live LLM.
     import services.mcp_write as mw
+
     monkeypatch.setattr(mw, "extract_entities", lambda *a, **k: [])
     monkeypatch.setattr(mw, "extract_relations", lambda *a, **k: [])
 
@@ -48,17 +51,23 @@ def test_add_memory_callable_end_to_end(monkeypatch):
     with TestClient(main.app) as client:
         init = _post(client, _initialize_payload(), headers)
         assert init.status_code == 200, init.text
-        call = _post(client, {
-            "jsonrpc": "2.0", "id": 2, "method": "tools/call",
-            "params": {
-                "name": "add_memory",
-                "arguments": {"content": "FalkorDB chosen over Neo4j", "bank": "coding"},
+        call = _post(
+            client,
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "add_memory",
+                    "arguments": {"content": "FalkorDB chosen over Neo4j", "bank": "coding"},
+                },
             },
-        }, headers)
+            headers,
+        )
     assert call.status_code == 200, call.text
     # The tool's structured result (memory_id) round-trips through JSON-RPC.
     assert "memory_id" in call.text
-    assert "isError\":true" not in call.text.replace(" ", "")
+    assert 'isError":true' not in call.text.replace(" ", "")
 
 
 # ---------------------------------------------------------------------------
@@ -77,16 +86,15 @@ def test_add_memory_callable_end_to_end(monkeypatch):
 def _install_token_store(monkeypatch, *, scopes):
     """Install a fake metadata store, mint an `lmcp_` token with `scopes`, and
     return its plaintext bearer. The store backs `mcp_tokens.verify()`."""
+    from tests.test_mcp_tokens_routes import _RoutesFakeStore
+
     import config as _config
     from services import mcp_tokens as _mcp_tokens
-    from tests.test_mcp_tokens_routes import _RoutesFakeStore
 
     s = _RoutesFakeStore()
     _config._instances["metadata_store"] = s
     _mcp_tokens._LAST_STAMP_CACHE.clear()
-    monkeypatch.setattr(
-        _config, "get_metadata_store", lambda: _config._instances["metadata_store"]
-    )
+    monkeypatch.setattr(_config, "get_metadata_store", lambda: _config._instances["metadata_store"])
     _row, plaintext = _mcp_tokens.mint("scope-e2e-user", "e2e", scopes=scopes)
     return plaintext
 
@@ -105,16 +113,22 @@ def test_read_scoped_token_denied_on_write_tool_e2e(monkeypatch):
     with TestClient(main.app) as client:
         init = _post(client, _initialize_payload(), headers)
         assert init.status_code == 200, init.text
-        call = _post(client, {
-            "jsonrpc": "2.0", "id": 2, "method": "tools/call",
-            "params": {
-                "name": "add_memory",
-                "arguments": {"content": "should be denied", "bank": "coding"},
+        call = _post(
+            client,
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "add_memory",
+                    "arguments": {"content": "should be denied", "bank": "coding"},
+                },
             },
-        }, headers)
+            headers,
+        )
     assert call.status_code == 200, call.text
     # Scope gate fired → JSON-RPC tool error, and the writer was never reached.
-    assert "isError\":true" in call.text.replace(" ", "")
+    assert 'isError":true' in call.text.replace(" ", "")
     assert "mcp:write" in call.text
     assert called["n"] == 0
 
@@ -124,7 +138,8 @@ def test_write_scoped_token_allowed_on_write_tool_e2e(monkeypatch):
     import services.mcp_write as mw
 
     monkeypatch.setattr(
-        mw, "add_memory",
+        mw,
+        "add_memory",
         lambda **k: {"memory_id": "e2e-ok", "entity_ids": [], "relation_ids": []},
     )
 
@@ -135,17 +150,23 @@ def test_write_scoped_token_allowed_on_write_tool_e2e(monkeypatch):
     with TestClient(main.app) as client:
         init = _post(client, _initialize_payload(), headers)
         assert init.status_code == 200, init.text
-        call = _post(client, {
-            "jsonrpc": "2.0", "id": 2, "method": "tools/call",
-            "params": {
-                "name": "add_memory",
-                "arguments": {"content": "write allowed", "bank": "coding"},
+        call = _post(
+            client,
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "add_memory",
+                    "arguments": {"content": "write allowed", "bank": "coding"},
+                },
             },
-        }, headers)
+            headers,
+        )
     assert call.status_code == 200, call.text
     # Write scope present → gate passed → writer reached → memory_id returned.
     assert "e2e-ok" in call.text
-    assert "isError\":true" not in call.text.replace(" ", "")
+    assert 'isError":true' not in call.text.replace(" ", "")
 
 
 def test_omitted_scopes_token_denied_on_write_tool_e2e(monkeypatch):
@@ -160,18 +181,18 @@ def test_omitted_scopes_token_denied_on_write_tool_e2e(monkeypatch):
     monkeypatch.delenv("MCP_AUTH_TOKEN", raising=False)
     monkeypatch.delenv("LUMOGIS_PUBLIC_ORIGIN", raising=False)
 
+    from tests.test_mcp_tokens_routes import _RoutesFakeStore
+
     import config as _config
     from services import mcp_tokens as _mcp_tokens
-    from tests.test_mcp_tokens_routes import _RoutesFakeStore
 
     s = _RoutesFakeStore()
     _config._instances["metadata_store"] = s
     _mcp_tokens._LAST_STAMP_CACHE.clear()
-    monkeypatch.setattr(
-        _config, "get_metadata_store", lambda: _config._instances["metadata_store"]
-    )
+    monkeypatch.setattr(_config, "get_metadata_store", lambda: _config._instances["metadata_store"])
 
     import services.mcp_write as mw
+
     called = {"n": 0}
 
     def _should_not_run(**k):
@@ -192,15 +213,21 @@ def test_omitted_scopes_token_denied_on_write_tool_e2e(monkeypatch):
         headers = {"Authorization": f"Bearer {plaintext}"}
         init = _post(client, _initialize_payload(), headers)
         assert init.status_code == 200, init.text
-        call = _post(client, {
-            "jsonrpc": "2.0", "id": 2, "method": "tools/call",
-            "params": {
-                "name": "add_memory",
-                "arguments": {"content": "omitted-scopes must be denied", "bank": "coding"},
+        call = _post(
+            client,
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "add_memory",
+                    "arguments": {"content": "omitted-scopes must be denied", "bank": "coding"},
+                },
             },
-        }, headers)
+            headers,
+        )
     assert call.status_code == 200, call.text
     # Read-only default → write gate fires → JSON-RPC error; writer never reached.
-    assert "isError\":true" in call.text.replace(" ", "")
+    assert 'isError":true' in call.text.replace(" ", "")
     assert "mcp:write" in call.text
     assert called["n"] == 0

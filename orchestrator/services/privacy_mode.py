@@ -334,6 +334,6 @@ def validate_instance_privacy_patch(
         current_locked
         and current_mode == InstancePrivacyMode.LOCAL_ONLY
         and new_mode == InstancePrivacyMode.ALLOW_CLOUD
-        and not (new_locked is False)
+        and new_locked is not False
     ):
         raise HTTPException(status_code=400, detail="privacy_mode_locked")

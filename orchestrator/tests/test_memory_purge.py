@@ -26,9 +26,7 @@ def sessions_ms(monkeypatch: pytest.MonkeyPatch) -> SessionsMemoryMetadataStore:
 def test_purge_removes_postgres_session_row(
     sessions_ms, mock_vector_store, monkeypatch: pytest.MonkeyPatch
 ):
-    monkeypatch.setitem(
-        config._instances, config._graph_store_cache_key("personal"), None
-    )
+    monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), None)
     sid = str(uuid.uuid4())
     sessions_ms.sessions[sid] = {
         "session_id": uuid.UUID(sid),
@@ -72,9 +70,7 @@ def test_purge_deletes_qdrant_point_by_deterministic_id(sessions_ms, mock_vector
 
 
 def test_purge_noop_graph_when_disabled(sessions_ms, mock_vector_store, monkeypatch):
-    monkeypatch.setitem(
-        config._instances, config._graph_store_cache_key("personal"), None
-    )
+    monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), None)
     sid = str(uuid.uuid4())
     sessions_ms.sessions[sid] = {
         "session_id": uuid.UUID(sid),
@@ -93,9 +89,7 @@ def test_purge_noop_graph_when_disabled(sessions_ms, mock_vector_store, monkeypa
 def test_purge_does_not_delete_note_conversation_points(
     sessions_ms, mock_vector_store, monkeypatch
 ):
-    monkeypatch.setitem(
-        config._instances, config._graph_store_cache_key("personal"), None
-    )
+    monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), None)
     sid = str(uuid.uuid4())
     note_pid = note_conversation_point_id("alice", str(uuid.uuid4()))
     mock_vector_store.upsert(
@@ -120,9 +114,7 @@ def test_purge_does_not_delete_note_conversation_points(
 
 
 def test_purge_wrong_user_no_delete(sessions_ms, mock_vector_store, monkeypatch):
-    monkeypatch.setitem(
-        config._instances, config._graph_store_cache_key("personal"), None
-    )
+    monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), None)
     sid = str(uuid.uuid4())
     sessions_ms.sessions[sid] = {
         "session_id": uuid.UUID(sid),
@@ -142,9 +134,7 @@ def test_purge_wrong_user_no_delete(sessions_ms, mock_vector_store, monkeypatch)
 def test_purge_deletes_shared_and_system_projection_qdrant_points(
     sessions_ms, mock_vector_store, monkeypatch
 ):
-    monkeypatch.setitem(
-        config._instances, config._graph_store_cache_key("personal"), None
-    )
+    monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), None)
     sid = str(uuid.uuid4())
     uid = "alice"
     for scope in ("shared", "system"):
@@ -173,9 +163,7 @@ def test_purge_deletes_shared_and_system_projection_qdrant_points(
 def test_purge_postgres_transaction_rolls_back_on_failure(
     sessions_ms, mock_vector_store, monkeypatch
 ):
-    monkeypatch.setitem(
-        config._instances, config._graph_store_cache_key("personal"), None
-    )
+    monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), None)
     sid = str(uuid.uuid4())
     sessions_ms.sessions[sid] = {
         "session_id": uuid.UUID(sid),
@@ -194,9 +182,7 @@ def test_purge_postgres_transaction_rolls_back_on_failure(
 
 
 def test_purge_qdrant_retries_before_partial(sessions_ms, mock_vector_store, monkeypatch):
-    monkeypatch.setitem(
-        config._instances, config._graph_store_cache_key("personal"), None
-    )
+    monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), None)
     sid = str(uuid.uuid4())
     sessions_ms.sessions[sid] = {
         "session_id": uuid.UUID(sid),

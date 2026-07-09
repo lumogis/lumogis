@@ -902,7 +902,9 @@ def export_user(user_id: str) -> tuple[bytes, str]:
             qdrant_payload[coll] = []
 
     # FalkorDB nodes + edges per bank (D15 / LUM-544) — best-effort.
-    falkor_by_bank, falkor_bank_warnings, falkor_external_count = _export_falkordb_all_banks(user_id)
+    falkor_by_bank, falkor_bank_warnings, falkor_external_count = _export_falkordb_all_banks(
+        user_id
+    )
     falkor_warnings: list[str] = list(falkor_bank_warnings)
     falkor_nodes: list[dict] = []
     falkor_edges: list[dict] = []

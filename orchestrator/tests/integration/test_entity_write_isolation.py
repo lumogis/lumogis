@@ -18,7 +18,6 @@ from uuid import uuid4
 import psycopg2
 import psycopg2.extras
 import pytest
-
 from auth import UserContext
 
 
@@ -39,7 +38,9 @@ def _postgres_store(raw: str):
     )
 
 
-def _insert_entity(cur, entity_id, user_id: str, scope: str, version: int = 1, summary: str = "initial"):
+def _insert_entity(
+    cur, entity_id, user_id: str, scope: str, version: int = 1, summary: str = "initial"
+):
     cur.execute(
         """
         INSERT INTO entities (

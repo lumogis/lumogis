@@ -32,9 +32,7 @@ def test_purge_session_memory_not_partial_when_all_arms_succeed(
     sessions_ms, mock_vector_store, monkeypatch
 ):
     """qdrant_entities_deleted must be True by default so a clean purge is not partial."""
-    monkeypatch.setitem(
-        config._instances, config._graph_store_cache_key("personal"), None
-    )
+    monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), None)
     sid = str(uuid.uuid4())
     sessions_ms.sessions[sid] = {
         "session_id": uuid.UUID(sid),
@@ -59,9 +57,7 @@ def test_purge_tombstone_resolved_at_set_on_full_success(
     sessions_ms, mock_vector_store, monkeypatch
 ):
     """resolved_at is persisted when a clean purge completes."""
-    monkeypatch.setitem(
-        config._instances, config._graph_store_cache_key("personal"), None
-    )
+    monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), None)
     sid = str(uuid.uuid4())
     sessions_ms.sessions[sid] = {
         "session_id": uuid.UUID(sid),
@@ -82,9 +78,7 @@ def test_purge_tombstone_resolved_at_set_on_full_success(
 
 def test_purge_tombstone_unresolved_when_qdrant_fails(sessions_ms, mock_vector_store, monkeypatch):
     """resolved_at stays None when the Qdrant arm exhausts its retries."""
-    monkeypatch.setitem(
-        config._instances, config._graph_store_cache_key("personal"), None
-    )
+    monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), None)
     sid = str(uuid.uuid4())
     sessions_ms.sessions[sid] = {
         "session_id": uuid.UUID(sid),
@@ -119,9 +113,7 @@ def test_purge_tombstone_unresolved_when_qdrant_fails(sessions_ms, mock_vector_s
 
 def test_sweep_resolves_partial_tombstone(sessions_ms, mock_vector_store, monkeypatch):
     """Sweeper retries a partial tombstone and marks it resolved when arms succeed."""
-    monkeypatch.setitem(
-        config._instances, config._graph_store_cache_key("personal"), None
-    )
+    monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), None)
     uid = "alice"
     sid = str(uuid.uuid4())
     # Seed a partial tombstone (Postgres done, Qdrant failed).
@@ -146,9 +138,7 @@ def test_sweep_resolves_partial_tombstone(sessions_ms, mock_vector_store, monkey
 
 
 def test_sweep_returns_zero_when_no_partials(sessions_ms, mock_vector_store, monkeypatch):
-    monkeypatch.setitem(
-        config._instances, config._graph_store_cache_key("personal"), None
-    )
+    monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), None)
     resolved = sweep_partial_purges()
     assert resolved == 0
 
@@ -157,9 +147,7 @@ def test_sweep_increments_attempts_on_continued_failure(
     sessions_ms, mock_vector_store, monkeypatch
 ):
     """Sweeper increments sweep_attempts even when the arm still fails."""
-    monkeypatch.setitem(
-        config._instances, config._graph_store_cache_key("personal"), None
-    )
+    monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), None)
     uid = "bob"
     sid = str(uuid.uuid4())
     sessions_ms.purged_conversations.add((uid, sid))
@@ -188,9 +176,7 @@ def test_sweep_increments_attempts_on_continued_failure(
 
 def test_sweep_skips_tombstones_at_max_attempts(sessions_ms, mock_vector_store, monkeypatch):
     """Tombstones that hit the cap are excluded from sweep candidates."""
-    monkeypatch.setitem(
-        config._instances, config._graph_store_cache_key("personal"), None
-    )
+    monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), None)
     uid = "carol"
     sid = str(uuid.uuid4())
     sessions_ms.purged_conversations.add((uid, sid))
@@ -216,9 +202,7 @@ def test_sweep_skips_already_resolved_tombstones(sessions_ms, mock_vector_store,
     from datetime import datetime
     from datetime import timezone
 
-    monkeypatch.setitem(
-        config._instances, config._graph_store_cache_key("personal"), None
-    )
+    monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), None)
     uid = "dave"
     sid = str(uuid.uuid4())
     sessions_ms.purged_conversations.add((uid, sid))
@@ -238,9 +222,7 @@ def test_sweep_skips_already_resolved_tombstones(sessions_ms, mock_vector_store,
 
 def test_sweep_handles_multiple_partial_tombstones(sessions_ms, mock_vector_store, monkeypatch):
     """Sweeper resolves all eligible partial tombstones in one pass."""
-    monkeypatch.setitem(
-        config._instances, config._graph_store_cache_key("personal"), None
-    )
+    monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), None)
     users = [("user1", str(uuid.uuid4())), ("user2", str(uuid.uuid4()))]
     for uid, sid in users:
         sessions_ms.purged_conversations.add((uid, sid))
@@ -264,9 +246,7 @@ def test_sweep_handles_multiple_partial_tombstones(sessions_ms, mock_vector_stor
 def test_sweep_graph_arm_deletes_session_projections(sessions_ms, mock_vector_store, monkeypatch):
     """Sweeper must mirror sync purge and remove published Session projections (LUM-419)."""
     mock_graph = object()
-    monkeypatch.setitem(
-        config._instances, config._graph_store_cache_key("personal"), mock_graph
-    )
+    monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), mock_graph)
     uid = "alice"
     sid = str(uuid.uuid4())
     sessions_ms.purged_conversations.add((uid, sid))

@@ -7,6 +7,7 @@ Exercises the real ``project_session`` override (+ preserve-on-omit) and the
 the in-memory sessions store. Cross-user is tested at the service layer because
 the TestClient runs AUTH-disabled (single caller).
 """
+
 from __future__ import annotations
 
 import uuid
@@ -74,7 +75,10 @@ def _projection_row(store, sid):
 def test_publish_with_edited_summary_projects_edited_not_source(store):
     sid = _source(store, summary="raw AI summary")
     proj.project_session(
-        _src_dict(store, sid), target_scope="shared", actor=_user(ALICE), shared_summary="Human edit"
+        _src_dict(store, sid),
+        target_scope="shared",
+        actor=_user(ALICE),
+        shared_summary="Human edit",
     )
     projection = _projection_row(store, sid)
     assert projection is not None

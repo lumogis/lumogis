@@ -15,8 +15,9 @@ from __future__ import annotations
 import logging
 from contextlib import contextmanager
 
-import config
 import psycopg2
+
+import config
 
 _log = logging.getLogger(__name__)
 
@@ -73,9 +74,7 @@ def share_document_lock(document_id: int):
                     (SHARE_DOCUMENT_ADVISORY_KEY1, key2),
                 )
         except Exception as exc:
-            _log.warning(
-                "share_lock: advisory unlock failed document_id=%s: %s", document_id, exc
-            )
+            _log.warning("share_lock: advisory unlock failed document_id=%s: %s", document_id, exc)
         finally:
             try:
                 conn.close()

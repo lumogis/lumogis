@@ -15,19 +15,18 @@ import logging
 from typing import Literal
 from uuid import UUID
 
-import config
 from auth import UserContext
 from models.entity_write import EntitySummarySnapshot
 from models.entity_write import GuardedWriteResult
 from visibility import visible_filter
 
+import config
+
 _log = logging.getLogger(__name__)
 
 _Scope = Literal["personal", "shared", "system"]
 
-_READ_COLUMNS = (
-    "entity_id, user_id, scope, entity_type, summary, staged_summary, version"
-)
+_READ_COLUMNS = "entity_id, user_id, scope, entity_type, summary, staged_summary, version"
 
 
 def read_entity_summary(

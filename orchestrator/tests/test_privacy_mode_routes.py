@@ -12,7 +12,6 @@ import pytest
 from auth import UserContext
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from models.privacy_mode import PrivacyUserRestriction
 from services.privacy_mode import PrivacyModeBlocked
 
 _ADMIN = UserContext(user_id="admin", role="admin", is_authenticated=True)
@@ -61,7 +60,10 @@ def test_patch_me_privacy_loosen_returns_403(_req, mock_patch, client):
 
 
 @patch("routes.chat._inject_context", side_effect=lambda q, h, m, u, **kw: h)
-@patch("routes.chat.config.get_model_config", return_value={"tools": False, "api_key_env": "ANTHROPIC_API_KEY"})
+@patch(
+    "routes.chat.config.get_model_config",
+    return_value={"tools": False, "api_key_env": "ANTHROPIC_API_KEY"},
+)
 @patch("routes.chat.config.is_model_enabled", return_value=True)
 @patch("routes.chat.ask", return_value="ok")
 @patch(
@@ -88,7 +90,10 @@ def test_chat_403_envelope_privacy_mode_blocked(_resolve, _ask, _enabled, _cfg, 
 @patch("routes.chat._inject_context", side_effect=lambda q, h, m, u, **kw: h)
 @patch(
     "services.privacy_mode.resolve_model_for_request",
-    return_value=("llama", {"fallback_applied": True, "requested_model": "claude", "message": "warn"}),
+    return_value=(
+        "llama",
+        {"fallback_applied": True, "requested_model": "claude", "message": "warn"},
+    ),
 )
 @patch("routes.chat.config.get_model_config", return_value={"tools": False})
 @patch("routes.chat.config.is_model_enabled", return_value=True)
@@ -110,7 +115,10 @@ def test_chat_fallback_includes_lumogis_privacy(_ask, _enabled, _cfg, _resolve, 
 
 
 @patch("routes.chat._inject_context", side_effect=lambda q, h, m, u, **kw: h)
-@patch("routes.chat.config.get_model_config", return_value={"tools": False, "api_key_env": "ANTHROPIC_API_KEY"})
+@patch(
+    "routes.chat.config.get_model_config",
+    return_value={"tools": False, "api_key_env": "ANTHROPIC_API_KEY"},
+)
 @patch("routes.chat.config.is_model_enabled", return_value=True)
 @patch("routes.chat.ask", return_value="should not run")
 @patch(
@@ -139,7 +147,11 @@ def test_streaming_privacy_metadata_shape_matches_non_streaming():
         stream_completion(
             iter([]),
             "llama",
-            privacy_metadata={"fallback_applied": True, "requested_model": "claude", "message": "m"},
+            privacy_metadata={
+                "fallback_applied": True,
+                "requested_model": "claude",
+                "message": "m",
+            },
         )
     )
     assert chunks

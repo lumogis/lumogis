@@ -37,11 +37,20 @@ from pydantic import field_validator
 RELATION_TYPES: frozenset[str] = frozenset(
     {
         # base (LUM-291)
-        "DEPENDS_ON", "PART_OF", "DECIDED", "RELATES_TO", "SUPERSEDES",
+        "DEPENDS_ON",
+        "PART_OF",
+        "DECIDED",
+        "RELATES_TO",
+        "SUPERSEDES",
         # coding-context (LUM-294). DECIDED_BY (subject->decision) coexists with
         # the base DECIDED (decision->subject); both retained, additive.
-        "DECIDED_BY", "IMPLEMENTS", "REPLACES", "CAUSED_BY",
-        "DISCUSSED_IN_SESSION", "BLOCKED_BY", "REFERENCES_ISSUE",
+        "DECIDED_BY",
+        "IMPLEMENTS",
+        "REPLACES",
+        "CAUSED_BY",
+        "DISCUSSED_IN_SESSION",
+        "BLOCKED_BY",
+        "REFERENCES_ISSUE",
         # code-structure (LUM-301). CALLS is the only net-new token; like the
         # others it auto-expands add_memory's _EXTRACT_RELATIONS_PROMPT (built
         # from sorted(RELATION_TYPES)) — intended, benign, still graph-gated.
@@ -53,9 +62,17 @@ RELATION_TYPES: frozenset[str] = frozenset(
 # the coding types (LUM-294) are Postgres/MCP-side (graph map sync deferred).
 ENTITY_TYPES: frozenset[str] = frozenset(
     {
-        "PERSON", "ORG", "PROJECT", "CONCEPT",
-        "CODING_DECISION", "CODING_CONVENTION", "COMPONENT", "FAILURE",
-        "SESSION", "TASK", "LIBRARY",
+        "PERSON",
+        "ORG",
+        "PROJECT",
+        "CONCEPT",
+        "CODING_DECISION",
+        "CODING_CONVENTION",
+        "COMPONENT",
+        "FAILURE",
+        "SESSION",
+        "TASK",
+        "LIBRARY",
     }
 )
 
@@ -187,6 +204,7 @@ class AddRelationInput(BaseModel):
 
 # --- LUM-526: supersede / archive tools --------------------------------------
 
+
 class ForgetInput(BaseModel):
     memory_id: str = Field(min_length=1, max_length=64)
 
@@ -238,4 +256,6 @@ class CheckpointInput(BaseModel):
 
 class CheckpointResult(BaseModel):
     memory_id: str
-    entity_id: str | None = None  # the auto-created SESSION entity (LUM-294); None if that write degraded
+    entity_id: str | None = (
+        None  # the auto-created SESSION entity (LUM-294); None if that write degraded
+    )

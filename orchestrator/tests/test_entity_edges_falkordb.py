@@ -28,9 +28,7 @@ falkordb = pytest.importorskip("falkordb")
 @pytest.fixture
 def falkordb_url():
     if not os.environ.get("RUN_FALKORDB_ENTITY_EDGES"):
-        pytest.skip(
-            "Set RUN_FALKORDB_ENTITY_EDGES=1 for live FalkorDB entity_edges tests"
-        )
+        pytest.skip("Set RUN_FALKORDB_ENTITY_EDGES=1 for live FalkorDB entity_edges tests")
     url = os.environ.get("FALKORDB_URL")
     if not url:
         pytest.skip("FALKORDB_URL not set")
@@ -51,8 +49,7 @@ def _graph_for(bank: str):
 def _seed_nodes(gs, src: str, dst: str, uid: str) -> None:
     """Create the two entity nodes exactly as the KG writer does."""
     gs.query(
-        "MERGE (a {lumogis_id: $src, user_id: $uid}) "
-        "MERGE (b {lumogis_id: $dst, user_id: $uid})",
+        "MERGE (a {lumogis_id: $src, user_id: $uid}) MERGE (b {lumogis_id: $dst, user_id: $uid})",
         {"src": src, "dst": dst, "uid": uid},
     )
 
@@ -94,15 +91,23 @@ def test_store_then_forget_purges_projected_edge(monkeypatch, falkordb_url):
     # node-projection race so this test proves the projection/purge Cypher is
     # correct when nodes exist (the race is a separate, tracked follow-up).
     entity_edges.store_edge(
-        user_id=uid, bank=bank, src_entity_id=src, dst_entity_id=dst,
-        relation_type="RELATES_TO", ms=_fake_ms(),
+        user_id=uid,
+        bank=bank,
+        src_entity_id=src,
+        dst_entity_id=dst,
+        relation_type="RELATES_TO",
+        ms=_fake_ms(),
     )
     assert _rel_count(gs, src, dst, uid) == 1
 
-    active = [{
-        "bank": bank, "src_entity_id": src, "dst_entity_id": dst,
-        "relation_type": "RELATES_TO",
-    }]
+    active = [
+        {
+            "bank": bank,
+            "src_entity_id": src,
+            "dst_entity_id": dst,
+            "relation_type": "RELATES_TO",
+        }
+    ]
     entity_edges.purge_graph_projections_for_edges(active, user_id=uid)
     assert _rel_count(gs, src, dst, uid) == 0
 
@@ -118,15 +123,18 @@ def test_forget_purge_is_user_scoped(monkeypatch, falkordb_url):
     owner, other = "ee566-owner", "ee566-other"
     _seed_nodes(gs, src, dst, owner)
     entity_edges.store_edge(
-        user_id=owner, bank=bank, src_entity_id=src, dst_entity_id=dst,
-        relation_type="RELATES_TO", ms=_fake_ms(),
+        user_id=owner,
+        bank=bank,
+        src_entity_id=src,
+        dst_entity_id=dst,
+        relation_type="RELATES_TO",
+        ms=_fake_ms(),
     )
     assert _rel_count(gs, src, dst, owner) == 1
 
     # A different user's forget must not touch the owner's edge.
     entity_edges.purge_graph_projections_for_edges(
-        [{"bank": bank, "src_entity_id": src, "dst_entity_id": dst,
-          "relation_type": "RELATES_TO"}],
+        [{"bank": bank, "src_entity_id": src, "dst_entity_id": dst, "relation_type": "RELATES_TO"}],
         user_id=other,
     )
     assert _rel_count(gs, src, dst, owner) == 1
@@ -156,8 +164,7 @@ def test_forget_purge_preserves_cooccurrence_edge(monkeypatch, falkordb_url):
     # Forgetting a typed RELATES_TO on the SAME (canonical) direction must not
     # delete the aggregate co-occurrence edge.
     entity_edges.purge_graph_projections_for_edges(
-        [{"bank": bank, "src_entity_id": lo, "dst_entity_id": hi,
-          "relation_type": "RELATES_TO"}],
+        [{"bank": bank, "src_entity_id": lo, "dst_entity_id": hi, "relation_type": "RELATES_TO"}],
         user_id=uid,
     )
     rows = gs.query(
@@ -172,8 +179,7 @@ def test_forget_purge_preserves_cooccurrence_edge(monkeypatch, falkordb_url):
     # The reverse-direction typed relation is a different edge; the canonical
     # co-occurrence edge must remain untouched by it too.
     entity_edges.purge_graph_projections_for_edges(
-        [{"bank": bank, "src_entity_id": hi, "dst_entity_id": lo,
-          "relation_type": "RELATES_TO"}],
+        [{"bank": bank, "src_entity_id": hi, "dst_entity_id": lo, "relation_type": "RELATES_TO"}],
         user_id=uid,
     )
     assert _rel_count(gs, lo, hi, uid) == 1

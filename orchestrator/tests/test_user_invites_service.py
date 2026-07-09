@@ -11,9 +11,9 @@ from datetime import timedelta
 from datetime import timezone
 
 import pytest
-
 from models.user_invite import DuplicateEmailError
 from models.user_invite import InviteInvalidError
+
 from services import user_invites as svc
 
 
@@ -49,9 +49,14 @@ class _FakeStore:
         if q.startswith("insert into user_invites"):
             iid, prefix, thash, role, allows, created_by, expires = p
             for row in self.invites.values():
-                if row["used_at"] is None and row["revoked_at"] is None and row["token_prefix"] == prefix:
+                if (
+                    row["used_at"] is None
+                    and row["revoked_at"] is None
+                    and row["token_prefix"] == prefix
+                ):
                     raise RuntimeError(
-                        "duplicate key value violates unique constraint user_invites_active_prefix_uniq"
+                        "duplicate key value violates unique constraint "
+                        "user_invites_active_prefix_uniq"
                     )
             self.invites[iid] = {
                 "id": iid,
@@ -76,7 +81,9 @@ class _FakeStore:
                 allows_shared = True
             for row in self.users.values():
                 if row["email"].lower() == email.lower():
-                    raise RuntimeError("duplicate key value violates unique constraint users_email_key")
+                    raise RuntimeError(
+                        "duplicate key value violates unique constraint users_email_key"
+                    )
             if self._fail_user_insert_unique:
                 raise RuntimeError("duplicate key value violates unique constraint users_email_key")
             self.users[uid] = {

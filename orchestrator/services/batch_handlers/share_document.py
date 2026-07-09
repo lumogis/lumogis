@@ -44,9 +44,10 @@ def _fetch_personal_source(user_id: str, document_id: int) -> dict | None:
 
 @register_batch_handler("share_document", ShareDocumentPayload)
 def handle_share(*, user_id: str, payload: ShareDocumentPayload, job_id: int) -> None:
+    from services.share_lock import share_document_lock
+
     from services import ingest_progress as ip
     from services import projection as proj
-    from services.share_lock import share_document_lock
 
     doc_id = payload.document_id
     src = _fetch_personal_source(user_id, doc_id)
@@ -74,9 +75,7 @@ def handle_share(*, user_id: str, payload: ShareDocumentPayload, job_id: int) ->
         # chunk that fails to mirror.
         from services import document_entity_cascade as cascade
 
-        ent_ok, ent_failed = cascade.cascade_share_document_entities(
-            src_file=src, actor=actor
-        )
+        ent_ok, ent_failed = cascade.cascade_share_document_entities(src_file=src, actor=actor)
         projected += ent_ok
         failed += ent_failed
 
@@ -93,9 +92,10 @@ def handle_share(*, user_id: str, payload: ShareDocumentPayload, job_id: int) ->
 
 @register_batch_handler("unshare_document", ShareDocumentPayload)
 def handle_unshare(*, user_id: str, payload: ShareDocumentPayload, job_id: int) -> None:
+    from services.share_lock import share_document_lock
+
     from services import ingest_progress as ip
     from services import projection as proj
-    from services.share_lock import share_document_lock
 
     doc_id = payload.document_id
     src = _fetch_personal_source(user_id, doc_id)

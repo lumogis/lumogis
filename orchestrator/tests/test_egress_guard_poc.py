@@ -12,20 +12,19 @@ from http.server import ThreadingHTTPServer
 from typing import Generator
 from unittest.mock import patch
 
-import config
 import main
 import pytest
 from auth import UserContext
 from fastapi.testclient import TestClient
 from openai import OpenAI
+
+import config
 from services import egress_guard as eg
 
 try:
     import tethered  # noqa: F401
 except ImportError:
-    pytest.fail(
-        "tethered==0.5.1 required — install orchestrator/requirements-core.txt"
-    )
+    pytest.fail("tethered==0.5.1 required — install orchestrator/requirements-core.txt")
 
 from tests.test_egress_guard import _PrivacyFakeStore
 
@@ -339,9 +338,7 @@ def test_poc_non_stream_real_adapter_allowed_on_allowlist(
 
 
 @patch("routes.chat.build_injected_context", side_effect=_passthrough_history)
-def test_poc_upstream_error_not_egress_blocked(
-    _ctx, chat_client_poc, egress_poc_env, monkeypatch
-):
+def test_poc_upstream_error_not_egress_blocked(_ctx, chat_client_poc, egress_poc_env, monkeypatch):
     server = ThreadingHTTPServer(("127.0.0.1", 0), _MalformedJSONHandler)
     _host, port = server.server_address
     base_url = f"http://{_host}:{port}/v1"
@@ -414,11 +411,7 @@ def test_poc_stream_tool_loop_second_connect_blocked(
     assert repointed["done"], "tool-loop round 2 did not run"
     assert resp.status_code == 200
     assert "egress guard" in resp.text.lower()
-    socket_events = [
-        e
-        for e in connect_events
-        if e[0] in ("socket.connect", "socket.getaddrinfo")
-    ]
+    socket_events = [e for e in connect_events if e[0] in ("socket.connect", "socket.getaddrinfo")]
     offlist_events = [e for e in socket_events if _OFF_ALLOWLIST_HOST in str(e[1])]
     assert len(socket_events) >= 2 or offlist_events, socket_events
 
@@ -513,4 +506,7 @@ def test_poc_privacy_local_only_blocks_before_adapter(
     err = body.get("error") or body.get("detail", {})
     if isinstance(err, dict):
         code = err.get("code") or err.get("error")
-        assert code in ("privacy_mode_blocked", "egress_blocked", None) or "privacy" in str(body).lower()
+        assert (
+            code in ("privacy_mode_blocked", "egress_blocked", None)
+            or "privacy" in str(body).lower()
+        )

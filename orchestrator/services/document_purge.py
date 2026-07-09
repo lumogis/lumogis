@@ -276,9 +276,7 @@ def purge_document(*, user_id: str, document_id: int) -> PurgeResult:
             from services import document_entity_cascade
 
             shared_retract_ids, _shared_downgrade_ids = (
-                document_entity_cascade.plan_document_entity_retraction(
-                    ms, file_path, user_id
-                )
+                document_entity_cascade.plan_document_entity_retraction(ms, file_path, user_id)
             )
             # Detect orphans while their entity_relations rows still exist.
             # SCOPE-EXEMPT: inline entity GC targets personal entities for the purging user.

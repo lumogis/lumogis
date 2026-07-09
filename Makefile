@@ -18,7 +18,7 @@ SHELL := /bin/bash
         search-dev search-build search-build-client \
         lumogis-cursor-install test-lumogis-mcp test-cursor-integration test-cursor-integration-full \
         seed-cursor-integration-fixture prove-cursor-integration-full \
-        audit-local bandit-check web-audit-fix \
+        audit-local bandit-check web-audit-fix zap-rc-baseline-lum318 \
         compose-policy-check \
         graph-relates-to-merge-policy-check \
         verify-public-rc verify-public-rc-full release-doc-sync-check \
@@ -83,7 +83,7 @@ compose-test-doctor:
 	export COMPOSE_PROJECT_NAME=lumogis-test; \
 	export COMPOSE_FILE=docker-compose.yml:docker-compose.test-doctor.yml; \
 	cd "$$REPO"; \
-	docker compose --env-file config/test.env.example up -d --wait --wait-timeout 180; \
+	docker compose --env-file config/test.env.example up -d --wait --wait-timeout 360; \
 	$(MAKE) --no-print-directory doctor ARGS="--json" > "$$REPO/doctor.json"; \
 	jq -e '.version == 1 and (.checks | type == "array")' < "$$REPO/doctor.json"; \
 	rm -f "$$REPO/doctor.json"; \
@@ -370,6 +370,10 @@ audit-local:
 bandit-check:
 	@test -x "$(CURDIR)/.venv-bandit-check/bin/bandit" || ( $(PYTHON) -m venv "$(CURDIR)/.venv-bandit-check" && "$(CURDIR)/.venv-bandit-check/bin/pip" install -q -r scripts/requirements-security-audit.txt )
 	-@"$(CURDIR)/.venv-bandit-check/bin/bandit" -r orchestrator/ -ll -ii
+
+# LUM-318 — RC-target OWASP ZAP baseline + update audit artefacts (after release / verify-public-rc-full).
+zap-rc-baseline-lum318:
+	bash scripts/zap-rc-baseline-lum318.sh
 
 # npm audit fix must run under clients/lumogis-web (package-lock.json lives there; repo root has none).
 web-audit-fix:

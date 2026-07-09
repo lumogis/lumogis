@@ -10,6 +10,7 @@ Qdrant verification, and the fail-loud audit. Projection teardown internals
 (``unproject_*``) have their own tests; here the registry's ``unproject`` is
 a spy so the security seams are isolated.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -303,9 +304,7 @@ def test_admin_unshare_all_types_happy_path(monkeypatch, vs, resource, collectio
     _seed_shared_point(vs, collection, coerced)
 
     def spy(p, target_scope="shared"):
-        vs.delete_where(
-            collection, {"must": [{"key": "published_from", "match": {"value": p}}]}
-        )
+        vs.delete_where(collection, {"must": [{"key": "published_from", "match": {"value": p}}]})
         return 1
 
     _spy_unproject(monkeypatch, resource, spy)

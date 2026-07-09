@@ -349,6 +349,7 @@ jobs:
 
       - name: Upload OpenAPI changes HTML report (LUM-314)
         if: steps.paths.outputs.should_run == 'true'
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: openapi-changes-html
@@ -405,12 +406,20 @@ jobs:
           command -v jq >/dev/null 2>&1 || { echo "doctor-integration: jq missing after apt install" >&2; exit 1; }
           jq --version
 
+      - name: Free runner disk before compose build
+        if: steps.paths.outputs.should_run == 'true'
+        run: |
+          docker system prune -af --volumes || true
+          docker builder prune -af || true
+          df -h /
+
       - name: Run compose-test-doctor (live stack + doctor JSON)
         if: steps.paths.outputs.should_run == 'true'
         run: make compose-test-doctor
 
       - name: Upload doctor.json (debug)
         if: always() && steps.paths.outputs.should_run == 'true'
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: doctor-json
@@ -493,12 +502,18 @@ jobs:
         shell: bash
         env:
           COMPOSE_PROJECT_NAME: lumogis-test-backup
-          COMPOSE_FILE: docker-compose.yml:docker-compose.falkordb.yml
         run: |
           set +e
           cd "$GITHUB_WORKSPACE"
+          if [[ -f docker-compose.falkordb.yml ]]; then
+            export COMPOSE_FILE=docker-compose.yml:docker-compose.falkordb.yml
+            services="backup falkordb postgres qdrant"
+          else
+            export COMPOSE_FILE=docker-compose.yml
+            services="backup postgres qdrant"
+          fi
           docker compose --env-file config/test.env.example ps -a
-          docker compose --env-file config/test.env.example logs --tail=200 backup falkordb postgres qdrant
+          docker compose --env-file config/test.env.example logs --tail=200 $services
 
       - name: Skip backup integration (path contract)
         if: steps.paths.outputs.should_run != 'true'
@@ -596,6 +611,7 @@ jobs:
 
       - name: Upload Bandit orchestrator log
         if: steps.paths.outputs.should_run == 'true'
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: bandit-orchestrator

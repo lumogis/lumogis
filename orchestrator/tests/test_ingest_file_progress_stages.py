@@ -13,9 +13,7 @@ import pytest
 
 
 def _write_tmp(text: str) -> str:
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".txt", delete=False, encoding="utf-8"
-    ) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, encoding="utf-8") as f:
         f.write(text)
         return f.name
 

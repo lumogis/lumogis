@@ -8,8 +8,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _WRITE_SCRIPT = _REPO_ROOT / "scripts" / "update" / "write_rollback_override.py"
 
@@ -33,7 +31,8 @@ def test_parse_state_lines_three_column():
 
 
 def test_parse_state_lines_skips_legacy_two_column():
-    text = "ghcr.io/lumogis/lumogis-orchestrator@sha256:abc\tghcr.io/lumogis/lumogis-orchestrator@sha256:abc\n"
+    ref = "ghcr.io/lumogis/lumogis-orchestrator@sha256:abc"
+    text = f"{ref}\t{ref}\n"
     assert wro.parse_state_lines(text) == []
 
 

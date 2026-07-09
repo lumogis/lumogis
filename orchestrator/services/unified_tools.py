@@ -227,9 +227,12 @@ def _capability_unhealthy_reason(svc: RegisteredService) -> str:
     if reason in _CAPABILITY_UNHEALTHY_COPY:
         return _CAPABILITY_UNHEALTHY_COPY[reason]
     if reason.startswith("http_"):
-        status = reason[len("http_"):]
+        status = reason[len("http_") :]
         if status in ("401", "403"):
-            return f"capability service rejected Core's credentials (last probe returned HTTP {status})"
+            return (
+                "capability service rejected Core's credentials "
+                f"(last probe returned HTTP {status})"
+            )
         return f"capability service health check failed (last probe returned HTTP {status})"
     return _CAPABILITY_UNHEALTHY_DEFAULT
 

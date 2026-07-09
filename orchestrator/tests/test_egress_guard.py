@@ -8,11 +8,10 @@ from contextlib import contextmanager
 from unittest.mock import patch
 
 import pytest
-from models.privacy_mode import InstancePrivacyMode
-from services import egress_guard as eg
 from services.privacy_mode import PrivacyModeBlocked
 
 import config
+from services import egress_guard as eg
 
 
 class _PrivacyFakeStore:
@@ -165,8 +164,9 @@ def test_privacy_still_blocks_before_egress(egress_env, monkeypatch):
 
 def test_sdk_wrapped_egress_block_translated(egress_env, monkeypatch):
     tethered = pytest.importorskip("tethered")
-    from openai import APIConnectionError
     from unittest.mock import Mock
+
+    from openai import APIConnectionError
 
     monkeypatch.setenv("LUMOGIS_FF_EGRESS_GUARD", "true")
 

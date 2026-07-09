@@ -163,9 +163,7 @@ def file_ms(monkeypatch: pytest.MonkeyPatch) -> _FileIndexStore:
 
 
 def test_purge_document_qdrant_enumeration(file_ms, mock_vector_store, monkeypatch):
-    monkeypatch.setitem(
-        config._instances, config._graph_store_cache_key("personal"), None
-    )
+    monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), None)
     uid = "alice"
     fp = "/uploads/alice/doc.pdf"
     file_ms.rows[1] = {
@@ -191,9 +189,7 @@ def test_purge_document_qdrant_enumeration(file_ms, mock_vector_store, monkeypat
 
 def test_purge_document_deletes_sparse_chunk_indices(file_ms, mock_vector_store, monkeypatch):
     """block_ingest can skip early chunks; purge must not rely on contiguous 0..chunk_count-1."""
-    monkeypatch.setitem(
-        config._instances, config._graph_store_cache_key("personal"), None
-    )
+    monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), None)
     uid = "alice"
     fp = "/uploads/alice/sparse.pdf"
     file_ms.rows[1] = {
@@ -216,9 +212,7 @@ def test_purge_document_deletes_sparse_chunk_indices(file_ms, mock_vector_store,
 
 
 def test_purge_document_partial_when_qdrant_fails(file_ms, mock_vector_store, monkeypatch):
-    monkeypatch.setitem(
-        config._instances, config._graph_store_cache_key("personal"), None
-    )
+    monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), None)
     file_ms.rows[1] = {
         "id": 1,
         "file_path": "/x.pdf",
@@ -237,9 +231,7 @@ def test_purge_document_partial_when_qdrant_fails(file_ms, mock_vector_store, mo
 
 
 def test_purge_entity_relations_uses_file_path(file_ms, mock_vector_store, monkeypatch):
-    monkeypatch.setitem(
-        config._instances, config._graph_store_cache_key("personal"), None
-    )
+    monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), None)
     fp = "/docs/a.txt"
     file_ms.rows[3] = {
         "id": 3,
@@ -259,9 +251,7 @@ def test_purge_entity_relations_uses_file_path(file_ms, mock_vector_store, monke
 
 
 def test_delete_document_cascades_projection_rows(file_ms, mock_vector_store, monkeypatch):
-    monkeypatch.setitem(
-        config._instances, config._graph_store_cache_key("personal"), None
-    )
+    monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), None)
     file_ms.rows[1] = {
         "id": 1,
         "file_path": "/personal.pdf",
@@ -283,18 +273,14 @@ def test_delete_document_cascades_projection_rows(file_ms, mock_vector_store, mo
 
 
 def test_purge_raises_when_not_found(file_ms, mock_vector_store, monkeypatch):
-    monkeypatch.setitem(
-        config._instances, config._graph_store_cache_key("personal"), None
-    )
+    monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), None)
     with pytest.raises(DocumentNotFoundError):
         purge_document(user_id="alice", document_id=99)
 
 
 def test_delete_no_entities_delete_when_no_orphans(file_ms, mock_vector_store, monkeypatch):
     """No orphan entities detected (entities dict empty) → no DELETE FROM entities."""
-    monkeypatch.setitem(
-        config._instances, config._graph_store_cache_key("personal"), None
-    )
+    monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), None)
     fp = "/docs/orphan.pdf"
     file_ms.rows[4] = {
         "id": 4,
@@ -320,9 +306,7 @@ def test_delete_no_entities_delete_when_no_orphans(file_ms, mock_vector_store, m
 
 
 def test_purge_inserts_tombstone_on_postgres_success(file_ms, mock_vector_store, monkeypatch):
-    monkeypatch.setitem(
-        config._instances, config._graph_store_cache_key("personal"), None
-    )
+    monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), None)
     file_ms.rows[10] = {
         "id": 10,
         "file_path": "/docs/report.pdf",
@@ -338,9 +322,7 @@ def test_purge_inserts_tombstone_on_postgres_success(file_ms, mock_vector_store,
 
 
 def test_purge_tombstone_resolved_on_full_success(file_ms, mock_vector_store, monkeypatch):
-    monkeypatch.setitem(
-        config._instances, config._graph_store_cache_key("personal"), None
-    )
+    monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), None)
     file_ms.rows[11] = {
         "id": 11,
         "file_path": "/docs/full.pdf",
@@ -357,9 +339,7 @@ def test_purge_tombstone_resolved_on_full_success(file_ms, mock_vector_store, mo
 
 
 def test_purge_partial_tombstone_stays_unresolved(file_ms, mock_vector_store, monkeypatch):
-    monkeypatch.setitem(
-        config._instances, config._graph_store_cache_key("personal"), None
-    )
+    monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), None)
     file_ms.rows[12] = {
         "id": 12,
         "file_path": "/docs/partial.pdf",
@@ -376,9 +356,7 @@ def test_purge_partial_tombstone_stays_unresolved(file_ms, mock_vector_store, mo
 
 
 def test_purge_partial_emits_structured_log_event(file_ms, mock_vector_store, monkeypatch):
-    monkeypatch.setitem(
-        config._instances, config._graph_store_cache_key("personal"), None
-    )
+    monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), None)
     file_ms.rows[13] = {
         "id": 13,
         "file_path": "/docs/event.pdf",
@@ -403,9 +381,7 @@ def test_purge_partial_emits_structured_log_event(file_ms, mock_vector_store, mo
 
 
 def test_purge_retry_via_tombstone(file_ms, mock_vector_store, monkeypatch):
-    monkeypatch.setitem(
-        config._instances, config._graph_store_cache_key("personal"), None
-    )
+    monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), None)
     # First call: Qdrant fails → partial tombstone.
     file_ms.rows[14] = {
         "id": 14,
@@ -436,9 +412,7 @@ def test_purge_retry_via_tombstone(file_ms, mock_vector_store, monkeypatch):
 
 
 def test_purge_idempotent_on_resolved_tombstone(file_ms, mock_vector_store, monkeypatch):
-    monkeypatch.setitem(
-        config._instances, config._graph_store_cache_key("personal"), None
-    )
+    monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), None)
     # Pre-seed a resolved tombstone; no file_index row.
     file_ms.purged_documents[("alice", 20)] = {
         "file_path": "/docs/done.pdf",
@@ -459,9 +433,7 @@ def test_purge_idempotent_on_resolved_tombstone(file_ms, mock_vector_store, monk
 
 
 def test_purge_raises_not_found_without_tombstone(file_ms, mock_vector_store, monkeypatch):
-    monkeypatch.setitem(
-        config._instances, config._graph_store_cache_key("personal"), None
-    )
+    monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), None)
     # No file_index row, no tombstone.
     with pytest.raises(DocumentNotFoundError):
         purge_document(user_id="alice", document_id=99)
@@ -474,9 +446,7 @@ def test_purge_raises_not_found_without_tombstone(file_ms, mock_vector_store, mo
 
 def test_entity_gc_removes_orphan_entities(file_ms, mock_vector_store, monkeypatch):
     """Deleting a doc whose entity has no other evidence removes entity from Postgres + Qdrant."""
-    monkeypatch.setitem(
-        config._instances, config._graph_store_cache_key("personal"), None
-    )
+    monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), None)
     fp = "/docs/gc.pdf"
     eid = "ent-aaa-111"
     file_ms.rows[30] = {
@@ -515,9 +485,7 @@ def test_entity_gc_removes_orphan_entities(file_ms, mock_vector_store, monkeypat
 
 def test_entity_gc_skips_non_orphan_entities(file_ms, mock_vector_store, monkeypatch):
     """Entity with evidence from another document is NOT deleted."""
-    monkeypatch.setitem(
-        config._instances, config._graph_store_cache_key("personal"), None
-    )
+    monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), None)
     fp = "/docs/partial-gc.pdf"
     fp2 = "/docs/other.pdf"
     eid = "ent-bbb-222"
@@ -547,9 +515,7 @@ def test_entity_gc_skips_non_orphan_entities(file_ms, mock_vector_store, monkeyp
 
 def test_entity_gc_sweeps_shared_projection_points(file_ms, mock_vector_store, monkeypatch):
     """The projection-sweep filter carries the orphan ids under published_from (LUM-501)."""
-    monkeypatch.setitem(
-        config._instances, config._graph_store_cache_key("personal"), None
-    )
+    monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), None)
     fp = "/docs/published.pdf"
     eid = "ent-eee-555"
     file_ms.rows[35] = {
@@ -583,9 +549,7 @@ def test_entity_gc_sweeps_shared_projection_points(file_ms, mock_vector_store, m
 
 def test_entity_gc_empty_when_no_entities(file_ms, mock_vector_store, monkeypatch):
     """Doc with no entities → entity Qdrant arm succeeds trivially; no entity delete_where."""
-    monkeypatch.setitem(
-        config._instances, config._graph_store_cache_key("personal"), None
-    )
+    monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), None)
     file_ms.rows[32] = {
         "id": 32,
         "file_path": "/docs/noentity.pdf",
@@ -607,9 +571,7 @@ def test_entity_gc_empty_when_no_entities(file_ms, mock_vector_store, monkeypatc
 
 def test_entity_gc_partial_when_qdrant_entities_fails(file_ms, mock_vector_store, monkeypatch):
     """Qdrant entity arm failure → partial; tombstone records qdrant_entities_deleted=False."""
-    monkeypatch.setitem(
-        config._instances, config._graph_store_cache_key("personal"), None
-    )
+    monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), None)
     fp = "/docs/entfail.pdf"
     eid = "ent-ccc-333"
     file_ms.rows[33] = {
@@ -637,9 +599,7 @@ def test_entity_gc_partial_when_qdrant_entities_fails(file_ms, mock_vector_store
 
 def test_entity_gc_log_event_emitted(file_ms, mock_vector_store, monkeypatch):
     """document_entity_gc info log emitted when orphan entities are removed."""
-    monkeypatch.setitem(
-        config._instances, config._graph_store_cache_key("personal"), None
-    )
+    monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), None)
     fp = "/docs/gclog.pdf"
     eid = "ent-ddd-444"
     file_ms.rows[34] = {

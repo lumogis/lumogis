@@ -97,6 +97,4 @@ class MockVectorStore:
 
     def count_where(self, collection: str, filter: dict) -> int:
         items = self._collections.get(collection, [])
-        return sum(
-            1 for i in items if _matches_qdrant_filter(i.get("payload", {}), filter)
-        )
+        return sum(1 for i in items if _matches_qdrant_filter(i.get("payload", {}), filter))

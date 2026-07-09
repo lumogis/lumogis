@@ -29,13 +29,15 @@ Design (per the LUM-583 plan, R1 corrections):
 Unshare is NOT implemented here — the page reuses the existing owner-only
 ``DELETE /api/v1/{resource_type}/{id}/publish`` routes.
 """
+
 from __future__ import annotations
 
 import logging
 
-import config
 from services.sharing_registry import SHAREABLE_RESOURCES
 from services.sharing_registry import short_label
+
+import config
 
 _log = logging.getLogger(__name__)
 

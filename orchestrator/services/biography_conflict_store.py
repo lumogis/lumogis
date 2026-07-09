@@ -8,7 +8,6 @@ import json
 import logging
 from uuid import UUID
 
-import config
 from models.biography_conflict import BiographyPinSnapshot
 from models.biography_conflict import ConflictResolution
 from models.biography_conflict import ConflictResolutionRequest
@@ -16,6 +15,8 @@ from models.biography_conflict import DetectedConflict
 from ports.metadata_store import MetadataStore
 from services.biography_conflict import apply_resolution_with_pins
 from services.biography_conflict import detect_conflicts
+
+import config
 
 _log = logging.getLogger(__name__)
 

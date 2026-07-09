@@ -39,7 +39,6 @@ from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import field_validator
 
-
 # Canonical MCP token scopes (LUM-527). `McpScope` is a Literal so the OpenAPI
 # schema for the mint request emits an `enum` (codegen clients see the
 # allowlist); `KNOWN_MCP_SCOPES` is derived from it for the validator's

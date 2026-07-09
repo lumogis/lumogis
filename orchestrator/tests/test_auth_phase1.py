@@ -700,9 +700,7 @@ def test_bootstrap_file_missing_falls_back_to_env(users_store, monkeypatch, tmp_
     import services.users as users_svc
 
     # _FILE points at a nonexistent path, raw env unset → no creds → None.
-    monkeypatch.setenv(
-        "LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD_FILE", str(tmp_path / "does-not-exist")
-    )
+    monkeypatch.setenv("LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD_FILE", str(tmp_path / "does-not-exist"))
     monkeypatch.delenv("LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD", raising=False)
     monkeypatch.setenv("LUMOGIS_BOOTSTRAP_ADMIN_EMAIL", "admin@home.lan")
     assert users_svc.bootstrap_if_empty() is None
@@ -714,9 +712,7 @@ def test_bootstrap_file_missing_but_env_set_uses_env(users_store, monkeypatch, t
 
     # _FILE points at a nonexistent path (ENOENT) AND raw env IS set → the open
     # fails, the helper falls through to the env value (not "").
-    monkeypatch.setenv(
-        "LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD_FILE", str(tmp_path / "does-not-exist")
-    )
+    monkeypatch.setenv("LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD_FILE", str(tmp_path / "does-not-exist"))
     monkeypatch.setenv("LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD", "envwhenfilegone1")
     monkeypatch.setenv("LUMOGIS_BOOTSTRAP_ADMIN_EMAIL", "admin@home.lan")
     admin = users_svc.bootstrap_if_empty()
@@ -821,9 +817,7 @@ def test_bind_host_is_loopback_classification(host, expected):
     assert main._bind_host_is_loopback(host) is expected
 
 
-def test_enforce_auth_consistency_refuses_nonloopback_bind_auth_off(
-    dev_env, monkeypatch
-):
+def test_enforce_auth_consistency_refuses_nonloopback_bind_auth_off(dev_env, monkeypatch):
     """0.0.0.0 + AUTH_ENABLED=false → refuse to boot (the core LUM-473 invariant)."""
     import main
 
@@ -832,9 +826,7 @@ def test_enforce_auth_consistency_refuses_nonloopback_bind_auth_off(
         main._enforce_auth_consistency()
 
 
-def test_enforce_auth_consistency_refuses_private_ip_bind_auth_off(
-    dev_env, monkeypatch
-):
+def test_enforce_auth_consistency_refuses_private_ip_bind_auth_off(dev_env, monkeypatch):
     """A private LAN IP is still 'exposed' and must mandate auth."""
     import main
 
@@ -860,9 +852,7 @@ def test_enforce_auth_consistency_bind_host_unset_auth_off_boots(dev_env, monkey
     main._enforce_auth_consistency()
 
 
-def test_enforce_auth_consistency_nonloopback_bind_auth_on_passes_guard(
-    auth_env, monkeypatch
-):
+def test_enforce_auth_consistency_nonloopback_bind_auth_on_passes_guard(auth_env, monkeypatch):
     """0.0.0.0 + AUTH_ENABLED=true → the guard does not raise (auth satisfies it).
 
     Isolates the guard: the conftest escape hatch returns before the users-table
@@ -884,9 +874,7 @@ def test_exposure_guard_fires_even_with_test_skip_set(dev_env, monkeypatch):
     """
     import main
 
-    monkeypatch.setenv(
-        "_LUMOGIS_TEST_SKIP_AUTH_CONSISTENCY_DO_NOT_SET_IN_PRODUCTION", "true"
-    )
+    monkeypatch.setenv("_LUMOGIS_TEST_SKIP_AUTH_CONSISTENCY_DO_NOT_SET_IN_PRODUCTION", "true")
     monkeypatch.setenv("LUMOGIS_BIND_HOST", "0.0.0.0")
     with pytest.raises(RuntimeError, match="non-loopback"):
         main._enforce_auth_consistency()

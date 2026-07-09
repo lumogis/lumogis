@@ -54,7 +54,9 @@ def test_build_description_from_json():
     row = {
         "action_name": "privacy_mode_block",
         "connector": "llm",
-        "input_summary": json.dumps({"requested_model": "gpt-4", "decline_type": "external_call_denied"}),
+        "input_summary": json.dumps(
+            {"requested_model": "gpt-4", "decline_type": "external_call_denied"}
+        ),
         "result_summary": "",
     }
     desc = build_description(row)

@@ -30,10 +30,11 @@ from rate_limit import FailureRateLimiter
 from rate_limit import RequestRateLimiter
 from routes.auth import _login_response
 from routes.auth import _set_refresh_cookie
+from services.users import PasswordPolicyViolationError
+
 from services import auth_sessions as auth_sess
 from services import user_invites as invites_service
 from services import users as users_svc
-from services.users import PasswordPolicyViolationError
 
 _log = logging.getLogger(__name__)
 

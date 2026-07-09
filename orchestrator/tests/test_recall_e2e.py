@@ -120,34 +120,81 @@ def test_recall_callable_end_to_end(monkeypatch):
     import config
 
     monkeypatch.setattr(config, "get_embedder", lambda: FakeEmbedder())
-    monkeypatch.setattr(config, "get_vector_store", lambda: FakeVS(
-        [{"id": "p", "score": 0.9, "payload": {"memory_id": "m1", "user_id": "e2e-user", "bank": "coding"}}]
-    ))
+    monkeypatch.setattr(
+        config,
+        "get_vector_store",
+        lambda: FakeVS(
+            [
+                {
+                    "id": "p",
+                    "score": 0.9,
+                    "payload": {"memory_id": "m1", "user_id": "e2e-user", "bank": "coding"},
+                }
+            ]
+        ),
+    )
     monkeypatch.setattr(config, "get_recall_reranker", lambda: None)
-    monkeypatch.setattr(config, "get_metadata_store", lambda: FakeMS([
-        [{"id": "m1"}],  # bm25
-        [{"id": "m1"}],  # temporal
-        [{"id": "m1", "content": "FalkorDB chosen over Neo4j", "bank": "coding", "valid_from": AS_OF, "valid_until": None}],
-        [],  # hydrate edges
-    ]))
+    monkeypatch.setattr(
+        config,
+        "get_metadata_store",
+        lambda: FakeMS(
+            [
+                [{"id": "m1"}],  # bm25
+                [{"id": "m1"}],  # temporal
+                [
+                    {
+                        "id": "m1",
+                        "content": "FalkorDB chosen over Neo4j",
+                        "bank": "coding",
+                        "valid_from": AS_OF,
+                        "valid_until": None,
+                    }
+                ],
+                [],  # hydrate edges
+            ]
+        ),
+    )
 
     import main
 
     headers = {"Authorization": "Bearer e2e-secret"}
     with TestClient(main.app) as client:
-        init = _post(client, {
-            "jsonrpc": "2.0", "id": 1, "method": "initialize",
-            "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "lum295", "version": "0.1"}},
-        }, headers)
+        init = _post(
+            client,
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "lum295", "version": "0.1"},
+                },
+            },
+            headers,
+        )
         assert init.status_code == 200, init.text
-        call = _post(client, {
-            "jsonrpc": "2.0", "id": 2, "method": "tools/call",
-            "params": {"name": "recall", "arguments": {"query": "FalkorDB", "bank": "coding", "retrieval_strategies": ["semantic", "bm25", "temporal"]}},
-        }, headers)
+        call = _post(
+            client,
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "recall",
+                    "arguments": {
+                        "query": "FalkorDB",
+                        "bank": "coding",
+                        "retrieval_strategies": ["semantic", "bm25", "temporal"],
+                    },
+                },
+            },
+            headers,
+        )
     assert call.status_code == 200, call.text
     assert "memories" in call.text
     assert "m1" in call.text
-    assert "isError\":true" not in call.text.replace(" ", "")
+    assert 'isError":true' not in call.text.replace(" ", "")
 
 
 # --- archive observability (load-bearing) -----------------------------------
@@ -157,20 +204,47 @@ def test_recall_when_memory_archived_then_absent_but_valid_sibling_present():
     """An archived memory (dropped by the temporal hydration filter) does not
     surface; a currently-valid sibling does. This is what makes LUM-526's
     forget/supersede observable on the read path."""
-    vs = FakeVS([
-        {"id": "pA", "score": 0.9, "payload": {"memory_id": "archived", "user_id": "u", "bank": "coding"}},
-        {"id": "pB", "score": 0.8, "payload": {"memory_id": "valid", "user_id": "u", "bank": "coding"}},
-    ])
-    # bm25 + temporal also surface both ids; hydration (temporal-filtered) returns ONLY the valid one.
-    ms = FakeMS([
-        [{"id": "archived"}, {"id": "valid"}],  # bm25
-        [{"id": "archived"}, {"id": "valid"}],  # temporal
-        [{"id": "valid", "content": "current", "bank": "coding", "valid_from": AS_OF, "valid_until": None}],  # hydrate q1 (archived absent)
-        [],  # hydrate edges
-    ])
+    vs = FakeVS(
+        [
+            {
+                "id": "pA",
+                "score": 0.9,
+                "payload": {"memory_id": "archived", "user_id": "u", "bank": "coding"},
+            },
+            {
+                "id": "pB",
+                "score": 0.8,
+                "payload": {"memory_id": "valid", "user_id": "u", "bank": "coding"},
+            },
+        ]
+    )
+    # bm25 + temporal surface both ids; temporal-filtered hydration returns only the valid one.
+    ms = FakeMS(
+        [
+            [{"id": "archived"}, {"id": "valid"}],  # bm25
+            [{"id": "archived"}, {"id": "valid"}],  # temporal
+            [
+                {
+                    "id": "valid",
+                    "content": "current",
+                    "bank": "coding",
+                    "valid_from": AS_OF,
+                    "valid_until": None,
+                }
+            ],  # hydrate q1 (archived absent)
+            [],  # hydrate edges
+        ]
+    )
     res = R.recall(
-        user_id="u", bank="coding", query="x", retrieval_strategies=["semantic", "bm25", "temporal"],
-        as_of=AS_OF, rerank=False, ms=ms, embedder=FakeEmbedder(), vs=vs,
+        user_id="u",
+        bank="coding",
+        query="x",
+        retrieval_strategies=["semantic", "bm25", "temporal"],
+        as_of=AS_OF,
+        rerank=False,
+        ms=ms,
+        embedder=FakeEmbedder(),
+        vs=vs,
     )
     ids = [m.id for m in res]
     assert "valid" in ids and "archived" not in ids
@@ -191,8 +265,9 @@ def test_recall_tool_rejects_malformed_as_of(monkeypatch):
 
 
 def test_recall_tool_coerces_naive_as_of_to_utc(monkeypatch):
-    import mcp_server
     from datetime import timezone
+
+    import mcp_server
 
     monkeypatch.setattr(mcp_server, "_resolve_user_id", lambda: "u")
     captured = {}

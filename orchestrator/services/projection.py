@@ -538,9 +538,7 @@ def project_file(src: dict, *, target_scope: str, actor: UserContext) -> dict:
     a shared document retrievable by other household members.
     """
     _validate_target_scope(target_scope)
-    row, _projected, _failed = project_file_with_status(
-        src, target_scope=target_scope, actor=actor
-    )
+    row, _projected, _failed = project_file_with_status(src, target_scope=target_scope, actor=actor)
     return row
 
 
@@ -562,8 +560,7 @@ def project_file_with_status(
     # content by passing a foreign source row.
     if owner != str(actor.user_id):
         raise ValueError(
-            "project_file: source owner does not match actor "
-            f"({owner!r} != {actor.user_id!r})"
+            f"project_file: source owner does not match actor ({owner!r} != {actor.user_id!r})"
         )
     row = _project_file_row(src, target_scope=target_scope, actor=actor)
     # LUM-157 finding-3: unproject-then-project so the shared set EXACTLY mirrors
@@ -659,9 +656,7 @@ def reproject_shared_on_reingest(
                 failed,
             )
     except Exception as exc:
-        _log.warning(
-            "projection: reingest re-projection failed src=%s — %s", src_pk, exc
-        )
+        _log.warning("projection: reingest re-projection failed src=%s — %s", src_pk, exc)
 
 
 def project_entity(
@@ -694,9 +689,7 @@ def project_entity(
     """
     _validate_target_scope(target_scope)
     if share_origin not in ("document", "user"):
-        raise ValueError(
-            f"share_origin must be 'document' or 'user'; got {share_origin!r}"
-        )
+        raise ValueError(f"share_origin must be 'document' or 'user'; got {share_origin!r}")
     src_pk = str(src["entity_id"])
     new_pk = projection_pk("entities", src_pk, target_scope)
     point_id = projection_point_id("entities", src_pk, target_scope)
@@ -939,9 +932,7 @@ def unproject_file(src_pk: int, target_scope: str = "shared") -> int:
     if target_scope == "shared" and file_path and owner:
         from services import document_entity_cascade
 
-        document_entity_cascade.retract_document_entities(
-            file_path=file_path, owner_user_id=owner
-        )
+        document_entity_cascade.retract_document_entities(file_path=file_path, owner_user_id=owner)
     return 1
 
 

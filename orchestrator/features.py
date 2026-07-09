@@ -80,9 +80,7 @@ _FLAG_LIST: tuple[FeatureFlag, ...] = (
     ),
     FeatureFlag(
         key="TEMPORAL_KG",
-        description=(
-            "Two-axis temporal validity on KG edges + contradiction detection (LUM-104)."
-        ),
+        description=("Two-axis temporal validity on KG edges + contradiction detection (LUM-104)."),
     ),
     FeatureFlag(
         key="WRITE_BACK_MCP",

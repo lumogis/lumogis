@@ -12,10 +12,17 @@ from typing import Any
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _DEFAULT_FIXTURE = _REPO_ROOT / "tests" / "fixtures" / "coding_bank.json"
 
-_CODING_ENTITY_TYPES = frozenset({
-    "CODING_DECISION", "CODING_CONVENTION", "COMPONENT", "FAILURE",
-    "SESSION", "TASK", "LIBRARY",
-})
+_CODING_ENTITY_TYPES = frozenset(
+    {
+        "CODING_DECISION",
+        "CODING_CONVENTION",
+        "COMPONENT",
+        "FAILURE",
+        "SESSION",
+        "TASK",
+        "LIBRARY",
+    }
+)
 
 
 @dataclass(frozen=True)

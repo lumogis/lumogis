@@ -87,9 +87,7 @@ def test_unshare_stale_job_is_terminal_noop(progress_calls, monkeypatch):
         "services.projection.unproject_file",
         lambda *a, **k: called.__setitem__("n", called["n"] + 1),
     )
-    handle_unshare(
-        user_id="alice", payload=ShareDocumentPayload(document_id=9), job_id=4
-    )
+    handle_unshare(user_id="alice", payload=ShareDocumentPayload(document_id=9), job_id=4)
     assert [c["stage"] for c in progress_calls] == ["done"]
     assert called["n"] == 0  # no unproject when source is gone
 
@@ -97,7 +95,5 @@ def test_unshare_stale_job_is_terminal_noop(progress_calls, monkeypatch):
 def test_unshare_success_reports_done(progress_calls, monkeypatch):
     _set_source(monkeypatch, {"id": 9, "user_id": "alice", "scope": "personal"})
     monkeypatch.setattr("services.projection.unproject_file", lambda *a, **k: None)
-    handle_unshare(
-        user_id="alice", payload=ShareDocumentPayload(document_id=9), job_id=5
-    )
+    handle_unshare(user_id="alice", payload=ShareDocumentPayload(document_id=9), job_id=5)
     assert [c["stage"] for c in progress_calls] == ["projecting", "done"]

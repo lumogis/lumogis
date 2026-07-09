@@ -18,10 +18,11 @@ import uuid
 from pathlib import Path
 
 import auth as auth_mod
-import config
-from services import mcp_tokens as mcp_tokens_svc
 from services.memories import COLLECTION
 from tests.cursor_integration.fixture_loader import load_coding_bank
+
+import config
+from services import mcp_tokens as mcp_tokens_svc
 
 _log = logging.getLogger("scripts.seed_coding_bank_fixture")
 
@@ -33,7 +34,9 @@ _BANKS = ("coding", "personal")
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Seed coding_bank.json on lumogis-test")
-    parser.add_argument("--user-id", default=os.environ.get("CURSOR_INTEGRATION_FULL_USER_ID", _DEFAULT_USER_ID))
+    parser.add_argument(
+        "--user-id", default=os.environ.get("CURSOR_INTEGRATION_FULL_USER_ID", _DEFAULT_USER_ID)
+    )
     parser.add_argument("--fixture-path", type=Path, default=None)
     parser.add_argument("--wipe", action="store_true")
     parser.add_argument("--env-file", type=Path, default=_DEFAULT_ENV_FILE)

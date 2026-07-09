@@ -11,6 +11,14 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.9.1] — 2026-07-09
+
+### Fixed
+
+- **Public repository CI** — GitHub Actions on the AGPL export tree passes orchestrator lint, backup round-trip (Postgres + Qdrant when the premium FalkorDB overlay is absent), and doctor integration startup checks again after the 0.9.0 publish.
+
+---
+
 ## [0.9.0] — 2026-07-09
 
 ### Added

@@ -187,12 +187,8 @@ def test_live_alice_and_bob_no_cross_user_qdrant_leakage(live_stores):
     file_path_b = f"/uploads/{bob}/lum307-{uuid.uuid4().hex[:8]}.md"
     dim = _vector_dim()
     vector_idx = _run_vector_index(dim)
-    alice_ctx = UserContext(
-        user_id=alice, is_authenticated=True, role="user", allows_shared=True
-    )
-    bob_ctx = UserContext(
-        user_id=bob, is_authenticated=True, role="user", allows_shared=True
-    )
+    alice_ctx = UserContext(user_id=alice, is_authenticated=True, role="user", allows_shared=True)
+    bob_ctx = UserContext(user_id=bob, is_authenticated=True, role="user", allows_shared=True)
     try:
         _seed_personal_chunks(vs, alice, file_path_a, vector_idx)
         _seed_personal_chunks(vs, bob, file_path_b, vector_idx)
@@ -249,12 +245,8 @@ def test_live_household_union_returns_shared_for_both_users(live_stores):
     file_path_shared = f"/uploads/shared/lum307-{uuid.uuid4().hex[:8]}.md"
     dim = _vector_dim()
     vector_idx = _run_vector_index(dim)
-    alice_ctx = UserContext(
-        user_id=alice, is_authenticated=True, role="user", allows_shared=True
-    )
-    bob_ctx = UserContext(
-        user_id=bob, is_authenticated=True, role="user", allows_shared=True
-    )
+    alice_ctx = UserContext(user_id=alice, is_authenticated=True, role="user", allows_shared=True)
+    bob_ctx = UserContext(user_id=bob, is_authenticated=True, role="user", allows_shared=True)
     try:
         _seed_personal_chunks(vs, alice, file_path_a, vector_idx)
         _seed_personal_chunks(vs, bob, file_path_b, vector_idx)
@@ -281,8 +273,7 @@ def test_live_household_union_returns_shared_for_both_users(live_stores):
             )
             paths = _paths_in_results(results)
             assert file_path_shared in paths, (
-                f"{label} union positive control failed: "
-                f"{file_path_shared} not in {paths}"
+                f"{label} union positive control failed: {file_path_shared} not in {paths}"
             )
             shared_hits = [
                 r
@@ -290,9 +281,7 @@ def test_live_household_union_returns_shared_for_both_users(live_stores):
                 if (r.get("payload") or {}).get("file_path") == file_path_shared
                 and (r.get("payload") or {}).get("scope") == "shared"
             ]
-            assert shared_hits, (
-                f"{label} did not retrieve shared chunk at {file_path_shared}"
-            )
+            assert shared_hits, f"{label} did not retrieve shared chunk at {file_path_shared}"
             assert own_path in paths, (
                 f"{label} personal positive control failed: {own_path} not in {paths}"
             )
@@ -319,12 +308,8 @@ def test_live_personal_only_member_excludes_shared_chunks(live_stores):
     file_path_shared = f"/uploads/shared/lum587-{uuid.uuid4().hex[:8]}.md"
     dim = _vector_dim()
     vector_idx = _run_vector_index(dim)
-    alice_ctx = UserContext(
-        user_id=alice, is_authenticated=True, role="user", allows_shared=True
-    )
-    bob_ctx = UserContext(
-        user_id=bob, is_authenticated=True, role="user", allows_shared=False
-    )
+    alice_ctx = UserContext(user_id=alice, is_authenticated=True, role="user", allows_shared=True)
+    bob_ctx = UserContext(user_id=bob, is_authenticated=True, role="user", allows_shared=False)
     try:
         _seed_personal_chunks(vs, alice, file_path_a, vector_idx)
         _seed_personal_chunks(vs, bob, file_path_b, vector_idx)
@@ -353,9 +338,7 @@ def test_live_personal_only_member_excludes_shared_chunks(live_stores):
             f"Bob (allows_shared=False) saw shared doc: {file_path_shared} in {bob_results}"
         )
         shared_hits_for_bob = [
-            r
-            for r in bob_results
-            if (r.get("payload") or {}).get("file_path") == file_path_shared
+            r for r in bob_results if (r.get("payload") or {}).get("file_path") == file_path_shared
         ]
         assert not shared_hits_for_bob, (
             f"Bob retrieved shared payloads despite opt-out: {shared_hits_for_bob}"
@@ -398,14 +381,8 @@ def test_live_semantic_search_no_cross_user_leakage(live_stores, monkeypatch):
     file_path_b = f"/uploads/{bob}/lum588-{uuid.uuid4().hex[:8]}.md"
     marker_a = uuid.uuid4().hex
     marker_b = uuid.uuid4().hex
-    alice_text = (
-        f"LUM588 Alice retrieval code {marker_a}; "
-        "sphinx of black quartz, judge my vow."
-    )
-    bob_text = (
-        f"LUM588 Bob retrieval code {marker_b}; "
-        "waltz bad nymph for quick jigs vex."
-    )
+    alice_text = f"LUM588 Alice retrieval code {marker_a}; sphinx of black quartz, judge my vow."
+    bob_text = f"LUM588 Bob retrieval code {marker_b}; waltz bad nymph for quick jigs vex."
     try:
         _seed_personal_chunk_embedded(vs, alice, file_path_a, alice_text)
         _seed_personal_chunk_embedded(vs, bob, file_path_b, bob_text)

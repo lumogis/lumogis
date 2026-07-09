@@ -42,13 +42,13 @@ import logging
 from typing import Any
 from typing import Optional
 
+from actions.audit import write_audit
 from auth import UserContext
 from models.actions import AuditEntry
-
-import config
-from actions.audit import write_audit
 from services.sharing_registry import SHAREABLE_RESOURCES as _RESOURCE
 from services.sharing_registry import short_label as _short
+
+import config
 
 _log = logging.getLogger(__name__)
 

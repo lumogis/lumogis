@@ -17,9 +17,9 @@ import os
 import uuid
 
 import pytest
+from plugins.graph.reconcile import reconcile_entity_edges
 
 import config
-from plugins.graph.reconcile import reconcile_entity_edges
 
 pytestmark = pytest.mark.integration
 
@@ -50,18 +50,22 @@ def _live_stores_or_skip(monkeypatch):
             raise RuntimeError("FalkorDB graph store unavailable")
         return ms, gs
     except Exception as exc:  # pragma: no cover - env-dependent
-        pytest.skip(f"FalkorDB/Postgres live stack required — run make compose-test-integration: {exc}")
+        pytest.skip(
+            f"FalkorDB/Postgres live stack required — run make compose-test-integration: {exc}"
+        )
 
 
 def _cleanup(ms, gs, edge_id: str, user_id: str, src: str, dst: str) -> None:
     try:
         gs.query(
-            "MATCH (a {lumogis_id: $src, user_id: $uid})-[r:IMPLEMENTS]->(b {lumogis_id: $dst, user_id: $uid}) "
+            "MATCH (a {lumogis_id: $src, user_id: $uid})"
+            "-[r:IMPLEMENTS]->(b {lumogis_id: $dst, user_id: $uid}) "
             "DELETE r",
             {"src": src, "dst": dst, "uid": user_id},
         )
         gs.query(
-            "MATCH (a {lumogis_id: $src, user_id: $uid})-[r:RELATES_TO]->(b {lumogis_id: $dst, user_id: $uid}) "
+            "MATCH (a {lumogis_id: $src, user_id: $uid})"
+            "-[r:RELATES_TO]->(b {lumogis_id: $dst, user_id: $uid}) "
             "DELETE r",
             {"src": src, "dst": dst, "uid": user_id},
         )
@@ -123,7 +127,8 @@ def test_live_reconcile_attaches_missed_typed_edge_without_touching_relates_to(m
 
         assert result["projected_ok"] >= 1
         attached = gs.query(
-            "MATCH (a {lumogis_id: $src, user_id: $uid})-[r:IMPLEMENTS]->(b {lumogis_id: $dst, user_id: $uid}) "
+            "MATCH (a {lumogis_id: $src, user_id: $uid})"
+            "-[r:IMPLEMENTS]->(b {lumogis_id: $dst, user_id: $uid}) "
             "RETURN count(r) AS c",
             {"src": src, "dst": dst, "uid": user_id},
         )
@@ -136,7 +141,8 @@ def test_live_reconcile_attaches_missed_typed_edge_without_touching_relates_to(m
         assert stamped is not None and stamped["graph_projected_at"] is not None
 
         cooc = gs.query(
-            "MATCH (a {lumogis_id: $src, user_id: $uid})-[r:RELATES_TO]->(b {lumogis_id: $dst, user_id: $uid}) "
+            "MATCH (a {lumogis_id: $src, user_id: $uid})"
+            "-[r:RELATES_TO]->(b {lumogis_id: $dst, user_id: $uid}) "
             "RETURN r.co_occurrence_count AS n",
             {"src": src, "dst": dst, "uid": user_id},
         )

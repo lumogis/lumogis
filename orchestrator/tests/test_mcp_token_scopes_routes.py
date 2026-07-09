@@ -14,9 +14,8 @@ from __future__ import annotations
 import json
 
 import pytest
-
-from tests.test_mcp_tokens_routes import _RoutesFakeStore
 from tests.test_mcp_tokens_routes import _client
+from tests.test_mcp_tokens_routes import _RoutesFakeStore
 
 
 @pytest.fixture
