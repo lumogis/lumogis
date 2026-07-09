@@ -11,6 +11,14 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.9.4] — 2026-07-09
+
+### Fixed
+
+- **Public repository CI** — doctor integration reaches Postgres inside the compose network (overlay pins `POSTGRES_HOST=postgres`); Lumogis MCP stdio smoke tests use shared fast-start lifespan stubs; document-chat injection tests skip premium graph webhook patching when the AGPL export omits that module.
+
+---
+
 ## [0.9.3] — 2026-07-09
 
 ### Fixed

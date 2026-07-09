@@ -8,6 +8,13 @@ services:
     env_file:
       - config/test.env.example
     environment:
+      # `config/test.env.example` sets POSTGRES_HOST=127.0.0.1:5433 for host-side pytest
+      # (published port). Inside the compose network the orchestrator must reach the
+      # `postgres` service directly — otherwise Core crash-loops on boot and never goes
+      # healthy (doctor `--wait` times out). Mirrors docker-compose.test.yml, which this
+      # overlay intentionally does not include (GHA "orchestrator conflicts" error).
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
       # Fast, public-export-safe doctor stack (no premium graph plugin / sidecars).
       GRAPH_MODE: disabled
       RERANKER_BACKEND: none

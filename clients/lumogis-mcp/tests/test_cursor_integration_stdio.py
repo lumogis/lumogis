@@ -217,10 +217,8 @@ def core_app(monkeypatch):
     monkeypatch.setenv("AUTH_ENABLED", "false")
     monkeypatch.setenv("LUMOGIS_INBOX_MODE", "off")
     monkeypatch.setenv("INGEST_PATHS_WATCH_MODE", "off")
-    monkeypatch.setenv("GRAPH_MODE", "disabled")
-    monkeypatch.setenv("RERANKER_BACKEND", "none")
-    monkeypatch.setenv("LUMOGIS_DEFER_LIBRARY_INDEX", "1")
-    monkeypatch.setenv("CAPABILITY_SERVICE_URLS", "")
+
+    stub_orchestrator_lifespan_for_stdio(monkeypatch)
 
     import config
     import services.mcp_write as mw
@@ -240,8 +238,6 @@ def core_app(monkeypatch):
         "add_memory",
         lambda **k: {"memory_id": "stdio-int-mem", "entity_ids": [], "relation_ids": []},
     )
-
-    stub_orchestrator_lifespan_for_stdio(monkeypatch)
 
     token = _mint_token(store, scopes=["mcp:read", "mcp:write"])
 

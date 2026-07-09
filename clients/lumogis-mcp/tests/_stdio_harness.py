@@ -120,9 +120,21 @@ def stop_uvicorn(server: uvicorn.Server) -> None:
     time.sleep(0.2)
 
 
+def apply_stdio_fast_start_env(monkeypatch) -> None:
+    """Env overrides shared by in-process Core uvicorn stdio integration tests."""
+    monkeypatch.setenv("GRAPH_MODE", "disabled")
+    monkeypatch.setenv("RERANKER_BACKEND", "none")
+    monkeypatch.setenv("LUMOGIS_DEFER_LIBRARY_INDEX", "1")
+    monkeypatch.setenv("CAPABILITY_SERVICE_URLS", "")
+    monkeypatch.setenv("BATCH_QUEUE_ENABLED", "false")
+    monkeypatch.setenv("INJECTION_SANITISER_ENABLED", "false")
+
+
 def stub_orchestrator_lifespan_for_stdio(monkeypatch) -> None:
     """Mirror orchestrator ``tests/conftest.py`` lifespan stubs for in-process uvicorn."""
+    apply_stdio_fast_start_env(monkeypatch)
     monkeypatch.setattr("db_default_user_remap.main", lambda: 0)
+    monkeypatch.setattr("services.users.bootstrap_if_empty", lambda: None)
     monkeypatch.setattr("services.ingest.enqueue_initial_ingest_scan", lambda: False)
     monkeypatch.setattr("services.batch_queue.enqueue", lambda **_kwargs: 1)
     monkeypatch.setattr("services.batch_queue.reset_stuck", lambda **_kwargs: 0)
@@ -132,6 +144,17 @@ def stub_orchestrator_lifespan_for_stdio(monkeypatch) -> None:
     monkeypatch.setattr("services.ingest.stop_ingest_path_watchers", lambda: None)
     monkeypatch.setattr("services.ingest.schedule_inbox_poll", lambda: None)
     monkeypatch.setattr("services.ingest.unschedule_inbox_poll", lambda: None)
+    monkeypatch.setattr("signals.start_all", lambda: None)
+    monkeypatch.setattr("services.notifications.migrate_webpush_prefs.run_if_needed", lambda: None)
+
+    class _SchedulerStub:
+        def start(self) -> None:
+            pass
+
+        def add_job(self, *args, **kwargs) -> None:
+            pass
+
+    monkeypatch.setattr("config.get_scheduler", lambda: _SchedulerStub())
 
     def _fast_embedding(state) -> bool:
         state.embedding_ready = True

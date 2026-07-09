@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import importlib.util
+
 import pytest
 from events import Event
 from models.memory import DocumentContextHit
@@ -46,7 +48,9 @@ def test_build_injected_context_scoped_skips_session_and_graph(
         return []
 
     monkeypatch.setattr("services.memory.retrieve_context", _session)
-    monkeypatch.setattr("services.graph_webhook_dispatcher.get_context_sync", _graph)
+    # Premium graph dispatcher is stripped from the public AGPL export.
+    if importlib.util.find_spec("services.graph_webhook_dispatcher") is not None:
+        monkeypatch.setattr("services.graph_webhook_dispatcher.get_context_sync", _graph)
 
     hit = DocumentContextHit(
         point_id="p1",
