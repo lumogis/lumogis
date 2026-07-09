@@ -15,3 +15,6 @@ services:
       INGEST_PATHS_WATCH_MODE: off
       LUMOGIS_DEFER_LIBRARY_INDEX: "1"
       CAPABILITY_SERVICE_URLS: ""
+      # Skip entrypoint Ollama wait + model pulls — doctor JSON proof does not need embeddings.
+      OLLAMA_SKIP_WAIT: "true"
+      OLLAMA_EXTRA_MODELS: ""

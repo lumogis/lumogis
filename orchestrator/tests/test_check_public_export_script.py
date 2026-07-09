@@ -20,6 +20,17 @@ def _repo_has_git() -> bool:
     return git_path.is_dir() or git_path.is_file()
 
 
+def _skip_unless_export_source_repo() -> None:
+    """Export-tree rebuild tests need private-main templates (stripped from public snapshot)."""
+    if not _repo_has_git():
+        pytest.skip("needs git checkout")
+    if not (REPO / "docs/public-export").is_dir():
+        pytest.skip(
+            "docs/public-export absent (public AGPL snapshot; "
+            "create-upstream-export-tree runs on private main only)"
+        )
+
+
 # Canonical OpenAPI CI export contract paths — duplicate exactly scripts/check-public-export.sh
 # lum303_paths array + comment block (LUM-303).
 # Canonical Search overlay CI export contract path — duplicate exactly
@@ -340,8 +351,7 @@ def test_lum492_server_build_ci_on_strip_list():
 
 def test_export_tree_omits_server_build_workflow(tmp_path):
     """LUM-492: Server deb CI must not ship on lumogis/lumogis (private appliance build)."""
-    if not _repo_has_git():
-        pytest.skip("needs git checkout")
+    _skip_unless_export_source_repo()
     out = tmp_path / "export"
     export_script = REPO / "scripts" / "create-upstream-export-tree.sh"
     proc = subprocess.run(
@@ -381,8 +391,7 @@ def test_lum303_required_paths_disjoint_from_strip_list():
 
 def test_export_tree_includes_search_overlay_workflow(tmp_path):
     """LUM-433: Search overlay CI must ship on lumogis/lumogis; Hub CI must not."""
-    if not _repo_has_git():
-        pytest.skip("needs git checkout")
+    _skip_unless_export_source_repo()
     out = tmp_path / "export"
     export_script = REPO / "scripts" / "create-upstream-export-tree.sh"
     proc = subprocess.run(
@@ -400,8 +409,7 @@ def test_export_tree_includes_search_overlay_workflow(tmp_path):
 
 def test_export_tree_includes_layered_requirements(tmp_path):
     """LUM-460: public export must ship orchestrator/requirements-core.txt for layered profiles."""
-    if not _repo_has_git():
-        pytest.skip("needs git checkout")
+    _skip_unless_export_source_repo()
     out = tmp_path / "export"
     export_script = REPO / "scripts" / "create-upstream-export-tree.sh"
     proc = subprocess.run(
@@ -422,8 +430,7 @@ def test_export_tree_includes_layered_requirements(tmp_path):
 
 def test_export_tree_omits_hub_build_workflow(tmp_path):
     """LUM-329: Hub CI must not ship on lumogis/lumogis (no Hub tree in export)."""
-    if not _repo_has_git():
-        pytest.skip("needs git checkout")
+    _skip_unless_export_source_repo()
     out = tmp_path / "export"
     export_script = REPO / "scripts" / "create-upstream-export-tree.sh"
     proc = subprocess.run(
@@ -442,8 +449,7 @@ def test_export_tree_omits_hub_build_workflow(tmp_path):
 
 def test_export_tree_has_no_apps_subtree(tmp_path):
     """LUM-491: public export must not ship any apps/ subtree (private Server leak guard)."""
-    if not _repo_has_git():
-        pytest.skip("needs git checkout")
+    _skip_unless_export_source_repo()
     out = tmp_path / "export"
     export_script = REPO / "scripts" / "create-upstream-export-tree.sh"
     proc = subprocess.run(
@@ -465,8 +471,7 @@ def test_export_tree_has_no_apps_subtree(tmp_path):
 
 def test_export_tree_has_sanitized_public_agent_docs(tmp_path):
     """LUM-376: public export substitutes AGENTS + orientation; strips private context pack."""
-    if not _repo_has_git():
-        pytest.skip("needs git checkout")
+    _skip_unless_export_source_repo()
     out = tmp_path / "export"
     export_script = REPO / "scripts" / "create-upstream-export-tree.sh"
     proc = subprocess.run(
@@ -509,8 +514,7 @@ def test_export_tree_has_sanitized_public_agent_docs(tmp_path):
 
 def test_check_public_export_rejects_beginners_leakage(tmp_path):
     """LUM-378: forbidden maintainer token in exported beginners doc fails check."""
-    if not _repo_has_git():
-        pytest.skip("needs git checkout")
+    _skip_unless_export_source_repo()
     out = tmp_path / "export"
     export_script = REPO / "scripts" / "create-upstream-export-tree.sh"
     proc = subprocess.run(

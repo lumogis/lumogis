@@ -11,6 +11,14 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.9.3] — 2026-07-09
+
+### Fixed
+
+- **Public repository CI** — doctor integration skips Ollama model pulls on GitHub Actions; Lumogis MCP stdio tests no longer block on Postgres remap during in-process startup; export-tree pytest skips when run from the published AGPL snapshot (no private export templates in-tree).
+
+---
+
 ## [0.9.2] — 2026-07-09
 
 ### Fixed

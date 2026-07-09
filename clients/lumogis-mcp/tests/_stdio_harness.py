@@ -120,6 +120,26 @@ def stop_uvicorn(server: uvicorn.Server) -> None:
     time.sleep(0.2)
 
 
+def stub_orchestrator_lifespan_for_stdio(monkeypatch) -> None:
+    """Mirror orchestrator ``tests/conftest.py`` lifespan stubs for in-process uvicorn."""
+    monkeypatch.setattr("db_default_user_remap.main", lambda: 0)
+    monkeypatch.setattr("services.ingest.enqueue_initial_ingest_scan", lambda: False)
+    monkeypatch.setattr("services.batch_queue.enqueue", lambda **_kwargs: 1)
+    monkeypatch.setattr("services.batch_queue.reset_stuck", lambda **_kwargs: 0)
+    monkeypatch.setattr("services.ingest.start_watcher", lambda *args, **kwargs: None)
+    monkeypatch.setattr("services.ingest.stop_watcher", lambda: None)
+    monkeypatch.setattr("services.ingest.start_ingest_path_watchers", lambda *args, **kwargs: None)
+    monkeypatch.setattr("services.ingest.stop_ingest_path_watchers", lambda: None)
+    monkeypatch.setattr("services.ingest.schedule_inbox_poll", lambda: None)
+    monkeypatch.setattr("services.ingest.unschedule_inbox_poll", lambda: None)
+
+    def _fast_embedding(state) -> bool:
+        state.embedding_ready = True
+        return True
+
+    monkeypatch.setattr("services.embedding_readiness.try_activate_embedding", _fast_embedding)
+
+
 def mcp_stdio_roundtrip(env: dict, messages: list[dict], timeout: float = 30.0) -> list[dict]:
     """Run ``lumogis-mcp`` and exchange newline-delimited JSON-RPC messages."""
     proc = subprocess.Popen(

@@ -22,6 +22,7 @@ from tests._stdio_harness import free_port
 from tests._stdio_harness import mcp_stdio_roundtrip
 from tests._stdio_harness import start_uvicorn
 from tests._stdio_harness import stop_uvicorn
+from tests._stdio_harness import stub_orchestrator_lifespan_for_stdio
 
 if str(ORCHESTRATOR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR))
@@ -239,6 +240,8 @@ def core_app(monkeypatch):
         "add_memory",
         lambda **k: {"memory_id": "stdio-int-mem", "entity_ids": [], "relation_ids": []},
     )
+
+    stub_orchestrator_lifespan_for_stdio(monkeypatch)
 
     token = _mint_token(store, scopes=["mcp:read", "mcp:write"])
 
