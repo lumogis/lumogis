@@ -13,7 +13,7 @@ def test_build_core_manifest_tool_set_stable() -> None:
     mcp = mcp_server.MCP_TOOLS_FOR_MANIFEST
     assert m.transport is CapabilityTransport.MCP
     assert {t.name for t in m.tools} == {t.name for t in mcp}
-    assert len(m.tools) == 5
+    assert len(m.tools) == 6
     # Ensure stable ids for snapshot-like regression (bump if MCP surface intentionally changes)
     assert {t.name for t in mcp} == {
         "memory.search",
@@ -21,4 +21,5 @@ def test_build_core_manifest_tool_set_stable() -> None:
         "entity.lookup",
         "entity.search",
         "context.build",
+        "recall",
     }

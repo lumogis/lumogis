@@ -15,5 +15,5 @@ class IngestFolderPayload(BaseModel):
 
 
 @register_batch_handler("ingest_folder", IngestFolderPayload)
-def handle(*, user_id: str, payload: IngestFolderPayload) -> None:
+def handle(*, user_id: str, payload: IngestFolderPayload, job_id: int) -> None:
     ingest_folder(payload.path, user_id=user_id)

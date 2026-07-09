@@ -8,7 +8,6 @@ import logging
 from datetime import time
 from typing import Any
 
-import config
 from fastapi import HTTPException
 from models.notifications import ChannelId
 from models.notifications import NotificationPreferenceCell
@@ -21,6 +20,8 @@ from models.notifications import NotificationTierPolicyRow
 from models.notifications import NotificationType
 from models.notifications import NotificationTypePrefsRow
 from services.notifications.taxonomy import TYPE_TO_TIER
+
+import config
 
 _log = logging.getLogger(__name__)
 

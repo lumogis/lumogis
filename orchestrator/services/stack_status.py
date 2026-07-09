@@ -450,6 +450,32 @@ def _compute_overall(
     return "ok"
 
 
+def build_service_states() -> tuple[
+    Literal["ok", "degraded", "down"], list[StackStatusServiceItem]
+]:
+    """Lean per-service health for the web client (LUM-512).
+
+    Runs the same service probing as :func:`build_stack_status_response`
+    (stack-control compose state + store pings) and the same overall rollup,
+    but **without** the storage ``statvfs`` scan or the Ollama model-list HTTP
+    call. The web health endpoint never surfaces those, so this avoids paying
+    for them on every poll. Storage is treated as empty for the rollup — the
+    web signal is about service up/down, not disk pressure (admins get the full
+    picture via ``/admin/diagnostics/stack-status``).
+    """
+    payload, _reachable, _cache_age = _get_stack_control_payload()
+    compose_ps: list[dict[str, Any]] = []
+    if payload:
+        raw_ps = payload.get("compose_ps")
+        if isinstance(raw_ps, list):
+            compose_ps = [r for r in raw_ps if isinstance(r, dict)]
+    compose_by_id = _index_compose_rows(compose_ps)
+    pings = _build_store_pings()
+    services = _build_services(compose_by_id, pings)
+    overall = _compute_overall(services, [])
+    return overall, services
+
+
 def build_stack_status_response() -> StackStatusResponse:
     """Assemble the wire DTO for ``GET /api/v1/admin/diagnostics/stack-status``."""
     generated_at = datetime.now(timezone.utc)

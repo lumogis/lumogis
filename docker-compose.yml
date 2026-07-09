@@ -53,10 +53,17 @@ services:
     build:
       context: ./docker/qdrant
     image: lumogis-qdrant:v1.14.1
+    # Loopback-only host publish — Qdrant HTTP API has no auth (ADR-053 FalkorDB precedent).
     ports:
-      - "${QDRANT_HOST_PORT:-6334}:6333"
+      - "127.0.0.1:${QDRANT_HOST_PORT:-6334}:6333"
     volumes:
       - qdrant_data:/qdrant/storage
+    # Qdrant mmap-opens many segment files at startup; Docker's default nofile=1024
+    # triggers EMFILE ("Too many open files") on non-trivial volumes (seen on lumogis-test).
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     healthcheck:
       test: ["CMD", "curl", "-sf", "-o", "/dev/null", "http://127.0.0.1:6333/readyz"]
       interval: 10s
@@ -236,6 +243,7 @@ services:
   #     NTFY_CACHE_FILE: /var/cache/ntfy/cache.db
 
   backup:
+    init: true
     build:
       context: .
       dockerfile: docker/backup/Dockerfile

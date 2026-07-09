@@ -3,7 +3,7 @@
 
 //! Shared Tauri commands.
 //!
-//! These are the 20 commands listed in [`super::SHARED_COMMAND_NAMES`] — the
+//! These are the 22 commands listed in [`super::SHARED_COMMAND_NAMES`] — the
 //! cross-client contract consumed by Search's `run()` and other embedding binaries.
 //! They live in this submodule rather than the crate root because
 //! `#[tauri::command]` on a `pub fn` cannot be defined in `lib.rs`/`main.rs`
@@ -421,6 +421,44 @@ pub fn take_pending_summon_hint(state: tauri::State<'_, AppState>) -> Result<boo
     } else {
         Ok(false)
     }
+}
+
+/// LUM-455 — Wayland recovery state for the overlay UI's DE-tailored re-summon hint.
+/// `recovery_confirmed` (Rust) is the authoritative cross-launch gate for that hint.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SummonRecoveryState {
+    pub wayland: bool,
+    pub desktop: String, // "gnome" | "kde" | "other"
+    pub recovery_confirmed: bool,
+    pub show_once_opt_out: bool,
+}
+
+#[tauri::command]
+pub fn get_summon_recovery_state(
+    state: tauri::State<'_, AppState>,
+) -> Result<SummonRecoveryState, String> {
+    let g = state.inner.lock().map_err(|_| "state poisoned".to_string())?;
+    let desktop = super::summon::detect_desktop_env(
+        std::env::var("XDG_CURRENT_DESKTOP").ok().as_deref(),
+    )
+    .as_str()
+    .to_string();
+    Ok(SummonRecoveryState {
+        wayland: super::is_wayland_session(),
+        desktop,
+        recovery_confirmed: g.config.recovery_confirmed,
+        show_once_opt_out: g.config.show_once_opt_out,
+    })
+}
+
+/// LUM-455 — user opted out of the Wayland show-once safety net ("Don't show on
+/// startup"). The only user action that persistently retires show-once + the hint.
+#[tauri::command]
+pub fn set_show_once_opt_out(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let mut g = state.inner.lock().map_err(|_| "state poisoned".to_string())?;
+    g.config.show_once_opt_out = true;
+    save_overlay_json(&g.config_path, &g.config)
 }
 
 #[tauri::command]

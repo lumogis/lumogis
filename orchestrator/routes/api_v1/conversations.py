@@ -22,6 +22,7 @@ from models.api_v1 import ConversationMessage
 from models.api_v1 import ConversationMessageAppendRequest
 from models.api_v1 import ConversationPatchRequest
 from models.api_v1 import ConversationSummary
+from services.conversations import ActionProposalNotFoundError
 from services.conversations import ConversationNotFoundError
 
 from services import conversations as conv_svc
@@ -48,7 +49,7 @@ def list_conversations(
     user: UserContext = Depends(require_user),
     limit: int = 50,
 ) -> ConversationListResponse:
-    rows = conv_svc.list_conversations(user.user_id, limit=limit)
+    rows = conv_svc.list_conversations(user, limit=limit)
     return ConversationListResponse(conversations=rows)
 
 
@@ -71,7 +72,7 @@ def get_conversation(
 ) -> ConversationDetail:
     cid = _parse_conversation_id(conversation_id)
     try:
-        return conv_svc.get_conversation(user.user_id, cid)
+        return conv_svc.get_conversation(user, cid)
     except ConversationNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -128,7 +129,7 @@ def continue_conversation(
 ) -> ConversationContinueResponse:
     cid = _parse_conversation_id(conversation_id)
     try:
-        detail = conv_svc.get_conversation(user.user_id, cid)
+        detail = conv_svc.get_conversation(user, cid)
     except ConversationNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -158,7 +159,14 @@ def append_message(
             role=body.role,
             content=body.content,
             model=body.model,
+            source_refs=body.source_refs,
+            action_proposal_id=body.action_proposal_id,
         )
+    except ActionProposalNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error": "invalid_action_proposal"},
+        ) from exc
     except ConversationNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

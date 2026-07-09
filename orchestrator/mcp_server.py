@@ -139,6 +139,11 @@ _current_bearer: ContextVar[str | None] = ContextVar("lumogis_mcp_bearer", defau
 # middleware is the ONLY writer.
 _current_mcp_token_id: ContextVar[str | None] = ContextVar("lumogis_mcp_token_id", default=None)
 _current_mcp_user_id: ContextVar[str | None] = ContextVar("lumogis_mcp_user_id", default=None)
+# LUM-291 — per-request token scopes. None = unrestricted (JWT/legacy/unscoped
+# tokens); a non-empty list = allowlist; [] = no access.
+_current_mcp_scopes: ContextVar[list[str] | None] = ContextVar(
+    "lumogis_mcp_scopes", default=None
+)
 
 
 def _current_bearer_token() -> str | None:
@@ -179,13 +184,48 @@ def _reset_current_mcp_user_id(reset_token) -> None:
     _current_mcp_user_id.reset(reset_token)
 
 
+def _set_current_mcp_scopes(scopes: list[str] | None):
+    """Per-request setter for the verified token's scopes (LUM-291)."""
+    return _current_mcp_scopes.set(scopes)
+
+
+def _reset_current_mcp_scopes(reset_token) -> None:
+    _current_mcp_scopes.reset(reset_token)
+
+
+def _resolve_scopes() -> list[str] | None:
+    """Return the inbound token's scopes; ``None`` = unrestricted."""
+    return _current_mcp_scopes.get()
+
+
+class McpScopeError(Exception):
+    """Raised by a write tool when the inbound token lacks the required scope.
+
+    FastMCP maps a raised exception to a JSON-RPC tool error, so this surfaces
+    to the client as a structured error rather than a silent success.
+    """
+
+
+def _require_scope(scope: str) -> None:
+    """Enforce ``scope`` on the inbound MCP token (LUM-291).
+
+    ``None`` scopes = unrestricted (every existing token, plus JWT bearers) →
+    allowed. A non-None list must contain ``scope`` or the call is rejected.
+    """
+    scopes = _resolve_scopes()
+    if scopes is not None and scope not in scopes:
+        raise McpScopeError(f"missing required scope {scope!r}")
+
+
 try:
     from mcp.server.fastmcp import FastMCP as _FastMCP
+    from mcp.types import ToolAnnotations as _ToolAnnotations
 except ImportError:
     _FastMCP = None
+    _ToolAnnotations = None
     _log.warning(
         "mcp package not installed — MCP server surface disabled. "
-        "Install `mcp>=1.10.0` to enable /mcp."
+        "Install `mcp>=1.27.2,<2` to enable /mcp."
     )
 
 
@@ -236,6 +276,25 @@ _ENTITY_SUMMARY_SCHEMA: dict[str, Any] = {
         },
     },
     "required": ["name", "entity_type", "scope"],
+}
+
+_RECALLED_MEMORY_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "string"},
+        "content": {"type": "string"},
+        "entity_ids": {"type": "array", "items": {"type": "string"}},
+        "valid_from": {"type": "string", "format": "date-time"},
+        "valid_until": {
+            "oneOf": [{"type": "string", "format": "date-time"}, {"type": "null"}],
+        },
+        "score": {"type": "number"},
+        "source_strategies": {
+            "type": "array",
+            "items": {"type": "string", "enum": ["semantic", "bm25", "graph", "temporal"]},
+        },
+    },
+    "required": ["id", "content", "valid_from", "score", "source_strategies"],
 }
 
 MCP_TOOLS_FOR_MANIFEST: list[CapabilityTool] = [
@@ -338,6 +397,48 @@ MCP_TOOLS_FOR_MANIFEST: list[CapabilityTool] = [
                 "sources": {"type": "array", "items": {"type": "string"}},
             },
             "required": ["context", "sources"],
+        },
+    ),
+    CapabilityTool(
+        name="recall",
+        description=(
+            "Fused memory recall (semantic + BM25 + graph + temporal) over the "
+            "Lumogis memory store, with optional cross-encoder rerank."
+        ),
+        license_mode=CapabilityLicenseMode.COMMUNITY,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Natural-language recall query."},
+                "bank": {
+                    "type": "string",
+                    "default": "coding",
+                    "description": (
+                        "Memory bank / context. Use bank=\"*\" to search across all "
+                        "banks for the same user_id (read-only opt-in)."
+                    ),
+                },
+                "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 10},
+                "retrieval_strategies": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": ["semantic", "bm25", "graph", "temporal"]},
+                    "default": ["semantic", "bm25", "graph", "temporal"],
+                },
+                "as_of": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "Recall memories valid at this instant (default: now).",
+                },
+                "rerank": {"type": "boolean", "default": True},
+            },
+            "required": ["query"],
+        },
+        output_schema={
+            "type": "object",
+            "properties": {
+                "memories": {"type": "array", "items": _RECALLED_MEMORY_SCHEMA},
+            },
+            "required": ["memories"],
         },
     ),
 ]
@@ -491,6 +592,51 @@ def context_build(query: str, max_tokens: int = 2000) -> dict:
     }
 
 
+def recall_tool(
+    query: str,
+    bank: str = "coding",
+    limit: int = 10,
+    retrieval_strategies: list[str] | None = None,
+    as_of: str | None = None,
+    rerank: bool = True,
+) -> dict:
+    """MCP tool: recall — fused semantic + BM25 + graph + temporal retrieval (LUM-295).
+
+    A read tool — never gates on scope (reads are ungated). Returns memories
+    valid at ``as_of`` (default now), so archived/superseded memories (LUM-526)
+    are excluded. Each result carries ``source_strategies`` for observability.
+    """
+    from datetime import datetime, timezone
+
+    from services.recall import recall as recall_service
+
+    parsed_as_of: datetime | None = None
+    if as_of:
+        try:
+            parsed_as_of = datetime.fromisoformat(as_of)
+        except ValueError as exc:
+            # Read tool: surface a clear client-facing error rather than an
+            # opaque traceback (VERIFY-PLAN: P2 — guard malformed as_of).
+            raise ValueError(
+                f"recall: invalid as_of timestamp {as_of!r}; expected ISO-8601"
+            ) from exc
+        if parsed_as_of.tzinfo is None:
+            # memories.valid_until is TIMESTAMPTZ; a naive datetime would be
+            # compared as server-local time. Force UTC (VERIFY-PLAN: P3).
+            parsed_as_of = parsed_as_of.replace(tzinfo=timezone.utc)
+
+    memories = recall_service(
+        user_id=_resolve_user_id(),
+        bank=bank,
+        query=query,
+        limit=limit,
+        retrieval_strategies=retrieval_strategies or ["semantic", "bm25", "graph", "temporal"],
+        as_of=parsed_as_of,
+        rerank=rerank,
+    )
+    return {"memories": [m.model_dump(mode="json") for m in memories]}
+
+
 # ---------------------------------------------------------------------------
 # FastMCP factory + module-level singleton. We rebuild a fresh FastMCP on
 # every lifespan startup (see main.py) for two reasons:
@@ -507,8 +653,167 @@ def context_build(query: str, max_tokens: int = 2000) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def _read_only_annotations(title: str) -> Any:
+    """MCP tool annotations for a read-only, side-effect-free Lumogis tool.
+
+    All read community tools query the local Lumogis instance and never
+    mutate state, so MCP clients (Cursor, Claude Desktop) can auto-approve
+    them instead of prompting on every call (MCP spec 2025-03-26 tool
+    annotations; LUM-290 / LUM-297).
+
+    ``openWorldHint`` is ``False``: these tools read the operator's own
+    closed memory / entity store, not an open external world (web, email).
+    Returns ``None`` when the SDK is unavailable (graceful degradation).
+    """
+    if _ToolAnnotations is None:
+        return None
+    return _ToolAnnotations(
+        title=title,
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+
+
+def _write_annotations(title: str, *, idempotent: bool = False) -> Any:
+    """MCP tool annotations for Lumogis write tools (LUM-290 + LUM-291 / LUM-526).
+
+    ``forget`` is a reversible soft archive — ``destructiveHint=False``.
+    """
+    if _ToolAnnotations is None:
+        return None
+    return _ToolAnnotations(
+        title=title,
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=idempotent,
+        openWorldHint=False,
+    )
+
+
+def add_memory_tool(
+    content: str,
+    bank: str | None = None,
+    tags: list[str] | None = None,
+    metadata: dict | None = None,
+) -> dict:
+    """Persist a memory + extract entities/relations (LUM-291). Requires mcp:write."""
+    from models.mcp_write import AddMemoryInput
+    from services import mcp_write
+
+    _require_scope("mcp:write")
+    params = AddMemoryInput(
+        content=content, bank=bank or mcp_write.default_bank(), tags=tags, metadata=metadata
+    )
+    return mcp_write.add_memory(
+        user_id=_resolve_user_id(),
+        bank=params.bank,
+        content=params.content,
+        tags=params.tags,
+        metadata=params.metadata,
+    )
+
+
+def add_entity_tool(
+    name: str,
+    entity_type: str,
+    bank: str | None = None,
+    aliases: list[str] | None = None,
+    context_tags: list[str] | None = None,
+) -> dict:
+    """Create a single explicit entity (LUM-291). Requires mcp:write."""
+    from models.mcp_write import AddEntityInput
+    from services import mcp_write
+
+    _require_scope("mcp:write")
+    params = AddEntityInput(
+        name=name,
+        entity_type=entity_type,
+        bank=bank or mcp_write.default_bank(),
+        aliases=aliases,
+        context_tags=context_tags,
+    )
+    return mcp_write.add_entity(
+        user_id=_resolve_user_id(),
+        bank=params.bank,
+        name=params.name,
+        entity_type=params.entity_type,
+        aliases=params.aliases,
+        context_tags=params.context_tags,
+    )
+
+
+def add_relation_tool(
+    src: str,
+    dst: str,
+    relation_type: str,
+    bank: str | None = None,
+) -> dict:
+    """Create a typed directed relation between two entities (LUM-291). Requires mcp:write."""
+    from models.mcp_write import AddRelationInput
+    from services import mcp_write
+
+    _require_scope("mcp:write")
+    params = AddRelationInput(
+        src=src, dst=dst, relation_type=relation_type, bank=bank or mcp_write.default_bank()
+    )
+    return mcp_write.add_relation(
+        user_id=_resolve_user_id(),
+        bank=params.bank,
+        src=params.src,
+        dst=params.dst,
+        relation_type=params.relation_type,
+    )
+
+
+def forget_tool(memory_id: str) -> dict:
+    """Soft-archive a memory + its edges (LUM-526). Reversible. Requires mcp:write."""
+    from models.mcp_write import ForgetInput
+    from services import mcp_write
+
+    _require_scope("mcp:write")
+    params = ForgetInput(memory_id=memory_id)
+    return mcp_write.forget(user_id=_resolve_user_id(), memory_id=params.memory_id)
+
+
+def update_observation_tool(
+    memory_id: str,
+    content: str,
+    tags: list[str] | None = None,
+    metadata: dict | None = None,
+) -> dict:
+    """Supersede a memory (archive old, add new) (LUM-526). Requires mcp:write."""
+    from models.mcp_write import UpdateObservationInput
+    from services import mcp_write
+
+    _require_scope("mcp:write")
+    params = UpdateObservationInput(
+        memory_id=memory_id, content=content, tags=tags, metadata=metadata
+    )
+    return mcp_write.update_observation(
+        user_id=_resolve_user_id(),
+        memory_id=params.memory_id,
+        content=params.content,
+        tags=params.tags,
+        metadata=params.metadata,
+    )
+
+
+def checkpoint_tool(summary: str, bank: str | None = None) -> dict:
+    """Write a session-boundary marker memory (kind=checkpoint) (LUM-526). Requires mcp:write."""
+    from models.mcp_write import CheckpointInput
+    from services import mcp_write
+
+    _require_scope("mcp:write")
+    params = CheckpointInput(summary=summary, bank=bank or mcp_write.default_bank())
+    return mcp_write.checkpoint(
+        user_id=_resolve_user_id(), bank=params.bank, summary=params.summary
+    )
+
+
 def build_fastmcp() -> Any:
-    """Construct a fresh FastMCP server with all five community tools.
+    """Construct a fresh FastMCP server with community read + write tools.
 
     Returns the FastMCP instance. The caller is responsible for calling
     `.streamable_http_app()` on it (which lazily creates the session
@@ -521,8 +826,12 @@ def build_fastmcp() -> Any:
     fresh = _FastMCP(
         name="lumogis-core",
         instructions=(
-            "Lumogis community memory and entity tools. All tools are "
-            "read-only and stateless. Single-user local deployment by default."
+            "Lumogis community memory and entity tools. Read tools "
+            "(memory.*, entity.*, context.build) plus write tools "
+            "(add_memory, add_entity, add_relation, forget, update_observation, "
+            "checkpoint) that require an mcp:write-scoped token. forget is a "
+            "reversible soft archive, not a hard delete. Stateless; single-user "
+            "local by default."
         ),
         stateless_http=True,
         json_response=True,
@@ -535,18 +844,22 @@ def build_fastmcp() -> Any:
     fresh.tool(
         name="memory.search",
         description="Semantic search across past Lumogis session summaries.",
+        annotations=_read_only_annotations("Search memory"),
     )(memory_search)
     fresh.tool(
         name="memory.get_recent",
         description="Return the most recent Lumogis session summaries (chronological).",
+        annotations=_read_only_annotations("Recent sessions"),
     )(memory_get_recent)
     fresh.tool(
         name="entity.lookup",
         description="Find an entity by exact name (case-insensitive).",
+        annotations=_read_only_annotations("Look up entity"),
     )(entity_lookup)
     fresh.tool(
         name="entity.search",
         description="Search entities by partial name (substring, case-insensitive).",
+        annotations=_read_only_annotations("Search entities"),
     )(entity_search)
     fresh.tool(
         name="context.build",
@@ -554,7 +867,72 @@ def build_fastmcp() -> Any:
             "Assemble relevant context for a query by combining semantic "
             "document search and past session memory, capped at max_tokens."
         ),
+        annotations=_read_only_annotations("Build context"),
     )(context_build)
+    fresh.tool(
+        name="recall",
+        description=(
+            "Fused memory recall (semantic + BM25 + graph + temporal) with "
+            "optional cross-encoder rerank. Returns memories valid at as_of "
+            "(default now); archived/superseded memories are excluded."
+        ),
+        annotations=_read_only_annotations("Recall memories"),
+    )(recall_tool)
+    fresh.tool(
+        name="add_memory",
+        description=(
+            "Persist a memory into the Lumogis knowledge graph (extracts "
+            "entities + relations). Requires an mcp:write-scoped token."
+        ),
+        annotations=_write_annotations("Add memory"),
+    )(add_memory_tool)
+    fresh.tool(
+        name="add_entity",
+        description=(
+            "Create a single explicit entity. entity_type must be one of the "
+            "registered types: PERSON, ORG, PROJECT, CONCEPT, or the coding "
+            "types CODING_DECISION, CODING_CONVENTION, COMPONENT, FAILURE, "
+            "SESSION, TASK, LIBRARY. Requires an mcp:write-scoped token."
+        ),
+        annotations=_write_annotations("Add entity"),
+    )(add_entity_tool)
+    fresh.tool(
+        name="add_relation",
+        description=(
+            "Create a typed directed relation between two entities. "
+            "relation_type must be one of the registered types: DEPENDS_ON, "
+            "PART_OF, DECIDED, RELATES_TO, SUPERSEDES, DECIDED_BY, IMPLEMENTS, "
+            "REPLACES, CAUSED_BY, DISCUSSED_IN_SESSION, BLOCKED_BY, "
+            "REFERENCES_ISSUE. Requires an mcp:write-scoped token."
+        ),
+        annotations=_write_annotations("Add relation", idempotent=True),
+    )(add_relation_tool)
+    # LUM-526 — supersede/archive surface. forget is a reversible soft archive
+    # (not a hard delete); all require mcp:write.
+    fresh.tool(
+        name="forget",
+        description=(
+            "Archive a memory by id (reversible soft archive — sets it inactive; "
+            "not a hard delete). Requires an mcp:write-scoped token."
+        ),
+        annotations=_write_annotations("Forget memory", idempotent=True),
+    )(forget_tool)
+    fresh.tool(
+        name="update_observation",
+        description=(
+            "Supersede a memory: archive the old one and store new content in its "
+            "place (history retained). Requires an mcp:write-scoped token."
+        ),
+        annotations=_write_annotations("Update observation"),
+    )(update_observation_tool)
+    fresh.tool(
+        name="checkpoint",
+        description=(
+            "Record a session-boundary checkpoint: a memory holding a summary, "
+            "marked with metadata.kind=checkpoint. Requires an mcp:write-scoped token."
+        ),
+        annotations=_write_annotations("Checkpoint"),
+    )(checkpoint_tool)
     return fresh
 
 

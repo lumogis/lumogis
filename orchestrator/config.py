@@ -30,6 +30,8 @@ _log = logging.getLogger(__name__)
 _instances: dict[str, object] = {}
 _effective_graph_mode: str | None = None
 _graph_store_import_warning_emitted: bool = False
+_falkordb_legacy_graph_name_warned: bool = False
+_memories_qdrant_indexes_ensured: bool = False
 _models_config: dict | None = None
 
 # ---------------------------------------------------------------------------
@@ -238,26 +240,41 @@ def get_model_config(model_name: str) -> dict:
     raise ValueError(f"Unknown model '{model_name}'. Available: {list(models.keys())}")
 
 
+def _close_llm_provider_hierarchy(provider) -> None:
+    """Best-effort close of httpx clients on cached LLM adapter stacks."""
+    seen: set[int] = set()
+    cur = provider
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        client = getattr(cur, "_client", None)
+        if client is not None:
+            close = getattr(client, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    _log.debug("failed to close LLM HTTP client", exc_info=True)
+        cur = getattr(cur, "_inner", None)
+
+
 def invalidate_llm_cache() -> None:
-    """Remove **legacy** cached LLM provider instances.
+    """Remove cached LLM provider instances (legacy and per-user keys).
 
-    Targets the pre-migration cache keys (``"llm_<model_name>"`` —
-    underscore separator, single shared slot per model). Kept for
-    backward compatibility with the auth-off ``PUT /api/v1/admin/settings``
-    code path which still flushes the global cache after writing a key
-    into ``app_settings``.
+    Targets ``llm_<model>`` (legacy underscore) and ``llm:…`` (current
+    per-user / global cache keys from :func:`get_llm_provider`). HTTP
+    clients are closed before eviction so httpx pools cannot outlive
+    allowlist or credential changes.
 
-    Under ``AUTH_ENABLED=true`` the per-user invalidator
-    :func:`invalidate_llm_cache_for_user` (driven by the connector
-    credentials change-listener mechanism) handles eviction; this
-    function becomes a no-op there because no entries match the
-    legacy underscore prefix.
+    Under ``AUTH_ENABLED=true`` the connector change-listener typically
+    calls :func:`invalidate_llm_cache_for_user`; admin settings flush
+    may still invoke this helper in auth-off mode.
     """
-    to_drop = [k for k in _instances if k.startswith("llm_")]
+    to_drop = [k for k in _instances if k.startswith("llm_") or k.startswith("llm:")]
     for k in to_drop:
+        _close_llm_provider_hierarchy(_instances[k])
         del _instances[k]
     if to_drop:
-        _log.info("LLM cache invalidated (legacy): %s", to_drop)
+        _log.info("LLM cache invalidated: %s", to_drop)
 
 
 def invalidate_llm_cache_for_user(user_id: str | None) -> None:
@@ -278,6 +295,7 @@ def invalidate_llm_cache_for_user(user_id: str | None) -> None:
     prefix = f"llm:{target}:"
     to_drop = [k for k in _instances if k.startswith(prefix)]
     for k in to_drop:
+        _close_llm_provider_hierarchy(_instances[k])
         del _instances[k]
     if to_drop:
         _log.info("LLM cache invalidated (per-user=%s): %s", target, to_drop)
@@ -298,6 +316,7 @@ def is_model_enabled(
     *,
     user_id: str | None = None,
     _credentials_present: set[str] | None = None,
+    _privacy_blocks_remote: bool | None = None,
 ) -> bool:
     """True if the model is available for use.
 
@@ -335,6 +354,15 @@ def is_model_enabled(
     try:
         cfg = get_model_config(model_name)
     except ValueError:
+        return False
+
+    if _privacy_blocks_remote is None:
+        from services.privacy_mode import blocks_remote_models
+        from services.privacy_mode import is_remote_model
+
+        if blocks_remote_models(user_id) and is_remote_model(model_name):
+            return False
+    elif _privacy_blocks_remote and not is_local_model(model_name):
         return False
 
     api_key_env = cfg.get("api_key_env", "")
@@ -401,6 +429,14 @@ def get_llm_provider(
     HTTP 503) on the documented failure shapes. ``get_llm_provider``
     propagates both unchanged.
     """
+    from services.privacy_mode import PrivacyModeBlocked
+    from services.privacy_mode import assert_remote_allowed
+
+    try:
+        assert_remote_allowed(model_name, user_id)
+    except PrivacyModeBlocked:
+        raise
+
     cfg = get_model_config(model_name)
     api_key_env = cfg.get("api_key_env", "")
 
@@ -432,7 +468,7 @@ def get_llm_provider(
     if adapter_type == "anthropic":
         from adapters.anthropic_llm import AnthropicLLM
 
-        _instances[cache_key] = AnthropicLLM(
+        adapter = AnthropicLLM(
             model=cfg["model"],
             api_key=effective_key or "",
             base_url=proxy,
@@ -440,7 +476,7 @@ def get_llm_provider(
     elif adapter_type == "openai":
         from adapters.openai_llm import OpenAILLM
 
-        _instances[cache_key] = OpenAILLM(
+        adapter = OpenAILLM(
             model=cfg["model"],
             base_url=proxy or cfg.get("base_url"),
             api_key=effective_key or None,
@@ -448,6 +484,16 @@ def get_llm_provider(
         )
     else:
         raise ValueError(f"Unknown adapter type '{adapter_type}' for model '{model_name}'")
+
+    # LUM-553: optional scoped egress guard (inside circuit breaker).
+    from services.circuit_breaker import wrap_llm_provider
+    from services.egress_guard import wrap_llm_provider_egress
+
+    adapter = wrap_llm_provider_egress(adapter, user_id=user_id)
+    # LUM-125: fail fast on repeated upstream failures instead of paying to
+    # retry a dead model on every request. Keyed per user+model; kill-switch
+    # via LUMOGIS_LLM_CIRCUIT_ENABLED=false.
+    _instances[cache_key] = wrap_llm_provider(adapter, cache_key)
 
     _log.info(
         "LLM provider created: %s (adapter=%s, model=%s, cache_key=%s)",
@@ -573,6 +619,42 @@ def get_reranker():
         else:
             raise ValueError(f"Unknown reranker backend: {backend}")
     return _instances.get("reranker")
+
+
+def get_recall_reranker():
+    """Reranker for the MCP `recall` fusion tool (LUM-295).
+
+    Mirrors :func:`get_reranker`'s backend-enum pattern but with its own env
+    seam so recall can use the fast ``cross-encoder/ms-marco-MiniLM-L-6-v2``
+    cross-encoder independently of the document-search reranker. Reuses the
+    existing ``BGEReranker`` adapter (a model-agnostic ``sentence-transformers``
+    ``CrossEncoder`` — zero new dependency). Returns ``None`` when the backend
+    is ``none`` OR when ``sentence-transformers`` is unavailable (e.g. the Hub
+    PyInstaller freeze) OR the model fails to load — recall then returns raw
+    RRF order rather than crashing.
+    """
+    if "recall_reranker" not in _instances:
+        backend = os.environ.get("RECALL_RERANKER_BACKEND", "cross_encoder")
+        if backend == "none":
+            _instances["recall_reranker"] = None
+        elif backend == "cross_encoder":
+            model = os.environ.get(
+                "RECALL_RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2"
+            )
+            try:
+                from adapters.bge_reranker import BGEReranker
+
+                _instances["recall_reranker"] = BGEReranker(model_name=model)
+            except Exception as exc:  # noqa: BLE001 — degrade (e.g. Hub freeze: no sentence-transformers)
+                logging.getLogger(__name__).warning(
+                    "recall reranker unavailable (model=%s) — recall returns RRF order: %s",
+                    model,
+                    exc,
+                )
+                _instances["recall_reranker"] = None
+        else:
+            raise ValueError(f"Unknown recall reranker backend: {backend}")
+    return _instances.get("recall_reranker")
 
 
 # --- Extractor auto-discovery ---
@@ -765,29 +847,58 @@ def get_scheduler():
     return _instances["scheduler"]
 
 
-def get_graph_store():
-    """Return the GraphStore singleton, or None if GRAPH_BACKEND is not configured.
+def _resolve_default_graph_bank() -> str:
+    from services import banks
 
-    Set GRAPH_BACKEND=falkordb and FALKORDB_URL=redis://falkordb:6379 to enable.
-    When disabled (default), the graph plugin silently does nothing.
+    raw = os.environ.get("LUMOGIS_GRAPH_DEFAULT_BANK", "personal").strip() or "personal"
+    try:
+        return banks.validate_bank_for_write(raw)
+    except ValueError:
+        _log.error(
+            "LUMOGIS_GRAPH_DEFAULT_BANK invalid %r — falling back to personal",
+            raw,
+        )
+        return "personal"
 
-    If GRAPH_BACKEND=falkordb but the FalkorDB adapter cannot be imported,
-    returns ``None`` after emitting a single ``graph_store_unavailable`` WARNING.
+
+def _graph_store_cache_key(bank: str) -> str:
+    return f"graph_store:{bank}"
+
+
+def get_graph_store(bank: str | None = None):
+    """Return a bank-scoped GraphStore singleton, or None when graph is disabled.
+
+    When ``bank`` is omitted, ``LUMOGIS_GRAPH_DEFAULT_BANK`` (default ``personal``)
+    selects the household KG graph. MCP ``entity_edges`` and codegraph pass an
+    explicit bank id (``coding``, ``personal``, ``default``).
     """
-    global _graph_store_import_warning_emitted
+    global _graph_store_import_warning_emitted, _falkordb_legacy_graph_name_warned
 
-    if "graph_store" not in _instances:
+    from services import banks
+
+    resolved_bank = banks.falkordb_graph_name(bank) if bank is not None else _resolve_default_graph_bank()
+    cache_key = _graph_store_cache_key(resolved_bank)
+
+    if cache_key not in _instances:
         backend = os.environ.get("GRAPH_BACKEND", "none")
         if backend == "falkordb":
             try:
                 from adapters.falkordb_store import FalkorDBStore
 
                 url = os.environ.get("FALKORDB_URL", "redis://falkordb:6379")
-                graph_name = os.environ.get("FALKORDB_GRAPH_NAME", "lumogis")
-                _instances["graph_store"] = FalkorDBStore(url=url, graph_name=graph_name)
+                graph_name = banks.falkordb_graph_name(resolved_bank)
+                legacy_name = os.environ.get("FALKORDB_GRAPH_NAME", "lumogis")
+                if legacy_name != graph_name and not _falkordb_legacy_graph_name_warned:
+                    _falkordb_legacy_graph_name_warned = True
+                    _log.warning(
+                        "FALKORDB_GRAPH_NAME=%s is deprecated for routing; using bank graph %s",
+                        legacy_name,
+                        graph_name,
+                    )
+                _instances[cache_key] = FalkorDBStore(url=url, graph_name=graph_name)
                 _log.info("GraphStore: FalkorDB at %s graph=%s", url, graph_name)
             except ImportError as exc:
-                _instances["graph_store"] = None
+                _instances[cache_key] = None
                 if not _graph_store_import_warning_emitted:
                     _graph_store_import_warning_emitted = True
                     _log.warning(
@@ -799,9 +910,31 @@ def get_graph_store():
                         },
                     )
         else:
-            _instances["graph_store"] = None
+            _instances[cache_key] = None
             _log.info("GraphStore: disabled (GRAPH_BACKEND=%s)", backend)
-    return _instances.get("graph_store")
+    return _instances.get(cache_key)
+
+
+def ensure_memories_qdrant_indexes(vs: VectorStore | None = None) -> None:
+    """Ensure Qdrant payload indexes for the MCP ``memories`` collection (LUM-293)."""
+    global _memories_qdrant_indexes_ensured
+
+    if _memories_qdrant_indexes_ensured:
+        return
+    vs = vs if vs is not None else get_vector_store()
+    if vs is None:
+        return
+    from services.memories import COLLECTION
+
+    try:
+        vs.ensure_tenant_payload_index(COLLECTION, "bank")
+        vs.ensure_payload_index(COLLECTION, "user_id")
+        _memories_qdrant_indexes_ensured = True
+    except Exception as exc:  # noqa: BLE001 — degrade search, never block writes.
+        _log.warning(
+            "memories Qdrant index bootstrap failed (recall may scan full payload): %s",
+            exc,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -929,6 +1062,15 @@ def _safe_int_env(var: str, default: int, *, minimum: int | None = None) -> int:
     return v
 
 
+def get_user_last_seen_throttle_seconds() -> int:
+    """Minimum gap between ``users.last_seen_at`` touches per user (LUM-334).
+
+    Read by the authenticated-request touch in ``auth.py`` (in-process skip) and
+    passed to ``services.users.touch_last_seen`` (DB-level conditional UPDATE).
+    """
+    return _safe_int_env("USER_LAST_SEEN_THROTTLE_SECONDS", 300, minimum=0)
+
+
 def _safe_float_env(var: str, default: float) -> float:
     raw = os.environ.get(var)
     if raw is None or str(raw).strip() == "":
@@ -990,6 +1132,19 @@ def get_auto_rag_enabled() -> bool:
     return _env_bool("LUMOGIS_AUTO_RAG_ENABLED", False)
 
 
+def get_share_inline_max_chunks() -> int:
+    """Max document chunk_count still projected INLINE on the raw publish route.
+
+    LUM-157 (finding-1, availability): the raw ``POST /api/v1/files/{id}/publish``
+    projects content synchronously (scroll + N chunk upserts on the request
+    thread). Documents with more chunks than this threshold are routed to the
+    background ``share_document`` job instead, so a large share never blocks the
+    request thread. The user-facing documents route (``/api/v1/documents/{id}/publish``)
+    always uses the background job regardless of this value.
+    """
+    return _safe_int_env("LUMOGIS_SHARE_INLINE_MAX_CHUNKS", 50, minimum=1)
+
+
 def get_auto_rag_top_k_pre() -> int:
     return _safe_int_env("LUMOGIS_AUTO_RAG_TOP_K_PRE", 20, minimum=1)
 
@@ -1009,6 +1164,16 @@ def get_auto_rag_min_bi_encoder_score() -> float:
 
 def get_auto_rag_max_tokens() -> int:
     return _safe_int_env("LUMOGIS_AUTO_RAG_MAX_TOKENS", 512, minimum=1)
+
+
+def get_document_chat_top_k_pre() -> int:
+    """Scoped document-chat Qdrant candidate fetch before rerank (LUM-175)."""
+    return _safe_int_env("LUMOGIS_DOCUMENT_CHAT_TOP_K_PRE", 40, minimum=1)
+
+
+def get_document_chat_top_k_post() -> int:
+    """Max chunks after rerank in scoped document chat (LUM-175)."""
+    return _safe_int_env("LUMOGIS_DOCUMENT_CHAT_TOP_K_POST", 12, minimum=1)
 
 
 # ---------------------------------------------------------------------------

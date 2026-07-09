@@ -308,6 +308,63 @@ falkordb_dump_rdb_path() {
   return 1
 }
 
+falkordb_redis_cli() {
+  redis-cli -h "${FALKORDB_HOST:-falkordb}" -p "${FALKORDB_PORT:-6379}" "$@"
+}
+
+# Wait for BGSAVE to finish and copy dump.rdb only after LASTSAVE advances.
+# Refuses to copy a pre-existing dump.rdb from before BGSAVE (stale graph backup).
+falkordb_wait_for_bgsave_dump() {
+  local dest="$1"
+  local last_before last_now tries=0 dump_src
+
+  last_before="$(falkordb_redis_cli LASTSAVE 2>/dev/null || true)"
+  if [[ -z "$last_before" ]]; then
+    log_error "falkordb LASTSAVE unavailable — cannot confirm fresh BGSAVE dump"
+    return 1
+  fi
+
+  falkordb_redis_cli BGSAVE >/dev/null 2>&1 || true
+
+  local max_tries=45
+  if [[ -n "${FALKORDB_BGSAVE_WAIT_SECONDS:-}" ]]; then
+    max_tries="$FALKORDB_BGSAVE_WAIT_SECONDS"
+  fi
+
+  while (( tries < max_tries )); do
+    last_now="$(falkordb_redis_cli LASTSAVE 2>/dev/null || true)"
+    if [[ -n "$last_now" && "$last_now" != "$last_before" ]]; then
+      dump_src="$(falkordb_dump_rdb_path || true)"
+      if [[ -n "$dump_src" ]]; then
+        cp "$dump_src" "$dest"
+        return 0
+      fi
+    fi
+    sleep 1
+    tries=$((tries + 1))
+  done
+
+  log_error "timed out waiting for fresh falkordb dump.rdb after BGSAVE"
+  return 1
+}
+
+# Returns 0 when orchestrator or lumogis-web health endpoints respond (writers likely up).
+restore_quiesce_violation() {
+  local orch_url web_url
+  orch_url="${ORCHESTRATOR_URL:-http://orchestrator:8000}"
+  web_url="${LUMOGIS_WEB_URL:-http://lumogis-web}"
+
+  if curl -sf --max-time 2 "${orch_url}/healthz" >/dev/null 2>&1; then
+    log_error "stop orchestrator before restore (healthz responding at ${orch_url})"
+    return 0
+  fi
+  if curl -sf --max-time 2 "${web_url}/healthz" >/dev/null 2>&1; then
+    log_error "stop lumogis-web before restore (healthz responding at ${web_url})"
+    return 0
+  fi
+  return 1
+}
+
 falkordb_redis_check_rdb_bin() {
   echo "${FALKORDB_REDIS_CHECK_RDB_BIN:-/usr/local/bin/redis-check-rdb-v13}"
 }

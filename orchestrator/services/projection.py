@@ -152,6 +152,44 @@ def _qdrant_delete_safe(collection: str, point_id: str) -> None:
         )
 
 
+def _insert_projection_or_rollback_qdrant(
+    *,
+    collection: str,
+    point_id: str,
+    insert_sql: str,
+    params: tuple,
+) -> Optional[dict]:
+    """Run a single-point projection's Postgres INSERT after its Qdrant upsert,
+    rolling back the orphan point if the INSERT fails (LUM-581 / LUM-44).
+
+    Every single-point ``project_*`` helper upserts the Qdrant projection point
+    *before* writing the Postgres projection row. If the Postgres write then
+    fails, the shared/system Qdrant point is left orphaned: it is searchable by
+    the whole household, but the owner has **no** Postgres projection row, so
+    ``is_shared`` reads ``false`` and they never see (or can) unshare it — a
+    silent content leak that ``unproject_*`` is never asked to clean up.
+
+    This wrapper compensates: on a Postgres failure it best-effort deletes the
+    just-upserted Qdrant point and re-raises, so a failed publish leaves no
+    orphaned shared vector. (The benign inverse — a Postgres row without its
+    vector, e.g. an idempotent re-publish whose transient Qdrant failure was
+    compensated — is visible as ``is_shared`` and self-heals on the next
+    publish/unpublish, and never leaks searchable content.)
+    """
+    ms = config.get_metadata_store()
+    try:
+        return ms.fetch_one(insert_sql, params)
+    except Exception:
+        _qdrant_delete_safe(collection, point_id)
+        _log.error(
+            "projection: Postgres projection insert failed after Qdrant upsert; "
+            "rolled back orphan point collection=%s id=%s",
+            collection,
+            point_id,
+        )
+        raise
+
+
 # ---------------------------------------------------------------------------
 # Per-resource publish helpers
 # ---------------------------------------------------------------------------
@@ -180,9 +218,10 @@ def project_note(src: dict, *, target_scope: str, actor: UserContext) -> dict:
     vector = _embed_for_projection(payload["text"])
     _qdrant_upsert_safe("conversations", point_id, vector, payload)
 
-    ms = config.get_metadata_store()
-    row = ms.fetch_one(
-        """
+    row = _insert_projection_or_rollback_qdrant(
+        collection="conversations",
+        point_id=point_id,
+        insert_sql="""
         INSERT INTO notes (note_id, text, user_id, source, scope, published_from,
                            graph_projected_at)
         VALUES (%s, %s, %s, %s, %s, %s, NULL)
@@ -192,7 +231,7 @@ def project_note(src: dict, *, target_scope: str, actor: UserContext) -> dict:
             graph_projected_at = NULL
         RETURNING *
         """,
-        (
+        params=(
             new_pk,
             src.get("text") or "",
             actor.user_id,
@@ -227,9 +266,10 @@ def project_audio_memo(src: dict, *, target_scope: str, actor: UserContext) -> d
     vector = _embed_for_projection(payload["transcript"])
     _qdrant_upsert_safe("conversations", point_id, vector, payload)
 
-    ms = config.get_metadata_store()
-    row = ms.fetch_one(
-        """
+    row = _insert_projection_or_rollback_qdrant(
+        collection="conversations",
+        point_id=point_id,
+        insert_sql="""
         INSERT INTO audio_memos (audio_id, file_path, transcript, duration_seconds,
                                  whisper_model, user_id, scope, published_from,
                                  transcribed_at, graph_projected_at)
@@ -242,7 +282,7 @@ def project_audio_memo(src: dict, *, target_scope: str, actor: UserContext) -> d
             graph_projected_at = NULL
         RETURNING *
         """,
-        (
+        params=(
             new_pk,
             src.get("file_path") or "",
             src.get("transcript"),
@@ -264,13 +304,35 @@ def project_audio_memo(src: dict, *, target_scope: str, actor: UserContext) -> d
     return row or {"audio_id": new_pk, "scope": target_scope, "published_from": src_pk}
 
 
-def project_session(src: dict, *, target_scope: str, actor: UserContext) -> dict:
+def project_session(
+    src: dict,
+    *,
+    target_scope: str,
+    actor: UserContext,
+    shared_summary: str | None = None,
+) -> dict:
     _validate_target_scope(target_scope)
     src_pk = str(src["session_id"])
     new_pk = projection_pk("sessions", src_pk, target_scope)
     point_id = projection_point_id("conversations", src_pk, target_scope)
 
-    summary_text = src.get("summary") or ""
+    # LUM-582 Rung 1 — the household-facing summary is an editable artifact on the
+    # projected row, never the owner's canonical source summary. Precedence:
+    #   1. an explicit ``shared_summary`` override (the sharer edited it);
+    #   2. else the EXISTING projected summary (a bare re-publish must not revert
+    #      a prior edit back to the raw AI summary);
+    #   3. else the source AI summary (first share).
+    override = (shared_summary or "").strip()
+    if override:
+        summary_text = override
+    else:
+        _existing = config.get_metadata_store().fetch_one(
+            "SELECT summary FROM sessions WHERE published_from = %s AND scope = %s",
+            (src_pk, target_scope),
+        )
+        summary_text = (_existing.get("summary") if _existing else None) or (
+            src.get("summary") or ""
+        )
     topics = src.get("topics") or []
     payload = {
         "session_id": new_pk,
@@ -284,9 +346,10 @@ def project_session(src: dict, *, target_scope: str, actor: UserContext) -> dict
     vector = _embed_for_projection(f"{summary_text} Topics: {', '.join(topics)}")
     _qdrant_upsert_safe("conversations", point_id, vector, payload)
 
-    ms = config.get_metadata_store()
-    row = ms.fetch_one(
-        """
+    row = _insert_projection_or_rollback_qdrant(
+        collection="conversations",
+        point_id=point_id,
+        insert_sql="""
         INSERT INTO sessions (session_id, summary, topics, entities, entity_ids,
                               user_id, scope, published_from, graph_projected_at)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NULL)
@@ -299,7 +362,7 @@ def project_session(src: dict, *, target_scope: str, actor: UserContext) -> dict
             graph_projected_at = NULL
         RETURNING *
         """,
-        (
+        params=(
             new_pk,
             summary_text,
             topics,
@@ -320,17 +383,124 @@ def project_session(src: dict, *, target_scope: str, actor: UserContext) -> dict
     return row or {"session_id": new_pk, "scope": target_scope, "published_from": src_pk}
 
 
-def project_file(src: dict, *, target_scope: str, actor: UserContext) -> dict:
-    """Project a personal `file_index` row.
+def _project_file_chunks(src: dict, *, target_scope: str) -> tuple[int, int]:
+    """Mirror a personal document's Qdrant chunks into ``target_scope`` (LUM-157).
 
-    ``file_index`` is the only INTEGER-PK resource in v1 — the
-    projection PK is server-assigned by SERIAL; idempotency is
-    enforced solely by the partial unique index
-    ``file_index_published_from_scope_uniq``.
+    Reuses the source chunks' stored vectors via the Qdrant adapter's
+    ``scroll_collection(..., with_vectors=True)`` — the ``VectorStore`` port has
+    no ``retrieve``, but the adapter exposes vectors — so **no re-embed**. Falls
+    back to re-embedding a chunk's text only if its vector is unavailable.
+    Idempotent: deterministic projection point ids overwrite on re-share.
+
+    Returns ``(projected, failed)``. Resilient per-chunk: a transient upsert
+    (or a chunk with no usable vector) increments ``failed`` and the loop
+    continues, so the share job can report an honest ``partial`` rather than
+    aborting the whole projection on the first bad chunk.
     """
-    _validate_target_scope(target_scope)
+    # LUM-157 finding-5: only shared documents mirror content chunks. Historically
+    # project_file did nothing in Qdrant for non-'shared' scopes; the share UI only
+    # ever sends 'shared', and system-scoped rows are produced by system-owned
+    # writers that manage their own content. Gate defensively so a future caller
+    # can't silently duplicate personal document content into 'system' scope.
+    if target_scope != "shared":
+        return 0, 0
     src_pk = int(src["id"])
+    owner = src.get("user_id") or ""
+    file_path = src.get("file_path") or ""
+    if not owner or not file_path:
+        return 0, 0
+    vs = config.get_vector_store()
+    scroll = getattr(vs, "scroll_collection", None)
+    if scroll is None:  # non-Qdrant backend: chunk projection unavailable
+        _log.warning(
+            "projection: vector store has no scroll_collection; file chunks not mirrored src=%s",
+            src_pk,
+        )
+        return 0, 0
+    chunks = scroll("documents", user_id=owner, file_path=file_path, with_vectors=True)
+    projected = 0
+    failed = 0
+    for pt in chunks:
+        payload = pt.get("payload") or {}
+        if payload.get("scope") != "personal":
+            continue  # only project the personal source chunks, never a projection
+        vector = pt.get("vector")
+        if vector is None:
+            vector = _embed_for_projection(payload.get("text") or "")
+        if vector is None:
+            failed += 1  # no usable vector — honest partial, not a silent skip
+            continue
+        # LUM-157 finding-4: chunk_index must be an int. A missing/non-int value
+        # would collapse multiple chunks onto the same deterministic point id
+        # (f"{src_pk}:None") → silent overwrite / lost content. Skip such chunks
+        # (counted as failed → honest partial) so per-chunk ids stay unique.
+        chunk_ix = payload.get("chunk_index")
+        if not isinstance(chunk_ix, int) or isinstance(chunk_ix, bool):
+            failed += 1
+            _log.warning(
+                "projection: skipping chunk with non-int chunk_index src=%s value=%r",
+                src_pk,
+                chunk_ix,
+            )
+            continue
+        point_id = projection_point_id("documents", f"{src_pk}:{chunk_ix}", target_scope)
+        new_payload = {
+            "file_path": file_path,
+            "chunk_index": chunk_ix,
+            "text": payload.get("text"),
+            "user_id": owner,
+            "scope": target_scope,
+            "published_from": src_pk,
+        }
+        if payload.get("section_header"):
+            new_payload["section_header"] = payload["section_header"]
+        try:
+            _qdrant_upsert_safe("documents", point_id, vector, new_payload)
+            projected += 1
+        except Exception as exc:
+            failed += 1
+            _log.warning(
+                "projection: file chunk upsert failed src=%s chunk=%s scope=%s — %s",
+                src_pk,
+                chunk_ix,
+                target_scope,
+                exc,
+            )
+    _log.info(
+        "projection: file chunks src=%s scope=%s projected=%s failed=%s",
+        src_pk,
+        target_scope,
+        projected,
+        failed,
+    )
+    return projected, failed
 
+
+def _unproject_file_chunks(src_pk: int, owner: str, target_scope: str) -> None:
+    """Remove the shared/system Qdrant chunk projections for a source (LUM-157).
+
+    Scoped by ``published_from`` (+ ``user_id`` + ``scope``) — a **non-empty**
+    ``must`` clause, never the empty-``must`` match-all that would wipe the
+    whole ``documents`` collection.
+    """
+    if not owner:
+        return
+    vs = config.get_vector_store()
+    vs.delete_where(
+        "documents",
+        {
+            "must": [
+                {"key": "published_from", "match": {"value": int(src_pk)}},
+                {"key": "user_id", "match": {"value": owner}},
+                {"key": "scope", "match": {"value": target_scope}},
+            ]
+        },
+    )
+
+
+def _project_file_row(src: dict, *, target_scope: str, actor: UserContext) -> dict:
+    """Insert (or ON CONFLICT update) the ``file_index`` shared projection row."""
+    src_pk = int(src["id"])
     ms = config.get_metadata_store()
     row = ms.fetch_one(
         """
@@ -354,17 +524,153 @@ def project_file(src: dict, *, target_scope: str, actor: UserContext) -> dict:
             src_pk,
         ),
     )
+    return row or {"id": None, "scope": target_scope, "published_from": src_pk}
+
+
+def project_file(src: dict, *, target_scope: str, actor: UserContext) -> dict:
+    """Project a personal `file_index` row + mirror its Qdrant chunks (LUM-157).
+
+    ``file_index`` is the only INTEGER-PK resource in v1 — the
+    projection PK is server-assigned by SERIAL; idempotency is
+    enforced solely by the partial unique index
+    ``file_index_published_from_scope_uniq``. The Postgres projection row
+    (metadata) plus the reuse-vectors chunk projection (content) together make
+    a shared document retrievable by other household members.
+    """
+    _validate_target_scope(target_scope)
+    row, _projected, _failed = project_file_with_status(
+        src, target_scope=target_scope, actor=actor
+    )
+    return row
+
+
+def project_file_with_status(
+    src: dict, *, target_scope: str, actor: UserContext
+) -> tuple[dict, int, int]:
+    """Like :func:`project_file` but returns ``(row, projected, failed)``.
+
+    Used by the ``share_document`` background job so it can report an honest
+    ``partial`` share status when some content chunks could not be mirrored.
+    """
+    _validate_target_scope(target_scope)
+    src_pk = int(src["id"])
+    owner = str(src.get("user_id") or "")
+    # LUM-157 finding-6: the chunk projection derives the owner from the source
+    # row. That is only sound because the publish path fetches the caller's OWN
+    # personal row (WHERE user_id = caller AND scope = 'personal'). Make the
+    # invariant explicit so a future caller can never project another member's
+    # content by passing a foreign source row.
+    if owner != str(actor.user_id):
+        raise ValueError(
+            "project_file: source owner does not match actor "
+            f"({owner!r} != {actor.user_id!r})"
+        )
+    row = _project_file_row(src, target_scope=target_scope, actor=actor)
+    # LUM-157 finding-3: unproject-then-project so the shared set EXACTLY mirrors
+    # the current source chunks. Without the pre-delete, re-sharing after a
+    # re-ingest with FEWER chunks would leave the removed chunk indices as
+    # retrievable shared orphans (deterministic ids only overwrite matching
+    # indices, never delete stale ones). Scoped delete (published_from + user_id
+    # + scope) — never a match-all.
+    if target_scope == "shared":
+        _unproject_file_chunks(src_pk, owner, target_scope)
+    # Mirror the document's content chunks to Qdrant at target_scope so other
+    # household members can actually search / document-chat over it (LUM-157).
+    projected, failed = _project_file_chunks(src, target_scope=target_scope)
     _log.info(
-        "projection: file src=%d new=%s scope=%s actor=%s",
+        "projection: file src=%d new=%s scope=%s actor=%s projected=%s failed=%s",
         src_pk,
         (row or {}).get("id"),
         target_scope,
         actor.user_id,
+        projected,
+        failed,
     )
-    return row or {"id": None, "scope": target_scope, "published_from": src_pk}
+    return row, projected, failed
 
 
-def project_entity(src: dict, *, target_scope: str, actor: UserContext) -> dict:
+def reproject_shared_on_reingest(
+    user_id: str,
+    file_path: str,
+    *,
+    removed_entity_ids: list[str] | None = None,
+) -> None:
+    """Re-mirror shared chunks after a re-ingest of a currently-shared doc (LUM-157).
+
+    A re-ingest wipes+rewrites the personal chunks (``_delete_document_vectors_for_path``
+    has no scope filter, so the old shared chunks are gone too). If the source
+    still has an active shared projection, re-run the projection so members see
+    the **new** content, never stale/missing. Serialised against a concurrent
+    share via the per-document advisory lock. Best-effort: failures are logged,
+    not raised (the ingest job itself already succeeded).
+
+    LUM-604: when ``removed_entity_ids`` is supplied (personal entities dropped
+    by the latest extraction), diff-retract unjustified doc-origin shared rows
+    before re-running the entity cascade for the surviving set.
+    """
+    if not user_id or not file_path:
+        return
+    ms = config.get_metadata_store()
+    # SCOPE-EXEMPT: personal source row owned by the ingest caller.
+    src = ms.fetch_one(
+        "SELECT * FROM file_index WHERE user_id = %s AND file_path = %s AND scope = 'personal'",
+        (user_id, file_path),
+    )
+    if not src:
+        return
+    src_pk = int(src["id"])
+    shared = ms.fetch_one(
+        "SELECT 1 FROM file_index WHERE published_from = %s AND scope = 'shared' "
+        "AND user_id = %s LIMIT 1",
+        (src_pk, user_id),
+    )
+    if not shared:
+        return
+    from services.share_lock import share_document_lock
+
+    try:
+        with share_document_lock(src_pk):
+            from services import document_entity_cascade
+
+            # LUM-604: retract shared rows for entities dropped by this re-ingest
+            # before re-projecting chunks and (re-)cascading survivors.
+            document_entity_cascade.retract_removed_entities_on_reingest(
+                file_path=file_path,
+                owner_user_id=user_id,
+                removed_entity_ids=list(removed_entity_ids or ()),
+            )
+            # finding-3: clear any stale shared chunks before re-projecting so a
+            # re-ingest with fewer chunks can't leave orphaned shared points.
+            _unproject_file_chunks(src_pk, user_id, "shared")
+            _projected, failed = _project_file_chunks(src, target_scope="shared")
+            # LUM-586: a re-ingest can add new extracted entities; re-run the
+            # entity cascade so members' shared graph reflects them. New/existing
+            # entities are (re-)projected idempotently. No-op unless the graph
+            # feature is enabled.
+            document_entity_cascade.cascade_share_document_entities(
+                src_file=src,
+                actor=UserContext(user_id=user_id, is_authenticated=True),
+            )
+        if failed:
+            _log.warning(
+                "projection: reingest re-projection partial src=%s failed=%s "
+                "(shared content may be incomplete until next share retry)",
+                src_pk,
+                failed,
+            )
+    except Exception as exc:
+        _log.warning(
+            "projection: reingest re-projection failed src=%s — %s", src_pk, exc
+        )
+
+
+def project_entity(
+    src: dict,
+    *,
+    target_scope: str,
+    actor: UserContext,
+    share_origin: str = "user",
+) -> dict:
     """Project a personal `entities` row.
 
     Entities also drive the FalkorDB shared-graph projection — the
@@ -372,8 +678,25 @@ def project_entity(src: dict, *, target_scope: str, actor: UserContext) -> dict:
     :mod:`services.lumogis-graph.projection` (Pass 8 KG-side helper).
     The orchestrator-side keeps the Postgres + Qdrant mirror; the
     graph reconciler picks up the new shared row on its next pass.
+
+    ``share_origin`` records why this shared projection exists (LUM-586):
+
+    * ``"user"`` (default) — a direct LUM-581 entity share. Callers that
+      publish an entity on its own (e.g. ``routes/scope.py``) omit the kwarg
+      and get ``"user"`` so a later document cascade cannot silently
+      reclassify a hand-shared entity as document-only.
+    * ``"document"`` — a LUM-586 document cascade
+      (``document_entity_cascade.cascade_share_document_entities``).
+
+    When both paths touch the same row the ``ON CONFLICT`` rule promotes
+    ``share_origin`` to ``"multiple"``; refcounted retraction reads it to
+    decide whether a document unshare may drop the projection.
     """
     _validate_target_scope(target_scope)
+    if share_origin not in ("document", "user"):
+        raise ValueError(
+            f"share_origin must be 'document' or 'user'; got {share_origin!r}"
+        )
     src_pk = str(src["entity_id"])
     new_pk = projection_pk("entities", src_pk, target_scope)
     point_id = projection_point_id("entities", src_pk, target_scope)
@@ -389,23 +712,33 @@ def project_entity(src: dict, *, target_scope: str, actor: UserContext) -> dict:
     vector = _embed_for_projection(f"{payload['name']} {payload['entity_type']}")
     _qdrant_upsert_safe("entities", point_id, vector, payload)
 
-    ms = config.get_metadata_store()
-    row = ms.fetch_one(
-        """
+    row = _insert_projection_or_rollback_qdrant(
+        collection="entities",
+        point_id=point_id,
+        insert_sql="""
         INSERT INTO entities (entity_id, name, entity_type, aliases, context_tags,
                               mention_count, user_id, scope, published_from,
-                              extraction_quality, is_staged)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE)
+                              extraction_quality, share_origin, is_staged)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE)
         ON CONFLICT (published_from, scope) WHERE published_from IS NOT NULL DO UPDATE SET
             name = EXCLUDED.name,
             entity_type = EXCLUDED.entity_type,
             aliases = EXCLUDED.aliases,
             context_tags = EXCLUDED.context_tags,
             mention_count = EXCLUDED.mention_count,
+            -- LUM-586 provenance promotion: a NULL (pre-migration) row adopts the
+            -- incoming origin; identical origins are idempotent; a genuinely
+            -- different origin (user vs document, or already 'multiple') promotes
+            -- to 'multiple' so a doc unshare downgrades rather than deletes.
+            share_origin = CASE
+                WHEN entities.share_origin IS NULL THEN EXCLUDED.share_origin
+                WHEN entities.share_origin = EXCLUDED.share_origin THEN entities.share_origin
+                ELSE 'multiple'
+              END,
             updated_at = NOW()
         RETURNING *
         """,
-        (
+        params=(
             new_pk,
             src.get("name") or "",
             src.get("entity_type") or "",
@@ -416,6 +749,7 @@ def project_entity(src: dict, *, target_scope: str, actor: UserContext) -> dict:
             target_scope,
             src_pk,
             src.get("extraction_quality"),
+            share_origin,
         ),
     )
     _log.info(
@@ -447,9 +781,10 @@ def project_signal(src: dict, *, target_scope: str, actor: UserContext) -> dict:
     vector = _embed_for_projection(f"{title} {summary}")
     _qdrant_upsert_safe("signals", point_id, vector, payload)
 
-    ms = config.get_metadata_store()
-    row = ms.fetch_one(
-        """
+    row = _insert_projection_or_rollback_qdrant(
+        collection="signals",
+        point_id=point_id,
+        insert_sql="""
         INSERT INTO signals (signal_id, user_id, source_id, title, url, published_at,
                              content_summary, entities, topics, importance_score,
                              relevance_score, notified, scope, published_from,
@@ -468,7 +803,7 @@ def project_signal(src: dict, *, target_scope: str, actor: UserContext) -> dict:
             source_label = EXCLUDED.source_label
         RETURNING *
         """,
-        (
+        params=(
             new_pk,
             actor.user_id,
             src.get("source_id") or "",
@@ -578,18 +913,36 @@ def unproject_signal(src_pk: str, target_scope: str = "shared") -> int:
 
 
 def unproject_file(src_pk: int, target_scope: str = "shared") -> int:
-    """INTEGER-PK unpublish for ``file_index``. No Qdrant mirror.
+    """INTEGER-PK unpublish for ``file_index`` (LUM-157).
 
-    File chunks are projected via re-ingest of the source row; the
-    projection row carries metadata only, so there is no Qdrant point
-    to delete here.
+    Deletes the Postgres projection row **and** the reuse-vectors Qdrant chunk
+    projections (scoped by ``published_from`` — never a match-all).
+
+    LUM-586: after the chunk teardown, retract the document's cascaded shared
+    **entity** projections (refcounted — only those this document was the last
+    justification for). ``file_path`` is resolved from the deleted shared row so
+    the retraction planner can enumerate the document's extracted entities. This
+    single choke point covers both owner unshare (route + share_document job)
+    and admin unshare (``admin_unshare`` routes ``files`` through here).
     """
     ms = config.get_metadata_store()
     deleted = ms.fetch_one(
-        "DELETE FROM file_index WHERE published_from = %s AND scope = %s RETURNING id",
+        "DELETE FROM file_index WHERE published_from = %s AND scope = %s "
+        "RETURNING id, user_id, file_path",
         (int(src_pk), target_scope),
     )
-    return 1 if deleted else 0
+    if not deleted:
+        return 0
+    owner = deleted.get("user_id") or ""
+    file_path = deleted.get("file_path") or ""
+    _unproject_file_chunks(int(src_pk), owner, target_scope)
+    if target_scope == "shared" and file_path and owner:
+        from services import document_entity_cascade
+
+        document_entity_cascade.retract_document_entities(
+            file_path=file_path, owner_user_id=owner
+        )
+    return 1
 
 
 # ---------------------------------------------------------------------------

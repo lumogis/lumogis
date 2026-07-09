@@ -17,6 +17,7 @@ import pytest
 from restart_e2e_env import (
     assert_test_env_example_guard,
     backup_project_env,
+    ensure_host_dir_writable,
     orchestrator_container_marker,
     reset_ingest_settings,
     restore_project_env,
@@ -217,7 +218,7 @@ def test_restart_e2e_1_malformed_ingest_paths_falls_back_after_restart():
         _poll_healthz_ingest_ok(client)
         token = f"lgmalform_{uuid.uuid4().hex[:12]}"
         probe = fallback_dir / f"{token}.txt"
-        fallback_dir.mkdir(parents=True, exist_ok=True)
+        ensure_host_dir_writable(fallback_dir)
         probe.write_text(f"malformed fallback probe {token}\n", encoding="utf-8")
         try:
             found = False

@@ -60,3 +60,31 @@ def test_embedder_embed_batch():
     vecs = emb.embed_batch(["a", "b"])
     assert len(vecs) == 2
     assert all(len(v) == 768 for v in vecs)
+
+
+def test_reranker_resolve_device_forces_cpu_on_macos(monkeypatch):
+    """BGE reranker pins CPU on macOS (default MPS OOMs; appliance is CPU-only)."""
+    from adapters.bge_reranker import _resolve_device
+
+    monkeypatch.setattr("adapters.bge_reranker.sys.platform", "darwin")
+    monkeypatch.delenv("RERANKER_DEVICE", raising=False)
+    assert _resolve_device(None) == "cpu"
+
+
+def test_reranker_resolve_device_auto_off_macos(monkeypatch):
+    """Off macOS, leave device selection to sentence-transformers (CUDA Docker keeps GPU)."""
+    from adapters.bge_reranker import _resolve_device
+
+    monkeypatch.setattr("adapters.bge_reranker.sys.platform", "linux")
+    monkeypatch.delenv("RERANKER_DEVICE", raising=False)
+    assert _resolve_device(None) is None
+
+
+def test_reranker_resolve_device_env_and_explicit_win(monkeypatch):
+    """Explicit arg and RERANKER_DEVICE override the macOS default."""
+    from adapters.bge_reranker import _resolve_device
+
+    monkeypatch.setattr("adapters.bge_reranker.sys.platform", "darwin")
+    monkeypatch.setenv("RERANKER_DEVICE", "cuda")
+    assert _resolve_device(None) == "cuda"
+    assert _resolve_device("cpu") == "cpu"

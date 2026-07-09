@@ -6,12 +6,18 @@ import { setRebootRunner } from "./e2e-wdio-bootstrap";
 import { createOverlayApp } from "./app";
 
 let appInstance: ReturnType<typeof createOverlayApp> | null = null;
+let e2eInitialBootDone = false;
 
 async function runBoot(): Promise<void> {
   if (!appInstance) {
     appInstance = createOverlayApp();
   }
-  await appInstance.boot();
+  if (!e2eInitialBootDone) {
+    await appInstance.boot();
+    e2eInitialBootDone = true;
+    return;
+  }
+  await appInstance.rebootForE2e();
 }
 
 setRebootRunner(runBoot);

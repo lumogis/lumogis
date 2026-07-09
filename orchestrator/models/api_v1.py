@@ -29,6 +29,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Annotated
 from typing import Any
+from typing import Dict
 from typing import List
 from typing import Literal
 from typing import Optional
@@ -44,6 +45,7 @@ from pydantic import AnyHttpUrl
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
+from pydantic import field_validator
 from pydantic import model_validator
 
 # Base configs — see module docstring.
@@ -60,11 +62,26 @@ class ChatMessageDTO(BaseModel):
     content: str = Field(max_length=64_000)
 
 
+class DocumentCitationDTO(BaseModel):
+    model_config = _RES
+    chunk_index: int | None = None
+    file_path: str
+    score: float
+    score_kind: str
+
+
+class LumogisChatExtensions(BaseModel):
+    model_config = _RES
+    context_citations: List[DocumentCitationDTO] = []
+    privacy: dict | None = None
+
+
 class ChatCompletionRequest(BaseModel):
     model_config = _REQ
     model: str = Field(default="claude", max_length=64)
     messages: List[ChatMessageDTO] = Field(min_length=1, max_length=200)
     stream: bool = True
+    document_id: int | None = None
 
 
 class ChatCompletionResponse(BaseModel):
@@ -75,6 +92,7 @@ class ChatCompletionResponse(BaseModel):
     model: str
     message: ChatMessageDTO
     finished_at: datetime
+    lumogis: LumogisChatExtensions | None = None
 
 
 class ModelDescriptor(BaseModel):
@@ -138,6 +156,19 @@ class EntityCard(BaseModel):
     sources: List[str] = []
     scope: Literal["personal", "shared", "system"] = "personal"
     owner_user_id: Optional[str] = None
+    # LUM-581 — household entity sharing. Additive + defaulted (non-breaking).
+    # Mirrors the LUM-157 cross-resource share contract so one share UI works
+    # uniformly across resources, but entity publish is synchronous (single
+    # Qdrant point, no background job) — only ``personal``/``shared`` occur, no
+    # transient ``sharing``/``unsharing``/``partial`` states. ``is_shared`` is a
+    # derived convenience; ``is_owner`` gates the interactive toggle (the server
+    # fetch guard on the publish route is the real boundary).
+    share_status: Literal["personal", "shared"] = "personal"
+    is_owner: bool = True
+
+    @property
+    def is_shared(self) -> bool:
+        return self.share_status == "shared"
 
 
 class RelatedEntity(BaseModel):
@@ -272,6 +303,10 @@ class AuditEntryDTO(BaseModel):
     reverse_action: Optional[Any] = None
     executed_at: Optional[datetime] = None
     reversed_at: Optional[datetime] = None
+    event_type: str = "audit.unknown"
+    scope: str = "personal"
+    source: Optional[str] = None
+    description: Optional[str] = None
 
 
 # Expose the schema under the bare name "AuditEntry" so the OpenAPI
@@ -284,12 +319,75 @@ AuditEntry = AuditEntryDTO
 class AuditListResponse(BaseModel):
     model_config = _RES
     audit: List[AuditEntryDTO]
+    total: int
+    limit: int
+    offset: int
 
 
 class AuditReverseResponse(BaseModel):
     model_config = _RES
     status: Literal["reversed"] = "reversed"
     reverse_token: str
+
+
+# ── Admin household-sharing governance (LUM-584) ─────────────────────
+
+
+class AdminSharedItem(BaseModel):
+    """One household shared item, admin view (LUM-584).
+
+    ``resource_id`` is the **source** pk (``published_from``) the admin
+    unshare route needs — admin-only provenance, never exposed on a
+    non-admin route. ``source_owner_id`` names the sharing member.
+    """
+
+    model_config = _RES
+    resource_type: Literal[
+        "notes", "audio_memos", "sessions", "files", "entities", "signals"
+    ]
+    resource_id: str
+    source_owner_id: Optional[str] = None
+    label: Optional[str] = None
+
+
+class AdminSharedItemsResponse(BaseModel):
+    model_config = _RES
+    items: List[AdminSharedItem]
+
+
+class AdminUnshareResult(BaseModel):
+    """Result of an admin retracting another member's share (LUM-584)."""
+
+    model_config = _RES
+    resource_type: str
+    resource_id: str
+    source_owner_id: Optional[str] = None
+    unshared: bool = True
+
+
+# ── Member's own shared items (LUM-583) ──────────────────────────────
+
+
+class SharedItem(BaseModel):
+    """One item the calling member has shared with the household (LUM-583).
+
+    ``resource_type`` is the route segment for the unshare call, and
+    ``resource_id`` is the source publish pk (``published_from``) the
+    ``DELETE /api/v1/{resource_type}/{resource_id}/publish`` route expects.
+    """
+
+    model_config = _RES
+    resource_type: Literal[
+        "notes", "audio_memos", "sessions", "files", "entities", "signals"
+    ]
+    resource_id: str
+    label: Optional[str] = None
+    shared_at: Optional[datetime] = None
+
+
+class SharedItemsResponse(BaseModel):
+    model_config = _RES
+    items: List[SharedItem]
 
 
 # ── Notifications ────────────────────────────────────────────────────
@@ -716,15 +814,15 @@ class MeNotificationsResponse(BaseModel):
     summary: MeNotificationsSummary
 
 
-# LUM-93 — preference matrix DTOs (single source: models.notifications)
-from models.notifications import NotificationPreferenceCell as NotificationPreferenceCell  # noqa: E402,F401
-from models.notifications import NotificationPreferencePatchItem as NotificationPreferencePatchItem  # noqa: E402,F401
-from models.notifications import NotificationPreferencesPatch as NotificationPreferencesPatch  # noqa: E402,F401
-from models.notifications import NotificationPreferencesResponse as NotificationPreferencesResponse  # noqa: E402,F401
-from models.notifications import NotificationTierPolicyPatch as NotificationTierPolicyPatch  # noqa: E402,F401
-from models.notifications import NotificationTierPolicyRow as NotificationTierPolicyRow  # noqa: E402,F401
-from models.notifications import NotificationTypePrefsRow as NotificationTypePrefsRow  # noqa: E402,F401
-
+# LUM-93 — preference matrix DTOs re-exported here (single source: models.notifications).
+# E402: intentional mid-module imports. F401: re-export surface (imported, not used here).
+from models.notifications import NotificationPreferenceCell  # noqa: E402,F401
+from models.notifications import NotificationPreferencePatchItem  # noqa: E402,F401
+from models.notifications import NotificationPreferencesPatch  # noqa: E402,F401
+from models.notifications import NotificationPreferencesResponse  # noqa: E402,F401
+from models.notifications import NotificationTierPolicyPatch  # noqa: E402,F401
+from models.notifications import NotificationTierPolicyRow  # noqa: E402,F401
+from models.notifications import NotificationTypePrefsRow  # noqa: E402,F401
 
 # ── Me / onboarding (LUM-165) ─────────────────────────────────────────
 
@@ -1035,6 +1133,24 @@ class StackStatusResponse(BaseModel):
     warnings: List[AdminDiagnosticsWarning] = Field(default_factory=list)
 
 
+HealthServiceState = Literal["healthy", "degraded", "down", "unknown", "not_configured"]
+
+
+class HealthResponse(BaseModel):
+    """Non-sensitive per-service health for the web client (``GET /api/v1/health``).
+
+    A trimmed projection of the admin stack-status snapshot (LUM-512): per-service
+    ``state`` keyed by service id, plus an ``overall`` rollup. Deliberately omits
+    runtime detail, storage, and the Ollama model list — those stay admin-only.
+    Used by the web client to drive graceful-degradation banners; the actual
+    request/response remains the source of truth for live errors.
+    """
+
+    model_config = _RES
+    overall: Literal["ok", "degraded", "down"]
+    services: Dict[str, HealthServiceState] = Field(default_factory=dict)
+
+
 class BackupStatusStoreItem(BaseModel):
     """Per-store coverage in DR backup status (LUM-185)."""
 
@@ -1060,6 +1176,25 @@ class BackupStatusResponse(BaseModel):
     stores: List[BackupStatusStoreItem] = Field(default_factory=list)
     last_verify_status: Literal["ok", "failed", "unknown"] | None = None
     warnings: List[AdminDiagnosticsWarning] = Field(default_factory=list)
+
+
+class UpdateStatusResponse(BaseModel):
+    """Response for ``GET /api/v1/admin/diagnostics/update-status`` (LUM-187).
+
+    Read-only: compares the running Core version against the latest published
+    GitHub release. ``checked`` is False (with ``error`` set) when the check is
+    disabled or the release lookup failed — the UI should degrade gracefully and
+    never block on this. No auto-update; the operator triggers ``make update``.
+    """
+
+    model_config = _RES
+    current_version: str
+    latest_version: str | None = None
+    update_available: bool = False
+    checked: bool = False
+    checked_at: str | None = None
+    release_url: str | None = None
+    error: str | None = None
 
 
 class AdminDiagnosticsResponse(BaseModel):
@@ -1164,12 +1299,67 @@ class IngestUploadQueuedResponse(BaseModel):
     model_config = _RES
     status: Literal["queued"] = "queued"
     file_id: str
+    job_id: int
+
+
+class IngestJobProgressResponse(BaseModel):
+    """``GET /api/v1/ingest/jobs/{job_id}`` — per-job ingest progress."""
+
+    model_config = _RES
+    job_id: int
+    file_id: str | None = None
+    batch_id: str | None = None
+    status: str
+    stage: Literal[
+        "queued",
+        "extracting",
+        "chunking",
+        "embedding",
+        "graph",
+        # LUM-157 — share_document job stages (else the poll 500s on validate):
+        "projecting",
+        "partial",
+        "done",
+        "failed",
+    ]
+    progress_pct: int | None = None
+    status_message: str | None = None
+    error: str | None = None
+    enqueued_at: datetime | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+
+class IngestBatchSummaryResponse(BaseModel):
+    """``GET /api/v1/ingest/batches/{batch_id}`` — aggregate batch counters."""
+
+    model_config = _RES
+    batch_id: str
+    completed: int
+    failed: int
+    in_progress: int
 
 
 # ── Conversations (LUM-162) ──────────────────────────────────────────
 
 
-class ConversationSummary(BaseModel):
+class _ConversationShareMixin(BaseModel):
+    # LUM-582 Rung 1 — household conversation sharing. Additive + defaulted
+    # (non-breaking). Synchronous publish, so ``share_status`` has no transient
+    # job states (unlike documents). ``shared_summary`` is the household-facing
+    # (editable) summary; ``can_share`` is false for a web-only conversation
+    # with no backing (summarized) ``sessions`` row.
+    share_status: Literal["personal", "shared"] = "personal"
+    is_owner: bool = True
+    can_share: bool = True
+    shared_summary: str | None = None
+
+    @property
+    def is_shared(self) -> bool:
+        return self.share_status == "shared"
+
+
+class ConversationSummary(_ConversationShareMixin):
     model_config = _RES
     conversation_id: str
     title: str
@@ -1186,9 +1376,11 @@ class ConversationMessage(BaseModel):
     content: str
     created_at: datetime
     model: str | None = None
+    source_refs: list[dict[str, Any]] | None = None
+    action_proposal_id: int | None = None
 
 
-class ConversationDetail(BaseModel):
+class ConversationDetail(_ConversationShareMixin):
     model_config = _RES
     conversation_id: str
     title: str
@@ -1210,6 +1402,94 @@ class ConversationDeleteResponse(BaseModel):
     deleted: bool
     conversation_id: str
     partial: bool = False
+
+
+class DocumentStatus(str, Enum):
+    indexing = "indexing"
+    indexed = "indexed"
+    failed = "failed"
+
+
+class DocumentSummary(BaseModel):
+    model_config = _RES
+    document_id: int | None = None
+    in_flight_job_id: int | None = None
+    display_name: str
+    file_path: str
+    file_type: str
+    chunk_count: int
+    entity_count: int
+    scope: str
+    status: DocumentStatus
+    indexed_at: datetime | None = None
+    error_message: str | None = None
+    # LUM-157 — household document sharing. Additive + defaulted (non-breaking).
+    # ``share_status`` is the first-class transient/partial state; ``is_shared``
+    # is a derived convenience (share_status in {shared, partial}); ``is_owner``
+    # gates the interactive toggle (server enforcement is the fetch guard).
+    share_status: Literal[
+        "personal", "sharing", "shared", "unsharing", "partial"
+    ] = "personal"
+    in_flight_share_job_id: int | None = None
+    is_owner: bool = True
+    # LUM-585 — "Shared by {member}" attribution label. Service-computed,
+    # non-owner-only, and the derived label ONLY (never the full email). None
+    # for the owner's own view / unresolvable owner / personal items → the UI
+    # falls back to the generic indicator. (Distinct from ``display_name`` above,
+    # which is the *document's* filename.)
+    shared_by: str | None = None
+
+    @property
+    def is_shared(self) -> bool:
+        return self.share_status in ("shared", "partial")
+
+
+class DocumentEntityLink(BaseModel):
+    model_config = _RES
+    entity_id: str
+    name: str
+    entity_type: str
+
+
+class DocumentDetail(DocumentSummary):
+    model_config = _RES
+    file_hash: str | None = None
+    entities: list[DocumentEntityLink] = Field(default_factory=list)
+    source_available: bool
+
+
+class DocumentListResponse(BaseModel):
+    model_config = _RES
+    documents: list[DocumentSummary]
+
+
+class DocumentDeleteResponse(BaseModel):
+    model_config = _RES
+    document_id: int
+    deleted: bool
+    partial: bool
+    errors: list[str] = Field(default_factory=list)
+
+
+class ReingestRequest(BaseModel):
+    model_config = _REQ
+    force: bool = False
+
+
+class ReingestQueuedResponse(BaseModel):
+    model_config = _RES
+    document_id: int
+    job_id: int
+    queued: bool
+
+
+class ShareQueuedResponse(BaseModel):
+    """``POST/DELETE /api/v1/documents/{id}/publish`` — 202 background share job (LUM-157)."""
+
+    model_config = _RES
+    document_id: int
+    job_id: int
+    share_status: Literal["sharing", "unsharing"]
 
 
 class ConversationContinueResponse(BaseModel):
@@ -1241,9 +1521,48 @@ class ConversationMessageAppendRequest(BaseModel):
     role: Literal["user", "assistant", "system"]
     content: str = Field(max_length=64_000)
     model: str | None = Field(default=None, max_length=64)
+    source_refs: list[dict[str, Any]] | None = Field(default=None, max_length=64)
+    action_proposal_id: int | None = None
+
+    @field_validator("source_refs")
+    @classmethod
+    def _validate_source_refs(
+        cls, value: list[dict[str, Any]] | None
+    ) -> list[dict[str, Any]] | None:
+        if value is None:
+            return None
+        import json
+
+        total = len(json.dumps(value, sort_keys=True))
+        if total > 65_536:
+            raise ValueError("source_refs total serialized size exceeds 65536 bytes")
+        for item in value:
+            if len(json.dumps(item, sort_keys=True)) > 4096:
+                raise ValueError("source_refs item exceeds 4096 bytes")
+        return value
 
 
 # ── Errors ───────────────────────────────────────────────────────────
+
+
+class FeatureFlagState(BaseModel):
+    """State of one experimental feature flag (LUM-126). Metadata only — never secrets."""
+
+    model_config = _RES
+    key: str = Field(description="Stable code-side identifier, e.g. ``CONSOLIDATION_AGENT``.")
+    env_var: str = Field(description="Environment variable that gates the feature.")
+    description: str = Field(description="What the flag controls and the originating LUM issue.")
+    default: bool = Field(description="Value when the env var is unset (always ``False``).")
+    enabled: bool = Field(description="Whether the flag is currently active in this process.")
+
+
+class FeatureFlagsResponse(BaseModel):
+    """``GET /api/v1/admin/feature-flags`` — admin visibility into experimental gates."""
+
+    model_config = _RES
+    total: int = Field(ge=0, description="Number of registered flags.")
+    enabled: int = Field(ge=0, description="Number currently enabled.")
+    flags: List[FeatureFlagState] = Field(description="All flags, sorted by ``key``.")
 
 
 class ErrorResponse(BaseModel):
@@ -1253,6 +1572,8 @@ class ErrorResponse(BaseModel):
 
 
 __all__ = [
+    "FeatureFlagState",
+    "FeatureFlagsResponse",
     "LoginRequest",
     "LoginResponse",
     "UserDTO",
@@ -1325,5 +1646,7 @@ __all__ = [
     "BackupStatusResponse",
     "AdminDiagnosticsResponse",
     "IngestUploadQueuedResponse",
+    "IngestJobProgressResponse",
+    "IngestBatchSummaryResponse",
     "ErrorResponse",
 ]

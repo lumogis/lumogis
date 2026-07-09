@@ -9,6 +9,19 @@ else
   REPO="$(cd "$SCRIPT_DIR/../.." && pwd)"
 fi
 
+# Pytest fixtures set LUMOGIS_DOCTOR_REPO_ROOT to an isolated tree. Do not let the
+# operator shell's compose/backup exports override that checkout's .env — that
+# probes the live stack and yields false warnings (BACKUP_HOST_DIR, etc.).
+if [ -n "${LUMOGIS_DOCTOR_REPO_ROOT:-}" ]; then
+  unset COMPOSE_PROJECT_NAME COMPOSE_FILE COMPOSE_PROFILES BACKUP_HOST_DIR BACKUP_DIR 2>/dev/null || true
+  if [ -f "$REPO/.env" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    . "$REPO/.env"
+    set +a
+  fi
+fi
+
 DOCTOR_JSON=0
 DOCTOR_SECURITY=0
 DOCTOR_FIX=0

@@ -51,7 +51,7 @@ from typing import Callable
 from typing import Optional
 
 from auth import UserContext
-from auth import get_user
+from authz import require_user
 from fastapi import APIRouter
 from fastapi import Body
 from fastapi import Depends
@@ -64,6 +64,10 @@ from services import projection as proj
 _log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1", tags=["scope"])
+
+# LUM-582 — bound the editable household summary (own-data, but cap storage +
+# embedding cost). Generous: a summary, not a transcript.
+_SHARED_SUMMARY_MAX_CHARS = 8000
 
 
 # ---------------------------------------------------------------------------
@@ -328,7 +332,7 @@ def _serialise_projection(resource: str, row: dict) -> dict:
 def publish_note(
     note_id: str,
     body: dict = Body(default={}),
-    user: UserContext = Depends(get_user),
+    user: UserContext = Depends(require_user),
 ):
     return _publish_one(resource="notes", pk=note_id, body=body, actor=user)
 
@@ -336,7 +340,7 @@ def publish_note(
 @router.delete("/notes/{note_id}/publish")
 def unpublish_note(
     note_id: str,
-    user: UserContext = Depends(get_user),
+    user: UserContext = Depends(require_user),
 ):
     return _unpublish_one(resource="notes", pk=note_id, actor=user)
 
@@ -350,7 +354,7 @@ def unpublish_note(
 def publish_audio_memo(
     audio_id: str,
     body: dict = Body(default={}),
-    user: UserContext = Depends(get_user),
+    user: UserContext = Depends(require_user),
 ):
     return _publish_one(resource="audio_memos", pk=audio_id, body=body, actor=user)
 
@@ -358,7 +362,7 @@ def publish_audio_memo(
 @router.delete("/audio_memos/{audio_id}/publish")
 def unpublish_audio_memo(
     audio_id: str,
-    user: UserContext = Depends(get_user),
+    user: UserContext = Depends(require_user),
 ):
     return _unpublish_one(resource="audio_memos", pk=audio_id, actor=user)
 
@@ -372,15 +376,61 @@ def unpublish_audio_memo(
 def publish_session(
     session_id: str,
     body: dict = Body(default={}),
-    user: UserContext = Depends(get_user),
+    user: UserContext = Depends(require_user),
 ):
-    return _publish_one(resource="sessions", pk=session_id, body=body, actor=user)
+    # LUM-582 Rung 1 — bespoke handler (not the generic ``_publish_one``) so the
+    # editable ``shared_summary`` override can be threaded to ``project_session``.
+    # The generic dispatch has a fixed ``project(src, target_scope, actor)`` shape
+    # shared by all six resources and cannot pass it. Owner-only fetch guard and
+    # scope validation are identical to ``_publish_one``.
+    target_scope = _validate_publish_scope(body)
+    cfg = _RESOURCE_REGISTRY["sessions"]
+    src = cfg["fetch"](session_id, user.user_id)
+    if src is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "not_found",
+                "message": f"sessions/{session_id} not found or not owned by caller",
+            },
+        )
+    pre = cfg["pre_publish"]
+    if pre is not None:
+        pre(src)
+    shared_summary = body.get("shared_summary")
+    if shared_summary is not None and not isinstance(shared_summary, str):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "invalid_shared_summary",
+                "message": "shared_summary must be a string when provided",
+            },
+        )
+    if isinstance(shared_summary, str) and len(shared_summary) > _SHARED_SUMMARY_MAX_CHARS:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "shared_summary_too_long",
+                "message": f"shared_summary exceeds {_SHARED_SUMMARY_MAX_CHARS} characters",
+            },
+        )
+    try:
+        row = proj.project_session(
+            src, target_scope=target_scope, actor=user, shared_summary=shared_summary
+        )
+    except Exception as exc:
+        _log.exception("publish session/%s failed actor=%s", session_id, user.user_id)
+        raise HTTPException(
+            status_code=502,
+            detail={"error": "projection_failed", "message": str(exc)},
+        )
+    return _serialise_projection("sessions", row)
 
 
 @router.delete("/sessions/{session_id}/publish")
 def unpublish_session(
     session_id: str,
-    user: UserContext = Depends(get_user),
+    user: UserContext = Depends(require_user),
 ):
     return _unpublish_one(resource="sessions", pk=session_id, actor=user)
 
@@ -394,15 +444,40 @@ def unpublish_session(
 def publish_file(
     file_id: str,
     body: dict = Body(default={}),
-    user: UserContext = Depends(get_user),
+    user: UserContext = Depends(require_user),
 ):
+    # LUM-157 finding-1 (availability): the file content projection (scroll + N
+    # chunk upserts) can be heavy. For large documents, route the projection to
+    # the background ``share_document`` job so the request thread never blocks;
+    # small documents keep the fast inline path (unchanged 200 + projection body).
+    _validate_publish_scope(body)  # 400 on invalid scope before any work
+    src = _RESOURCE_REGISTRY["files"]["fetch"](file_id, user.user_id)
+    if src is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "not_found",
+                "message": f"files/{file_id} not found or not owned by caller",
+            },
+        )
+    if int(src.get("chunk_count") or 0) > config.get_share_inline_max_chunks():
+        from services import documents as doc_svc
+
+        queued = doc_svc.share_document(user.user_id, int(src["id"]))
+        return {
+            "resource": "files",
+            "scope": "shared",
+            "id": queued.document_id,
+            "queued": True,
+            "job_id": queued.job_id,
+        }
     return _publish_one(resource="files", pk=file_id, body=body, actor=user)
 
 
 @router.delete("/files/{file_id}/publish")
 def unpublish_file(
     file_id: str,
-    user: UserContext = Depends(get_user),
+    user: UserContext = Depends(require_user),
 ):
     return _unpublish_one(resource="files", pk=file_id, actor=user)
 
@@ -416,7 +491,7 @@ def unpublish_file(
 def publish_entity(
     entity_id: str,
     body: dict = Body(default={}),
-    user: UserContext = Depends(get_user),
+    user: UserContext = Depends(require_user),
 ):
     return _publish_one(resource="entities", pk=entity_id, body=body, actor=user)
 
@@ -424,7 +499,7 @@ def publish_entity(
 @router.delete("/entities/{entity_id}/publish")
 def unpublish_entity(
     entity_id: str,
-    user: UserContext = Depends(get_user),
+    user: UserContext = Depends(require_user),
 ):
     return _unpublish_one(resource="entities", pk=entity_id, actor=user)
 
@@ -438,7 +513,7 @@ def unpublish_entity(
 def publish_signal(
     signal_id: str,
     body: dict = Body(default={}),
-    user: UserContext = Depends(get_user),
+    user: UserContext = Depends(require_user),
 ):
     return _publish_one(resource="signals", pk=signal_id, body=body, actor=user)
 
@@ -446,7 +521,7 @@ def publish_signal(
 @router.delete("/signals/{signal_id}/publish")
 def unpublish_signal(
     signal_id: str,
-    user: UserContext = Depends(get_user),
+    user: UserContext = Depends(require_user),
 ):
     return _unpublish_one(resource="signals", pk=signal_id, actor=user)
 

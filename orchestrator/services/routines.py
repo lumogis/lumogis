@@ -261,22 +261,25 @@ def _run_weekly_review(*, user_id: str) -> str:
     try:
         from services.connector_credentials import ConnectorNotConfigured
         from services.connector_credentials import CredentialUnavailable
+        from services.privacy_mode import resolve_job_model
 
-        llm = config.get_llm_provider("llama", user_id=user_id)
-        resp = llm.chat(
-            messages=[
-                {
-                    "role": "user",
-                    "content": (
-                        "Write a concise 3-5 sentence weekly review summary based on this data:\n\n"
-                        + review_json_trimmed
-                    ),
-                }
-            ],
-            system="You are a concise analyst. Summarise what happened this week.",
-            max_tokens=300,
-        )
-        prose = resp.text.strip()
+        job_model = resolve_job_model("llama", user_id)
+        if job_model:
+            llm = config.get_llm_provider(job_model, user_id=user_id)
+            resp = llm.chat(
+                messages=[
+                    {
+                        "role": "user",
+                        "content": (
+                            "Write a concise 3-5 sentence weekly review summary based on this data:\n\n"
+                            + review_json_trimmed
+                        ),
+                    }
+                ],
+                system="You are a concise analyst. Summarise what happened this week.",
+                max_tokens=300,
+            )
+            prose = resp.text.strip()
     except ConnectorNotConfigured as exc:
         _log.warning(
             "weekly_review: missing per-user credential (user=%s): %s",

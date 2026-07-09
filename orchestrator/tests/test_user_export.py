@@ -297,3 +297,50 @@ def test_export_user_returns_zip_with_manifest(monkeypatch, tmp_path):
     on_disk = list((tmp_path / "u1").glob("export_*.zip"))
     assert len(on_disk) == 1
     assert on_disk[0].read_bytes() == archive_bytes
+
+
+def test_export_user_writes_per_bank_falkordb_sections(monkeypatch, tmp_path):
+    """LUM-544: each configured bank graph is exported under falkordb/{bank}/."""
+    from unittest.mock import Mock
+
+    import config
+
+    monkeypatch.setattr(user_export, "_USER_EXPORT_DIR", tmp_path)
+
+    coding_gs = Mock()
+    personal_gs = Mock()
+    coding_gs.query.side_effect = [
+        [{"labels": ["Node"], "lumogis_id": "c1", "properties": {"user_id": "u1"}}],
+        [],
+    ]
+    personal_gs.query.side_effect = [
+        [{"labels": ["Node"], "lumogis_id": "p1", "properties": {"user_id": "u1"}}],
+        [],
+    ]
+    stores = {"coding": coding_gs, "personal": personal_gs, "default": None}
+
+    def _gs(bank=None):
+        if bank is None:
+            return personal_gs
+        return stores.get(bank)
+
+    monkeypatch.setattr(config, "get_graph_store", _gs)
+
+    archive_bytes, _filename = user_export.export_user("u1")
+    with zipfile.ZipFile(io.BytesIO(archive_bytes)) as zf:
+        names = zf.namelist()
+        manifest = json.loads(zf.read("manifest.json"))
+        assert manifest.get("falkordb_banks") == ["coding", "personal"]
+        for bank in ("coding", "personal"):
+            nodes_name = f"falkordb/{bank}/nodes.json"
+            edges_name = f"falkordb/{bank}/edges.json"
+            assert nodes_name in names
+            assert edges_name in names
+            nodes = json.loads(zf.read(nodes_name))
+            assert len(nodes) == 1
+        assert "falkordb/nodes.json" in names
+        combined = json.loads(zf.read("falkordb/nodes.json"))
+        assert len(combined) == 2
+        section_names = {s["name"] for s in manifest["sections"]}
+        assert "falkordb/coding/nodes.json" in section_names
+        assert "falkordb/personal/nodes.json" in section_names

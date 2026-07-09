@@ -273,7 +273,7 @@ class TestStagedEntityPromotion:
         _config._instances["metadata_store"] = ms
         _config._instances["embedder"] = embedder
         _config._instances["vector_store"] = vs
-        _config._instances["graph_store"] = None  # disable graph hook
+        _config._instances[_config._graph_store_cache_key("personal")] = None
         try:
             _upsert_entity(entity, "ev-001", "SESSION", "default", ms, embedder, vs)
         finally:

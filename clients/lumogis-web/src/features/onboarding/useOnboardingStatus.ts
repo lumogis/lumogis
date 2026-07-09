@@ -12,6 +12,7 @@ import {
   patchMeOnboardingComplete,
   type MeOnboardingResponse,
 } from "../../api/meOnboarding";
+import { INVITE_ONBOARDING_STORAGE_KEY } from "../../api/invites";
 import { describeApiError } from "../../api/webPush";
 
 export function useOnboardingStatus(client: ApiClient) {
@@ -38,6 +39,11 @@ export function useOnboardingStatus(client: ApiClient) {
 
   const completeOnboarding = useCallback(async () => {
     await completion.mutateAsync();
+    try {
+      sessionStorage.removeItem(INVITE_ONBOARDING_STORAGE_KEY);
+    } catch {
+      /* ignore */
+    }
   }, [completion]);
 
   return {

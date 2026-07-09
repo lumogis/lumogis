@@ -81,10 +81,22 @@
         "properties": {
           "kind": {
             "type": "string",
-            "enum": ["compose_up_service", "ollama_pull_model", "mkdir_backup_dir"]
+            "enum": ["compose_up_service", "compose_restart_service", "ollama_pull_model", "mkdir_backup_dir", "set_env_key"]
           },
           "target": {
             "oneOf": [
+              {
+                "type": "object",
+                "required": ["key", "value"],
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                  },
+                  "value": { "type": "string" }
+                },
+                "additionalProperties": false
+              },
               {
                 "type": "object",
                 "required": ["service"],

@@ -24,6 +24,8 @@ The public AGPL tree is produced by export (`scripts/create-upstream-export-tree
 
 **Beginners onboarding (LUM-378):** the public export must include **`CONTRIBUTING-BEGINNERS.md`** at the repository root (copied from **`docs/public-export/CONTRIBUTING-BEGINNERS.md`**). **Do not** add that path to **`scripts/public-export-strip-list.txt`** without updating **`scripts/check-public-export.sh`** (search for `Required presence (LUM-378)`), **`orchestrator/tests/test_check_public_export_script.py`**, and this section in the **same** change.
 
+**Operator evaluation (LUM-363):** the public export must include **`EVALUATION.md`** at the repository root (copied from **`docs/public-export/EVALUATION.md`**). **Do not** add that path to **`scripts/public-export-strip-list.txt`** without updating **`scripts/check-public-export.sh`** (search for `Required presence (LUM-363)`), **`orchestrator/tests/test_check_public_export_script.py`**, and **`README.md`** in the **same** change.
+
 Architecture context: **`docs/decisions/037-ghcr-publish-public-repo-only.md`** (export and public CI); **`docs/decisions/053-lum-94-ci-openapi-codegen-check-without-live-orchestrator.md`** (OpenAPI gate); **[ADR 061 — LUM-303](docs/decisions/061-lum-303-public-ci-parity-openapi-check-via-export.md)** (export presence contract).
 
 ## Optional CI — web Playwright (LUM-60)
@@ -50,7 +52,9 @@ The slim **`web-e2e.yml`** job does **not** start Ollama (ADR-064). To exercise 
 | **`LUMOGIS_E2E_OLLAMA_PULL_MODEL`** | no | Ephemeral pull model (default **`tinyllama:1.1b`**) |
 | **`PLAYWRIGHT_BASE_URL`** | no | Caddy front door (default **`http://127.0.0.1`**) |
 
-The spec pulls then deletes **only** the ephemeral model — never household defaults. It is **not** part of **`make web-e2e-prove`**, **`verify-public-rc`**, or **`verify-public-rc-full`** (Phase 1). Phase 2 optional CI and **`verify-public-rc-full`** auto-wire (after cold-pull timing baseline) are tracked in **LUM-453**.
+The spec pulls then deletes **only** the ephemeral model — never household defaults. It is **not** part of **`make web-e2e-prove`**, **`verify-public-rc`**, or **`verify-public-rc-full`** (Phase 1).
+
+**Phase 2 — optional CI (LUM-453):** the workflow **`.github/workflows/web-e2e-ollama.yml`** runs this subset in GitHub Actions against the slim stack **plus** the **`ollama`** service (overlay **`docker-compose.web-e2e-ollama-ci.yml`**). It is **label-gated** like the slim job but with **`ci:run-web-e2e-ollama`** (or **`workflow_dispatch`**), pre-pulls **`tinyllama:1.1b`** (env **`OLLAMA_PULL_MODEL`**) inside the `ollama` container, then runs **`make web-e2e-ollama-prove`** with an extended 60-minute timeout. It does **not** change the default slim **`web-e2e.yml`** (which keeps its "Ollama not running" assertion) and is still **not** auto-wired into **`verify-public-rc-full`** (deferred per ADR-064).
 
 This job does **not** replace **`make verify-public-rc`** or **`make verify-public-rc-full`**; do not use it as a reason to set **`VERIFY_PUBLIC_RC_SKIP_WEB_E2E`**.
 
@@ -183,6 +187,22 @@ Feature→test evidence lives in [docs/testing/README.md](docs/testing/README.md
 
 The v1 baseline was seeded in **LUM-384** (code audit). **LUM-428** tightened ✅ rows and cross-checks **active + archived** `.cursor/plans/*.plan.md` for test citations. Re-run `python3 scripts/testing/_lum428_audit_matrix_citations.py` after matrix edits. **LUM-429:** CI runs `make coverage-matrix-check` — row ID format, legend, duplicate IDs, catalog sync (`scripts/feature-ids.json`). After adding or renaming IDs, run `node scripts/check-coverage-matrix.mjs --write-catalog` in the same PR. Do not assign ✅ from `docs/capabilities.md` or CHANGELOG alone; cite `` `test_name` in `file` `` in the matrix **Notes** column.
 
+### Changed-line coverage (LUM-379 — advisory)
+
+CI **reports** coverage on the lines your PR changes (not aggregate coverage) via **`diff-cover`**. The **`lint-and-test`** job runs the orchestrator and stack-control suites with **`pytest-cov`** (lcov output) and then runs (advisory — **does not fail** the job on low %):
+
+```
+diff-cover coverage-orchestrator.lcov coverage-stack-control.lcov \
+  --compare-branch <PR base sha> --show-uncovered
+```
+
+- **PR-only:** the report needs a base to diff against, so it runs on **`pull_request`** events. PRs that change no measured Python see *"No lines with coverage information"* and **pass**.
+- **Scope:** measured trees are **`orchestrator/`** and **`stack-control/`** (the Python suites CI runs). Changed Python outside those trees is not measured by this check.
+- **Uncovered lines** are printed to the job log (`--show-uncovered`) so you can see exactly which changed lines need tests.
+- **Exemptions** (excluded from the report, via `--exclude` globs): **`*/migrations/*`**, **`*/alembic/*`** (DB migrations), **`*/generated/*`** (codegen output), **`*/vendor/*`**. To exempt a new path, add an `--exclude` glob to the `LUM-379 — changed-line coverage report` step in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) and note it here in the same PR.
+- **Locally:** `pip install -r orchestrator/requirements-dev.txt` (includes `pytest-cov` + `diff-cover`), run a suite with `--cov=. --cov-report=lcov:cov.lcov`, then `diff-cover cov.lcov --compare-branch origin/main --show-uncovered`.
+- **Required gate (future):** promoting **`--fail-under=80`** as a blocking check is tracked as a **Linear child of LUM-379**, after **LUM-384** coverage matrix + an advisory burn-in period (see `/evaluate` LUM-379 defer rationale).
+
 ### Release manual checklist
 
 Before a maintainer release sign-off (after automated RC gates on the release line), complete [docs/RELEASE-MANUAL-CHECKLIST.md](docs/RELEASE-MANUAL-CHECKLIST.md) — human verification items cited as **`MS-###`** in coverage matrix 🚫 rows. See [docs/testing/automated-test-strategy.md](docs/testing/automated-test-strategy.md) for automated vs manual boundaries.
@@ -205,9 +225,13 @@ cd orchestrator && python -m scripts.dump_openapi --pretty --sort-keys \
 
 CI runs **[oasdiff](https://github.com/oasdiff/oasdiff)** (`oasdiff breaking`) on the **committed** `clients/lumogis-web/openapi.snapshot.json` after `make openapi-check` succeeds: **base** = snapshot at the PR **merge-base** (or `HEAD~1` on `push`), **revision** = working tree at `HEAD`. This is **semantic** classification on top of the LUM-94 binary snapshot/codegen gate — see [ADR 053](docs/decisions/053-lum-94-ci-openapi-codegen-check-without-live-orchestrator.md) and [ADR 060 — LUM-302](docs/decisions/060-lum-302-openapi-breaking-change-classifier.md).
 
-**`OPENAPI_BREAKING_FAIL_ON`** (passed to oasdiff `--fail-on`): **`ERR`** (default in CI) exits **1** only on definite breaking changes; **`WARN`** is **stricter** (fails on ERR **or** WARN); **`INFO`** is strictest. **`off`** skips oasdiff entirely and prints a `::warning::OpenAPI breaking gate bypassed (OPENAPI_BREAKING_FAIL_ON=off)` audit line — use only with maintainer intent.
+**`OPENAPI_BREAKING_FAIL_ON`** (passed to oasdiff `--fail-on`): **`WARN`** (default in CI since LUM-312) fails on definite breaking changes **and** potential-breaking WARN-level findings; **`ERR`** is the **looser** gate (fails only on definite breaking changes); **`INFO`** is strictest. **`off`** skips oasdiff entirely and prints a `::warning::OpenAPI breaking gate bypassed (OPENAPI_BREAKING_FAIL_ON=off)` audit line — use only with maintainer intent.
 
 **Local run:** use **Go 1.26+** (the oasdiff v1.15.2 module requires it — CI uses `setup-go` **1.26.x**), then install the pinned CLI (`go install github.com/oasdiff/oasdiff@v1.15.2` — same pin as `.github/workflows/ci.yml`), then `make openapi-breaking-check`. Optional **`OPENAPI_BREAKING_BASE_REF`** (e.g. `origin/main`) selects the base revision explicitly; otherwise the script uses **`HEAD~1`** locally (merge-base is used automatically on `pull_request` in Actions).
+
+**HTML drift report (LUM-314):** when the `openapi-check` job runs, it also uploads an optional **`openapi-changes-html`** artefact — a human-readable `oasdiff changelog --format html` of the snapshot drift (base → `HEAD`). It is **review UX only** (`continue-on-error`, tolerant of a missing base snapshot) and never gates; download it from the workflow run to eyeball large diffs that the dense inline annotations make hard to read.
+
+**RC gate (LUM-313):** `make verify-public-rc` runs `openapi-breaking-check` locally before publish. `oasdiff` is a Go dev tool, so a missing binary degrades to a `WARN` (CI is the binding gate); set **`VERIFY_PUBLIC_RC_REQUIRE_OPENAPI_BREAKING=1`** to make it a hard local gate on the release line.
 
 **Ignore files** (`--warn-ignore` / `--err-ignore`): do **not** commit an ignore rules file without **explicit reviewer approval** in the PR (link the Linear issue or an ADR note). If OpenAPI 3.x / oasdiff behaviour becomes a recurring problem, revisit tool choice per the LUM-302 ADR “revisit conditions”.
 
@@ -221,7 +245,7 @@ We follow [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) in [CHANGELOG
 
 If your pull request changes **product-facing paths** tracked in [`.github/workflows/changelog.yml`](.github/workflows/changelog.yml), **`CHANGELOG.md` must appear in the PR diff** (typically under **`[Unreleased]`** with **Added** / **Changed** / **Fixed** / **Removed** as appropriate). The same path list lives in [scripts/changelog-gate-paths.txt](scripts/changelog-gate-paths.txt) for local checks—**keep these in sync** when globs change.
 
-PRs that touch only paths outside that filter (for example **`docs/**`** alone or **`.github/`** alone) **do not** run this workflow and have **no** changelog obligation from that gate.
+PRs that touch only paths outside that filter (for example **`docs/**`** alone or **`.github/`** alone) have **no** changelog obligation from that gate. Since **LUM-258** the workflow still **runs** on every PR — a job-level path gate (the **`changes`** job, via [`.github/scripts/changelog-paths.sh`](.github/scripts/changelog-paths.sh)) detects whether product paths changed; when they did not, the **`changelog`** job reports **success** without enforcing (so the check always posts a status — see *Branch protection* below).
 
 ### Bypasses (maintainers)
 
@@ -232,7 +256,7 @@ Third-party outages or misconfiguration may block the check until fixed; the sam
 
 ### Branch protection / required checks
 
-If this workflow is marked **required** in branch protection while it uses **workflow-level `paths:`** filters, **docs-only** (or otherwise filtered) PRs may show **no status** from this job and appear stuck (“waiting for status”). **Do not** mark the changelog check **required** until you add a job-level path filter with an always-reporting success job, or your process explicitly handles that case.
+**LUM-258 — the changelog check is now safe to mark required.** The footgun is that a **workflow-level `paths:`** filter leaves **docs-only** (or otherwise filtered) PRs with **no status** from the job, so a required check appears stuck (“waiting for status”). This workflow no longer uses a workflow-level `pull_request` `paths:` filter: it **always runs** on PRs, the **`changes`** job does **job-level** path detection (mirroring the include + negated mock-capability rules from [scripts/changelog-gate-paths.txt](scripts/changelog-gate-paths.txt)), and the **`changelog`** job always completes — enforcing only when product paths changed and otherwise reporting success. The required check therefore always posts a conclusion.
 
 ### Fork pull requests
 
@@ -251,6 +275,50 @@ make changelog-check
 ```
 
 Uses [scripts/check-changelog-touched.sh](scripts/check-changelog-touched.sh) (diff vs `origin/dev`, then `origin/main`, then `HEAD~1`). To mimic the **PR-body** skip locally, set **`CHANGELOG_GATE_PR_BODY`** to a string containing **`[skip changelog]`**.
+
+---
+
+## Feature flags
+
+Experimental subsystems should merge to `main` **disabled by default** behind an env-var gate (LUM-126), so the code is built, tested, and reviewable without shipping to users prematurely. The public AGPL repo gets clean production behaviour; you flip one variable to develop against a flag.
+
+Flags live in `orchestrator/features.py`. To add one:
+
+1. Append a `FeatureFlag` to `_FLAG_LIST` (keep it alphabetical by `key`):
+
+```python
+# orchestrator/features.py
+FeatureFlag(
+    key="MY_FEATURE",
+    description="What it controls and the originating LUM issue (LUM-###).",
+)
+```
+
+The runtime env var is `LUMOGIS_FF_` + `key` (here `LUMOGIS_FF_MY_FEATURE`). All flags default to `False`; a flag is enabled only when its env var is truthy (`true`/`1`/`yes`/`on`).
+
+2. Gate the experimental code path:
+
+```python
+import features
+
+if features.is_enabled("MY_FEATURE"):
+    ...  # experimental path
+```
+
+`is_enabled()` raises `UnknownFeatureFlag` on an unregistered key, so typos fail loudly.
+
+The current flag list (with per-flag comments) is maintained in
+`config/test.env.example` under "Experimental feature flags".
+
+A flag read by more than one process must parse identically on every side —
+when a flag's gate is replicated outside this module (e.g. in a separate
+service), pin the two parsers together with a shared truthy-fixture test so
+`=on` cannot be honoured in one process and ignored in another
+(`LUMOGIS_FF_TEMPORAL_KG` / LUM-104 is the precedent).
+
+3. Document the variable (commented, defaulting to `false`) in `config/test.env.example`. **Never** set a flag to `true` in the default `docker-compose.yml`.
+
+Admins can see all flags and their current state at `GET /api/v1/admin/feature-flags`.
 
 ---
 

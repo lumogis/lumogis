@@ -48,3 +48,16 @@ def test_build_filter_entity_merge_style_must() -> None:
     flt = QdrantStore._build_filter({"must": [{"key": "entity_id", "match": {"value": "e-1"}}]})
     assert flt.must is not None and len(flt.must) == 1
     assert flt.must[0] == FieldCondition(key="entity_id", match=MatchValue(value="e-1"))
+
+
+def test_build_filter_visibility_and_file_path_and_merge() -> None:
+    from services.auto_rag import _merge_file_path_filter
+
+    base = visible_qdrant_filter(UserContext(user_id="alice"))
+    merged = _merge_file_path_filter(base, "/pinned.pdf")
+    flt = QdrantStore._build_filter(merged)
+    assert flt.must is not None and len(flt.must) == 2
+    nested = flt.must[0]
+    assert isinstance(nested, Filter)
+    assert nested.should is not None
+    assert flt.must[1] == FieldCondition(key="file_path", match=MatchValue(value="/pinned.pdf"))

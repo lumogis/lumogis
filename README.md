@@ -4,9 +4,9 @@
 
 # lumogis
 
-**The AI comes to your data. Not the other way around.**
+**A private, self-hosted knowledge base for your whole household.**
 
-Lumogis is a **self-hosted, local-first, privacy-first** household and personal AI platform that you run yourself with Docker Compose under **AGPL-3.0-only**. Your primary UI is **[Lumogis Web](#lumogis-web)** (same origin behind **[Caddy](docker/caddy/Caddyfile)**). **Core** is the **[FastAPI](orchestrator/main.py)** orchestrator. **[LibreChat](config/librechat.coldstart.yaml)** stays available behind an optional Compose profile (`librechat`) for OpenAI-compatible chat—not the main product surface.
+Lumogis is a **self-hosted, local-first** knowledge base built for a **household**: multiple people, one shared **Core** on hardware you control. Most self-hosted "second brain" tools are built around one person's notes — Lumogis is built around a **home**, with **per-user personal/shared scopes** as the design centre. Your documents stay yours, but you can **share one with the household in a click** — and everyone can then **search** it and **ask questions grounded in it**, with citations. Everyone reaches it from a browser on your home network via **[Lumogis Web](#lumogis-web)** (same origin behind **[Caddy](docker/caddy/Caddyfile)**); **Core** is the **[FastAPI](orchestrator/main.py)** orchestrator. You run it yourself with Docker Compose under **AGPL-3.0-only**. *(A desktop global-hotkey search overlay — **Lumogis Search** — ships in a later release; the household web experience is the launch surface.)* **[LibreChat](config/librechat.coldstart.yaml)** stays available behind an optional Compose profile (`librechat`) for OpenAI-compatible chat — not the main product surface.
 
 ---
 
@@ -35,7 +35,9 @@ The source code is **[AGPL-3.0-only](LICENSE)**. There is no Lumogis-operated Sa
 | Area | Capability |
 |---|---|
 | Documents | PDF, DOCX, text, images (OCR when enabled)—see ingestion in [`orchestrator/services/ingest.py`](orchestrator/services/ingest.py) |
-| Search | Dense vectors + optional hybrid / reranking—[`orchestrator/services/search.py`](orchestrator/services/search.py), [`ARCHITECTURE.md`](ARCHITECTURE.md) |
+| Search | **Hybrid by default**—dense vectors + keyword (sparse) together, so exact-term and fuzzy queries both land; optional BGE reranking—[`orchestrator/services/search.py`](orchestrator/services/search.py), [`ARCHITECTURE.md`](ARCHITECTURE.md) |
+| Household sharing | **Share a document with the household in one click**—per-user `personal`/`shared` scopes ([`ADR-015`](docs/decisions/015-personal-shared-system-memory-scopes.md)); your documents stay yours, shared ones are findable by everyone (kids stay scoped) |
+| Document-chat | **Ask questions about a document**—grounded answers **with citations**, from your own files |
 | Memory | Sessions and summaries embedded locally |
 | Signals | RSS, pages, calendars, digest—[`signals/`](orchestrator/signals/) |
 | Actions | **[Ask / Do](#security-model-ask-and-do)** with audit logging—[`actions/`](orchestrator/actions/) |
@@ -103,6 +105,12 @@ Clone the repo, copy **`.env.example`** to **`.env`**, run **`docker compose up 
 
 ---
 
+## How do I know it's working?
+
+After a few days of normal use (ingest + chat/search), run the baseline queries and health checks in **[`EVALUATION.md`](EVALUATION.md)** — five search prompts, indexing signals, and copy-paste `curl` / `make doctor` commands for your instance.
+
+---
+
 ## Remote access
 
 Lumogis is reachable on your local network by default (**http://localhost/** or your LAN IP). For phones and laptops when someone is away from home, **Tailscale Serve** is the recommended path: it provides HTTPS (required for PWA install and Web Push) with no port forwarding and keeps traffic on your private tailnet rather than the public internet. See **[`docs/deployment/remote-access.md`](docs/deployment/remote-access.md)** for step-by-step setup; **Cloudflare Tunnel** is documented there as an alternative.
@@ -110,6 +118,8 @@ Lumogis is reachable on your local network by default (**http://localhost/** or 
 ---
 
 ## Lumogis Search and personas
+
+> **Note:** the desktop **Lumogis Search** overlay ships in a **later release** (v1.1). The launch surface is **[Lumogis Web](#lumogis-web)** in the browser — this section describes the overlay for when it lands.
 
 **Lumogis Search** is the global-hotkey memory-search overlay for your household Core. **Persona A** (Docker Compose on the same machine → `http://localhost`) and **Persona B** (household member → operator URL) ship the **same** client-only installer; see the [persona distribution matrix](docs/LUMOGIS_REFERENCE_MANUAL.md#persona-a--b--c--distribution-matrix) and [Persona A install steps](clients/lumogis-search/README.md#persona-a--docker-track-localhost).
 

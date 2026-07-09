@@ -57,29 +57,56 @@ WAIT_TIMEOUT_S = int(os.environ.get("LUMOGIS_DB_WAIT_TIMEOUT_S", "120"))
 # parent → child for cosmetic per-table summaries; functionally each
 # UPDATE is independent because no FK references `user_id`.
 _SCOPED_TABLES: tuple[str, ...] = (
+    # Core library / inbox surfaces
     "file_index",
-    "entities",
-    "entity_relations",
-    "review_queue",
-    "connector_permissions",
-    "routine_do_tracking",
-    "action_log",
-    "sources",
-    "signals",
-    "relevance_profiles",
-    "feedback_log",
-    "audit_log",
-    "routines",
-    "user_batch_jobs",
-    "constraint_violations",
-    "edge_scores",
-    "known_distinct_entity_pairs",
-    "review_decisions",
-    "deduplication_runs",
-    "dedup_candidates",
     "sessions",
     "notes",
     "audio_memos",
+    "web_conversations",
+    "web_messages",
+    "captures",
+    "capture_attachments",
+    "capture_transcripts",
+    # Knowledge graph + memory
+    "entities",
+    "entity_relations",
+    "entity_edges",
+    "memories",
+    "sources",
+    "external_documents",
+    "signals",
+    "relevance_profiles",
+    "edge_scores",
+    "known_distinct_entity_pairs",
+    # KG quality / review
+    "review_queue",
+    "review_decisions",
+    "constraint_violations",
+    "deduplication_runs",
+    "dedup_candidates",
+    "feedback_log",
+    # Connectors, routines, jobs
+    "connector_permissions",
+    "routine_do_tracking",
+    "routines",
+    "user_batch_jobs",
+    "action_proposals",
+    # Credentials + tokens (per-user rows; export may omit but remap must run)
+    "user_connector_credentials",
+    "mcp_tokens",
+    # Auth/session bookkeeping tied to a user_id
+    "auth_sessions",
+    "auth_refresh_revocations",
+    # Notifications + privacy prefs
+    "notification_preferences",
+    "notification_user_settings",
+    "privacy_user_settings",
+    "webpush_subscriptions",
+    # Purge tombstones + audit
+    "purged_conversations",
+    "purged_documents",
+    "action_log",
+    "audit_log",
 )
 
 
@@ -136,8 +163,15 @@ def _resolve_target_user_id(conn) -> str | None:
     """
     explicit = os.environ.get("INBOX_OWNER_USER_ID", "").strip()
     if explicit:
-        _log.info("Resolved target via INBOX_OWNER_USER_ID = %s", explicit)
-        return explicit
+        auth_enabled = os.environ.get("AUTH_ENABLED", "false").strip().lower() == "true"
+        if explicit == "default" and auth_enabled:
+            _log.warning(
+                "INBOX_OWNER_USER_ID='default' is ignored when AUTH_ENABLED=true — "
+                "remap would be a no-op; falling through to bootstrap email resolution."
+            )
+        else:
+            _log.info("Resolved target via INBOX_OWNER_USER_ID = %s", explicit)
+            return explicit
 
     bootstrap_email = os.environ.get("LUMOGIS_BOOTSTRAP_ADMIN_EMAIL", "").strip()
     if bootstrap_email:

@@ -37,8 +37,10 @@ def test_session_end_handler_lists_without_ollama(
         ],
     )
 
-    session_end_handle(user_id="alice", payload=payload)
+    session_end_handle(user_id="alice", job_id=1, payload=payload)
 
-    listed = list_conversations("alice")
+    from auth import UserContext
+
+    listed = list_conversations(UserContext(user_id="alice"))
     assert any(c.conversation_id == sid for c in listed)
     assert mock_vector_store._collections.get("conversations", []) == []

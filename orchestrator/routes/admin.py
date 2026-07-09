@@ -39,19 +39,21 @@ from fastapi.responses import JSONResponse
 from permissions import get_all_permissions
 from permissions import set_connector_mode
 from pydantic import BaseModel
+from services.ollama_pull_jobs import (
+    QDRANT_INIT_WARNING_MSG,  # noqa: F401 — re-exported (tests import from routes.admin)
+)
+from services.ollama_pull_jobs import JobAlreadyRunning
+from services.ollama_pull_jobs import create_job
+from services.ollama_pull_jobs import get_active_job
+from services.ollama_pull_jobs import get_job
+from services.ollama_pull_jobs import job_to_response
+from services.ollama_pull_jobs import run_pull_job
 from settings_store import get_setting
 from settings_store import put_settings
 
 import config
 from services import admin_ollama as admin_ollama_svc
 from services import connector_credentials
-from services.ollama_pull_jobs import JobAlreadyRunning
-from services.ollama_pull_jobs import QDRANT_INIT_WARNING_MSG
-from services.ollama_pull_jobs import create_job
-from services.ollama_pull_jobs import get_active_job
-from services.ollama_pull_jobs import get_job
-from services.ollama_pull_jobs import job_to_response
-from services.ollama_pull_jobs import run_pull_job
 
 _DASHBOARD_HTML = Path(__file__).parent.parent / "dashboard" / "index.html"
 _GRAPH_MGM_HTML = Path(__file__).parent.parent / "static" / "graph_mgm.html"
@@ -129,6 +131,8 @@ class SettingsUpdate(BaseModel):
     default_model: str | None = None
     optional_models: dict[str, bool] | None = None
     reranker_enabled: bool | None = None
+    privacy_mode: str | None = None
+    privacy_mode_locked: bool | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -1010,6 +1014,10 @@ def _get_settings_response(
     if api_key_status is not None:
         response["api_key_status"] = api_key_status
 
+    from services.privacy_mode import get_instance_privacy_settings
+
+    response.update(get_instance_privacy_settings())
+
     display_paths = (
         pending_ingest_paths if pending_ingest_paths is not None else effective_ingest_paths
     )
@@ -1120,6 +1128,28 @@ def update_settings(body: SettingsUpdate, user: UserContext = Depends(get_user))
                 _log.info("Updated RERANKER_BACKEND in /project/.env to %s", new_val)
             except Exception as exc:
                 _log.warning("Could not write RERANKER_BACKEND to /project/.env: %s", exc)
+
+    if body.privacy_mode is not None or body.privacy_mode_locked is not None:
+        from models.privacy_mode import InstancePrivacyMode
+        from services.privacy_mode import effective_privacy_mode
+        from services.privacy_mode import validate_instance_privacy_patch
+
+        current = effective_privacy_mode(None)
+        new_mode = (
+            InstancePrivacyMode(body.privacy_mode)
+            if body.privacy_mode is not None
+            else None
+        )
+        validate_instance_privacy_patch(
+            current_mode=current.instance_mode,
+            current_locked=current.instance_locked,
+            new_mode=new_mode,
+            new_locked=body.privacy_mode_locked,
+        )
+        if body.privacy_mode is not None:
+            updates["privacy_mode"] = body.privacy_mode
+        if body.privacy_mode_locked is not None:
+            updates["privacy_mode_locked"] = "true" if body.privacy_mode_locked else "false"
 
     if updates:
         put_settings(store, updates)

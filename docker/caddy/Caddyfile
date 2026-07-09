@@ -82,13 +82,20 @@
 	}
 
 	# Legacy root JSON routes still served by the orchestrator. Keep these
-	# before the SPA catch-all. Browser navigations to `/search` remain with
-	# Lumogis Web; API-style `/search` calls are forwarded.
+	# before the SPA catch-all. Browser navigations to `/search` and `/audit`
+	# remain with Lumogis Web; API-style calls are forwarded.
 	@legacy_search_api {
 		path /search
 		not header Accept *text/html*
 	}
 	handle @legacy_search_api {
+		reverse_proxy orchestrator:8000
+	}
+	@legacy_audit_api {
+		path /audit*
+		not header Accept *text/html*
+	}
+	handle @legacy_audit_api {
 		reverse_proxy orchestrator:8000
 	}
 	handle /ingest {
@@ -98,9 +105,6 @@
 		reverse_proxy orchestrator:8000
 	}
 	handle /actions* {
-		reverse_proxy orchestrator:8000
-	}
-	handle /audit* {
 		reverse_proxy orchestrator:8000
 	}
 	handle /routines* {

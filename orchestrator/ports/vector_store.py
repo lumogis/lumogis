@@ -50,9 +50,19 @@ class VectorStore(Protocol):
         ``visibility.visible_qdrant_filter``): without payload indexes on
         ``user_id`` and ``scope``, every Qdrant search degrades to a full
         payload scan once the household corpus grows past a few thousand
-        points. Idempotent — calling on an already-indexed field must not
-        raise. Backends that do not support payload indexing must
-        implement this as a no-op.
+        points. The ``documents`` collection is additionally indexed on
+        ``file_path`` for document-scoped chat (LUM-175 Bridge A / LUM-505),
+        which AND-filters retrieval to a single document's path. Idempotent —
+        calling on an already-indexed field must not raise. Backends that do
+        not support payload indexing must implement this as a no-op.
+        """
+        ...
+
+    def ensure_tenant_payload_index(self, collection: str, field: str) -> None:
+        """Create a keyword payload index with ``is_tenant=true`` when supported.
+
+        Used for Qdrant multitenancy on the ``bank`` field (LUM-293). Backends
+        without tenant indexing implement this as a no-op.
         """
         ...
 
@@ -106,4 +116,18 @@ class VectorStore(Protocol):
 
     def count(self, collection: str) -> int:
         """Return the number of vectors in the collection."""
+        ...
+
+    def count_where(self, collection: str, filter: dict) -> int:
+        """Return the number of points matching a payload filter dict.
+
+        filter format: {"must": [{"key": "field", "match": {"value": "x"}}]}
+        (same shape as :meth:`delete_where`). Returns 0 if no points match.
+
+        Used by the admin unshare path (LUM-584) to verify a share's Qdrant
+        mirror is actually gone after teardown — the shared delete primitive
+        swallows backend failures, so a post-teardown count is the honest
+        check for a privacy-critical retraction. Backends without a
+        server-side count must scroll-and-count.
+        """
         ...

@@ -9,7 +9,9 @@ REPO_ROOT=$(cd "${SCRIPT_DIR}/../.." && pwd)
 SNAPSHOT_PATH="clients/lumogis-web/openapi.snapshot.json"
 HEAD_FILE="${REPO_ROOT}/${SNAPSHOT_PATH}"
 
-fail_on="${OPENAPI_BREAKING_FAIL_ON:-ERR}"
+# LUM-312 — default tightened ERR -> WARN after burn-in (fails on potential-breaking
+# WARN-level findings too). Override with OPENAPI_BREAKING_FAIL_ON=ERR for the looser gate.
+fail_on="${OPENAPI_BREAKING_FAIL_ON:-WARN}"
 case "$fail_on" in
   ERR | WARN | INFO | off) ;;
   *)

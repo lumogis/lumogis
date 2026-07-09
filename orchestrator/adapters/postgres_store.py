@@ -46,6 +46,22 @@ class PostgresStore:
         with self._conn.cursor() as cur:
             cur.execute(query, params)
 
+    def execute_isolated(self, query: str, params: tuple | None = None) -> None:
+        """Execute on a dedicated short-lived connection (LUM-334).
+
+        Safe to call off the request path / from a background thread: it does
+        not touch the shared ``self._conn``, so a background writer never
+        contends with request handlers on the process-wide connection. Used for
+        the throttled ``users.last_seen_at`` touch. Best-effort: the caller
+        swallows failures.
+        """
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(query, params)
+        finally:
+            conn.close()
+
     def fetch_one(self, query: str, params: tuple | None = None) -> dict | None:
         self._ensure_conn()
         with self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -61,6 +77,24 @@ class PostgresStore:
 
     def close(self) -> None:
         self._conn.close()
+
+    @contextmanager
+    def checkout_connection(self):
+        """Yield a dedicated psycopg2 connection for session advisory locks (LUM-358).
+
+        Independent of the process-wide ``self._conn`` so ``_ensure_conn()``
+        reconnect on the singleton cannot drop a held ``pg_advisory_lock``.
+        Caller must close via context exit; ``autocommit=True`` matches the
+        digest/consolidation non-transactional lock pattern.
+        """
+        conn = self._connect()
+        try:
+            yield conn
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
     @contextmanager
     def transaction(self):

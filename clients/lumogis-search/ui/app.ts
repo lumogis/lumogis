@@ -30,8 +30,11 @@ import {
 import {
   activateSummonHint,
   dismissSummonHint,
+  isRecoveryHintActive,
   isSummonHintActive,
+  offerRecoveryHintIfNeeded,
   offerSummonHintIfPending,
+  upsertRecoveryHintElement,
   upsertSummonHintElement,
 } from "./summonHint";
 import {
@@ -507,6 +510,9 @@ function render() {
 
   if (isSummonHintActive()) {
     upsertSummonHintElement(root, settings.hotkey);
+  }
+  if (isRecoveryHintActive()) {
+    upsertRecoveryHintElement(root, ctx);
   }
 }
 
@@ -1050,7 +1056,13 @@ async function listenOverlay(
   return listen(event, handler);
 }
 
-async function boot() {
+let overlayEventListenersBound = false;
+
+async function bindOverlayEventListeners(): Promise<void> {
+  if (overlayEventListenersBound) {
+    return;
+  }
+  overlayEventListenersBound = true;
   await listenOverlay("overlay-config-corrupt", (ev) => {
     const p = (ev.payload as { error?: string; path?: string }) || {};
     const ok = confirm(
@@ -1089,19 +1101,26 @@ async function boot() {
       dismissSummonHint(ctx);
     }
   });
+}
 
-  // Resolve the desktop profile before the first render().
-  profile = hooks.resolveProfile ? await hooks.resolveProfile() : await defaultResolveProfile();
+async function applyOverlayBootState(firstBoot: boolean): Promise<void> {
+  if (firstBoot) {
+    profile = hooks.resolveProfile ? await hooks.resolveProfile() : await defaultResolveProfile();
+  }
 
   try {
     await refreshSettingsFromRust();
     await hooks.prepareBoot?.(ctx);
-    unwatchSystemTheme?.();
-    unwatchSystemTheme = watchSystemTheme(() => {
-      if (currentTheme() === "system") applyTheme("system");
-    });
+    if (firstBoot) {
+      unwatchSystemTheme?.();
+      unwatchSystemTheme = watchSystemTheme(() => {
+        if (currentTheme() === "system") applyTheme("system");
+      });
+    }
     render();
-    await hooks.onBoot?.(ctx);
+    if (firstBoot) {
+      await hooks.onBoot?.(ctx);
+    }
     if (!shouldShowOnboarding()) {
       if (import.meta.env.VITE_WDIO_E2E === "true") {
         // WDIO specs mock invoke; avoid blocking boot on live Core.
@@ -1116,13 +1135,36 @@ async function boot() {
       }
       render();
     }
-    if (import.meta.env.VITE_WDIO_E2E !== "true") {
+    if (firstBoot && import.meta.env.VITE_WDIO_E2E !== "true") {
       await offerSummonHintIfPending(ctx);
+      // LUM-455: independently offer the Wayland re-summon recovery hint (Rust-gated).
+      await offerRecoveryHintIfNeeded(ctx);
     }
   } catch (e) {
     root.innerHTML = `<div class="banner err"><p>Lumogis failed to start.</p><p class="hint">${String(e)}</p></div>`;
   }
 }
 
-  return { boot };
+async function boot() {
+  await bindOverlayEventListeners();
+  await applyOverlayBootState(true);
+}
+
+/** WDIO mock-leg: reset UI state from mocked invoke without re-binding Tauri listeners. */
+async function rebootForE2e(): Promise<void> {
+  settingsViewOpen = false;
+  adminSettings = null;
+  selectedHitIndex = 0;
+  if (lastController) {
+    lastController.abort();
+    lastController = null;
+  }
+  if (debounceTimer) {
+    clearTimeout(debounceTimer);
+    debounceTimer = null;
+  }
+  await applyOverlayBootState(false);
+}
+
+  return { boot, rebootForE2e };
 }

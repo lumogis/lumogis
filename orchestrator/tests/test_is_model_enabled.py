@@ -14,6 +14,8 @@ def _fake_store(settings: dict):
 
     def fetch_one(query, params):
         key = params[0] if params else None
+        if key == "privacy_mode":
+            return {"value": "allow_cloud"}
         if key and key in settings:
             return {"value": settings[key]}
         return None

@@ -206,4 +206,25 @@ describe("consumeChatStream", () => {
     expect(onError).not.toHaveBeenCalled();
     expect(onDone).toHaveBeenCalledTimes(1);
   });
+
+  it("parses lumogis.context_citations on the first chunk", async () => {
+    const onContextCitations = vi.fn();
+    const stream = streamFrom([
+      chunk({
+        ...makeChunkObject("", { role: "assistant" }),
+        lumogis: {
+          context_citations: [
+            { chunk_index: 4, file_path: "/doc.pdf", score: 0.9, score_kind: "rerank" },
+          ],
+        },
+      }),
+      chunk("[DONE]"),
+    ]);
+
+    await consumeChatStream(stream, { onDelta: vi.fn(), onContextCitations, onDone: vi.fn() });
+
+    expect(onContextCitations).toHaveBeenCalledWith([
+      { chunk_index: 4, file_path: "/doc.pdf", score: 0.9, score_kind: "rerank" },
+    ]);
+  });
 });

@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock
 
+import pytest
 from auth import UserContext
 from models.search import SearchResult
 from services.auto_rag import retrieve_document_context
@@ -312,3 +313,107 @@ def test_auto_rag_never_raises(monkeypatch) -> None:
 
     monkeypatch.setattr(cfg, "get_embedder", lambda: MagicMock(embed=_boom))
     assert retrieve_document_context("q", "u1") == []
+
+
+def test_auto_rag_scoped_bypasses_global_disabled(monkeypatch) -> None:
+    import config as cfg
+
+    called = {"search": False}
+
+    def _search(**kw):
+        called["search"] = True
+        return []
+
+    monkeypatch.setattr(cfg, "get_auto_rag_enabled", lambda: False)
+    monkeypatch.setattr(cfg, "get_document_chat_top_k_pre", lambda: 40)
+    monkeypatch.setattr(cfg, "get_document_chat_top_k_post", lambda: 12)
+    monkeypatch.setattr(cfg, "get_auto_rag_min_rerank_score", lambda: 0.0)
+    monkeypatch.setattr(cfg, "get_auto_rag_min_bi_encoder_score", lambda: 0.55)
+    monkeypatch.setattr(cfg, "get_auto_rag_max_tokens", lambda: 512)
+    monkeypatch.setattr(cfg, "get_embedder", lambda: MagicMock(embed=lambda _q: [0.0]))
+    monkeypatch.setattr(cfg, "get_vector_store", lambda: MagicMock(search=_search))
+    monkeypatch.setattr(cfg, "get_reranker", lambda: None)
+
+    retrieve_document_context("q", "u1", file_path="/doc.pdf", scoped=True)
+    assert called["search"] is True
+
+
+def test_auto_rag_file_path_filter_merged(monkeypatch) -> None:
+    import config as cfg
+
+    captured: dict = {}
+
+    def _search(**kw):
+        captured["filter"] = kw.get("filter")
+        return []
+
+    monkeypatch.setattr(cfg, "get_auto_rag_enabled", lambda: True)
+    monkeypatch.setattr(cfg, "get_document_chat_top_k_pre", lambda: 40)
+    monkeypatch.setattr(cfg, "get_document_chat_top_k_post", lambda: 12)
+    monkeypatch.setattr(cfg, "get_auto_rag_top_k_pre", lambda: 20)
+    monkeypatch.setattr(cfg, "get_auto_rag_top_k_post", lambda: 3)
+    monkeypatch.setattr(cfg, "get_auto_rag_min_rerank_score", lambda: 0.0)
+    monkeypatch.setattr(cfg, "get_auto_rag_min_bi_encoder_score", lambda: 0.55)
+    monkeypatch.setattr(cfg, "get_auto_rag_max_tokens", lambda: 512)
+    monkeypatch.setattr(cfg, "get_embedder", lambda: MagicMock(embed=lambda _q: [0.0]))
+    monkeypatch.setattr(cfg, "get_vector_store", lambda: MagicMock(search=_search))
+    monkeypatch.setattr(cfg, "get_reranker", lambda: None)
+
+    retrieve_document_context("q", "u1", file_path="/pinned.pdf", scoped=True)
+
+    filt = captured["filter"]
+    assert "must" in filt
+    assert len(filt["must"]) == 2
+    base = filt["must"][0]
+    assert "should" in base
+    path_clause = filt["must"][1]
+    assert path_clause == {"key": "file_path", "match": {"value": "/pinned.pdf"}}
+
+
+def test_auto_rag_scoped_raises_on_infra_failure(monkeypatch) -> None:
+    import config as cfg
+
+    monkeypatch.setattr(cfg, "get_auto_rag_enabled", lambda: False)
+    monkeypatch.setattr(cfg, "get_document_chat_top_k_pre", lambda: 40)
+    monkeypatch.setattr(cfg, "get_document_chat_top_k_post", lambda: 12)
+    monkeypatch.setattr(
+        cfg,
+        "get_embedder",
+        lambda: MagicMock(embed=lambda _q: (_ for _ in ()).throw(RuntimeError("down"))),
+    )
+
+    with pytest.raises(RuntimeError, match="down"):
+        retrieve_document_context("q", "u1", scoped=True, file_path="/x.pdf")
+
+
+def test_auto_rag_scoped_uses_elevated_top_k(monkeypatch) -> None:
+    import config as cfg
+
+    raw = [
+        {
+            "id": str(i),
+            "score": 0.9 - i * 0.01,
+            "payload": {"text": f"t{i}", "file_path": "/doc.pdf", "scope": "personal"},
+            "score_space": "cosine",
+        }
+        for i in range(10)
+    ]
+    captured: dict = {}
+
+    def _search(**kw):
+        captured["limit"] = kw.get("limit")
+        return raw
+
+    monkeypatch.setattr(cfg, "get_auto_rag_enabled", lambda: True)
+    monkeypatch.setattr(cfg, "get_document_chat_top_k_pre", lambda: 40)
+    monkeypatch.setattr(cfg, "get_document_chat_top_k_post", lambda: 8)
+    monkeypatch.setattr(cfg, "get_auto_rag_min_rerank_score", lambda: 0.0)
+    monkeypatch.setattr(cfg, "get_auto_rag_min_bi_encoder_score", lambda: 0.1)
+    monkeypatch.setattr(cfg, "get_auto_rag_max_tokens", lambda: 4096)
+    monkeypatch.setattr(cfg, "get_embedder", lambda: MagicMock(embed=lambda _q: [0.0]))
+    monkeypatch.setattr(cfg, "get_vector_store", lambda: MagicMock(search=_search))
+    monkeypatch.setattr(cfg, "get_reranker", lambda: None)
+
+    hits = retrieve_document_context("q", "u1", scoped=True, file_path="/doc.pdf")
+    assert captured["limit"] == 40
+    assert len(hits) > 3

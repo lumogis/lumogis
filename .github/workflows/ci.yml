@@ -9,11 +9,20 @@ on:
   push:
     branches: [main, master]
 
+# Cancel superseded PR runs (saves Actions minutes — CI is the heaviest always-on
+# workflow); never cancel an in-flight main run so the gate stays authoritative.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # LUM-379 — full history so diff-cover can diff against the PR base.
+          fetch-depth: 0
 
       - name: LUM-190 — security-audit path gate contract tests
         run: bash .github/scripts/test-security-audit-paths.sh
@@ -56,11 +65,30 @@ jobs:
 
       - name: Test orchestrator
         run: |
-          cd orchestrator && python -m pytest tests/ -x -q
+          cd orchestrator && python -m pytest tests/ -x -q \
+            --cov=. --cov-report=lcov:"$GITHUB_WORKSPACE/coverage-orchestrator.lcov"
+
+      - name: Detect lumogis-mcp changes (PR)
+        id: lumogis_mcp_changes
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch origin "${{ github.base_ref }}"
+          if git diff --name-only "origin/${{ github.base_ref }}"...HEAD | grep -qE '^(clients/lumogis-mcp/|scripts/install-cursor-mcp\.sh|Makefile|tests/fixtures/coding_bank\.json)'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Test lumogis-mcp client (LUM-292)
+        if: |
+          github.event_name != 'pull_request' ||
+          steps.lumogis_mcp_changes.outputs.run == 'true'
+        run: make test-lumogis-mcp
 
       - name: Test stack-control
         run: |
-          cd stack-control && python -m pytest test_main.py -q
+          cd stack-control && python -m pytest test_main.py -q \
+            --cov=. --cov-report=lcov:"$GITHUB_WORKSPACE/coverage-stack-control.lcov"
 
       - name: Test lumogis-graph
         run: |
@@ -69,6 +97,31 @@ jobs:
             exit 0
           fi
           cd services/lumogis-graph && python -m pytest -q
+
+      # LUM-379 — report changed-line coverage via diff-cover (advisory; no --fail-under).
+      # PR-only (needs a base to diff against). lcov SF paths are emitted relative to each
+      # test CWD, so prefix them to repo-relative before diff-cover matches the git diff.
+      # Exemptions (migrations / generated / vendored) are documented in CONTRIBUTING.md.
+      # Required --fail-under=80 gate deferred until LUM-384 matrix + burn-in (Linear child).
+      - name: LUM-379 — changed-line coverage report (diff-cover, advisory)
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          test -f coverage-orchestrator.lcov || { echo "missing coverage-orchestrator.lcov" >&2; exit 1; }
+          test -f coverage-stack-control.lcov || { echo "missing coverage-stack-control.lcov" >&2; exit 1; }
+          sed -i 's#^SF:#SF:orchestrator/#' coverage-orchestrator.lcov
+          sed -i 's#^SF:#SF:stack-control/#' coverage-stack-control.lcov
+          # Advisory only — omit --fail-under until required gate is promoted (see CONTRIBUTING.md).
+          diff-cover coverage-orchestrator.lcov coverage-stack-control.lcov \
+            --compare-branch "$BASE_SHA" \
+            --show-uncovered \
+            --exclude '*/migrations/*' \
+            --exclude '*/alembic/*' \
+            --exclude '*/generated/*' \
+            --exclude '*/vendor/*'
 
       - uses: actions/setup-node@v4
         with:
@@ -227,7 +280,9 @@ jobs:
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
-          OPENAPI_BREAKING_FAIL_ON: ERR
+          # LUM-312 — post burn-in: tightened from ERR to WARN so potential-breaking
+          # (WARN-level) findings also fail CI, not just definite breaking changes.
+          OPENAPI_BREAKING_FAIL_ON: WARN
         run: |
           set -euo pipefail
           FIXDIR="scripts/fixtures/openapi-breaking-check"
@@ -255,6 +310,51 @@ jobs:
             exit 1
           }
           make openapi-breaking-check
+
+      # LUM-314 — optional human-readable HTML changelog of the OpenAPI drift.
+      # oasdiff annotations are dense; this artefact helps reviewers eyeball large
+      # snapshot diffs. Review UX only — never gates: continue-on-error + tolerant
+      # of a missing base snapshot. Reuses the oasdiff already installed above
+      # (its `changelog --format html`), so no extra tool dependency.
+      - name: OpenAPI changes HTML report (review UX, LUM-314)
+        if: steps.paths.outputs.should_run == 'true'
+        continue-on-error: true
+        shell: bash
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
+        run: |
+          set -uo pipefail
+          SNAP="clients/lumogis-web/openapi.snapshot.json"
+          # Resolve the same base revision the breaking gate uses (PR merge-base,
+          # else previous commit) so the report matches the gate's comparison.
+          if [[ "${GITHUB_EVENT_NAME:-}" == "pull_request" && -n "${BASE_SHA:-}" && -n "${HEAD_SHA:-}" ]]; then
+            base_rev="$(git merge-base "$BASE_SHA" "$HEAD_SHA" 2>/dev/null || echo "$BASE_SHA")"
+          else
+            base_rev="HEAD~1"
+          fi
+          mkdir -p openapi-report
+          if ! git show "${base_rev}:${SNAP}" > openapi-report/base.json 2>/dev/null; then
+            echo "LUM-314: no base snapshot at ${base_rev}:${SNAP}; skipping HTML report"
+            exit 0
+          fi
+          if ! oasdiff changelog openapi-report/base.json "$SNAP" --format html \
+                > openapi-report/openapi-changes.html 2>openapi-report/oasdiff.err; then
+            echo "LUM-314: oasdiff changelog failed; skipping HTML report"
+            cat openapi-report/oasdiff.err >&2 || true
+            exit 0
+          fi
+          echo "LUM-314: wrote openapi-report/openapi-changes.html (base ${base_rev})"
+
+      - name: Upload OpenAPI changes HTML report (LUM-314)
+        if: steps.paths.outputs.should_run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: openapi-changes-html
+          path: openapi-report/openapi-changes.html
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Skip OpenAPI check (path contract)
         if: steps.paths.outputs.should_run != 'true'
@@ -316,6 +416,7 @@ jobs:
           name: doctor-json
           path: doctor.json
           if-no-files-found: ignore
+          retention-days: 7
 
       - name: Compose diagnostics (bounded)
         if: always() && steps.paths.outputs.should_run == 'true'
@@ -499,6 +600,7 @@ jobs:
         with:
           name: bandit-orchestrator
           path: bandit-orchestrator.log
+          retention-days: 7
 
       - name: Skip security audit (path contract)
         if: steps.paths.outputs.should_run != 'true'

@@ -80,6 +80,81 @@ def test_visible_filter_rejects_unknown_scope(user):
         visible_filter(user, scope_filter="")
 
 
+def test_visible_filter_personal_only_member_excludes_shared(user):
+    personal_only = UserContext(
+        user_id="alice", is_authenticated=True, role="user", allows_shared=False
+    )
+    clause, params = visible_filter(personal_only)
+    assert clause == "((scope = 'personal' AND user_id = %s) OR scope = 'system')"
+    assert params == ("alice",)
+
+
+def test_visible_filter_personal_only_shared_scope_returns_false(user):
+    personal_only = UserContext(
+        user_id="alice", is_authenticated=True, role="user", allows_shared=False
+    )
+    clause, params = visible_filter(personal_only, scope_filter="shared")
+    assert clause == "(FALSE)"
+    assert params == ()
+
+
+def test_visible_filter_admin_ignores_allows_shared_flag():
+    admin = UserContext(user_id="adam", is_authenticated=True, role="admin", allows_shared=False)
+    clause, params = visible_filter(admin)
+    assert clause == ("((scope = 'personal' AND user_id = %s) OR scope IN ('shared','system'))")
+    assert params == ("adam",)
+
+
+def test_visible_filter_user_id_only_context_uses_db_allows_shared(monkeypatch):
+    """Routes that rebuild UserContext(user_id=...) must not inherit default admin role."""
+    monkeypatch.setattr(
+        "services.users.get_allows_shared",
+        lambda user_id: user_id != "bob",
+    )
+    ctx = UserContext(user_id="bob")
+    clause, params = visible_filter(ctx)
+    assert clause == "((scope = 'personal' AND user_id = %s) OR scope = 'system')"
+    assert params == ("bob",)
+
+
+def test_visible_qdrant_filter_user_id_only_context_uses_db_allows_shared(monkeypatch):
+    monkeypatch.setattr(
+        "services.users.get_allows_shared",
+        lambda user_id: user_id != "bob",
+    )
+    ctx = UserContext(user_id="bob")
+    f = visible_qdrant_filter(ctx)
+    assert f == {
+        "should": [
+            {
+                "must": [
+                    {"key": "scope", "match": {"value": "personal"}},
+                    {"key": "user_id", "match": {"value": "bob"}},
+                ]
+            },
+            {"key": "scope", "match": {"value": "system"}},
+        ]
+    }
+
+
+def test_visible_qdrant_filter_personal_only_excludes_shared_arm(user):
+    personal_only = UserContext(
+        user_id="alice", is_authenticated=True, role="user", allows_shared=False
+    )
+    f = visible_qdrant_filter(personal_only)
+    assert f == {
+        "should": [
+            {
+                "must": [
+                    {"key": "scope", "match": {"value": "personal"}},
+                    {"key": "user_id", "match": {"value": "alice"}},
+                ]
+            },
+            {"key": "scope", "match": {"value": "system"}},
+        ]
+    }
+
+
 def test_admin_unfiltered_filter_defaults_to_true():
     clause, params = admin_unfiltered_filter()
     assert clause == "(TRUE)"

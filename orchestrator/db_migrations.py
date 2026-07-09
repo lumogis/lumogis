@@ -70,6 +70,16 @@ for human readers cross-referencing plans/ADRs):
                      first-run onboarding gate for Lumogis Web — LUM-165)
   028 user-wow-dismissed-at  (nullable ``users.wow_dismissed_at``; first wow-moment
                      path dismissal for Lumogis Web — LUM-216)
+  035 ingest-job-progress  (``user_batch_jobs.progress_*`` columns + batch_id index;
+                     ingest SSE/poll progress — LUM-511)
+  044 user-invites  (single-use hashed household invite links — LUM-186)
+  045 users-allows-shared  (``users.allows_shared`` per-user shared-scope gate — LUM-577)
+  048 users-display-name  (nullable ``users.display_name``; admin-managed
+                     "Shared by {member}" attribution label — LUM-585)
+  049 entity-edges-graph-projected-at  (nullable ``entity_edges.graph_projected_at``
+                     stamp; drives the typed-edge reconcile replay — LUM-580)
+  051 fix-cursor-integration-email  (rewrite legacy ``@test.lumogis.local`` fixture
+                     email so ``GET /api/v1/admin/users`` can hydrate rows — LUM-540)
 
   Lexical ordering applies **all** ``024-*.sql`` files before ``025-*.sql``;
   two ``024-*`` prefixes already coexist (``024-paperless-external-documents.sql``
@@ -159,7 +169,12 @@ def _record(conn, filename: str, checksum: str) -> None:
         )
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    # LUM-187 — `--dry-run` previews pending migrations without applying them
+    # (powers `make migrate-dry-run` before an operator runs `make update`).
+    args = sys.argv[1:] if argv is None else argv
+    dry_run = "--dry-run" in args
+
     if not MIGRATIONS_DIR.is_dir():
         print(f"[migrations] no migrations directory at {MIGRATIONS_DIR}; skipping")
         return 0
@@ -176,6 +191,25 @@ def main() -> int:
         _ensure_table(conn)
         conn.commit()
         applied = _applied(conn)
+
+        if dry_run:
+            pending = [Path(p).name for p in files if Path(p).name not in applied]
+            if not pending:
+                print(
+                    f"[migrations] DRY RUN: up to date ({len(files)} files, "
+                    f"{len(applied)} already applied); nothing pending"
+                )
+            else:
+                print(
+                    f"[migrations] DRY RUN: {len(pending)} pending migration(s) would be applied:"
+                )
+                for name in pending:
+                    print(f"[migrations]   - {name}")
+            # Preview only: no migration SQL is executed and nothing is recorded.
+            # (The schema_migrations bookkeeping table is ensured above via an
+            # idempotent CREATE TABLE IF NOT EXISTS — a no-op on any running
+            # instance, where boot migrations already created it.)
+            return 0
 
         # Pre-seed: if migration files already match what's in the live schema
         # (e.g. an existing install upgraded today), record them as applied

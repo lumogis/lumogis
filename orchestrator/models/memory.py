@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Lumogis
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel
@@ -12,6 +13,7 @@ class SessionSummary(BaseModel):
     entities: list[str] = []
     entity_ids: list[str] = []
     scope: str = "personal"
+    updated_at: datetime | None = None
 
 
 class ContextHit(BaseModel):

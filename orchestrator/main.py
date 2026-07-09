@@ -29,7 +29,9 @@ import hooks
 import mcp_server
 from auth import auth_middleware
 from correlation import correlation_middleware
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI
+from fastapi import HTTPException
+from fastapi import Request
 from plugins import load_plugins
 from routes.actions import router as actions_router
 from routes.admin import router as admin_router
@@ -38,6 +40,7 @@ from routes.admin_ollama import router as admin_ollama_router
 from routes.admin_users import imports_router as admin_user_imports_router
 from routes.admin_users import router as admin_users_router
 from routes.auth import router as auth_router
+from routes.invites import router as invites_router
 from routes.capabilities import router as capabilities_router
 from routes.chat import router as chat_router
 from routes.connector_credentials import admin_router as connector_credentials_admin_router
@@ -51,6 +54,7 @@ from routes.connector_credentials import (
 from routes.data import router as data_router
 from routes.events import register_hooks as register_sse_hooks
 from routes.events import router as events_router
+from routes.admin_sharing import router as admin_sharing_router
 from routes.mcp_tokens import admin_router as mcp_tokens_admin_router
 from routes.mcp_tokens import router as mcp_tokens_router
 from routes.me import router as me_router
@@ -66,7 +70,7 @@ _log = logging.getLogger(__name__)
 # Qdrant collections created on startup.
 # "signals" stores embedded content summaries for semantic dedup.
 # Vector size 768 matches Nomic Embed. Changing later requires drop + re-index.
-_COLLECTIONS = ["documents", "conversations", "entities", "signals"]
+_COLLECTIONS = ["documents", "conversations", "entities", "signals", "memories"]
 
 
 def _wire_graph_mode_handlers(graph_mode: str) -> str:
@@ -134,6 +138,66 @@ def _wire_graph_mode_handlers(graph_mode: str) -> str:
     return effective_mode
 
 
+def _bind_host_is_loopback(host: str) -> bool:
+    """Classify ``LUMOGIS_BIND_HOST`` for the exposure guard (LUM-473 Chunk A).
+
+    Returns ``True`` only for the loopback interface (and the literal
+    ``localhost``); **everything else** — private LAN IPs, link-local, public,
+    or any unparseable/hostname value — is treated as **non-loopback** so the
+    guard fails safe. This is deliberately stricter than
+    ``config._stt_sidecar_host_allowed`` (which also permits private/link-local
+    and single-label hostnames): a Core bound to a private LAN address is
+    *exactly* the exposed case that must mandate auth.
+
+    An empty/unset value maps to loopback because the native launcher defaults
+    ``--host`` to ``127.0.0.1`` and only sets ``LUMOGIS_BIND_HOST`` explicitly.
+    The Docker path never sets it, so the guard stays passive there even though
+    the container binds ``0.0.0.0`` (host port-mapping, not the container bind,
+    decides real exposure) — see the plan's Docker no-regression note.
+    """
+    import ipaddress
+
+    h = host.strip()
+    if not h or h.lower() == "localhost":
+        return True
+    try:
+        addr = ipaddress.ip_address(h)
+    except ValueError:
+        # Hostname / unparseable → cannot prove loopback → fail safe (exposed).
+        return False
+    embedded = getattr(addr, "ipv4_mapped", None)
+    if embedded is not None:
+        addr = embedded
+    return addr.is_loopback
+
+
+def _run_post_bootstrap_default_user_remap() -> None:
+    """Second-chance remap after ``bootstrap_if_empty`` on first auth-on boot.
+
+    The docker-entrypoint / native launcher invoke ``db_default_user_remap.py``
+    **before** uvicorn starts. On the single→multi flip (LUM-473 household
+    sharing enable), that pass always races the empty ``users`` table: the
+    bootstrap admin email is set but the row does not exist yet, so legacy
+    ``user_id='default'`` rows are not remapped and the new admin's library
+    appears empty until an unrelated restart.
+
+    This pass is idempotent — when the pre-uvicorn remap already succeeded it
+    is a no-op.
+    """
+    try:
+        import db_default_user_remap
+
+        rc = db_default_user_remap.main()
+        if rc != 0:
+            _log.warning(
+                "post-bootstrap default-user remap exited %d — legacy "
+                "'default' rows may remain until the next restart",
+                rc,
+            )
+    except Exception:
+        _log.exception("post-bootstrap default-user remap failed")
+
+
 def _enforce_auth_consistency() -> None:
     """Refuse to boot when the env contradicts the users table.
 
@@ -157,6 +221,23 @@ def _enforce_auth_consistency() -> None:
     """
     import services.users as users_svc
     from auth import auth_enabled
+
+    # Exposure invariant (LUM-473 Chunk A): auth must NEVER be off on a
+    # non-loopback bind. Checked BEFORE the test escape hatch below because it
+    # is an independent security guard (not about the users table) and no
+    # existing test sets LUMOGIS_BIND_HOST — so it stays passive (loopback
+    # default) everywhere except a deliberately exposed Core. Dormant in Chunk A
+    # (Core binds 127.0.0.1); live for Chunk B when a proxy fronts the LAN.
+    bind_host = os.environ.get("LUMOGIS_BIND_HOST", "127.0.0.1")
+    if not _bind_host_is_loopback(bind_host) and not auth_enabled():
+        raise RuntimeError(
+            "LUMOGIS_BIND_HOST=%r is a non-loopback interface but "
+            "AUTH_ENABLED=false — refusing to boot. Exposing Core beyond "
+            "loopback without authentication would let anyone on the network "
+            "read every user's data. Either bind to 127.0.0.1 (loopback) or "
+            "set AUTH_ENABLED=true with a bootstrap admin, AUTH_SECRET, and "
+            "LUMOGIS_CREDENTIAL_KEY. See LUM-473." % bind_host
+        )
 
     # Test-only escape hatch — NEVER set in production, NEVER read from
     # any other module. Allows tests that exercise AUTH_ENABLED=true
@@ -275,6 +356,7 @@ async def lifespan(app: FastAPI):
         bootstrap_if_empty()
     except Exception:
         _log.exception("Bootstrap admin creation hit an unexpected error")
+    _run_post_bootstrap_default_user_remap()
     _enforce_auth_consistency()
     # Plan llm_provider_keys_per_user_migration Pass 2.6: refuse to boot if
     # SIGNAL_LLM_MODEL is a cloud model under AUTH_ENABLED=true (no per-user
@@ -358,19 +440,11 @@ async def lifespan(app: FastAPI):
     if _library_index_deferred():
         from services.index_bootstrap import prior_library_index_exists
 
-        if (
-            _library_resync_on_start()
-            and _embedding_ready
-            and prior_library_index_exists()
-        ):
+        if _library_resync_on_start() and _embedding_ready and prior_library_index_exists():
             enqueue_initial_ingest_scan()
-            _log.info(
-                "Library index resync enqueued on Hub cold start (prior index present)"
-            )
+            _log.info("Library index resync enqueued on Hub cold start (prior index present)")
         else:
-            _log.info(
-                "Library index scan deferred — Hub wizard will trigger explicitly"
-            )
+            _log.info("Library index scan deferred — Hub wizard will trigger explicitly")
     elif _embedding_ready:
         enqueue_initial_ingest_scan()
     else:
@@ -512,6 +586,30 @@ async def lifespan(app: FastAPI):
             coalesce=True,
         )
         _log.info("Action proposals queue APScheduler stuck sweeper registered")
+
+    if scheduler:
+        from services.memory_purge import PURGE_SWEEPER_INTERVAL_SECONDS
+        from services.memory_purge import sweep_partial_purges
+
+        def _purge_partial_sweep() -> None:
+            try:
+                sweep_partial_purges()
+            except Exception:
+                _log.exception("purge_partial_sweep failed")
+
+        scheduler.add_job(
+            _purge_partial_sweep,
+            trigger="interval",
+            seconds=PURGE_SWEEPER_INTERVAL_SECONDS,
+            id="purge_partial_sweep",
+            name="Partial conversation purge reconciliation sweeper",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        _log.info(
+            "Purge reconciliation sweeper registered (interval=%ds)", PURGE_SWEEPER_INTERVAL_SECONDS
+        )
 
     _graph_mode = _wire_graph_mode_handlers(config.read_graph_mode_from_env())
     config.set_effective_graph_mode_for_process(_graph_mode)
@@ -659,19 +757,14 @@ async def lifespan(app: FastAPI):
                     else:
                         from services.index_bootstrap import prior_library_index_exists
 
-                        if (
-                            _library_resync_on_start()
-                            and prior_library_index_exists()
-                        ):
+                        if _library_resync_on_start() and prior_library_index_exists():
                             enqueue_initial_ingest_scan()
                             _log.info(
                                 "Library index resync enqueued after embedding ready "
                                 "(Hub cold start)"
                             )
                 except Exception:
-                    _log.exception(
-                        "Failed to enqueue initial library scan after embedding ready"
-                    )
+                    _log.exception("Failed to enqueue initial library scan after embedding ready")
                 try:
                     scheduler.remove_job("embedding_readiness_retry")
                     _log.info("Embedding readiness retry job removed — embedder active")
@@ -844,6 +937,7 @@ def healthz(request: Request) -> dict[str, str]:
 app.middleware("http")(correlation_middleware)
 app.middleware("http")(auth_middleware)
 app.include_router(auth_router)
+app.include_router(invites_router)
 app.include_router(admin_users_router)
 app.include_router(admin_user_imports_router)
 app.include_router(me_router)
@@ -861,6 +955,7 @@ app.include_router(admin_router)
 app.include_router(data_router)
 app.include_router(signals_router)
 app.include_router(scope_router)
+app.include_router(admin_sharing_router)
 app.include_router(actions_router)
 from routes.connector_permissions import (
     admin_list_router as connector_permissions_admin_list_router,

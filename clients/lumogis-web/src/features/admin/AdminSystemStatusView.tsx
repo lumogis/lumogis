@@ -15,6 +15,7 @@ import {
 } from "../../api/adminOllama";
 import { fetchAdminStackStatus, type StackServiceState } from "../../api/adminStackStatus";
 import { fetchAdminBackupStatus } from "../../api/adminBackupStatus";
+import { fetchAdminUpdateStatus, type UpdateStatusResponse } from "../../api/adminUpdateStatus";
 import { ApiError } from "../../api/client";
 import { useAuth } from "../../auth/AuthProvider";
 
@@ -90,6 +91,102 @@ function isEmbeddingPullTarget(name: string, embeddingModel: string | null | und
   return isEmbeddingModel(name, embeddingModel);
 }
 
+const UPDATE_DISMISS_KEY = "lumogis.admin.updateDismissedVersion";
+
+function readDismissedVersion(): string | null {
+  try {
+    return localStorage.getItem(UPDATE_DISMISS_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function writeDismissedVersion(version: string): void {
+  try {
+    localStorage.setItem(UPDATE_DISMISS_KEY, version);
+  } catch {
+    // localStorage blocked — dismiss is a no-op
+  }
+}
+
+function UpdateStatusCardBody({
+  data,
+  dismissedVersion,
+  onDismiss,
+}: {
+  data: UpdateStatusResponse;
+  dismissedVersion: string | null;
+  onDismiss: (latestVersion: string) => void;
+}): JSX.Element | null {
+  const { checked, update_available, current_version, latest_version, checked_at, release_url, error } =
+    data;
+  const isDismissed =
+    update_available && latest_version != null && dismissedVersion === latest_version;
+
+  if (checked && update_available && !isDismissed) {
+    return (
+      <>
+        <p role="alert" style={{ color: "#ed6c02", fontSize: "0.9rem" }}>
+          A newer Lumogis release is available: <strong>{current_version}</strong>
+          {latest_version != null ? (
+            <>
+              {" "}
+              → <strong>{latest_version}</strong>
+            </>
+          ) : null}
+          .
+        </p>
+        {release_url ? (
+          <p style={{ fontSize: "0.85rem", margin: "0.35rem 0" }}>
+            <a href={release_url} target="_blank" rel="noopener noreferrer">
+              Release notes
+            </a>
+          </p>
+        ) : null}
+        <p style={{ fontSize: "0.85rem", margin: "0.35rem 0" }}>
+          Update on the host with <code>make update</code> (see the reference manual — Update
+          mechanism).
+        </p>
+        {latest_version != null ? (
+          <button
+            type="button"
+            aria-label={`Dismiss update notification for version ${latest_version}`}
+            onClick={() => onDismiss(latest_version)}
+          >
+            Dismiss
+          </button>
+        ) : null}
+      </>
+    );
+  }
+
+  if (checked && update_available && isDismissed) {
+    return null;
+  }
+
+  if (checked && !update_available && !error) {
+    return (
+      <p style={{ fontSize: "0.85rem", opacity: 0.85 }}>
+        Running the latest release (<strong>{current_version}</strong>).
+        {checked_at ? ` Last checked: ${checked_at}.` : null}
+      </p>
+    );
+  }
+
+  if (checked && !update_available && error) {
+    return (
+      <p style={{ fontSize: "0.85rem", opacity: 0.85 }}>
+        {error}
+        {latest_version ? ` (${latest_version})` : null}
+      </p>
+    );
+  }
+
+  return (
+    <p style={{ fontSize: "0.85rem", opacity: 0.85 }}>{error ?? "Update check unavailable."}</p>
+  );
+}
+
 export function AdminSystemStatusView(): JSX.Element {
   const { client } = useAuth();
   const queryClient = useQueryClient();
@@ -98,6 +195,9 @@ export function AdminSystemStatusView(): JSX.Element {
   const [ollamaActionError, setOllamaActionError] = useState<string | null>(null);
   const [ollamaPullWarning, setOllamaPullWarning] = useState<string | null>(null);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [dismissedVersion, setDismissedVersion] = useState<string | null>(() =>
+    readDismissedVersion(),
+  );
   const terminalHandledRef = useRef<string | null>(null);
 
   const status = useQuery({
@@ -113,6 +213,15 @@ export function AdminSystemStatusView(): JSX.Element {
     enabled: status.isSuccess,
     refetchInterval: (query) => (query.state.data ? 30_000 : false),
     refetchIntervalInBackground: false,
+  });
+
+  const updateStatus = useQuery({
+    queryKey: ["admin", "update-status"],
+    queryFn: () => fetchAdminUpdateStatus(client),
+    enabled: status.isSuccess,
+    refetchInterval: false,
+    staleTime: 60 * 60 * 1000,
+    refetchOnWindowFocus: false,
   });
 
   const discovery = useQuery({
@@ -340,6 +449,30 @@ export function AdminSystemStatusView(): JSX.Element {
         </div>
       ) : backupStatus.isError ? (
         <p style={{ fontSize: "0.85rem", opacity: 0.85 }}>DR backup status unavailable.</p>
+      ) : null}
+
+      {updateStatus.data ? (
+        <div
+          style={{
+            margin: "1rem 0",
+            padding: "0.75rem 1rem",
+            border: "1px solid #e0e0e0",
+            borderRadius: 6,
+            maxWidth: "42rem",
+          }}
+        >
+          <h3 style={{ fontSize: "1rem", margin: "0 0 0.5rem" }}>Software updates</h3>
+          <UpdateStatusCardBody
+            data={updateStatus.data}
+            dismissedVersion={dismissedVersion}
+            onDismiss={(latestVersion) => {
+              writeDismissedVersion(latestVersion);
+              setDismissedVersion(latestVersion);
+            }}
+          />
+        </div>
+      ) : updateStatus.isError ? (
+        <p style={{ fontSize: "0.85rem", opacity: 0.85 }}>Software update status unavailable.</p>
       ) : null}
 
       <h3 style={{ fontSize: "1rem", marginTop: "1.25rem" }}>Services</h3>

@@ -10,8 +10,13 @@
 structlog>=25.0
 psycopg2-binary>=2.9.0
 pydantic[email]>=2.0.0
-ruff>=0.4.0
+# Pin ruff exactly: `ruff format` output and lint rules can change between
+# releases, so an unpinned range silently drifts CI lint/format vs the tree.
+ruff==0.15.8
 pytest>=8.0.0
 pytest-asyncio>=0.24.0
+# LUM-379 — changed-line coverage gate (pytest emits lcov; diff-cover gates the PR diff)
+pytest-cov>=5.0.0
+diff-cover>=9.0.0
 # LUM-377 — compact pytest summaries for scripts/debug (dev/CI only; not runtime image)
 pytest-agent-digest>=0.3.2,<0.4

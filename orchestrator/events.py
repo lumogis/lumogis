@@ -33,6 +33,16 @@ class Event:
     AUDIO_TRANSCRIBED = "on_audio_transcribed"
     ENTITY_MERGED = "on_entity_merged"
 
+    # LUM-586: fired by the document-share entity cascade (off the request path,
+    # from the share_document background job) once the Postgres+Qdrant shared
+    # entity projections are committed. Carries the set of (source, projection)
+    # entity ids so the KG service can MERGE the shared nodes and sweep incident
+    # RELATES_TO edges. Only consumed when GRAPH_MODE=service (the outbound
+    # webhook callback is wired by services/graph_webhook_dispatcher); with no
+    # registered listener the fire is a harmless no-op (in-process parity is a
+    # deferred follow-up).
+    DOCUMENT_SHARED = "on_document_shared"
+
     SIGNAL_RECEIVED = "on_signal_received"
     FEEDBACK_RECEIVED = "on_feedback_received"
 

@@ -299,6 +299,8 @@ input:focus-visible,
 }
 
 .lumogis-shell__main {
+  container-type: inline-size;
+  container-name: layout;
   padding: var(--lumogis-space-4);
   overflow: auto;
   min-width: 0;
@@ -946,6 +948,14 @@ input:focus-visible,
   min-width: 28px;
 }
 
+.lumogis-chat__history-item--pending {
+  opacity: 0.7;
+}
+
+.lumogis-chat__history-pending-label {
+  font-style: italic;
+}
+
 .lumogis-chat__main {
   display: grid;
   grid-template-rows: auto 1fr auto auto;
@@ -1079,6 +1089,42 @@ input:focus-visible,
 @keyframes lumogis-chat-blink {
   0%, 50% { opacity: 1; }
   51%, 100% { opacity: 0; }
+}
+
+/* LUM-212 — pre-first-token typing indicator (animated dots). */
+.lumogis-chat__typing {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 1em;
+}
+
+.lumogis-chat__typing-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--lumogis-fg-muted, #999);
+  animation: lumogis-chat-typing 1.2s ease-in-out infinite;
+}
+
+.lumogis-chat__typing-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.lumogis-chat__typing-dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes lumogis-chat-typing {
+  0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-2px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lumogis-chat__typing-dot {
+    animation: none;
+    opacity: 0.6;
+  }
 }
 
 .lumogis-chat__bubble-error {
@@ -1282,6 +1328,34 @@ input:focus-visible,
   color: var(--lumogis-fg-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
+}
+
+/* LUM-581 — "Shared with household" filter + "Shared" badge on entities. */
+.lumogis-search__filter {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--lumogis-space-2);
+  margin: 0 0 var(--lumogis-space-3);
+  font-size: 0.8rem;
+  color: var(--lumogis-fg-muted);
+  cursor: pointer;
+}
+
+.lumogis-search__shared-badge {
+  display: inline-block;
+  padding: 0.125rem 0.5rem;
+  border-radius: var(--lumogis-radius-sm);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: #d1eaff;
+  color: #004f8a;
+}
+
+[data-theme="dark"] .lumogis-search__shared-badge {
+  background: #003d6e;
+  color: #a3cfff;
 }
 
 .lumogis-search__empty {

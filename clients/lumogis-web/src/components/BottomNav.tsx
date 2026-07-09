@@ -20,6 +20,7 @@ export interface NavItem {
 export const NAV_ITEMS: ReadonlyArray<NavItem> = [
   { key: "chat", label: "Chat", href: "/chat" },
   { key: "search", label: "Search", href: "/search" },
+  { key: "documents", label: "Library", href: "/documents" },
   { key: "capture", label: "Capture", href: "/capture" },
   { key: "approvals", label: "Approvals", href: "/approvals" },
 ];

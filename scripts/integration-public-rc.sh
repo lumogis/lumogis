@@ -49,6 +49,20 @@ _rc_compose_project() {
   echo "${COMPOSE_PROJECT_NAME:-lumogis-test}"
 }
 
+_host_port_only_rc_stack() {
+  local port=$1 rc_project="$(_rc_compose_project)"
+  local c found=0
+  while IFS= read -r c; do
+    [ -n "$c" ] || continue
+    found=1
+    case "$c" in
+      "${rc_project}"-*) ;;
+      *) return 1 ;;
+    esac
+  done < <(_containers_on_host_port "$port")
+  [ "$found" -eq 1 ]
+}
+
 _free_host_port_for_rc() {
   local port=$1
   local c seen="" rc_project
@@ -86,6 +100,24 @@ _rc_qdrant_host_port() {
   echo "${QDRANT_HOST_PORT:-6335}"
 }
 
+_ensure_host_data_dir_writable() {
+  # Docker may have created ./lumogis-data as root on first bind-mount; restart_e2e
+  # writes a probe file there from the host pytest process (LUM-400).
+  mkdir -p "$ROOT/lumogis-data"
+  if [ -w "$ROOT/lumogis-data" ]; then
+    return 0
+  fi
+  if [ "$(id -u)" -eq 0 ]; then
+    chmod 1777 "$ROOT/lumogis-data"
+    return 0
+  fi
+  if command -v sudo >/dev/null 2>&1; then
+    sudo chown "$(id -u)":"$(id -g)" "$ROOT/lumogis-data" 2>/dev/null \
+      || sudo chmod 1777 "$ROOT/lumogis-data" 2>/dev/null \
+      || true
+  fi
+}
+
 _rc_preflight_host_ports() {
   local p qdrant_port
   qdrant_port="$(_rc_qdrant_host_port)"
@@ -93,14 +125,12 @@ _rc_preflight_host_ports() {
     if ! _host_port_in_use "$p"; then
       continue
     fi
+    if _host_port_only_rc_stack "$p"; then
+      # RC stack already bound this port (e.g. gate-start with stack up).
+      continue
+    fi
     _free_host_port_for_rc "$p"
     if ! _wait_port_free "$p"; then
-      echo "[integration-public-rc] ERROR: port $p still occupied after stop attempt. Free it manually and retry." >&2
-      exit 1
-    fi
-  done
-  for p in 6333 6334 8000 "$qdrant_port"; do
-    if _host_port_in_use "$p"; then
       echo "[integration-public-rc] ERROR: port $p still occupied after stop attempt. Free it manually and retry." >&2
       exit 1
     fi
@@ -158,7 +188,7 @@ cmd_up() {
   # Create the default filesystem root on the host as the invoking user *before* compose up.
   # Otherwise the Docker daemon auto-creates the ./lumogis-data bind-mount target as root, and
   # the restart_e2e fallback test (which writes a probe file there from the host) hits EACCES.
-  mkdir -p "$ROOT/lumogis-data"
+  _ensure_host_data_dir_writable
   eval "$(python3 "$ROOT/scripts/rc_test_env_defaults.py" "$ROOT/$ENV_FILE")"
   _rc_preflight_host_ports
   compose up -d --wait
@@ -197,6 +227,15 @@ cmd_restart_e2e_pytest() {
   source "$ROOT/.venv/bin/activate"
   pip install -q -r "$ROOT/orchestrator/requirements-dev.txt"
   eval "$(python3 "$ROOT/scripts/rc_test_env_defaults.py" "$ROOT/$ENV_FILE")"
+  export HOST_PROJECT_DIR="${HOST_PROJECT_DIR:-$ROOT}"
+  _ensure_host_data_dir_writable
+  if [[ "${COMPOSE_PROJECT_NAME:-}" == "lumogis-test" ]]; then
+    bash "$ROOT/scripts/seed-public-rc-approvals-fixture.sh"
+    bash "$ROOT/scripts/seed-public-rc-ingest-owner.sh"
+    COMPOSE_FILE=docker-compose.yml:docker-compose.test.yml:docker-compose.public-rc-stack.yml \
+      docker compose --env-file "$ENV_FILE" up -d --no-deps --force-recreate stack-control orchestrator
+    sleep 5
+  fi
   (
     cd "$ROOT/orchestrator"
     export LUMOGIS_WEB_BASE_URL=http://127.0.0.1

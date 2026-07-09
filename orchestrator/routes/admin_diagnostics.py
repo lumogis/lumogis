@@ -46,12 +46,14 @@ from fastapi import status
 from models.api_v1 import AdminDiagnosticsResponse
 from models.api_v1 import BackupStatusResponse
 from models.api_v1 import StackStatusResponse
+from models.api_v1 import UpdateStatusResponse
 
 from services import admin_diagnostics as admin_diagnostics_svc
 from services import backup_status as backup_status_svc
 from services import connector_credentials as ccs
 from services import credential_tiers as cts
 from services import stack_status as stack_status_svc
+from services import update_check as update_check_svc
 
 _log = logging.getLogger(__name__)
 
@@ -94,6 +96,18 @@ def admin_stack_status() -> StackStatusResponse:
 def admin_backup_status() -> BackupStatusResponse:
     """Read-only DR backup snapshot status (admin-only)."""
     return backup_status_svc.build_backup_status_response()
+
+
+@router.get("/update-status", response_model=UpdateStatusResponse)
+def admin_update_status() -> UpdateStatusResponse:
+    """Read-only update availability check (LUM-187).
+
+    Compares the running Core version against the latest GitHub release. Fail-soft:
+    a disabled check or a lookup failure returns ``checked=False`` with an ``error``
+    string (HTTP 200) so the admin dashboard can show version state without blocking.
+    No auto-update — the operator runs ``make update`` explicitly.
+    """
+    return update_check_svc.build_update_status_response()
 
 
 @router.get("/credential-key-fingerprint")

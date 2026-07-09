@@ -123,6 +123,35 @@ def test_recent_returns_sessions(client, monkeypatch):
     body = resp.json()
     assert len(body["sessions"]) == 1
     assert body["sessions"][0]["summary"] == "trip notes"
+    assert body["sessions"][0]["ended_at"] is not None
+
+
+def test_recent_returns_nonempty_via_fetch_all(client, monkeypatch):
+    ts = datetime(2026, 6, 10, 15, 45, tzinfo=timezone.utc)
+    rows = [
+        {
+            "session_id": "22222222-2222-4222-9222-222222222222",
+            "summary": "recent via db",
+            "topics": [],
+            "entities": [],
+            "entity_ids": [],
+            "scope": "personal",
+            "updated_at": ts,
+        }
+    ]
+
+    import config as _config
+
+    ms = _config.get_metadata_store()
+    monkeypatch.setattr(ms, "fetch_all", lambda q, p=None: rows)
+
+    resp = client.get("/api/v1/memory/recent", params={"limit": 5})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body["sessions"]) == 1
+    assert body["sessions"][0]["session_id"] == "22222222-2222-4222-9222-222222222222"
+    assert body["sessions"][0]["summary"] == "recent via db"
+    assert body["sessions"][0]["ended_at"] is not None
 
 
 def test_recent_skips_sessions_without_timestamp(client, monkeypatch):

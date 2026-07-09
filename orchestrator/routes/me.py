@@ -50,6 +50,8 @@ from models.api_v1 import MeOnboardingResponse
 from models.api_v1 import MeToolsResponse
 from models.api_v1 import MeWowPatchRequest
 from models.api_v1 import MeWowStateResponse
+from models.api_v1 import SharedItem
+from models.api_v1 import SharedItemsResponse
 from models.api_v1 import WowTopEntity
 from models.auth import AckOk
 from models.auth import MePasswordChangeRequest
@@ -59,6 +61,7 @@ from models.user_export import SectionSummary
 from services import me_llm_providers as me_llm_providers_svc
 from services import me_notifications as me_notifications_svc
 from services import me_tools_catalog
+from services import shared_items as shared_items_svc
 from services import user_export as user_export_service
 from services import users as users_service
 from services import wow_state as wow_state_service
@@ -70,6 +73,20 @@ router = APIRouter(
     tags=["me"],
     dependencies=[Depends(require_user)],
 )
+
+
+@router.get("/shared-items", response_model=SharedItemsResponse)
+def list_my_shared_items(request: Request) -> SharedItemsResponse:
+    """List everything the calling member has shared with the household (LUM-583).
+
+    Owner-scoped by construction (each arm binds ``user_id = caller``), so it
+    can never surface another member's shared item. Returns ``{items: []}`` —
+    not 404 — when the member has shared nothing. Unshare is done via the
+    existing per-type ``DELETE /api/v1/{resource_type}/{resource_id}/publish``.
+    """
+    caller = get_user(request)
+    rows = shared_items_svc.list_my_shared_items(caller.user_id)
+    return SharedItemsResponse(items=[SharedItem.model_validate(r) for r in rows])
 
 
 @router.post(

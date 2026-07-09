@@ -10,14 +10,15 @@
 name: Search overlay build
 
 on:
+  # Cross-platform matrix: macOS = 10x billed minutes, Windows = 2x. To protect the
+  # private Actions quota this is RELEASE-ONLY — it runs on a `search-v*` tag or a manual
+  # dispatch, NOT on routine dev/main pushes. The AGPL overlay is also built on FREE
+  # runners in the public repo (lumogis/lumogis) per LUM-433, so per-push private builds
+  # were pure waste. To cut a build: tag `search-vX.Y.Z`, or use "Run workflow".
   workflow_dispatch:
   push:
-    branches: [dev, main]
     tags:
       - "search-v*"
-    paths:
-      - "clients/lumogis-search/**"
-      - ".github/workflows/search-overlay-build.yml"
 
 concurrency:
   group: search-overlay-build-${{ github.workflow }}-${{ github.ref }}
@@ -25,6 +26,11 @@ concurrency:
 
 jobs:
   build-matrix:
+    # PUBLIC-REPO-ONLY (free macOS/Windows runners). Mirrors the ADR-037 guard used by
+    # publish-image.yml. In private lumogis-app this job is SKIPPED → 0 billed minutes;
+    # the file still flows to lumogis/lumogis via the export pipeline (LUM-433), where it
+    # runs for free. Releases therefore cost nothing and private quota is never touched.
+    if: github.repository == 'lumogis/lumogis'
     permissions:
       contents: write
     strategy:
@@ -109,3 +115,6 @@ jobs:
             clients/lumogis-search/src-tauri/target/release/bundle/
             clients/lumogis-search/src-tauri/target/*/release/bundle/
           if-no-files-found: error
+          # Release bundles (dmg/nsis/AppImage) — 7d window to bound the 0.5 GB Actions
+          # artifact quota; durable copies live in GitHub Releases, not artifacts.
+          retention-days: 7

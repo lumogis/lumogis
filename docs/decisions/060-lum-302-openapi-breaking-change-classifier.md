@@ -53,7 +53,7 @@ What becomes harder:
 What future chunks must know:
 
 - The classifier composes *on top of* `dump_openapi.py` and the committed snapshot. Any change to the snapshot path, normalisation rules, or codegen pipeline must keep the classifier step in mind.
-- The `OPENAPI_BREAKING_FAIL_ON` default is intentionally **`ERR`** initially (gentler gate); tightening to **`WARN`** is a deliberate, Linear-tracked follow-up, not an oversight.
+- The `OPENAPI_BREAKING_FAIL_ON` default started at **`ERR`** (gentler gate) and was tightened to **`WARN`** after burn-in (LUM-312, 2026-06-22 — see status history); `ERR` remains the documented looser opt-out.
 - Schemathesis remains available for a separate *runtime conformance* exploration — this ADR rules it out only for the static-spec classification role.
 
 ## Revisit conditions
@@ -68,3 +68,4 @@ What future chunks must know:
 - 2026-05-22: Draft created by /explore (headless run for LUM-302).
 - 2026-05-22: Revised during /review-plan --arbitrate R1 — corrected oasdiff `--fail-on` semantics: `--fail-on WARN` fails on **ERR and WARN**; `--fail-on ERR` fails **only** on ERR (gentler). Plan/ADR rollout is now **default `ERR`**, then tighten to **`WARN`** after burn-in (matches upstream docs).
 - 2026-05-22: Finalised by `/verify-plan --headless` — implementation confirmed in `.github/scripts/openapi-breaking-check.sh`, `.github/workflows/ci.yml`, fixtures, `Makefile`, `CONTRIBUTING.md`, and `docs/LUMOGIS_REFERENCE_MANUAL.md`.
+- 2026-06-22: **Burn-in complete — gate tightened `ERR` → `WARN`** (LUM-312). The default `OPENAPI_BREAKING_FAIL_ON` is now `WARN` in both `.github/workflows/ci.yml` and the `.github/scripts/openapi-breaking-check.sh` fallback, so potential-breaking WARN-level findings also fail CI (and `make verify-public-rc` per LUM-313). `ERR` remains available as the looser opt-out; the fixture self-tests stay pinned to `--fail-on ERR` as a deterministic tool-behaviour proof. Docs updated in `CONTRIBUTING.md` and `docs/LUMOGIS_REFERENCE_MANUAL.md`.

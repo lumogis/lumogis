@@ -28,6 +28,7 @@ import type { ApiClient } from "../../api/client";
 import {
   memorySearch,
   kgSearch,
+  isEntityShared,
   type EntityCard,
   type MemorySearchHit,
 } from "../../api/search";
@@ -52,6 +53,7 @@ export interface SearchResults {
   degraded: boolean;
   loading: boolean;
   error: string | null;
+  refetchEntities: () => Promise<void>;
 }
 
 export function useSearch(client: ApiClient, query: string): SearchResults {
@@ -62,6 +64,20 @@ export function useSearch(client: ApiClient, query: string): SearchResults {
   const [error, setError] = useState<string | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
+
+  const refetchEntities = useCallback(async () => {
+    const trimmed = query.trim();
+    if (!trimmed) {
+      setEntityHits([]);
+      return;
+    }
+    try {
+      const res = await kgSearch(client, trimmed, 10);
+      setEntityHits(res.entities);
+    } catch {
+      setEntityHits([]);
+    }
+  }, [client, query]);
 
   useEffect(() => {
     if (!query.trim()) {
@@ -108,7 +124,7 @@ export function useSearch(client: ApiClient, query: string): SearchResults {
     };
   }, [client, query]);
 
-  return { memoryHits, entityHits, degraded, loading, error };
+  return { memoryHits, entityHits, degraded, loading, error, refetchEntities };
 }
 
 // ── Component ─────────────────────────────────────────────────────────────
@@ -117,9 +133,17 @@ export function SearchPage(): JSX.Element {
   const { client } = useAuth();
   const [rawQuery, setRawQuery] = useState("");
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
+  const [sharedOnly, setSharedOnly] = useState(false);
 
   const query = useDebounced(rawQuery, 300);
-  const { memoryHits, entityHits, degraded, loading, error } = useSearch(client, query);
+  const { memoryHits, entityHits, degraded, loading, error, refetchEntities } =
+    useSearch(client, query);
+
+  // LUM-581 — client-side "Shared with household" filter over the
+  // household-union entity results (no server-side ?scope=shared for v1).
+  const visibleEntities = sharedOnly
+    ? entityHits.filter((e) => isEntityShared(e.share_status))
+    : entityHits;
 
   const handleInput = useCallback((e: ChangeEvent<HTMLInputElement>) => {
     setRawQuery(e.target.value);
@@ -206,14 +230,27 @@ export function SearchPage(): JSX.Element {
           aria-label="Entity results"
         >
           <h2 className="lumogis-search__col-title">Entities</h2>
+          <label className="lumogis-search__filter">
+            <input
+              type="checkbox"
+              checked={sharedOnly}
+              onChange={(e) => setSharedOnly(e.target.checked)}
+              aria-label="Shared with household"
+            />
+            <span>Shared with household</span>
+          </label>
           {!query.trim() && (
             <p className="lumogis-search__empty">Type to search entities.</p>
           )}
-          {query.trim() && entityHits.length === 0 && !loading && (
-            <p className="lumogis-search__empty">No entity hits.</p>
+          {query.trim() && visibleEntities.length === 0 && !loading && (
+            <p className="lumogis-search__empty">
+              {sharedOnly && entityHits.length > 0
+                ? "No shared entities."
+                : "No entity hits."}
+            </p>
           )}
           <ul className="lumogis-search__hits" role="list">
-            {entityHits.map((entity) => (
+            {visibleEntities.map((entity) => (
               <li key={entity.entity_id} className="lumogis-search__hit lumogis-search__hit--entity">
                 <button
                   type="button"
@@ -230,6 +267,14 @@ export function SearchPage(): JSX.Element {
                     <span className="lumogis-search__entity-type">{entity.type}</span>
                   )}
                   <ScopePill scope={entity.scope} />
+                  {isEntityShared(entity.share_status) && (
+                    <span
+                      className="lumogis-search__shared-badge"
+                      aria-label="Shared with household"
+                    >
+                      Shared
+                    </span>
+                  )}
                 </button>
 
                 {selectedEntityId === entity.entity_id && (
@@ -237,6 +282,7 @@ export function SearchPage(): JSX.Element {
                     entityId={entity.entity_id}
                     client={client}
                     initialCard={entity}
+                    onShareChanged={() => void refetchEntities()}
                   />
                 )}
               </li>

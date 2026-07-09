@@ -42,7 +42,7 @@ def test_chat_injects_document_context_when_enabled(monkeypatch, alice) -> None:
     monkeypatch.setenv("GRAPH_MODE", "disabled")
     cfg.clear_graph_mode_env_cache()
 
-    monkeypatch.setattr(cfg, "is_model_enabled", lambda model, user_id=None: True)
+    monkeypatch.setattr(cfg, "is_model_enabled", lambda model, user_id=None, **_kw: True)
     monkeypatch.setattr(
         cfg,
         "get_model_config",
@@ -98,7 +98,7 @@ def test_chat_streaming_search_files_dedupe(monkeypatch, alice) -> None:
     monkeypatch.setenv("GRAPH_MODE", "disabled")
     cfg.clear_graph_mode_env_cache()
 
-    monkeypatch.setattr(cfg, "is_model_enabled", lambda model, user_id=None: True)
+    monkeypatch.setattr(cfg, "is_model_enabled", lambda model, user_id=None, **_kw: True)
     monkeypatch.setattr(
         cfg,
         "get_model_config",

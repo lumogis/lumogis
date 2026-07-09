@@ -197,7 +197,7 @@ class TestStatus:
         assert body["system_df_busy"] is False
         assert "fetched_at" in body
         assert mock_run.call_count == 2
-        assert mock_run.call_args_list[0][1]["cwd"] == main._PROJECT_DIR
+        assert mock_run.call_args_list[0][1]["cwd"] == main._project_dir()
 
     def test_compose_ps_timeout_returns_504(self, client):
         with patch(

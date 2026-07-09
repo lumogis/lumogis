@@ -26,6 +26,10 @@ def _repo_has_git() -> bool:
 # scripts/check-public-export.sh LUM-433 comment block.
 SEARCH_OVERLAY_CI_CANONICAL_PATHS: tuple[str, ...] = (".github/workflows/search-overlay-build.yml",)
 
+# Canonical private Server CI path — duplicate exactly scripts/check-public-export.sh
+# LUM-492 comment block. Inverse contract: must be stripped, never shipped public.
+SERVER_BUILD_CI_PRIVATE_PATH: str = ".github/workflows/server-build.yml"
+
 LUM303_CANONICAL_OPENAPI_PATHS: tuple[str, ...] = (
     ".github/workflows/ci.yml",
     ".github/scripts/openapi-check-paths.sh",
@@ -115,6 +119,11 @@ def _write_minimal_public_agent_docs(tmp_path: Path) -> None:
     (tmp_path / "CONTRIBUTING-BEGINNERS.md").write_text(
         "# SPDX-License-Identifier: AGPL-3.0-only\n"
         "Beginners contributing stub for export contract tests.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "EVALUATION.md").write_text(
+        "# SPDX-License-Identifier: AGPL-3.0-only\n"
+        "Operator evaluation stub for export contract tests.\n",
         encoding="utf-8",
     )
     orient = tmp_path / "docs" / "LUMOGIS_AGENT_ORIENTATION.md"
@@ -291,6 +300,63 @@ def test_lum433_fails_when_workflow_references_server(tmp_path):
     assert "LUM-433" in combined
 
 
+def test_lum492_minimal_export_passes_server_build_private_contract(tmp_path):
+    """LUM-492: a clean export (no private Server CI present) passes the inverse contract."""
+    _minimal_passing_export_search_overlay_contract(tmp_path)
+    assert not (tmp_path / SERVER_BUILD_CI_PRIVATE_PATH).exists()
+    proc = _run_check(tmp_path)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def test_lum492_fails_when_server_build_present_in_export(tmp_path):
+    """LUM-492: the private Server deb CI must never ship in a public export tree.
+
+    Because the workflow is on the strip list, the generic
+    ``assert_strip_list_paths_absent`` guard is the first line of defence and rejects
+    the leaked file by name; the LUM-492 contract is the belt-and-suspenders behind it.
+    """
+    _minimal_passing_export_search_overlay_contract(tmp_path)
+    leaked = tmp_path / SERVER_BUILD_CI_PRIVATE_PATH
+    leaked.parent.mkdir(parents=True, exist_ok=True)
+    leaked.write_text("name: Server build\non: workflow_dispatch\n", encoding="utf-8")
+    proc = _run_check(tmp_path)
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode != 0
+    assert SERVER_BUILD_CI_PRIVATE_PATH in combined
+
+
+def test_lum492_server_build_ci_on_strip_list():
+    """LUM-492: the private Server CI must be listed on the strip list so export rm -rf's it."""
+    text = STRIP_LIST.read_text(encoding="utf-8")
+    strip_entries: set[str] = set()
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if line:
+            strip_entries.add(line)
+    assert SERVER_BUILD_CI_PRIVATE_PATH in strip_entries, (
+        f"strip list must list LUM-492 private Server CI path: {SERVER_BUILD_CI_PRIVATE_PATH}"
+    )
+
+
+def test_export_tree_omits_server_build_workflow(tmp_path):
+    """LUM-492: Server deb CI must not ship on lumogis/lumogis (private appliance build)."""
+    if not _repo_has_git():
+        pytest.skip("needs git checkout")
+    out = tmp_path / "export"
+    export_script = REPO / "scripts" / "create-upstream-export-tree.sh"
+    proc = subprocess.run(
+        ["bash", str(export_script), str(out)],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO),
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert not (out / SERVER_BUILD_CI_PRIVATE_PATH).exists()
+    assert not (out / "apps/lumogis-server").exists()
+    check = _run_check(out)
+    assert check.returncode == 0, check.stdout + check.stderr
+
+
 def test_search_overlay_required_path_disjoint_from_strip_list():
     text = STRIP_LIST.read_text(encoding="utf-8")
     strip_entries: set[str] = set()
@@ -430,6 +496,13 @@ def test_export_tree_has_sanitized_public_agent_docs(tmp_path):
     assert "LUMOGIS_CONTEXT_PACK" not in beginners
     assert "linear.app" not in beginners_lower
     assert "githubusercontent" not in beginners_lower
+    assert (out / "EVALUATION.md").is_file()
+    evaluation = (out / "EVALUATION.md").read_text(encoding="utf-8")
+    evaluation_lower = evaluation.lower()
+    assert "lumogis-devtools" not in evaluation
+    assert "LUMOGIS_CONTEXT_PACK" not in evaluation
+    assert "linear.app" not in evaluation_lower
+    assert "githubusercontent" not in evaluation_lower
     check = _run_check(out)
     assert check.returncode == 0, check.stdout + check.stderr
 

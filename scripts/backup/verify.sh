@@ -51,10 +51,9 @@ else
   fi
 fi
 
-include_falkor="$(resolve_backup_include_falkordb)"
 falkor_skipped="$(read_manifest_field "$manifest" '.stores.falkordb.skipped')"
 falkor_file="${snapshot_dir%/}/$(read_manifest_field "$manifest" '.stores.falkordb.file')"
-if [[ "$include_falkor" == "true" && "$falkor_skipped" != "true" ]]; then
+if [[ "$falkor_skipped" != "true" ]]; then
   if [[ ! -s "$falkor_file" ]]; then
     errors+=("falkordb artefact missing or empty")
   elif falkordb_redis_check_rdb_ready; then

@@ -59,7 +59,11 @@ def test_in_app_routine_elevation_sse_event_name():
             )
         )
         mock_sse.assert_called_once()
-        event_type, data, kwargs = mock_sse.call_args[0][0], mock_sse.call_args[0][1], mock_sse.call_args[1]
+        event_type, data, kwargs = (
+            mock_sse.call_args[0][0],
+            mock_sse.call_args[0][1],
+            mock_sse.call_args[1],
+        )
         assert event_type == "routine_elevation_ready"
         assert kwargs["user_id"] == "u1"
         assert data["connector"] == "c"
@@ -179,3 +183,54 @@ def test_in_app_channel_sse_payload_credential_key_guard():
             mock_sse.call_args[1],
         )
         _assert_sse_payload_has_no_credential_keys(data)
+
+
+def test_document_status_sse_does_not_cancel_wow_debounce(monkeypatch):
+    import routes.events as events_mod
+
+    wow_timers: dict[str, object] = {}
+    doc_timers: dict[str, object] = {}
+    wow_cancelled = []
+    doc_cancelled = []
+
+    class _FakeTimer:
+        def __init__(self, _delay, _fn):
+            self._fn = _fn
+
+        def cancel(self):
+            wow_cancelled.append(True)
+
+        def start(self):
+            pass
+
+    class _DocTimer:
+        def __init__(self, _delay, _fn):
+            self._fn = _fn
+
+        def cancel(self):
+            doc_cancelled.append(True)
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(events_mod, "_wow_debounce_timers", wow_timers)
+    monkeypatch.setattr(events_mod, "_document_debounce_timers", doc_timers)
+    monkeypatch.setattr(events_mod.threading, "Timer", _FakeTimer)
+
+    events_mod._schedule_wow_readiness_push("alice")
+    assert "alice" in wow_timers
+
+    monkeypatch.setattr(events_mod.threading, "Timer", _DocTimer)
+    events_mod._schedule_document_status_push("alice")
+
+    assert wow_cancelled == []
+    assert "alice" in doc_timers
+
+
+def test_document_status_changed_sse_empty_payload():
+    from routes.events import _make_sse_event
+
+    msg = _make_sse_event("document_status_changed", {}, user_id="alice")
+    assert "event: document_status_changed" in msg
+    assert "data: {}" in msg
+    _assert_sse_payload_has_no_credential_keys({})

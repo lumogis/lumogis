@@ -2,6 +2,10 @@
 # Copyright (C) 2026 Lumogis
 """Entity extraction, resolution, and storage.
 
+Future entity-summary writers (LUM-108 write-back, LUM-109 consolidation) must
+use ``services.entity_write_guard`` for OCC commits — never bare
+``UPDATE entities SET summary=…`` without ``WHERE version=``.
+
 Extracts structured entities from session/document text using the local LLM,
 resolves them against existing entities using name + context_tag overlap,
 persists to Postgres (entities + entity_relations + review_queue tables) and
@@ -87,8 +91,13 @@ def extract_entities(session_text: str, *, user_id: str | None = None) -> list[E
     from services.connector_credentials import ConnectorNotConfigured
     from services.connector_credentials import CredentialUnavailable
 
+    from services.privacy_mode import resolve_job_model
+
     try:
-        provider = config.get_llm_provider("llama", user_id=user_id)
+        job_model = resolve_job_model("llama", user_id)
+        if not job_model:
+            return []
+        provider = config.get_llm_provider(job_model, user_id=user_id)
     except ConnectorNotConfigured as exc:
         _log.warning(
             "extract_entities: missing per-user credential (user=%s): %s",
@@ -181,13 +190,22 @@ def store_entities(
     evidence_id: str,
     evidence_type: str,
     user_id: str = "default",
+    *,
+    skip_quality_gate: bool = False,
 ) -> list[str]:
     """Persist extracted entities to Postgres + Qdrant and fire hooks.
 
     For each entity, resolve_entity() decides whether to merge, create new,
     or log as ambiguous. Ambiguous matches are written to review_queue AND
     stored as a separate entity. MENTIONED_IN_SESSION / MENTIONED_IN_DOCUMENT
-    relations are always recorded regardless of resolution outcome.
+    / MENTIONED_IN_MEMORY relations are always recorded regardless of
+    resolution outcome.
+
+    ``skip_quality_gate`` (LUM-291): when True, the LLM-extraction quality gate
+    (``score_and_filter_entities``) is bypassed and each entity is given
+    ``extraction_quality = 1.0``. This is for *explicit, user-asserted* entities
+    (the MCP ``add_entity`` / ``add_relation`` tools) which must never be
+    silently discarded. Default False keeps every existing caller's behaviour.
 
     Returns the list of resolved entity_id UUIDs (one per entity, in order).
     Failed entities are skipped and excluded from the returned list.
@@ -195,13 +213,18 @@ def store_entities(
     if not entities:
         return []
 
-    entities, discarded_count = entity_quality.score_and_filter_entities(entities, user_id)
-    if discarded_count > 0:
-        _log.debug(
-            "Entity quality gate discarded %d low-quality entities for user=%s",
-            discarded_count,
-            user_id,
-        )
+    if skip_quality_gate:
+        for entity in entities:
+            if entity.extraction_quality is None:
+                entity.extraction_quality = 1.0
+    else:
+        entities, discarded_count = entity_quality.score_and_filter_entities(entities, user_id)
+        if discarded_count > 0:
+            _log.debug(
+                "Entity quality gate discarded %d low-quality entities for user=%s",
+                discarded_count,
+                user_id,
+            )
 
     if not entities:
         return []
@@ -378,9 +401,10 @@ def _upsert_entity(
         # decision == "new" — no match or zero tag overlap → fresh entity
         entity_id = _insert_new_entity(entity, user_id, ms)
 
-    relation_type = (
-        "MENTIONED_IN_SESSION" if evidence_type == "SESSION" else "MENTIONED_IN_DOCUMENT"
-    )
+    relation_type = {
+        "SESSION": "MENTIONED_IN_SESSION",
+        "MEMORY": "MENTIONED_IN_MEMORY",  # LUM-291 — MCP-originated provenance
+    }.get(evidence_type, "MENTIONED_IN_DOCUMENT")
     ms.execute(
         "INSERT INTO entity_relations "
         "(source_id, relation_type, evidence_type, evidence_id, user_id) "
@@ -527,3 +551,44 @@ def search_by_name(
         }
         for r in rows
     ]
+
+
+def entity_ids_for_query(
+    query: str,
+    *,
+    user_id: str,
+    limit: int = 10,
+    ms=None,
+) -> list[str]:
+    """Return ``entity_id``s seeding the recall graph leg (LUM-295).
+
+    Matches the query — and each whitespace-split term — as a case-insensitive
+    ``name`` substring, ordered by ``mention_count`` (strongest signals first).
+    Unlike :func:`search_by_name` (which returns no id and applies the
+    household-union ``visible_filter``), this is **personal-only**
+    (``WHERE user_id = %s``): graph-seed expansion must not pull another
+    household member's entities into a user's recall. Household-union seeding
+    is a tracked follow-up. Returns ``[]`` on empty/whitespace query or any DB
+    failure (the leg degrades; recall never fails on the graph seed).
+    """
+    if not query or not query.strip():
+        return []
+
+    ms = ms or config.get_metadata_store()
+    terms = [query.strip(), *query.split()]
+    patterns = list({f"%{t.strip()}%" for t in terms if t.strip()})
+    try:
+        rows = ms.fetch_all(
+            # SCOPE-EXEMPT: personal-only seed read (user_id-only, no god-mode);
+            # deliberately narrower than search_by_name's household union.
+            "SELECT entity_id FROM entities "
+            "WHERE user_id = %s AND name ILIKE ANY(%s) "
+            "ORDER BY mention_count DESC "
+            "LIMIT %s",
+            (user_id, patterns, limit),
+        )
+    except Exception as exc:
+        _log.warning("entity_ids_for_query: DB query failed — %s", exc)
+        return []
+
+    return [str(r["entity_id"]) for r in rows]

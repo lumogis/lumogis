@@ -61,8 +61,11 @@ a count in `falkordb_external_edge_count`, never serialised.
 table with every credential-shaped column blanked to `null`:
 
 * `password_hash`
-* `refresh_token_jti`
-* anything else ending in `_secret`, `_token`, `_credential`, or `_jti`
+* anything ending in `_secret`, `_token`, `_credential`, or `_jti`
+
+The legacy `refresh_token_jti` column was dropped in migration 037
+(LUM-244); the `_jti` suffix rule above still blanks any future
+jti-shaped column by construction.
 
 The destination instance mints a fresh password during import via
 `NewUserSpec.password`; the source-instance credential never leaves

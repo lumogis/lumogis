@@ -6,21 +6,19 @@ from __future__ import annotations
 
 from datetime import datetime
 from datetime import time
-from datetime import timezone
-from unittest.mock import MagicMock
-from zoneinfo import ZoneInfo
 
-import config
 import pytest
 from models.notifications import ChannelDeliveryResult
 from models.notifications import ChannelId
 from models.notifications import NotificationTier
+from models.notifications import NotificationTierPolicyRow
 from models.notifications import NotificationType
 from models.notifications import TypedNotification
-from models.notifications import NotificationTierPolicyRow
 from services.notifications.dispatcher import emit
 from services.notifications.dispatcher import is_in_quiet_hours
 from services.notifications.dispatcher import resolve_effective_channels
+
+import config
 
 
 class _StubChannel:
@@ -91,7 +89,9 @@ def _patch_prefs(monkeypatch, *, sparse=None, settings=None):
 
 def test_emit_assigns_emit_id_when_missing(monkeypatch):
     _patch_prefs(monkeypatch)
-    ntfy = _StubChannel(ChannelId.NTFY, ChannelDeliveryResult(channel=ChannelId.NTFY, status="delivered"))
+    ntfy = _StubChannel(
+        ChannelId.NTFY, ChannelDeliveryResult(channel=ChannelId.NTFY, status="delivered")
+    )
     monkeypatch.setitem(config._instances, "notification_channels", {ChannelId.NTFY: ntfy})
 
     result = emit(
@@ -136,8 +136,12 @@ def test_sparse_disable_skips_channel(monkeypatch):
         monkeypatch,
         sparse={(NotificationType.SIGNAL_RECEIVED, ChannelId.NTFY): False},
     )
-    ntfy = _StubChannel(ChannelId.NTFY, ChannelDeliveryResult(channel=ChannelId.NTFY, status="delivered"))
-    in_app = _StubChannel(ChannelId.IN_APP, ChannelDeliveryResult(channel=ChannelId.IN_APP, status="delivered"))
+    ntfy = _StubChannel(
+        ChannelId.NTFY, ChannelDeliveryResult(channel=ChannelId.NTFY, status="delivered")
+    )
+    in_app = _StubChannel(
+        ChannelId.IN_APP, ChannelDeliveryResult(channel=ChannelId.IN_APP, status="delivered")
+    )
     monkeypatch.setitem(
         config._instances,
         "notification_channels",
@@ -163,8 +167,12 @@ def test_quiet_hours_skips_push_not_in_app(monkeypatch):
         lambda *_a, **_k: True,
     )
 
-    ntfy = _StubChannel(ChannelId.NTFY, ChannelDeliveryResult(channel=ChannelId.NTFY, status="delivered"))
-    in_app = _StubChannel(ChannelId.IN_APP, ChannelDeliveryResult(channel=ChannelId.IN_APP, status="delivered"))
+    ntfy = _StubChannel(
+        ChannelId.NTFY, ChannelDeliveryResult(channel=ChannelId.NTFY, status="delivered")
+    )
+    in_app = _StubChannel(
+        ChannelId.IN_APP, ChannelDeliveryResult(channel=ChannelId.IN_APP, status="delivered")
+    )
     monkeypatch.setitem(
         config._instances,
         "notification_channels",
@@ -191,7 +199,9 @@ def test_urgent_bypass_delivers_push_and_audits(monkeypatch):
         lambda *_a, **_k: True,
     )
 
-    ntfy = _StubChannel(ChannelId.NTFY, ChannelDeliveryResult(channel=ChannelId.NTFY, status="delivered"))
+    ntfy = _StubChannel(
+        ChannelId.NTFY, ChannelDeliveryResult(channel=ChannelId.NTFY, status="delivered")
+    )
     monkeypatch.setitem(
         config._instances,
         "notification_channels",
@@ -211,8 +221,12 @@ def test_urgent_bypass_delivers_push_and_audits(monkeypatch):
 
 def test_channel_failure_does_not_abort_others(monkeypatch):
     _patch_prefs(monkeypatch)
-    ntfy = _StubChannel(ChannelId.NTFY, ChannelDeliveryResult(channel=ChannelId.NTFY, status="failed", reason="x"))
-    in_app = _StubChannel(ChannelId.IN_APP, ChannelDeliveryResult(channel=ChannelId.IN_APP, status="delivered"))
+    ntfy = _StubChannel(
+        ChannelId.NTFY, ChannelDeliveryResult(channel=ChannelId.NTFY, status="failed", reason="x")
+    )
+    in_app = _StubChannel(
+        ChannelId.IN_APP, ChannelDeliveryResult(channel=ChannelId.IN_APP, status="delivered")
+    )
     monkeypatch.setitem(
         config._instances,
         "notification_channels",
@@ -277,7 +291,9 @@ def test_urgent_zero_push_still_delivers_in_app(monkeypatch):
             (NotificationType.SECURITY_ALERT, ChannelId.WEB_PUSH): False,
         },
     )
-    ntfy = _StubChannel(ChannelId.NTFY, ChannelDeliveryResult(channel=ChannelId.NTFY, status="delivered"))
+    ntfy = _StubChannel(
+        ChannelId.NTFY, ChannelDeliveryResult(channel=ChannelId.NTFY, status="delivered")
+    )
     web_push = _StubChannel(
         ChannelId.WEB_PUSH,
         ChannelDeliveryResult(channel=ChannelId.WEB_PUSH, status="delivered"),

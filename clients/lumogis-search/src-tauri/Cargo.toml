@@ -23,7 +23,10 @@ tauri-build = { version = "2", features = [] }
 
 [features]
 default = ["standalone-app"]
-standalone-app = []
+# LUM-455: single-instance is gated here so it is compiled/registered ONLY for the
+# standalone Search binary. The Hub path-deps this crate with default-features=false,
+# so the plugin is entirely absent from the Hub build/ACL tree.
+standalone-app = ["dep:tauri-plugin-single-instance"]
 wdio-e2e = [
   "dep:tauri-plugin-wdio",
   "dep:tauri-plugin-wdio-webdriver",
@@ -34,6 +37,7 @@ wdio-e2e = [
 tauri = { version = "2", features = ["macos-private-api", "tray-icon", "image-png"] }
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-opener = "2"
+tauri-plugin-single-instance = { version = "2", optional = true }  # LUM-455 — Search only (gated by standalone-app)
 tauri-plugin-wdio = { version = "1", optional = true }
 tauri-plugin-wdio-webdriver = { version = "1", optional = true }
 serde = { version = "1", features = ["derive"] }

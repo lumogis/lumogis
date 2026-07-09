@@ -1,0 +1,24 @@
+-- Migration 049: entity_edges graph-projection stamp (LUM-580).
+--
+-- Typed `entity_edges` rows project synchronously to FalkorDB via
+-- `_project_edge` (services/entity_edges.py), but the entity NODE they attach
+-- to is MERGE'd asynchronously (`fire_background`). On a first-mention entity
+-- the typed edge fires before the node exists, so the MATCH-only MERGE no-ops
+-- and the typed edge is silently dropped from the graph. The reconcile pass
+-- `reconcile_entity_edges` (services/lumogis-graph/graph/reconcile.py) replays
+-- those dropped edges — and this column drives the stale scan.
+--
+-- NULL  = never projected (or the live projection was dropped) -> reconcile
+--         picks it up on the next pass (self-healing backfill of existing rows).
+-- SET    = the live projection (or a reconcile pass) confirmed the edge attached
+--          to both nodes; steady state re-projects only newly-missed edges.
+--
+-- `entity_edges` has no `updated_at` and a projected typed edge is immutable
+-- (store_edge UPSERTs then never mutates the row), so the stale predicate is
+-- `graph_projected_at IS NULL` only — there is no "changed since projection"
+-- case to detect, unlike the entities/file_index passes.
+--
+-- Additive, nullable, no default, forward-only (IF NOT EXISTS) — safe on
+-- existing volumes.
+
+ALTER TABLE entity_edges ADD COLUMN IF NOT EXISTS graph_projected_at TIMESTAMPTZ NULL;

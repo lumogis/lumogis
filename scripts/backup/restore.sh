@@ -60,12 +60,8 @@ manifest="${snapshot_dir%/}/manifest.json"
 [[ -f "$manifest" ]] || { log_error "manifest.json missing"; exit 1; }
 
 if [[ "${RESTORE_SKIP_QUIESCE:-}" != "1" ]]; then
-  if command -v docker >/dev/null 2>&1; then
-    running="$(docker compose ps --status running --services 2>/dev/null | grep -E '^(orchestrator|lumogis-web)$' || true)"
-    if [[ -n "$running" ]]; then
-      log_error "stop orchestrator and lumogis-web before restore (running: $running)"
-      exit 2
-    fi
+  if restore_quiesce_violation; then
+    exit 2
   fi
 fi
 
@@ -102,9 +98,8 @@ if [[ "$qdrant_ok" != "true" ]]; then
   exit 1
 fi
 
-include_falkor="$(resolve_backup_include_falkordb)"
 falkor_skipped="$(jq -r '.stores.falkordb.skipped // false' "$manifest")"
-if [[ "$include_falkor" == "true" && "$falkor_skipped" != "true" ]]; then
+if [[ "$falkor_skipped" != "true" ]]; then
   rel="$(jq -r '.stores.falkordb.file' "$manifest")"
   src="${snapshot_dir}/${rel}"
   dest_dir="$(falkordb_data_dir)"

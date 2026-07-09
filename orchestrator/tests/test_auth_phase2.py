@@ -216,6 +216,26 @@ def _route_has_require_admin(route) -> bool:
     return False
 
 
+def _iter_api_routes(app):
+    """Yield all :class:`APIRoute` instances, including under FastAPI
+    ``_IncludedRouter`` wrappers (route table flattening broke in newer
+    FastAPI — top-level ``app.routes`` no longer exposes nested paths)."""
+    from fastapi.routing import APIRoute, APIRouter
+
+    def _walk(routes):
+        for route in routes:
+            if isinstance(route, APIRoute):
+                yield route
+            elif isinstance(route, APIRouter):
+                yield from _walk(route.routes)
+            elif type(route).__name__ == "_IncludedRouter":
+                yield from _walk(route.original_router.routes)
+            elif hasattr(route, "routes"):
+                yield from _walk(route.routes)
+
+    yield from _walk(app.routes)
+
+
 def test_every_admin_path_has_require_admin_dependency(users_store, auth_env):
     """Walk the live FastAPI route table and assert each plan-nominated
     admin path actually carries ``require_admin``. Catches regressions
@@ -223,8 +243,8 @@ def test_every_admin_path_has_require_admin_dependency(users_store, auth_env):
     import main
 
     by_key: dict[tuple[str, str], list] = {}
-    for r in main.app.routes:
-        for m in getattr(r, "methods", ()) or ():
+    for r in _iter_api_routes(main.app):
+        for m in r.methods or ():
             by_key.setdefault((m, r.path), []).append(r)
 
     missing = []

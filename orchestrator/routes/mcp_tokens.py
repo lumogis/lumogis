@@ -61,6 +61,12 @@ from services import users as users_service
 
 _log = logging.getLogger(__name__)
 
+# LUM-531 — the product default for an omitted/null `scopes` mint: least-privilege
+# read-only. A tuple (immutable); the route copies it into a fresh list per call.
+# Deliberately not env-configurable — an operator-flippable default would
+# re-introduce the fail-open footgun this closes.
+_DEFAULT_MINT_SCOPES: tuple[str, ...] = ("mcp:read",)
+
 
 router = APIRouter(
     prefix="/api/v1/me/mcp-tokens",
@@ -150,16 +156,25 @@ def mint_my_token(
     rejects unknown fields with HTTP 422 (D4 / D16 — ``expires_at`` is
     intentionally not yet supported; rejecting it is part of the
     contract, not an oversight).
+
+    LUM-531: omitted/``null`` ``scopes`` default to least-privilege
+    ``["mcp:read"]`` — the route NEVER mints a ``NULL`` (unrestricted) token.
+    Writing requires explicitly sending ``mcp:write``. (Unrestricted/``NULL`` is
+    reachable only via the internal service path, ``mcp_tokens.mint(scopes=None)``.)
     """
     caller = get_user(request)
+    # LUM-531 — fresh list per call (never share the mutable default); None
+    # (omitted or explicit null) ⇒ least-privilege read-only, not NULL.
+    scopes = list(body.scopes) if body.scopes is not None else list(_DEFAULT_MINT_SCOPES)
     internal, plaintext = mcp_tokens_service.mint(
         caller.user_id,
         body.label.strip(),
+        scopes=scopes,
     )
     mcp_tokens_service._emit_audit(
         mcp_tokens_service.ACTION_MINTED,
         user_id=caller.user_id,
-        input_summary={"label": internal.label},
+        input_summary={"label": internal.label, "scopes": internal.scopes},
         result_summary={
             "token_id": internal.id,
             "token_prefix": internal.token_prefix,

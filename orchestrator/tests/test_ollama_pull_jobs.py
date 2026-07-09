@@ -89,7 +89,9 @@ class TestOllamaPullJobsService(unittest.TestCase):
             run_pull_job("j1", MagicMock())
 
         finish_calls = [
-            c for c in meta.execute.call_args_list if c.args and c.args[0].startswith("UPDATE ollama_pull_jobs SET status")
+            c
+            for c in meta.execute.call_args_list
+            if c.args and c.args[0].startswith("UPDATE ollama_pull_jobs SET status")
         ]
         self.assertTrue(any(call.args[1][0] == "succeeded" for call in finish_calls))
 
@@ -109,7 +111,9 @@ class TestOllamaPullJobsService(unittest.TestCase):
             run_pull_job("j1", MagicMock())
 
         fail_calls = [
-            c for c in meta.execute.call_args_list if c.args and c.args[0].startswith("UPDATE ollama_pull_jobs SET status")
+            c
+            for c in meta.execute.call_args_list
+            if c.args and c.args[0].startswith("UPDATE ollama_pull_jobs SET status")
         ]
         self.assertTrue(any(call.args[1][0] == "failed" for call in fail_calls))
 
@@ -176,9 +180,7 @@ class TestOllamaPullJobsService(unittest.TestCase):
             run_pull_job("j1", MagicMock())
 
         progress_updates = [
-            c
-            for c in meta.execute.call_args_list
-            if c.args and "progress_pct" in str(c.args[0])
+            c for c in meta.execute.call_args_list if c.args and "progress_pct" in str(c.args[0])
         ]
         self.assertLessEqual(len(progress_updates), 2)
 

@@ -10,6 +10,15 @@ apps/lumogis-server/
 Makefile.server.mk
 deprecated/lumogis-hub-fused/
 
+# LUM-402 — private overlay GUI E2E CI (heavy maintainer-runner; smoke uses secrets).
+# Only the workflow + path script are private; the harness SOURCE under
+# clients/lumogis-search/e2e/** is AGPL and exports with the public tree.
+.github/workflows/overlay-e2e.yml
+.github/scripts/overlay-e2e-paths.sh
+
+# LUM-492 — private Server deb build CI (replaces retired hub-build.yml); never public
+.github/workflows/server-build.yml
+
 .cursor
 .claude
 docs/private

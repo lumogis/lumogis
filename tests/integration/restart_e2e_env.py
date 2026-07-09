@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -58,6 +59,37 @@ def restore_project_env(backup_path: Path, *, repo_root: Path | None = None) -> 
         env_path.write_text(content, encoding="utf-8")
     elif env_path.is_file():
         env_path.unlink()
+
+
+def ensure_host_dir_writable(path: Path) -> None:
+    """Ensure a host bind-mount target is writable from the pytest process.
+
+    Docker often creates ``./lumogis-data`` as root on first compose up; the
+    malformed-JSON restart proof drops a probe file from the host.
+    """
+    path.mkdir(parents=True, exist_ok=True)
+    if os.access(path, os.W_OK):
+        return
+    proc = subprocess.run(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "-v",
+            f"{path.resolve()}:/d",
+            "alpine:3",
+            "chmod",
+            "1777",
+            "/d",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0 or not os.access(path, os.W_OK):
+        raise PermissionError(
+            f"{path} is not writable and could not be fixed via docker chmod: {proc.stderr.strip()}"
+        )
 
 
 def rewrite_env_key(content: str, key: str, value: str) -> str:

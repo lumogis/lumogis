@@ -33,15 +33,10 @@ from __future__ import annotations
 
 import logging
 import os
-import time
 import uuid
-from collections import defaultdict
-from collections import deque
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
-from threading import Lock
-from typing import Deque
 
 import services.users as users_svc
 from auth import UserContext
@@ -64,6 +59,7 @@ from fastapi import status
 from models.auth import LoginRequest
 from models.auth import LoginResponse
 from models.auth import UserPublic
+from rate_limit import FailureRateLimiter
 from services.auth_sessions import RefreshError
 from services.auth_sessions import RefreshReuseError
 
@@ -81,45 +77,24 @@ REFRESH_COOKIE_PATH = "/api/v1/auth"
 # Rate limiter (per-IP and per-email, in-process token bucket)
 # ---------------------------------------------------------------------------
 
-_RATE_WINDOW_SECONDS = 60.0
-_RATE_MAX_FAILURES = 5
-
-_rate_lock = Lock()
-_rate_ip: dict[str, Deque[float]] = defaultdict(deque)
-_rate_email: dict[str, Deque[float]] = defaultdict(deque)
+_login_limiter = FailureRateLimiter()
 
 
 def _rate_check(key_ip: str, key_email: str) -> bool:
-    """Return ``True`` if the request is within the window for both keys."""
-    now = time.monotonic()
-    cutoff = now - _RATE_WINDOW_SECONDS
-    with _rate_lock:
-        for store in (_rate_ip[key_ip], _rate_email[key_email]):
-            while store and store[0] < cutoff:
-                store.popleft()
-            if len(store) >= _RATE_MAX_FAILURES:
-                return False
-        return True
+    return _login_limiter.check(key_ip, key_email)
 
 
 def _rate_record_failure(key_ip: str, key_email: str) -> None:
-    now = time.monotonic()
-    with _rate_lock:
-        _rate_ip[key_ip].append(now)
-        _rate_email[key_email].append(now)
+    _login_limiter.record_failure(key_ip, key_email)
 
 
 def _rate_record_success(key_ip: str, key_email: str) -> None:
-    """Reset the per-email bucket on success; per-IP keeps its history."""
-    with _rate_lock:
-        _rate_email[key_email].clear()
+    _login_limiter.record_success(key_ip, key_email)
 
 
 def _reset_rate_limit_for_tests() -> None:
     """Test helper — wipe the in-process counters between cases."""
-    with _rate_lock:
-        _rate_ip.clear()
-        _rate_email.clear()
+    _login_limiter.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -182,6 +157,7 @@ def _login_response(
     *,
     session_id: str,
     token_version: int,
+    allows_shared: bool = True,
 ) -> LoginResponse:
     return LoginResponse(
         access_token=mint_access_token(
@@ -189,6 +165,7 @@ def _login_response(
             role,
             session_id=session_id,
             token_version=token_version,
+            allows_shared=allows_shared,
         ),
         token_type="bearer",
         expires_in=access_token_ttl_seconds(),
@@ -270,6 +247,7 @@ def login(body: LoginRequest, request: Request, response: Response) -> LoginResp
         user.email,
         session_id=session_id,
         token_version=user.token_version,
+        allows_shared=user.allows_shared,
     )
 
 
@@ -335,6 +313,7 @@ def refresh(
         user2.email,
         session_id=new_sid,
         token_version=int(tv),
+        allows_shared=user2.allows_shared,
     )
 
 

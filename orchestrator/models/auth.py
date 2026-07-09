@@ -74,6 +74,8 @@ class UserAdminView(UserPublic):
     disabled: bool
     created_at: datetime
     last_login_at: datetime | None = None
+    last_seen_at: datetime | None = None  # LUM-334 — last authenticated request (throttled)
+    display_name: str | None = None  # LUM-585 — admin-managed attribution label
 
 
 class InternalUser(BaseModel):
@@ -91,7 +93,10 @@ class InternalUser(BaseModel):
     disabled: bool = False
     created_at: datetime
     last_login_at: datetime | None = None
+    last_seen_at: datetime | None = None  # LUM-334
     token_version: int = 1
+    allows_shared: bool = True  # LUM-577 — household shared-scope access
+    display_name: str | None = None  # LUM-585 — admin-managed attribution label
 
 
 class LoginRequest(BaseModel):
@@ -115,6 +120,9 @@ class UserCreateRequest(BaseModel):
 class UserPatchRequest(BaseModel):
     role: Role | None = None
     disabled: bool | None = None
+    # LUM-585 — admin-managed display label. "" / whitespace clears it (→ NULL →
+    # email local-part fallback). Bounded free text (single-admin household).
+    display_name: str | None = Field(default=None, max_length=64)
 
 
 class MePasswordChangeRequest(BaseModel):

@@ -81,10 +81,27 @@ function backupStatusPayload(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function updateStatusPayload(overrides: Record<string, unknown> = {}) {
+  return {
+    current_version: "0.8.0",
+    latest_version: "0.8.0",
+    update_available: false,
+    checked: true,
+    checked_at: "2026-06-30T12:00:00Z",
+    release_url: null as string | null,
+    error: null as string | null,
+    ...overrides,
+  };
+}
+
 type FetchHandler = (input: RequestInfo, init?: RequestInit) => Promise<Response>;
 
-function makeFetchImpl(handler: FetchHandler, options?: { defaultActiveJob?: boolean }) {
+function makeFetchImpl(
+  handler: FetchHandler,
+  options?: { defaultActiveJob?: boolean; defaultUpdateStatus?: boolean },
+) {
   const defaultActive = options?.defaultActiveJob ?? true;
+  const defaultUpdateStatus = options?.defaultUpdateStatus ?? true;
   const wrapped: FetchHandler = async (input, init) => {
     const u = String(input);
     if (defaultActive && u.includes("/api/v1/admin/ollama/pull/jobs/active")) {
@@ -93,7 +110,15 @@ function makeFetchImpl(handler: FetchHandler, options?: { defaultActiveJob?: boo
     if (defaultActive && u.includes("/api/v1/admin/diagnostics/backup-status")) {
       return jsonResponse(200, backupStatusPayload());
     }
-    return handler(input, init);
+    const response = await handler(input, init);
+    if (
+      defaultUpdateStatus &&
+      u.includes("/api/v1/admin/diagnostics/update-status") &&
+      response.status === 404
+    ) {
+      return jsonResponse(200, updateStatusPayload());
+    }
+    return response;
   };
   return vi.fn(wrapped) as unknown as typeof fetch;
 }
@@ -150,12 +175,35 @@ function withAsyncPullMocks(
 function renderView(fetchImpl: typeof fetch) {
   const store = new AccessTokenStore();
   const client = new ApiClient({ tokens: store, fetchImpl });
-  render(
+  const view = render(
     <AuthProvider client={client} tokens={store} skipRefreshOnMount>
       <AdminSystemStatusView />
     </AuthProvider>,
   );
-  return { fetchImpl };
+  return { fetchImpl, ...view };
+}
+
+function standardAdminHandler(
+  overrides: {
+    stack?: ReturnType<typeof stackPayload>;
+    discovery?: ReturnType<typeof discoveryFixture>;
+    updateStatus?: ReturnType<typeof updateStatusPayload>;
+  } = {},
+): FetchHandler {
+  return async (input) => {
+    const u = String(input);
+    if (u.includes("/api/v1/auth/me")) return jsonResponse(200, adminUser);
+    if (u.includes("/api/v1/admin/diagnostics/stack-status")) {
+      return jsonResponse(200, overrides.stack ?? stackPayload());
+    }
+    if (u.includes("/api/v1/admin/ollama/discovery")) {
+      return jsonResponse(200, overrides.discovery ?? discoveryFixture());
+    }
+    if (u.includes("/api/v1/admin/diagnostics/update-status")) {
+      return jsonResponse(200, overrides.updateStatus ?? updateStatusPayload());
+    }
+    return jsonResponse(404, { detail: "not found" });
+  };
 }
 
 describe("AdminSystemStatusView", () => {
@@ -630,5 +678,197 @@ describe("AdminSystemStatusView", () => {
 
     expect(await screen.findByText("Disaster recovery backup")).toBeTruthy();
     expect(screen.getByRole("alert").textContent).toContain("30.0h old");
+  });
+
+  it("shows update available alert with release link", async () => {
+    const fetchImpl = makeFetchImpl(
+      standardAdminHandler({
+        updateStatus: updateStatusPayload({
+          checked: true,
+          update_available: true,
+          current_version: "0.7.0",
+          latest_version: "0.8.0",
+          release_url: "https://github.com/lumogis/lumogis/releases/tag/0.8.0",
+        }),
+      }),
+    );
+    globalThis.fetch = fetchImpl;
+    renderView(fetchImpl);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/0\.7\.0/);
+    expect(alert.textContent).toMatch(/0\.8\.0/);
+    expect(screen.getByRole("link", { name: "Release notes" }).getAttribute("href")).toBe(
+      "https://github.com/lumogis/lumogis/releases/tag/0.8.0",
+    );
+    expect(screen.getByText(/make update/i)).toBeTruthy();
+  });
+
+  it("shows up to date informational state", async () => {
+    const fetchImpl = makeFetchImpl(
+      standardAdminHandler({
+        updateStatus: updateStatusPayload({
+          checked: true,
+          update_available: false,
+          current_version: "0.8.0",
+          latest_version: "0.8.0",
+          checked_at: "2026-06-30T12:00:00Z",
+          error: null,
+        }),
+      }),
+    );
+    globalThis.fetch = fetchImpl;
+    renderView(fetchImpl);
+
+    expect(await screen.findByText(/latest release/i)).toBeTruthy();
+    expect(screen.getByText(/0\.8\.0/)).toBeTruthy();
+    expect(screen.getByText(/Last checked: 2026-06-30T12:00:00Z/)).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("fail-soft when check disabled", async () => {
+    const disabledError = "update check disabled (LUMOGIS_UPDATE_CHECK_ENABLED=0)";
+    const fetchImpl = makeFetchImpl(
+      standardAdminHandler({
+        updateStatus: updateStatusPayload({
+          checked: false,
+          error: disabledError,
+          current_version: "0.8.0",
+        }),
+      }),
+    );
+    globalThis.fetch = fetchImpl;
+    renderView(fetchImpl);
+
+    expect(await screen.findByText(disabledError)).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  describe("update dismissal", () => {
+    beforeEach(() => {
+      localStorage.clear();
+    });
+
+    it("dismiss hides alert until newer version", async () => {
+      let updatePayload = updateStatusPayload({
+        checked: true,
+        update_available: true,
+        current_version: "0.7.0",
+        latest_version: "0.8.0",
+        release_url: "https://github.com/lumogis/lumogis/releases/tag/0.8.0",
+      });
+
+      const fetchImpl = makeFetchImpl(async (input) => {
+        const u = String(input);
+        if (u.includes("/api/v1/auth/me")) return jsonResponse(200, adminUser);
+        if (u.includes("/api/v1/admin/diagnostics/stack-status")) return jsonResponse(200, stackPayload());
+        if (u.includes("/api/v1/admin/ollama/discovery")) return jsonResponse(200, discoveryFixture());
+        if (u.includes("/api/v1/admin/diagnostics/update-status")) {
+          return jsonResponse(200, updatePayload);
+        }
+        return jsonResponse(404, { detail: "not found" });
+      });
+      globalThis.fetch = fetchImpl;
+
+      const user = userEvent.setup();
+      const { unmount, rerender } = renderView(fetchImpl);
+
+      const alert = await screen.findByRole("alert");
+      expect(alert.textContent).toMatch(/0\.8\.0/);
+
+      await user.click(
+        screen.getByRole("button", { name: "Dismiss update notification for version 0.8.0" }),
+      );
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(screen.getByText("Software updates")).toBeTruthy();
+
+      rerender(
+        <AuthProvider
+          client={new ApiClient({ tokens: new AccessTokenStore(), fetchImpl })}
+          tokens={new AccessTokenStore()}
+          skipRefreshOnMount
+        >
+          <AdminSystemStatusView />
+        </AuthProvider>,
+      );
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(screen.getByText("Software updates")).toBeTruthy();
+
+      updatePayload = {
+        ...updatePayload,
+        latest_version: "0.8.1",
+        release_url: "https://github.com/lumogis/lumogis/releases/tag/0.8.1",
+      };
+      unmount();
+      renderView(fetchImpl);
+
+      const alertNew = await screen.findByRole("alert");
+      expect(alertNew.textContent).toMatch(/0\.8\.1/);
+
+      await user.click(
+        screen.getByRole("button", { name: "Dismiss update notification for version 0.8.1" }),
+      );
+      expect(localStorage.getItem("lumogis.admin.updateDismissedVersion")).toBe("0.8.1");
+    });
+  });
+
+  it("missing tag_name is informational", async () => {
+    const tagError = "latest release has no tag_name";
+    const fetchImpl = makeFetchImpl(
+      standardAdminHandler({
+        updateStatus: updateStatusPayload({
+          checked: false,
+          error: tagError,
+          current_version: "0.8.0",
+          checked_at: "2026-06-30T12:00:00Z",
+          latest_version: null,
+        }),
+      }),
+    );
+    globalThis.fetch = fetchImpl;
+    renderView(fetchImpl);
+
+    expect(await screen.findByText(tagError)).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("update-status fetch error", async () => {
+    const fetchImpl = makeFetchImpl(async (input) => {
+      const u = String(input);
+      if (u.includes("/api/v1/auth/me")) return jsonResponse(200, adminUser);
+      if (u.includes("/api/v1/admin/diagnostics/stack-status")) return jsonResponse(200, stackPayload());
+      if (u.includes("/api/v1/admin/ollama/discovery")) return jsonResponse(200, discoveryFixture());
+      if (u.includes("/api/v1/admin/diagnostics/update-status")) {
+        return jsonResponse(500, { detail: "server error" });
+      }
+      return jsonResponse(404, { detail: "not found" });
+    });
+    globalThis.fetch = fetchImpl;
+    renderView(fetchImpl);
+
+    expect(await screen.findByText("Software update status unavailable.")).toBeTruthy();
+  });
+
+  it("version comparison error is informational", async () => {
+    const compareError = "could not compare versions (non-PEP440 tag)";
+    const fetchImpl = makeFetchImpl(
+      standardAdminHandler({
+        updateStatus: updateStatusPayload({
+          checked: true,
+          update_available: false,
+          error: compareError,
+          latest_version: "vNext",
+          current_version: "0.8.0",
+        }),
+      }),
+    );
+    globalThis.fetch = fetchImpl;
+    renderView(fetchImpl);
+
+    await screen.findByText("Software updates");
+    const updateSection = screen.getByText("Software updates").parentElement;
+    expect(updateSection?.textContent).toContain(compareError);
+    expect(updateSection?.textContent).toContain("vNext");
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });

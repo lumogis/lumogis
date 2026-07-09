@@ -26,7 +26,7 @@
 // be cancelled with the user's "Stop" button without the parser holding state.
 
 import { consumeEvents } from "../../api/sse";
-import type { ChatCompletionChunk } from "../../api/chat";
+import type { ChatCompletionChunk, DocumentCitationDTO } from "../../api/chat";
 
 export type ChatFinishReason = "stop" | "length";
 
@@ -35,6 +35,7 @@ export interface ChatStreamHandlers {
   onFinish?(reason: ChatFinishReason): void;
   onError?(message: string): void;
   onDone?(): void;
+  onContextCitations?(citations: DocumentCitationDTO[]): void;
 }
 
 /**
@@ -82,6 +83,9 @@ export async function consumeChatStream(
     }
     const choice = chunk.choices?.[0];
     if (choice === undefined) return;
+    if (chunk.lumogis?.context_citations !== undefined) {
+      handlers.onContextCitations?.(chunk.lumogis.context_citations);
+    }
     const text = choice.delta?.content;
     if (typeof text === "string" && text.length > 0) {
       handlers.onDelta(text);

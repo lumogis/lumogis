@@ -3,7 +3,6 @@
 # Requires: python3, npm when auditing JS (Node ≥ 20 per web client). Network for advisory DBs.
 #
 # Optional env:
-#   LUMOGIS_DEVTOOLS — devtools checkout (default: ../lumogis-devtools); audits tools/linear-agent when present.
 #   AUDIT_SKIP_NPM=1 — pip-audit only.
 #   AUDIT_SKIP_PIP=1 — npm audit only.
 #   PIP_AUDIT_VENV — override bootstrap venv when pip-audit is not on PATH (default: .venv-audit/).
@@ -13,8 +12,6 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 PIP_AUDIT_VENV="${PIP_AUDIT_VENV:-$ROOT/.venv-audit}"
-# Optional sibling checkout (repo split); scanned only if present.
-LUMOGIS_DEVTOOLS="${LUMOGIS_DEVTOOLS:-$ROOT/../lumogis-devtools}"
 
 die() {
   printf '%s\n' "$*" >&2
@@ -75,12 +72,6 @@ main() {
   if [[ "${AUDIT_SKIP_NPM:-}" != "1" ]]; then
     require_cmd npm
     run_npm_audit "$ROOT/clients/lumogis-web" 'clients/lumogis-web'
-
-    if [[ -d "$LUMOGIS_DEVTOOLS/tools/linear-agent" ]]; then
-      run_npm_audit "$LUMOGIS_DEVTOOLS/tools/linear-agent" 'lumogis-devtools/tools/linear-agent'
-    else
-      printf '\naudit_local: skip devtools npm (directory missing): %s/tools/linear-agent\n' "$LUMOGIS_DEVTOOLS"
-    fi
   else
     printf 'audit_local: AUDIT_SKIP_NPM=1 — skipping npm audit\n'
   fi

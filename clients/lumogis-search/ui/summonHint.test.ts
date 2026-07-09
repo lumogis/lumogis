@@ -9,12 +9,19 @@ import type { OverlayAppContext } from "./app";
 import {
   SUMMON_HINT_DISMISS_MS,
   SUMMON_HINT_STORAGE_KEY,
+  type SummonRecoveryState,
   activateSummonHint,
   dismissSummonHint,
+  isRecoveryHintActive,
   isSummonHintSeen,
   markSummonHintSeen,
+  offerRecoveryHintIfNeeded,
+  optOutRecoveryHint,
+  recoveryHintMarkup,
+  resetRecoveryHintStateForTests,
   resetSummonHintStateForTests,
   scheduleSummonHintDismiss,
+  shouldShowRecoveryHint,
   summonHintMarkup,
 } from "./summonHint";
 
@@ -53,6 +60,7 @@ function makeCtx(over: Partial<OverlayAppContext> = {}): OverlayAppContext {
 beforeEach(() => {
   localStorage.clear();
   resetSummonHintStateForTests();
+  resetRecoveryHintStateForTests();
   document.body.innerHTML = "";
   vi.useFakeTimers();
 });
@@ -60,6 +68,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   resetSummonHintStateForTests();
+  resetRecoveryHintStateForTests();
   localStorage.clear();
 });
 
@@ -116,5 +125,90 @@ describe("activateSummonHint", () => {
     activateSummonHint(ctx);
     dismissSummonHint(ctx);
     expect(isSummonHintSeen()).toBe(true);
+  });
+});
+
+describe("LUM-455 Wayland recovery hint", () => {
+  const state = (over: Partial<SummonRecoveryState> = {}): SummonRecoveryState => ({
+    wayland: true,
+    desktop: "gnome",
+    recoveryConfirmed: false,
+    showOnceOptOut: false,
+    ...over,
+  });
+
+  it("shouldShowRecoveryHint only on unconfirmed, non-opted-out Wayland", () => {
+    expect(shouldShowRecoveryHint(state())).toBe(true);
+    expect(shouldShowRecoveryHint(state({ recoveryConfirmed: true }))).toBe(false);
+    expect(shouldShowRecoveryHint(state({ showOnceOptOut: true }))).toBe(false);
+    expect(shouldShowRecoveryHint(state({ wayland: false }))).toBe(false);
+  });
+
+  it("GNOME copy is keybinding-first and includes the --toggle command", () => {
+    const el = recoveryHintMarkup(state({ desktop: "gnome" }), () => {});
+    expect(el.textContent).toContain("keyboard shortcut");
+    expect(el.querySelector(".summon-recovery-hint__cmd")?.textContent).toBe("lumogis-search --toggle");
+    expect(el.textContent).not.toContain("tray icon");
+  });
+
+  it("KDE copy offers the tray icon", () => {
+    const el = recoveryHintMarkup(state({ desktop: "kde" }), () => {});
+    expect(el.textContent).toContain("tray icon");
+    expect(el.querySelector(".summon-recovery-hint__cmd")?.textContent).toBe("lumogis-search --toggle");
+  });
+
+  it("offerRecoveryHintIfNeeded activates + renders on unconfirmed Wayland", async () => {
+    let renders = 0;
+    const ctx = makeCtx({
+      render() {
+        renders += 1;
+      },
+      async invoke<T>() {
+        return state() as unknown as T;
+      },
+    });
+    await offerRecoveryHintIfNeeded(ctx);
+    expect(isRecoveryHintActive()).toBe(true);
+    expect(renders).toBe(1);
+  });
+
+  it("does NOT activate when recovery already confirmed", async () => {
+    const ctx = makeCtx({
+      async invoke<T>() {
+        return state({ recoveryConfirmed: true }) as unknown as T;
+      },
+    });
+    await offerRecoveryHintIfNeeded(ctx);
+    expect(isRecoveryHintActive()).toBe(false);
+  });
+
+  it("divergence: ignores the X11 localStorage seen-flag (still activates)", async () => {
+    // The X11 hotkey-hint flag must NOT suppress the Wayland recovery hint.
+    markSummonHintSeen();
+    expect(isSummonHintSeen()).toBe(true);
+    const ctx = makeCtx({
+      async invoke<T>() {
+        return state() as unknown as T;
+      },
+    });
+    await offerRecoveryHintIfNeeded(ctx);
+    expect(isRecoveryHintActive()).toBe(true);
+  });
+
+  it("optOutRecoveryHint persists via set_show_once_opt_out and deactivates (active→inactive)", async () => {
+    const calls: string[] = [];
+    const ctx = makeCtx({
+      async invoke<T>(cmd: string) {
+        calls.push(cmd);
+        // get_summon_recovery_state → an unconfirmed Wayland state so the hint activates;
+        // set_show_once_opt_out → void.
+        return (cmd === "get_summon_recovery_state" ? state() : undefined) as unknown as T;
+      },
+    });
+    await offerRecoveryHintIfNeeded(ctx);
+    expect(isRecoveryHintActive()).toBe(true); // genuinely active before opt-out
+    await optOutRecoveryHint(ctx);
+    expect(calls).toContain("set_show_once_opt_out");
+    expect(isRecoveryHintActive()).toBe(false);
   });
 });

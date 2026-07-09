@@ -108,6 +108,9 @@ _USER_EXPORT_TABLES: tuple[str, ...] = (
     "audit_log",
     # Tables WITHOUT a `scope` column → user_id-only filter.
     "entity_relations",
+    # MCP memory write surface (LUM-291) — per-user, no scope column.
+    "memories",
+    "entity_edges",
     "sources",
     "external_documents",
     "relevance_profiles",
@@ -128,6 +131,8 @@ _USER_EXPORT_TABLES: tuple[str, ...] = (
     # Notification prefs (migration 031) — per-user routing settings, no scope column.
     "notification_preferences",
     "notification_user_settings",
+    # Privacy mode per-user restriction (LUM-194); no scope column.
+    "privacy_user_settings",
 )
 
 # Tables with a `user_id` column that are deliberately omitted from
@@ -183,6 +188,10 @@ _OMITTED_USER_TABLES: dict[str, str] = {
     # jobs on the source instance; they are not meaningful portable user content.
     "purged_conversations": (
         "excluded (purge tombstone bookkeeping; source-instance coordination)"
+    ),
+    # Document hard-delete tombstones (LUM-500) — same contract as conversations.
+    "purged_documents": (
+        "excluded (document purge tombstone bookkeeping; source-instance coordination)"
     ),
 }
 
@@ -714,6 +723,86 @@ def _restore_capture_media_from_zip(
 # ─── Export ─────────────────────────────────────────────────────────────────
 
 
+def _export_falkordb_user_subgraph(gs, user_id: str) -> tuple[list[dict], list[dict], int]:
+    """Return (nodes, edges, external_edge_count) for one bank graph."""
+    falkor_nodes: list[dict] = []
+    falkor_edges: list[dict] = []
+    falkor_external_count = 0
+    try:
+        node_rows = gs.query(
+            "MATCH (n {user_id: $me}) "
+            "RETURN labels(n) AS labels, n.lumogis_id AS lumogis_id, "
+            "properties(n) AS properties",
+            {"me": user_id},
+        )
+        for row in node_rows or []:
+            falkor_nodes.append(
+                {
+                    "labels": row.get("labels") or [],
+                    "lumogis_id": row.get("lumogis_id"),
+                    "properties": row.get("properties") or {},
+                }
+            )
+    except Exception:
+        _log.exception("export: FalkorDB node read failed")
+        raise
+    try:
+        edge_rows = gs.query(
+            "MATCH (a)-[r {user_id: $me}]->(b) "
+            "RETURN a.lumogis_id AS from_lumogis_id, "
+            "       a.user_id AS from_user_id, "
+            "       b.lumogis_id AS to_lumogis_id, "
+            "       b.user_id AS to_user_id, "
+            "       type(r) AS rel_type, "
+            "       properties(r) AS properties",
+            {"me": user_id},
+        )
+        for row in edge_rows or []:
+            if row.get("from_user_id") != user_id or row.get("to_user_id") != user_id:
+                falkor_external_count += 1
+                continue
+            falkor_edges.append(
+                {
+                    "from_lumogis_id": row.get("from_lumogis_id"),
+                    "to_lumogis_id": row.get("to_lumogis_id"),
+                    "rel_type": row.get("rel_type"),
+                    "properties": row.get("properties") or {},
+                }
+            )
+    except Exception:
+        _log.exception("export: FalkorDB edge read failed")
+        raise
+    return falkor_nodes, falkor_edges, falkor_external_count
+
+
+def _export_falkordb_all_banks(user_id: str) -> tuple[dict[str, dict], list[str], int]:
+    """Export FalkorDB subgraphs for every configured bank (LUM-544).
+
+    Returns ``({bank: {"nodes": [...], "edges": [...]}}, warnings, external_edge_count)``.
+    """
+    from services import banks
+
+    by_bank: dict[str, dict] = {}
+    warnings: list[str] = []
+    external_total = 0
+    for bank in sorted(banks.KNOWN_BANKS):
+        try:
+            gs = config.get_graph_store(bank)
+        except Exception:
+            gs = None
+        if gs is None:
+            continue
+        try:
+            nodes, edges, ext = _export_falkordb_user_subgraph(gs, user_id)
+            external_total += ext
+            by_bank[bank] = {"nodes": nodes, "edges": edges}
+        except Exception as exc:
+            _log.exception("export: FalkorDB read failed for bank %s", bank)
+            warnings.append(f"falkordb:{bank}:{type(exc).__name__}")
+            by_bank[bank] = {"nodes": [], "edges": []}
+    return by_bank, warnings, external_total
+
+
 def enumerate_user_data_sections(user_id: str) -> list[SectionSummary]:
     """Read-only inventory of what would be exported for ``user_id``.
 
@@ -812,61 +901,31 @@ def export_user(user_id: str) -> tuple[bytes, str]:
             qdrant_warnings.append(f"qdrant:{coll}:{type(exc).__name__}")
             qdrant_payload[coll] = []
 
-    # FalkorDB nodes + edges (D15) — best-effort.
+    # FalkorDB nodes + edges per bank (D15 / LUM-544) — best-effort.
+    falkor_by_bank, falkor_bank_warnings, falkor_external_count = _export_falkordb_all_banks(user_id)
+    falkor_warnings: list[str] = list(falkor_bank_warnings)
     falkor_nodes: list[dict] = []
     falkor_edges: list[dict] = []
-    falkor_external_count = 0
-    falkor_warnings: list[str] = []
-    try:
-        gs = config.get_graph_store()
-    except Exception:
-        gs = None
-    if gs is not None:
-        try:
-            node_rows = gs.query(
-                "MATCH (n {user_id: $me}) "
-                "RETURN labels(n) AS labels, n.lumogis_id AS lumogis_id, "
-                "properties(n) AS properties",
-                {"me": user_id},
-            )
-            for row in node_rows or []:
-                falkor_nodes.append(
-                    {
-                        "labels": row.get("labels") or [],
-                        "lumogis_id": row.get("lumogis_id"),
-                        "properties": row.get("properties") or {},
-                    }
-                )
-        except Exception as exc:
-            _log.exception("export: FalkorDB node read failed")
-            falkor_warnings.append(f"falkordb:nodes:{type(exc).__name__}")
-        try:
-            edge_rows = gs.query(
-                "MATCH (a)-[r {user_id: $me}]->(b) "
-                "RETURN a.lumogis_id AS from_lumogis_id, "
-                "       a.user_id AS from_user_id, "
-                "       b.lumogis_id AS to_lumogis_id, "
-                "       b.user_id AS to_user_id, "
-                "       type(r) AS rel_type, "
-                "       properties(r) AS properties",
-                {"me": user_id},
-            )
-            for row in edge_rows or []:
-                if row.get("from_user_id") != user_id or row.get("to_user_id") != user_id:
-                    falkor_external_count += 1
-                    continue
-                falkor_edges.append(
-                    {
-                        "from_lumogis_id": row.get("from_lumogis_id"),
-                        "to_lumogis_id": row.get("to_lumogis_id"),
-                        "rel_type": row.get("rel_type"),
-                        "properties": row.get("properties") or {},
-                    }
-                )
-        except Exception as exc:
-            _log.exception("export: FalkorDB edge read failed")
-            falkor_warnings.append(f"falkordb:edges:{type(exc).__name__}")
-
+    for bank, payload in falkor_by_bank.items():
+        nodes = payload["nodes"]
+        edges = payload["edges"]
+        falkor_nodes.extend(nodes)
+        falkor_edges.extend(edges)
+        sections.append(
+            {
+                "name": f"falkordb/{bank}/nodes.json",
+                "kind": "falkordb",
+                "row_count": len(nodes),
+            }
+        )
+        sections.append(
+            {
+                "name": f"falkordb/{bank}/edges.json",
+                "kind": "falkordb",
+                "row_count": len(edges),
+            }
+        )
+    # Legacy combined paths (union of all banks) for import backward compatibility.
     sections.append(
         {"name": "falkordb/nodes.json", "kind": "falkordb", "row_count": len(falkor_nodes)}
     )
@@ -899,6 +958,7 @@ def export_user(user_id: str) -> tuple[bytes, str]:
         "exported_user_role": (user_row_dict or {}).get("role", "user"),
         "scope_filter": "authored_by_me",
         "falkordb_edge_policy": "personal_intra_user_authored",
+        "falkordb_banks": sorted(falkor_by_bank.keys()),
         "sections": sections,
         "falkordb_external_edge_count": falkor_external_count,
         "warnings": qdrant_warnings + falkor_warnings,
@@ -928,6 +988,15 @@ def export_user(user_id: str) -> tuple[bytes, str]:
             zf.writestr(f"postgres/{table}.json", json.dumps(rows, default=str))
         for coll, points in qdrant_payload.items():
             zf.writestr(f"qdrant/{coll}.json", json.dumps(points, default=str))
+        for bank, payload in falkor_by_bank.items():
+            zf.writestr(
+                f"falkordb/{bank}/nodes.json",
+                json.dumps(payload["nodes"], default=str),
+            )
+            zf.writestr(
+                f"falkordb/{bank}/edges.json",
+                json.dumps(payload["edges"], default=str),
+            )
         zf.writestr("falkordb/nodes.json", json.dumps(falkor_nodes, default=str))
         zf.writestr("falkordb/edges.json", json.dumps(falkor_edges, default=str))
         if att_rows:
@@ -1470,10 +1539,6 @@ def _import_user_impl(
     meta = config.get_metadata_store()
     vs = config.get_vector_store()
     embedder = config.get_embedder()
-    try:
-        gs = config.get_graph_store()
-    except Exception:
-        gs = None
 
     receipt_warnings: list[str] = []
     leaf_collisions: dict[str, int] = {}
@@ -1692,9 +1757,55 @@ def _import_user_impl(
                     )
                 )
 
-            # FalkorDB re-MERGE — best-effort.
-            if gs is not None:
-                if "falkordb/nodes.json" in archive_names:
+            # FalkorDB re-MERGE — best-effort (per-bank when present; else legacy personal).
+            per_bank_nodes = sorted(
+                entry.split("/")[1]
+                for entry in archive_names
+                if entry.startswith("falkordb/")
+                and entry.endswith("/nodes.json")
+                and entry.count("/") == 2
+            )
+            if per_bank_nodes:
+                for bank in per_bank_nodes:
+                    nodes_entry = f"falkordb/{bank}/nodes.json"
+                    try:
+                        gs = config.get_graph_store(bank)
+                    except Exception:
+                        gs = None
+                    if gs is None or nodes_entry not in archive_names:
+                        continue
+                    try:
+                        nodes = json.loads(zf.read(nodes_entry))
+                        for n in nodes:
+                            props = dict(n.get("properties") or {})
+                            props["user_id"] = new_user_id
+                            props["lumogis_id"] = n.get("lumogis_id")
+                            try:
+                                gs.create_node(
+                                    labels=n.get("labels") or ["Node"],
+                                    properties=props,
+                                )
+                                falkor_nodes_imported += 1
+                            except Exception:
+                                _log.debug("import: falkor node create failed for bank %s", bank)
+                    except Exception:
+                        _log.exception("import: falkor nodes parse failed for bank %s", bank)
+                    edges_entry = f"falkordb/{bank}/edges.json"
+                    if edges_entry in archive_names:
+                        try:
+                            edges = json.loads(zf.read(edges_entry))
+                            if edges:
+                                receipt_warnings.append(
+                                    f"falkordb_edges_not_restored:{bank}: re-derive via re-ingest"
+                                )
+                        except Exception:
+                            pass
+            else:
+                try:
+                    gs = config.get_graph_store()
+                except Exception:
+                    gs = None
+                if gs is not None and "falkordb/nodes.json" in archive_names:
                     try:
                         nodes = json.loads(zf.read("falkordb/nodes.json"))
                         for n in nodes:

@@ -127,6 +127,9 @@ def test_get_graph_store_falkordb_import_error_returns_none_with_warning(monkeyp
 
     monkeypatch.setenv("GRAPH_BACKEND", "falkordb")
     config._instances.pop("graph_store", None)
+    for key in list(config._instances.keys()):
+        if key.startswith("graph_store:"):
+            config._instances.pop(key, None)
     config._graph_store_import_warning_emitted = False
     fake_mod = types.ModuleType("adapters.falkordb_store")
     monkeypatch.setitem(sys.modules, "adapters.falkordb_store", fake_mod)

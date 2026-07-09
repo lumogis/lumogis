@@ -2,7 +2,7 @@
 
 **Status:** Finalised
 **Created:** 2026-05-15
-**Last updated:** 2026-05-15
+**Last updated:** 2026-06-23
 **Decided by:** `/explore --headless` (claude-opus-4-7-thinking-medium); implementation verified `/verify-plan --headless` (Composer)
 **Linear:** [LUM-29](https://linear.app/lumogis/issue/LUM-29/jwt-access-token-revocation-multi-device-session-management-and-token) (`priority:1`, `risk:security`, `milestone:household-ready`, parent **LUM-51**, blocks **LUM-65** + **LUM-51**)
 
@@ -73,7 +73,7 @@ See `.cursor/explorations/LUM-29-jwt-revocation-multi-device-sessions.md` for fu
 
 - One additional per-request DB read for `users.token_version` unless cached. Mitigation: in-process `TTLCache` (default 30 s); cache invalidated in-process on `_apply_new_password` / `set_disabled`. Single-uvicorn-worker today → safe; multi-worker is LUM-30's scope (Postgres LISTEN/NOTIFY is the natural extension, but **not** required by this ADR).
 - Per-device immediate access-token kick is **not** in scope: revoking a single session leaves that device's access token alive ≤15 min until TTL. Documented as a limitation; follow-up issue tracks the `sid` lookup option.
-- Migration touches a load-bearing column. Dual-write window for one release while `users.refresh_token_jti` is retained for downgrade safety.
+- Migration touches a load-bearing column. Dual-write window for one release while `users.refresh_token_jti` is retained for downgrade safety. **Closed (LUM-244):** the column was dropped in `postgres/migrations/037-drop-users-refresh-token-jti.sql` after six releases (0.5.0 → 0.8.0); the CI grep gate (`scripts/check_refresh_token_jti_guard.py`) remains to prevent reintroduction.
 - Personal data export (LUM-188) must explicitly exclude session metadata (operational, not user data) — coordinate at plan time.
 
 **Future chunks must know:**
@@ -98,3 +98,4 @@ See `.cursor/explorations/LUM-29-jwt-revocation-multi-device-sessions.md` for fu
 - 2026-05-15: Draft created by `/explore --headless` (claude-opus-4-7-thinking-medium) for LUM-29.
 - 2026-05-15: Revised during `/review-plan --arbitrate` R1 — table renamed **`auth_sessions`** (avoid collision with **`003` `sessions`**); **`token_version` → BIGINT**; explicit **`tv`** enforcement on **`_check_mcp_bearer`** after decode and before opaque MCP token compare; rotation semantics = **insert-new + revoke-prior** (OAuth 2.1 reuse path).
 - 2026-05-15: Finalised by `/verify-plan --headless` — implementation confirmed against plan; canonical copy at this path.
+- 2026-06-23: Dual-write downgrade window closed (LUM-244) — `users.refresh_token_jti` dropped in migration 037 after six releases with zero production references; CI grep gate retained.

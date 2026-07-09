@@ -5,11 +5,13 @@ import { useState } from "react";
 import { useAuth } from "../../auth/AuthProvider";
 import { ApiError } from "../../api/client";
 import { CopyOnceModal } from "../_shared/CopyOnceModal";
+import { accessLabel } from "./mcpTokenDisplay";
 
 interface McpRow {
   id: string;
   label: string;
   created_at: string;
+  scopes: string[] | null;
 }
 interface MintRes {
   plaintext: string;
@@ -20,6 +22,7 @@ export function MeMcpTokensView(): JSX.Element {
   const { client } = useAuth();
   const qc = useQueryClient();
   const [label, setLabel] = useState("");
+  const [writable, setWritable] = useState(false); // LUM-527: default least-privilege
   const [err, setErr] = useState<string | null>(null);
   const [plain, setPlain] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
@@ -30,11 +33,16 @@ export function MeMcpTokensView(): JSX.Element {
   });
 
   const mintM = useMutation({
-    mutationFn: () => client.postJson<{ label: string }, MintRes>("/api/v1/me/mcp-tokens", { label: label.trim() }),
+    mutationFn: () =>
+      client.postJson<{ label: string; scopes: string[] }, MintRes>("/api/v1/me/mcp-tokens", {
+        label: label.trim(),
+        scopes: writable ? ["mcp:read", "mcp:write"] : ["mcp:read"],
+      }),
     onSuccess: (data) => {
       setPlain(data.plaintext);
       setShowModal(true);
       setLabel("");
+      setWritable(false); // back to least-privilege default for the next mint
       void qc.invalidateQueries({ queryKey: ["mcp", "me"] });
     },
     onError: (e) => {
@@ -54,7 +62,7 @@ export function MeMcpTokensView(): JSX.Element {
     <section>
       <h2>MCP tokens</h2>
       {err && <p role="alert">{err}</p>}
-      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem" }}>
+      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.5rem" }}>
         <input
           value={label}
           onChange={(e) => setLabel(e.target.value)}
@@ -72,11 +80,33 @@ export function MeMcpTokensView(): JSX.Element {
           Mint
         </button>
       </div>
+      <fieldset style={{ border: "none", margin: 0, padding: 0, marginBottom: "1rem" }}>
+        <legend style={{ fontSize: "0.85rem", padding: 0 }}>Token access</legend>
+        <label style={{ marginRight: "1rem" }}>
+          <input
+            type="radio"
+            name="mcp-token-access"
+            checked={!writable}
+            onChange={() => setWritable(false)}
+          />{" "}
+          Read-only
+        </label>
+        <label>
+          <input
+            type="radio"
+            name="mcp-token-access"
+            checked={writable}
+            onChange={() => setWritable(true)}
+          />{" "}
+          Read + write
+        </label>
+      </fieldset>
       <ul>
         {listQ.data?.map((t) => (
           <li key={t.id} style={{ marginBottom: "0.5rem" }}>
             {t.label}{" "}
             <code style={{ fontSize: "0.8rem" }}>{t.id}</code>{" "}
+            <span style={{ fontSize: "0.8rem", opacity: 0.8 }}>[{accessLabel(t.scopes)}]</span>{" "}
             <button type="button" onClick={() => delM.mutate(t.id)}>
               Revoke
             </button>

@@ -3,9 +3,9 @@
 > **Superseded (export boundary and product paths)** by **[ADR 081](081-lum-434-export-boundary-reconciliation.md)**. Persona B **distribution UX** below remains valid; artefact is **`clients/lumogis-search/`**.
 
 > Status: Active (numbering conflict)
-> Last reviewed: 2026-06-14
-> Verified against commit: a36f022
-> Notes: **`docs/decisions/072-lum-401-compose-multibind-generator.md`** also claims **ADR 072** in its title. Resolve by renumbering one document and sweeping references. Filename prefixes **053–097** are already taken (duplicate clusters on **053**, **059**, **060**, **061**, **063**, **064**, **072**, **074**, plus **`065-lum-320-*.md`** through **`097-lum-470-pip-dependency-hash-pinning.md`**). Pick a **non-colliding** new slug (for example **`098-*.md`**) when renumbering—coordinate with any **`034-linear-evidence-index.md`** / **046** / **074** pair rename in the same pass—see `docs/_librarian/docs-inventory.md`.
+> Last reviewed: 2026-07-07
+> Verified against commit: 6c80e10
+> Notes: **`docs/decisions/072-lum-401-compose-multibind-generator.md`** also claims **ADR 072** in its title. Resolve by renumbering one document and sweeping references. Filename prefixes **053–157** are already taken (duplicate clusters on **053**, **059**, **060**, **061**, **063**, **064**, **072**, **074**, **098**, **101**, **147**, **154**, **156**, plus **`065-lum-320-*.md`** through **`157-lum-157-577-post-ship-sharing-fixes.md`**). Pick a **non-colliding** new slug (for example **`158+`**) when renumbering—coordinate with any **`034-linear-evidence-index.md`** / **046** / **074** pair rename in the same pass—see `docs/_librarian/docs-inventory.md`.
 
 **Status:** Superseded (export boundary) — distribution UX record retained
 **Created:** 2026-05-29

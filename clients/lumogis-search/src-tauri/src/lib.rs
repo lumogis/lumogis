@@ -6,9 +6,11 @@
 mod auth;
 pub mod commands;
 mod overlay_window;
+mod summon;
 pub mod system_tray;
 
 pub use overlay_window::{enter_overlay_mode_inner, is_wayland_session};
+pub use summon::{SummonAction, SummonSource};
 
 use auth::AuthCoordinator;
 use auth::AuthMode;
@@ -31,7 +33,7 @@ const MAX_SUPPORTED_SCHEMA_VERSION: u32 = 3;
 /// prove macro registration (`generate_handler!` registers by fn ident).
 /// `get_desktop_profile` is intentionally **excluded**: each host binary
 /// registers its own profile command (Search → `"client-only"`). Each binary's
-/// `generate_handler!` therefore registers 1 (local profile fn) + 20 (these) = 21 commands.
+/// `generate_handler!` therefore registers 1 (local profile fn) + 22 (these) = 23 commands.
 pub const SHARED_COMMAND_NAMES: &[&str] = &[
     "get_overlay_settings",
     "save_overlay_settings",
@@ -53,6 +55,8 @@ pub const SHARED_COMMAND_NAMES: &[&str] = &[
     "reveal_if_allowed",
     "reset_overlay_config_to_defaults",
     "take_pending_summon_hint",
+    "get_summon_recovery_state",
+    "set_show_once_opt_out",
 ];
 
 // ── Wire DTOs (FastAPI /api/v1/memory/search — snake_case JSON) ─────────────
@@ -97,6 +101,15 @@ pub struct OverlayConfig {
     pub theme: String,
     #[serde(default)]
     pub onboarding_complete: bool,
+    /// LUM-455 — Wayland re-summon recovery confirmed (verified visible+focused
+    /// tray/CLI summon). On-disk key: `recoveryConfirmed`. serde-default keeps
+    /// pre-LUM-455 `overlay.json` loading (no schema-version bump).
+    #[serde(default)]
+    pub recovery_confirmed: bool,
+    /// LUM-455 — user opted out of the Wayland show-once safety net
+    /// ("Don't show on startup"). On-disk key: `showOnceOptOut`.
+    #[serde(default)]
+    pub show_once_opt_out: bool,
 }
 
 fn default_theme() -> String {
@@ -119,6 +132,8 @@ impl Default for OverlayConfig {
             library_roots: vec![],
             theme: default_theme(),
             onboarding_complete: false,
+            recovery_confirmed: false,
+            show_once_opt_out: false,
         }
     }
 }
@@ -301,6 +316,52 @@ pub fn toggle_overlay_window(app: &AppHandle) {
     }
 }
 
+/// Route a summon through the shared show/hide path and, on a *verified* Wayland
+/// summon from a guaranteed path (tray/CLI), confirm recovery (LUM-455). The single
+/// choke-point so every summon trigger keeps `recovery_confirmed` accurate.
+pub fn apply_summon(app: &AppHandle, action: SummonAction, source: SummonSource) {
+    match action {
+        SummonAction::Toggle => toggle_overlay_window(app),
+        SummonAction::Show => show_overlay_window(app),
+        SummonAction::Hide => {
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.hide();
+            }
+        }
+    }
+    // Confirm Wayland recovery only from a guaranteed-path summon (tray/CLI), and
+    // only if the overlay is actually visible AND focused afterwards — a
+    // compositor-refused focus must NOT false-confirm (ARBITRATE-R1 P0). The
+    // in-app hotkey (Source::Hotkey) never confirms.
+    if matches!(source, SummonSource::Cli | SummonSource::Tray)
+        && !matches!(action, SummonAction::Hide)
+        && is_wayland_session()
+    {
+        confirm_recovery_if_focused(app);
+    }
+}
+
+/// Flip `recovery_confirmed` (persisted) only when the overlay is verified
+/// visible+focused after a guaranteed-path Wayland summon.
+fn confirm_recovery_if_focused(app: &AppHandle) {
+    let Some(win) = app.get_webview_window("main") else {
+        return;
+    };
+    let verified = win.is_visible().unwrap_or(false) && win.is_focused().unwrap_or(false);
+    if !verified {
+        return; // safe side: stay unconfirmed → keep showing the hint, no lockout
+    }
+    let state = app.state::<AppState>();
+    let mut g = state.inner.lock().expect("state poisoned");
+    if g.config.recovery_confirmed {
+        return;
+    }
+    g.config.recovery_confirmed = true;
+    if let Err(e) = save_overlay_json(&g.config_path, &g.config) {
+        tracing::warn!("failed to persist recovery_confirmed: {e}");
+    }
+}
+
 fn reregister_hotkey(app: &AppHandle) -> Result<(), String> {
     let hotkey_str = {
         let state = app.state::<AppState>();
@@ -332,7 +393,7 @@ pub fn reregister_hotkey_best_effort(app: &AppHandle) {
 
 // ── Commands ────────────────────────────────────────────────────────────────
 //
-// The 19 **shared** commands now live in the `commands` submodule (see
+// The 22 **shared** commands now live in the `commands` submodule (see
 // `SHARED_COMMAND_NAMES`) — `#[tauri::command] pub fn` cannot be defined in the
 // crate root (`lib.rs`/`main.rs`). They are registered below as `commands::<name>`.
 //
@@ -348,7 +409,22 @@ fn get_desktop_profile() -> String {
 /// desktop client needs (opener + global shortcut). Embedding callers may add
 /// extra plugins before `.setup(...)`.
 pub fn shared_builder() -> tauri::Builder<tauri::Wry> {
-    let mut builder = tauri::Builder::default()
+    #[allow(unused_mut)]
+    let mut builder = tauri::Builder::default();
+    // LUM-455: single-instance must be registered FIRST so a second launch is
+    // forwarded (and exits) before other plugins/setup run. Feature-gated on
+    // `standalone-app` (the Search binary); the Hub path-deps this crate with
+    // `default-features = false`, so single-instance is entirely absent there —
+    // no Hub build/ACL impact. A second launch's argv (`--toggle`/`--show`/`--hide`,
+    // or none) is routed through `apply_summon` (Source::Cli) on the running instance.
+    #[cfg(feature = "standalone-app")]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            let action = summon::parse_summon_args(&argv).unwrap_or(SummonAction::Show);
+            apply_summon(app, action, SummonSource::Cli);
+        }));
+    }
+    builder = builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build());
     #[cfg(feature = "wdio-e2e")]
@@ -452,6 +528,29 @@ pub fn shared_setup(
     Ok(())
 }
 
+/// LUM-455 — on Wayland, show the overlay once on cold start (Search only) until the
+/// user has a confirmed recovery path or has opted out, so the silently-failing
+/// in-app global hotkey can never leave an A/B user locked out. Kept in `run()`
+/// (not `shared_setup`) so the Hub's own overlay lifecycle (ADR-089) is untouched.
+#[cfg(feature = "standalone-app")]
+fn wayland_cold_start_show_once(app: &AppHandle) {
+    let (wayland, recovery_confirmed, opt_out) = {
+        let state = app.state::<AppState>();
+        let g = state.inner.lock().expect("state poisoned");
+        (
+            is_wayland_session(),
+            g.config.recovery_confirmed,
+            g.config.show_once_opt_out,
+        )
+    };
+    if summon::cold_start_should_show(wayland, recovery_confirmed, opt_out) {
+        // The recovery hint is driven independently by the UI via
+        // `get_summon_recovery_state` (we do NOT set `pending_summon_hint`, which
+        // would show the X11 "press the hotkey" hint — wrong on Wayland).
+        show_overlay_window(app);
+    }
+}
+
 #[cfg(feature = "standalone-app")]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -467,7 +566,9 @@ pub fn run() {
                 system_tray::TrayClickBehavior::ToggleOverlay,
                 system_tray::TRAY_TOOLTIP,
                 true,
-            )
+            )?;
+            wayland_cold_start_show_once(app.handle());
+            Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             get_desktop_profile,
@@ -491,6 +592,8 @@ pub fn run() {
             commands::reveal_if_allowed,
             commands::reset_overlay_config_to_defaults,
             commands::take_pending_summon_hint,
+            commands::get_summon_recovery_state,
+            commands::set_show_once_opt_out,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -556,12 +659,34 @@ mod overlay_schema_tests {
             library_roots: vec![],
             theme: "dark".into(),
             onboarding_complete: true,
+            recovery_confirmed: false,
+            show_once_opt_out: false,
         };
         save_overlay_json(&path, &cfg).unwrap();
         let loaded = load_overlay_json(&path).unwrap();
         assert!(loaded.onboarding_complete);
         assert_eq!(loaded.schema_version, 2);
         assert_eq!(loaded.theme, "dark");
+    }
+
+    #[test]
+    fn load_overlay_v3_without_recovery_keys_defaults_false() {
+        // LUM-455: a pre-LUM-455 v3 overlay.json (no recoveryConfirmed/showOnceOptOut)
+        // must load with both flags false (serde default; no schema-version bump).
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("overlay.json");
+        let raw = r#"{
+            "schemaVersion": 3,
+            "orchestratorBaseUrl": "http://127.0.0.1:8000",
+            "hotkey": "CommandOrControl+Shift+L",
+            "libraryRoots": [],
+            "theme": "system",
+            "onboardingComplete": true
+        }"#;
+        fs::write(&path, raw).unwrap();
+        let cfg = load_overlay_json(&path).unwrap();
+        assert!(!cfg.recovery_confirmed);
+        assert!(!cfg.show_once_opt_out);
     }
 }
 
@@ -603,13 +728,13 @@ mod command_registry_tests {
     use super::*;
     use std::collections::HashSet;
 
-    /// Frontend-contract guard (LUM-435 Chunk A): the shared command-name set is
-    /// exactly 20 with no duplicates. Search's `generate_handler!` registers these
-    /// 20 plus the local `get_desktop_profile` = 21 total. This guards the
-    /// frontend invoke-string contract, not macro registration.
+    /// Frontend-contract guard (LUM-435 Chunk A; +2 for LUM-455): the shared
+    /// command-name set is exactly 22 with no duplicates. Search's
+    /// `generate_handler!` registers these 22 plus the local `get_desktop_profile`
+    /// = 23 total. This guards the frontend invoke-string contract, not macro registration.
     #[test]
     fn shared_command_names_count_and_unique() {
-        assert_eq!(SHARED_COMMAND_NAMES.len(), 20, "shared command count drifted");
+        assert_eq!(SHARED_COMMAND_NAMES.len(), 22, "shared command count drifted");
         let unique: HashSet<&&str> = SHARED_COMMAND_NAMES.iter().collect();
         assert_eq!(
             unique.len(),

@@ -174,13 +174,18 @@ def build_backup_status_response() -> BackupStatusResponse:
     age_hours: float | None = None
     stale = False
     if created_dt is not None:
-        age_hours = (datetime.now(timezone.utc) - created_dt.astimezone(timezone.utc)).total_seconds() / 3600.0
+        age_hours = (
+            datetime.now(timezone.utc) - created_dt.astimezone(timezone.utc)
+        ).total_seconds() / 3600.0
         stale = age_hours > stale_hours
         if stale:
             warnings.append(
                 AdminDiagnosticsWarning(
                     code="backup_stale",
-                    message=f"Last verified backup is {age_hours:.1f}h old (threshold {stale_hours:.0f}h)",
+                    message=(
+                        f"Last verified backup is {age_hours:.1f}h old "
+                        f"(threshold {stale_hours:.0f}h)"
+                    ),
                 )
             )
 

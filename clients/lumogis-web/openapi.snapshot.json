@@ -498,6 +498,106 @@
         "title": "AdminDiagnosticsWarning",
         "type": "object"
       },
+      "AdminSharedItem": {
+        "description": "One household shared item, admin view (LUM-584).\n\n``resource_id`` is the **source** pk (``published_from``) the admin\nunshare route needs — admin-only provenance, never exposed on a\nnon-admin route. ``source_owner_id`` names the sharing member.",
+        "properties": {
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "resource_id": {
+            "title": "Resource Id",
+            "type": "string"
+          },
+          "resource_type": {
+            "enum": [
+              "notes",
+              "audio_memos",
+              "sessions",
+              "files",
+              "entities",
+              "signals"
+            ],
+            "title": "Resource Type",
+            "type": "string"
+          },
+          "source_owner_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Owner Id"
+          }
+        },
+        "required": [
+          "resource_type",
+          "resource_id"
+        ],
+        "title": "AdminSharedItem",
+        "type": "object"
+      },
+      "AdminSharedItemsResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AdminSharedItem"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "AdminSharedItemsResponse",
+        "type": "object"
+      },
+      "AdminUnshareResult": {
+        "description": "Result of an admin retracting another member's share (LUM-584).",
+        "properties": {
+          "resource_id": {
+            "title": "Resource Id",
+            "type": "string"
+          },
+          "resource_type": {
+            "title": "Resource Type",
+            "type": "string"
+          },
+          "source_owner_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Owner Id"
+          },
+          "unshared": {
+            "default": true,
+            "title": "Unshared",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "resource_type",
+          "resource_id"
+        ],
+        "title": "AdminUnshareResult",
+        "type": "object"
+      },
       "AdminUserPasswordResetRequest": {
         "description": "Body for ``POST /api/v1/admin/users/{user_id}/password``.",
         "properties": {
@@ -613,6 +713,22 @@
             "title": "Connector",
             "type": "string"
           },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "event_type": {
+            "default": "audit.unknown",
+            "title": "Event Type",
+            "type": "string"
+          },
           "executed_at": {
             "anyOf": [
               {
@@ -686,6 +802,22 @@
               }
             ],
             "title": "Reversed At"
+          },
+          "scope": {
+            "default": "personal",
+            "title": "Scope",
+            "type": "string"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
           }
         },
         "required": [
@@ -705,10 +837,25 @@
             },
             "title": "Audit",
             "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
           }
         },
         "required": [
-          "audit"
+          "audit",
+          "total",
+          "limit",
+          "offset"
         ],
         "title": "AuditListResponse",
         "type": "object"
@@ -873,6 +1020,22 @@
           "present"
         ],
         "title": "BackupStatusStoreItem",
+        "type": "object"
+      },
+      "BiographyConflictListResponse": {
+        "properties": {
+          "conflicts": {
+            "items": {
+              "$ref": "#/components/schemas/ConflictResolution"
+            },
+            "title": "Conflicts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "conflicts"
+        ],
+        "title": "BiographyConflictListResponse",
         "type": "object"
       },
       "Body_transcribe_voice_api_v1_voice_transcribe_post": {
@@ -1614,6 +1777,17 @@
       "ChatCompletionRequest": {
         "additionalProperties": false,
         "properties": {
+          "document_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Id"
+          },
           "messages": {
             "items": {
               "$ref": "#/components/schemas/ChatMessageDTO"
@@ -1718,6 +1892,150 @@
           "content"
         ],
         "title": "ChatMessageDTO",
+        "type": "object"
+      },
+      "ConflictContribution": {
+        "properties": {
+          "pin_id": {
+            "format": "uuid",
+            "title": "Pin Id",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "pin_id",
+          "text",
+          "updated_at"
+        ],
+        "title": "ConflictContribution",
+        "type": "object"
+      },
+      "ConflictResolution": {
+        "properties": {
+          "action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action"
+          },
+          "archived_pin_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Archived Pin Ids",
+            "type": "array"
+          },
+          "fact_group_key": {
+            "title": "Fact Group Key",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "resolved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved At"
+          },
+          "resolved_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved By"
+          },
+          "status": {
+            "enum": [
+              "open",
+              "resolved",
+              "dismissed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "fact_group_key",
+          "status"
+        ],
+        "title": "ConflictResolution",
+        "type": "object"
+      },
+      "ConflictResolutionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "enum": [
+              "confirm_one",
+              "keep_both",
+              "dismiss"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "chosen_pin_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chosen Pin Id"
+          },
+          "context_note": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context Note"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "title": "ConflictResolutionRequest",
         "type": "object"
       },
       "ConnectorCredentialList": {
@@ -2062,6 +2380,11 @@
       },
       "ConversationDetail": {
         "properties": {
+          "can_share": {
+            "default": true,
+            "title": "Can Share",
+            "type": "boolean"
+          },
           "conversation_id": {
             "title": "Conversation Id",
             "type": "string"
@@ -2078,6 +2401,11 @@
             "title": "Entities",
             "type": "array"
           },
+          "is_owner": {
+            "default": true,
+            "title": "Is Owner",
+            "type": "boolean"
+          },
           "messages": {
             "items": {
               "$ref": "#/components/schemas/ConversationMessage"
@@ -2088,6 +2416,26 @@
           "scope": {
             "title": "Scope",
             "type": "string"
+          },
+          "share_status": {
+            "default": "personal",
+            "enum": [
+              "personal",
+              "shared"
+            ],
+            "title": "Share Status",
+            "type": "string"
+          },
+          "shared_summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shared Summary"
           },
           "summary": {
             "title": "Summary",
@@ -2135,6 +2483,17 @@
       },
       "ConversationMessage": {
         "properties": {
+          "action_proposal_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action Proposal Id"
+          },
           "content": {
             "title": "Content",
             "type": "string"
@@ -2167,6 +2526,21 @@
             ],
             "title": "Role",
             "type": "string"
+          },
+          "source_refs": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Refs"
           }
         },
         "required": [
@@ -2181,6 +2555,17 @@
       "ConversationMessageAppendRequest": {
         "additionalProperties": false,
         "properties": {
+          "action_proposal_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action Proposal Id"
+          },
           "content": {
             "maxLength": 64000,
             "title": "Content",
@@ -2210,6 +2595,22 @@
             ],
             "title": "Role",
             "type": "string"
+          },
+          "source_refs": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "maxItems": 64,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Refs"
           }
         },
         "required": [
@@ -2251,6 +2652,11 @@
       },
       "ConversationSummary": {
         "properties": {
+          "can_share": {
+            "default": true,
+            "title": "Can Share",
+            "type": "boolean"
+          },
           "conversation_id": {
             "title": "Conversation Id",
             "type": "string"
@@ -2259,6 +2665,11 @@
             "format": "date-time",
             "title": "Ended At",
             "type": "string"
+          },
+          "is_owner": {
+            "default": true,
+            "title": "Is Owner",
+            "type": "boolean"
           },
           "message_count": {
             "anyOf": [
@@ -2275,6 +2686,26 @@
             "default": "personal",
             "title": "Scope",
             "type": "string"
+          },
+          "share_status": {
+            "default": "personal",
+            "enum": [
+              "personal",
+              "shared"
+            ],
+            "title": "Share Status",
+            "type": "string"
+          },
+          "shared_summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shared Summary"
           },
           "summary": {
             "title": "Summary",
@@ -2419,6 +2850,416 @@
         "title": "DeniedActionItem",
         "type": "object"
       },
+      "DetectedConflict": {
+        "properties": {
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "contributions": {
+            "items": {
+              "$ref": "#/components/schemas/ConflictContribution"
+            },
+            "title": "Contributions",
+            "type": "array"
+          },
+          "domain": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Domain"
+          },
+          "fact_group_key": {
+            "title": "Fact Group Key",
+            "type": "string"
+          },
+          "pin_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Pin Ids",
+            "type": "array"
+          },
+          "represent_both_line": {
+            "title": "Represent Both Line",
+            "type": "string"
+          },
+          "requires_review": {
+            "title": "Requires Review",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "fact_group_key",
+          "category",
+          "domain",
+          "pin_ids",
+          "contributions",
+          "requires_review",
+          "represent_both_line"
+        ],
+        "title": "DetectedConflict",
+        "type": "object"
+      },
+      "DocumentDeleteResponse": {
+        "properties": {
+          "deleted": {
+            "title": "Deleted",
+            "type": "boolean"
+          },
+          "document_id": {
+            "title": "Document Id",
+            "type": "integer"
+          },
+          "errors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "partial": {
+            "title": "Partial",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "document_id",
+          "deleted",
+          "partial"
+        ],
+        "title": "DocumentDeleteResponse",
+        "type": "object"
+      },
+      "DocumentDetail": {
+        "properties": {
+          "chunk_count": {
+            "title": "Chunk Count",
+            "type": "integer"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "document_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Id"
+          },
+          "entities": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentEntityLink"
+            },
+            "title": "Entities",
+            "type": "array"
+          },
+          "entity_count": {
+            "title": "Entity Count",
+            "type": "integer"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "file_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Hash"
+          },
+          "file_path": {
+            "title": "File Path",
+            "type": "string"
+          },
+          "file_type": {
+            "title": "File Type",
+            "type": "string"
+          },
+          "in_flight_job_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "In Flight Job Id"
+          },
+          "in_flight_share_job_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "In Flight Share Job Id"
+          },
+          "indexed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Indexed At"
+          },
+          "is_owner": {
+            "default": true,
+            "title": "Is Owner",
+            "type": "boolean"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "string"
+          },
+          "share_status": {
+            "default": "personal",
+            "enum": [
+              "personal",
+              "sharing",
+              "shared",
+              "unsharing",
+              "partial"
+            ],
+            "title": "Share Status",
+            "type": "string"
+          },
+          "shared_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shared By"
+          },
+          "source_available": {
+            "title": "Source Available",
+            "type": "boolean"
+          },
+          "status": {
+            "$ref": "#/components/schemas/DocumentStatus"
+          }
+        },
+        "required": [
+          "display_name",
+          "file_path",
+          "file_type",
+          "chunk_count",
+          "entity_count",
+          "scope",
+          "status",
+          "source_available"
+        ],
+        "title": "DocumentDetail",
+        "type": "object"
+      },
+      "DocumentEntityLink": {
+        "properties": {
+          "entity_id": {
+            "title": "Entity Id",
+            "type": "string"
+          },
+          "entity_type": {
+            "title": "Entity Type",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id",
+          "name",
+          "entity_type"
+        ],
+        "title": "DocumentEntityLink",
+        "type": "object"
+      },
+      "DocumentListResponse": {
+        "properties": {
+          "documents": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentSummary"
+            },
+            "title": "Documents",
+            "type": "array"
+          }
+        },
+        "required": [
+          "documents"
+        ],
+        "title": "DocumentListResponse",
+        "type": "object"
+      },
+      "DocumentStatus": {
+        "enum": [
+          "indexing",
+          "indexed",
+          "failed"
+        ],
+        "title": "DocumentStatus",
+        "type": "string"
+      },
+      "DocumentSummary": {
+        "properties": {
+          "chunk_count": {
+            "title": "Chunk Count",
+            "type": "integer"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "document_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Id"
+          },
+          "entity_count": {
+            "title": "Entity Count",
+            "type": "integer"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "file_path": {
+            "title": "File Path",
+            "type": "string"
+          },
+          "file_type": {
+            "title": "File Type",
+            "type": "string"
+          },
+          "in_flight_job_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "In Flight Job Id"
+          },
+          "in_flight_share_job_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "In Flight Share Job Id"
+          },
+          "indexed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Indexed At"
+          },
+          "is_owner": {
+            "default": true,
+            "title": "Is Owner",
+            "type": "boolean"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "string"
+          },
+          "share_status": {
+            "default": "personal",
+            "enum": [
+              "personal",
+              "sharing",
+              "shared",
+              "unsharing",
+              "partial"
+            ],
+            "title": "Share Status",
+            "type": "string"
+          },
+          "shared_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shared By"
+          },
+          "status": {
+            "$ref": "#/components/schemas/DocumentStatus"
+          }
+        },
+        "required": [
+          "display_name",
+          "file_path",
+          "file_type",
+          "chunk_count",
+          "entity_count",
+          "scope",
+          "status"
+        ],
+        "title": "DocumentSummary",
+        "type": "object"
+      },
       "ElevateResponse": {
         "properties": {
           "action_type": {
@@ -2496,6 +3337,11 @@
             "title": "Entity Id",
             "type": "string"
           },
+          "is_owner": {
+            "default": true,
+            "title": "Is Owner",
+            "type": "boolean"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -2519,6 +3365,15 @@
               "system"
             ],
             "title": "Scope",
+            "type": "string"
+          },
+          "share_status": {
+            "default": "personal",
+            "enum": [
+              "personal",
+              "shared"
+            ],
+            "title": "Share Status",
             "type": "string"
           },
           "sources": {
@@ -2617,6 +3472,77 @@
         "title": "ExportRequest",
         "type": "object"
       },
+      "FeatureFlagState": {
+        "description": "State of one experimental feature flag (LUM-126). Metadata only — never secrets.",
+        "properties": {
+          "default": {
+            "description": "Value when the env var is unset (always ``False``).",
+            "title": "Default",
+            "type": "boolean"
+          },
+          "description": {
+            "description": "What the flag controls and the originating LUM issue.",
+            "title": "Description",
+            "type": "string"
+          },
+          "enabled": {
+            "description": "Whether the flag is currently active in this process.",
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "env_var": {
+            "description": "Environment variable that gates the feature.",
+            "title": "Env Var",
+            "type": "string"
+          },
+          "key": {
+            "description": "Stable code-side identifier, e.g. ``CONSOLIDATION_AGENT``.",
+            "title": "Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "env_var",
+          "description",
+          "default",
+          "enabled"
+        ],
+        "title": "FeatureFlagState",
+        "type": "object"
+      },
+      "FeatureFlagsResponse": {
+        "description": "``GET /api/v1/admin/feature-flags`` — admin visibility into experimental gates.",
+        "properties": {
+          "enabled": {
+            "description": "Number currently enabled.",
+            "minimum": 0.0,
+            "title": "Enabled",
+            "type": "integer"
+          },
+          "flags": {
+            "description": "All flags, sorted by ``key``.",
+            "items": {
+              "$ref": "#/components/schemas/FeatureFlagState"
+            },
+            "title": "Flags",
+            "type": "array"
+          },
+          "total": {
+            "description": "Number of registered flags.",
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "enabled",
+          "flags"
+        ],
+        "title": "FeatureFlagsResponse",
+        "type": "object"
+      },
       "FeedbackRequest": {
         "properties": {
           "event_type": {
@@ -2668,6 +3594,39 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HealthResponse": {
+        "description": "Non-sensitive per-service health for the web client (``GET /api/v1/health``).\n\nA trimmed projection of the admin stack-status snapshot (LUM-512): per-service\n``state`` keyed by service id, plus an ``overall`` rollup. Deliberately omits\nruntime detail, storage, and the Ollama model list — those stay admin-only.\nUsed by the web client to drive graceful-degradation banners; the actual\nrequest/response remains the source of truth for live errors.",
+        "properties": {
+          "overall": {
+            "enum": [
+              "ok",
+              "degraded",
+              "down"
+            ],
+            "title": "Overall",
+            "type": "string"
+          },
+          "services": {
+            "additionalProperties": {
+              "enum": [
+                "healthy",
+                "degraded",
+                "down",
+                "unknown",
+                "not_configured"
+              ],
+              "type": "string"
+            },
+            "title": "Services",
+            "type": "object"
+          }
+        },
+        "required": [
+          "overall"
+        ],
+        "title": "HealthResponse",
         "type": "object"
       },
       "HouseholdConnectorCredentialList": {
@@ -2932,6 +3891,161 @@
         "title": "ImportRequest",
         "type": "object"
       },
+      "IngestBatchSummaryResponse": {
+        "description": "``GET /api/v1/ingest/batches/{batch_id}`` — aggregate batch counters.",
+        "properties": {
+          "batch_id": {
+            "title": "Batch Id",
+            "type": "string"
+          },
+          "completed": {
+            "title": "Completed",
+            "type": "integer"
+          },
+          "failed": {
+            "title": "Failed",
+            "type": "integer"
+          },
+          "in_progress": {
+            "title": "In Progress",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "batch_id",
+          "completed",
+          "failed",
+          "in_progress"
+        ],
+        "title": "IngestBatchSummaryResponse",
+        "type": "object"
+      },
+      "IngestJobProgressResponse": {
+        "description": "``GET /api/v1/ingest/jobs/{job_id}`` — per-job ingest progress.",
+        "properties": {
+          "batch_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Id"
+          },
+          "enqueued_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enqueued At"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "file_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Id"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "integer"
+          },
+          "progress_pct": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Progress Pct"
+          },
+          "stage": {
+            "enum": [
+              "queued",
+              "extracting",
+              "chunking",
+              "embedding",
+              "graph",
+              "projecting",
+              "partial",
+              "done",
+              "failed"
+            ],
+            "title": "Stage",
+            "type": "string"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "status_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Message"
+          }
+        },
+        "required": [
+          "job_id",
+          "status",
+          "stage"
+        ],
+        "title": "IngestJobProgressResponse",
+        "type": "object"
+      },
       "IngestRequest": {
         "properties": {
           "path": {
@@ -2961,6 +4075,10 @@
             "title": "File Id",
             "type": "string"
           },
+          "job_id": {
+            "title": "Job Id",
+            "type": "integer"
+          },
           "status": {
             "const": "queued",
             "default": "queued",
@@ -2969,9 +4087,39 @@
           }
         },
         "required": [
-          "file_id"
+          "file_id",
+          "job_id"
         ],
         "title": "IngestUploadQueuedResponse",
+        "type": "object"
+      },
+      "InstancePrivacyMode": {
+        "enum": [
+          "local_only",
+          "allow_cloud"
+        ],
+        "title": "InstancePrivacyMode",
+        "type": "string"
+      },
+      "InstancePrivacySettings": {
+        "properties": {
+          "privacy_effective": {
+            "$ref": "#/components/schemas/InstancePrivacyMode"
+          },
+          "privacy_mode": {
+            "$ref": "#/components/schemas/InstancePrivacyMode"
+          },
+          "privacy_mode_locked": {
+            "title": "Privacy Mode Locked",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "privacy_mode",
+          "privacy_mode_locked",
+          "privacy_effective"
+        ],
+        "title": "InstancePrivacySettings",
         "type": "object"
       },
       "InstanceSystemConnectorCredentialList": {
@@ -3032,6 +4180,222 @@
           "key_version"
         ],
         "title": "InstanceSystemConnectorCredentialPublic",
+        "type": "object"
+      },
+      "InviteAdminRow": {
+        "properties": {
+          "allows_shared": {
+            "title": "Allows Shared",
+            "type": "boolean"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "token_prefix": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token Prefix"
+          },
+          "used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Used At"
+          },
+          "used_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Used By"
+          }
+        },
+        "required": [
+          "id",
+          "role",
+          "allows_shared",
+          "created_by",
+          "created_at",
+          "expires_at",
+          "used_at",
+          "used_by",
+          "revoked_at"
+        ],
+        "title": "InviteAdminRow",
+        "type": "object"
+      },
+      "InviteMintRequest": {
+        "properties": {
+          "allows_shared": {
+            "default": true,
+            "title": "Allows Shared",
+            "type": "boolean"
+          },
+          "role": {
+            "default": "user",
+            "enum": [
+              "admin",
+              "user"
+            ],
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "title": "InviteMintRequest",
+        "type": "object"
+      },
+      "InviteMintResponse": {
+        "properties": {
+          "invite": {
+            "$ref": "#/components/schemas/InviteAdminRow"
+          },
+          "invite_url": {
+            "title": "Invite Url",
+            "type": "string"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "invite",
+          "invite_url",
+          "token"
+        ],
+        "title": "InviteMintResponse",
+        "type": "object"
+      },
+      "InviteOnboardingHint": {
+        "properties": {
+          "allows_shared": {
+            "title": "Allows Shared",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "allows_shared"
+        ],
+        "title": "InviteOnboardingHint",
+        "type": "object"
+      },
+      "InvitePeekPublic": {
+        "properties": {
+          "allows_shared": {
+            "title": "Allows Shared",
+            "type": "boolean"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "allows_shared",
+          "expires_at"
+        ],
+        "title": "InvitePeekPublic",
+        "type": "object"
+      },
+      "InviteRedeemRequest": {
+        "properties": {
+          "email": {
+            "format": "email",
+            "title": "Email",
+            "type": "string"
+          },
+          "password": {
+            "maxLength": 256,
+            "minLength": 12,
+            "title": "Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ],
+        "title": "InviteRedeemRequest",
+        "type": "object"
+      },
+      "InviteRedeemResponse": {
+        "properties": {
+          "access_token": {
+            "title": "Access Token",
+            "type": "string"
+          },
+          "expires_in": {
+            "title": "Expires In",
+            "type": "integer"
+          },
+          "invite_onboarding": {
+            "$ref": "#/components/schemas/InviteOnboardingHint"
+          },
+          "token_type": {
+            "const": "bearer",
+            "default": "bearer",
+            "title": "Token Type",
+            "type": "string"
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserPublic"
+          }
+        },
+        "required": [
+          "access_token",
+          "expires_in",
+          "user",
+          "invite_onboarding"
+        ],
+        "title": "InviteRedeemResponse",
         "type": "object"
       },
       "KgSettingsUpsertItem": {
@@ -3749,6 +5113,43 @@
         "title": "MePasswordChangeRequest",
         "type": "object"
       },
+      "MePrivacyModePatch": {
+        "properties": {
+          "user_restriction": {
+            "$ref": "#/components/schemas/PrivacyUserRestriction"
+          }
+        },
+        "required": [
+          "user_restriction"
+        ],
+        "title": "MePrivacyModePatch",
+        "type": "object"
+      },
+      "MePrivacyModeResponse": {
+        "properties": {
+          "can_allow_cloud": {
+            "title": "Can Allow Cloud",
+            "type": "boolean"
+          },
+          "instance": {
+            "$ref": "#/components/schemas/InstancePrivacySettings"
+          },
+          "privacy_effective": {
+            "$ref": "#/components/schemas/InstancePrivacyMode"
+          },
+          "user_restriction": {
+            "$ref": "#/components/schemas/PrivacyUserRestriction"
+          }
+        },
+        "required": [
+          "instance",
+          "user_restriction",
+          "privacy_effective",
+          "can_allow_cloud"
+        ],
+        "title": "MePrivacyModeResponse",
+        "type": "object"
+      },
       "MeToolsItem": {
         "description": "One user-safe tool row — observational only; not an execution contract.",
         "properties": {
@@ -4111,6 +5512,24 @@
             "minLength": 1,
             "title": "Label",
             "type": "string"
+          },
+          "scopes": {
+            "anyOf": [
+              {
+                "items": {
+                  "enum": [
+                    "mcp:read",
+                    "mcp:write"
+                  ],
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scopes"
           }
         },
         "required": [
@@ -4842,6 +6261,14 @@
         "title": "PermissionUpdate",
         "type": "object"
       },
+      "PrivacyUserRestriction": {
+        "enum": [
+          "inherit",
+          "local_only"
+        ],
+        "title": "PrivacyUserRestriction",
+        "type": "string"
+      },
       "ProfileRequest": {
         "properties": {
           "tracked_entities": {
@@ -4976,6 +6403,41 @@
           "sessions"
         ],
         "title": "RecentSessionsResponse",
+        "type": "object"
+      },
+      "ReingestQueuedResponse": {
+        "properties": {
+          "document_id": {
+            "title": "Document Id",
+            "type": "integer"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "integer"
+          },
+          "queued": {
+            "title": "Queued",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "document_id",
+          "job_id",
+          "queued"
+        ],
+        "title": "ReingestQueuedResponse",
+        "type": "object"
+      },
+      "ReingestRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "force": {
+            "default": false,
+            "title": "Force",
+            "type": "boolean"
+          }
+        },
+        "title": "ReingestRequest",
         "type": "object"
       },
       "RelatedEntitiesResponse": {
@@ -5314,6 +6776,28 @@
             ],
             "title": "Optional Models"
           },
+          "privacy_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Privacy Mode"
+          },
+          "privacy_mode_locked": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Privacy Mode Locked"
+          },
           "reranker_enabled": {
             "anyOf": [
               {
@@ -5327,6 +6811,100 @@
           }
         },
         "title": "SettingsUpdate",
+        "type": "object"
+      },
+      "ShareQueuedResponse": {
+        "description": "``POST/DELETE /api/v1/documents/{id}/publish`` — 202 background share job (LUM-157).",
+        "properties": {
+          "document_id": {
+            "title": "Document Id",
+            "type": "integer"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "integer"
+          },
+          "share_status": {
+            "enum": [
+              "sharing",
+              "unsharing"
+            ],
+            "title": "Share Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "document_id",
+          "job_id",
+          "share_status"
+        ],
+        "title": "ShareQueuedResponse",
+        "type": "object"
+      },
+      "SharedItem": {
+        "description": "One item the calling member has shared with the household (LUM-583).\n\n``resource_type`` is the route segment for the unshare call, and\n``resource_id`` is the source publish pk (``published_from``) the\n``DELETE /api/v1/{resource_type}/{resource_id}/publish`` route expects.",
+        "properties": {
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "resource_id": {
+            "title": "Resource Id",
+            "type": "string"
+          },
+          "resource_type": {
+            "enum": [
+              "notes",
+              "audio_memos",
+              "sessions",
+              "files",
+              "entities",
+              "signals"
+            ],
+            "title": "Resource Type",
+            "type": "string"
+          },
+          "shared_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shared At"
+          }
+        },
+        "required": [
+          "resource_type",
+          "resource_id"
+        ],
+        "title": "SharedItem",
+        "type": "object"
+      },
+      "SharedItemsResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SharedItem"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "SharedItemsResponse",
         "type": "object"
       },
       "SourceRequest": {
@@ -5720,6 +7298,74 @@
         "title": "TranscriptionSegment",
         "type": "object"
       },
+      "UpdateStatusResponse": {
+        "description": "Response for ``GET /api/v1/admin/diagnostics/update-status`` (LUM-187).\n\nRead-only: compares the running Core version against the latest published\nGitHub release. ``checked`` is False (with ``error`` set) when the check is\ndisabled or the release lookup failed — the UI should degrade gracefully and\nnever block on this. No auto-update; the operator triggers ``make update``.",
+        "properties": {
+          "checked": {
+            "default": false,
+            "title": "Checked",
+            "type": "boolean"
+          },
+          "checked_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checked At"
+          },
+          "current_version": {
+            "title": "Current Version",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "latest_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Version"
+          },
+          "release_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release Url"
+          },
+          "update_available": {
+            "default": false,
+            "title": "Update Available",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "current_version"
+        ],
+        "title": "UpdateStatusResponse",
+        "type": "object"
+      },
       "UserAdminView": {
         "description": "Admin-only listing shape returned by ``/api/v1/admin/users`` routes.\n\nAdds operational fields useful to administrators (account state, age,\nlast sign-in). Still excludes secrets such as ``password_hash``.",
         "properties": {
@@ -5731,6 +7377,17 @@
           "disabled": {
             "title": "Disabled",
             "type": "boolean"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
           },
           "email": {
             "format": "email",
@@ -5752,6 +7409,18 @@
               }
             ],
             "title": "Last Login At"
+          },
+          "last_seen_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen At"
           },
           "role": {
             "enum": [
@@ -5814,6 +7483,18 @@
               }
             ],
             "title": "Disabled"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
           },
           "role": {
             "anyOf": [
@@ -6697,6 +8378,50 @@
         ]
       }
     },
+    "/api/v1/admin/diagnostics/update-status": {
+      "get": {
+        "description": "Read-only update availability check (LUM-187).\n\nCompares the running Core version against the latest GitHub release. Fail-soft:\na disabled check or a lookup failure returns ``checked=False`` with an ``error``\nstring (HTTP 200) so the admin dashboard can show version state without blocking.\nNo auto-update — the operator runs ``make update`` explicitly.",
+        "operationId": "admin_update_status_api_v1_admin_diagnostics_update_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Admin Update Status",
+        "tags": [
+          "admin-diagnostics"
+        ]
+      }
+    },
+    "/api/v1/admin/feature-flags": {
+      "get": {
+        "operationId": "get_feature_flags_api_v1_admin_feature_flags_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeatureFlagsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Feature Flags",
+        "tags": [
+          "v1",
+          "v1-feature-flags"
+        ]
+      }
+    },
     "/api/v1/admin/notification-tier-policy": {
       "get": {
         "operationId": "get_notification_tier_policies_api_v1_admin_notification_tier_policy_get",
@@ -6972,6 +8697,80 @@
         ]
       }
     },
+    "/api/v1/admin/shared-items": {
+      "get": {
+        "description": "List every household shared item with source pk + owner (admin-only).\n\nAdmin gating is enforced by the router-level ``require_admin`` dependency;\nthis handler needs no acting-user context (unlike the delete handler,\nwhich records the admin as the audit actor).",
+        "operationId": "list_shared_items_api_v1_admin_shared_items_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminSharedItemsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Shared Items",
+        "tags": [
+          "admin-shared-items"
+        ]
+      }
+    },
+    "/api/v1/admin/shared-items/{resource_type}/{resource_id}": {
+      "delete": {
+        "description": "Retract another member's household share (admin governance, audited).",
+        "operationId": "admin_unshare_item_api_v1_admin_shared_items__resource_type___resource_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "resource_type",
+            "required": true,
+            "schema": {
+              "title": "Resource Type",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "resource_id",
+            "required": true,
+            "schema": {
+              "title": "Resource Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminUnshareResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Admin Unshare Item",
+        "tags": [
+          "admin-shared-items"
+        ]
+      }
+    },
     "/api/v1/admin/user-imports": {
       "get": {
         "description": "Inventory of every archive under ``${USER_EXPORT_DIR}/*/``.\n\nRead-only; opens each zip just long enough to parse its\n``manifest.json``. Bad archives are surfaced via ``manifest_status``\nrather than excluded — operators need to see them to clean up.",
@@ -7112,6 +8911,112 @@
         ]
       }
     },
+    "/api/v1/admin/users/invites": {
+      "get": {
+        "operationId": "list_invites_api_v1_admin_users_invites_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Invites Api V1 Admin Users Invites Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Invites",
+        "tags": [
+          "admin-users"
+        ]
+      },
+      "post": {
+        "operationId": "mint_invite_api_v1_admin_users_invites_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InviteMintRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InviteMintResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Mint Invite",
+        "tags": [
+          "admin-users"
+        ]
+      }
+    },
+    "/api/v1/admin/users/invites/{invite_id}": {
+      "delete": {
+        "operationId": "revoke_invite_api_v1_admin_users_invites__invite_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "invite_id",
+            "required": true,
+            "schema": {
+              "title": "Invite Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Revoke Invite Api V1 Admin Users Invites  Invite Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Invite",
+        "tags": [
+          "admin-users"
+        ]
+      }
+    },
     "/api/v1/admin/users/{user_id}": {
       "delete": {
         "description": "Hard-delete a user. Returns 400 if it would leave zero admins.",
@@ -7157,7 +9062,7 @@
         ]
       },
       "patch": {
-        "description": "Update ``role`` and/or ``disabled``. Either field may be omitted.\n\nRefuses changes that would leave zero active admins, and refuses\nself-disable to avoid locking the calling admin out mid-session.",
+        "description": "Update ``role``, ``disabled``, and/or ``display_name``. Any field may be\nomitted; at least one is required.\n\nRefuses changes that would leave zero active admins, and refuses\nself-disable to avoid locking the calling admin out mid-session. Setting\n``display_name`` to ``\"\"`` / whitespace clears it (LUM-585 — the attribution\nlabel then falls back to the email local-part).",
         "operationId": "patch_user_api_v1_admin_users__user_id__patch",
         "parameters": [
           {
@@ -8220,6 +10125,57 @@
           },
           {
             "in": "query",
+            "name": "event_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Event Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "After"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before"
+            }
+          },
+          {
+            "in": "query",
             "name": "limit",
             "required": false,
             "schema": {
@@ -8227,6 +10183,17 @@
               "maximum": 200,
               "minimum": 1,
               "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
               "type": "integer"
             }
           },
@@ -8270,6 +10237,151 @@
           }
         },
         "summary": "List Audit",
+        "tags": [
+          "v1",
+          "v1-audit"
+        ]
+      }
+    },
+    "/api/v1/audit/stream": {
+      "get": {
+        "description": "Poll ``audit_log`` and push new rows as SSE ``audit_entry`` events.",
+        "operationId": "stream_audit_api_v1_audit_stream_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "connector",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Connector"
+            }
+          },
+          {
+            "in": "query",
+            "name": "action_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Action Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "event_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Event Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "After"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before"
+            }
+          },
+          {
+            "in": "query",
+            "name": "since_id",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Since Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "as_user",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "As User"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stream Audit",
         "tags": [
           "v1",
           "v1-audit"
@@ -8482,6 +10594,155 @@
         "summary": "Refresh",
         "tags": [
           "auth"
+        ]
+      }
+    },
+    "/api/v1/biography/conflicts": {
+      "get": {
+        "operationId": "list_biography_conflicts_api_v1_biography_conflicts_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": "open",
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BiographyConflictListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Biography Conflicts",
+        "tags": [
+          "v1",
+          "v1-biography-conflicts"
+        ]
+      }
+    },
+    "/api/v1/biography/conflicts/{conflict_id}": {
+      "get": {
+        "operationId": "get_biography_conflict_api_v1_biography_conflicts__conflict_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conflict_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conflict Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetectedConflict"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Biography Conflict",
+        "tags": [
+          "v1",
+          "v1-biography-conflicts"
+        ]
+      }
+    },
+    "/api/v1/biography/conflicts/{conflict_id}/resolve": {
+      "post": {
+        "operationId": "resolve_biography_conflict_api_v1_biography_conflicts__conflict_id__resolve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conflict_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conflict Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConflictResolutionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictResolution"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resolve Biography Conflict",
+        "tags": [
+          "v1",
+          "v1-biography-conflicts"
         ]
       }
     },
@@ -9471,6 +11732,292 @@
         ]
       }
     },
+    "/api/v1/documents": {
+      "get": {
+        "operationId": "list_documents_api_v1_documents_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Documents",
+        "tags": [
+          "v1",
+          "v1-documents"
+        ]
+      }
+    },
+    "/api/v1/documents/{document_id}": {
+      "delete": {
+        "operationId": "delete_document_api_v1_documents__document_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentDeleteResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Document",
+        "tags": [
+          "v1",
+          "v1-documents"
+        ]
+      },
+      "get": {
+        "operationId": "get_document_api_v1_documents__document_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Document",
+        "tags": [
+          "v1",
+          "v1-documents"
+        ]
+      }
+    },
+    "/api/v1/documents/{document_id}/publish": {
+      "delete": {
+        "description": "Stop sharing a document with the household (LUM-157).",
+        "operationId": "unpublish_document_api_v1_documents__document_id__publish_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShareQueuedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Unpublish Document",
+        "tags": [
+          "v1",
+          "v1-documents"
+        ]
+      },
+      "post": {
+        "description": "Share a personal document with the household (LUM-157).\n\nOwner-only, ``scope='personal'`` source (validated synchronously → 404 on a\nforeign/non-personal document; 400 on an invalid scope), then enqueues the\nbackground ``share_document`` projection job (→ 202 + job_id).",
+        "operationId": "publish_document_api_v1_documents__document_id__publish_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "default": {},
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShareQueuedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Publish Document",
+        "tags": [
+          "v1",
+          "v1-documents"
+        ]
+      }
+    },
+    "/api/v1/documents/{document_id}/reingest": {
+      "post": {
+        "operationId": "reingest_document_api_v1_documents__document_id__reingest_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ReingestRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReingestQueuedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reingest Document",
+        "tags": [
+          "v1",
+          "v1-documents"
+        ]
+      }
+    },
     "/api/v1/entities/{entity_id}/publish": {
       "delete": {
         "operationId": "unpublish_entity_api_v1_entities__entity_id__publish_delete",
@@ -9671,10 +12218,152 @@
         ]
       }
     },
+    "/api/v1/health": {
+      "get": {
+        "description": "Return the cached non-sensitive per-service health snapshot.",
+        "operationId": "get_health_api_v1_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Unauthenticated"
+          }
+        },
+        "summary": "Get Health",
+        "tags": [
+          "v1",
+          "v1-health"
+        ]
+      }
+    },
+    "/api/v1/ingest/batches/{batch_id}": {
+      "get": {
+        "operationId": "get_ingest_batch_summary_api_v1_ingest_batches__batch_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "batch_id",
+            "required": true,
+            "schema": {
+              "title": "Batch Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestBatchSummaryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "Invalid batch id"
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Poll multi-file upload batch counters",
+        "tags": [
+          "v1",
+          "v1-ingest"
+        ]
+      }
+    },
+    "/api/v1/ingest/jobs/{job_id}": {
+      "get": {
+        "operationId": "get_ingest_job_progress_api_v1_ingest_jobs__job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestJobProgressResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "404": {
+            "description": "Job not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Poll ingest job progress",
+        "tags": [
+          "v1",
+          "v1-ingest"
+        ]
+      }
+    },
     "/api/v1/ingest/upload": {
       "post": {
         "description": "Stream upload to persistent storage and enqueue ``ingest_upload`` batch work.",
         "operationId": "upload_ingest_file_api_v1_ingest_upload_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Lumogis-Batch-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Lumogis-Batch-Id"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "multipart/form-data": {
@@ -9716,6 +12405,100 @@
         "tags": [
           "v1",
           "v1-ingest"
+        ]
+      }
+    },
+    "/api/v1/invites/{token}": {
+      "get": {
+        "operationId": "peek_invite_api_v1_invites__token__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "title": "Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitePeekPublic"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Peek Invite",
+        "tags": [
+          "invites"
+        ]
+      }
+    },
+    "/api/v1/invites/{token}/redeem": {
+      "post": {
+        "operationId": "redeem_invite_api_v1_invites__token__redeem_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "title": "Token",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InviteRedeemRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InviteRedeemResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Redeem Invite",
+        "tags": [
+          "invites"
         ]
       }
     },
@@ -10206,7 +12989,7 @@
         ]
       },
       "post": {
-        "description": "Mint a fresh ``lmcp_…`` token for the caller. Returns the plaintext ONCE.\n\n``MintMcpTokenRequest.model_config = ConfigDict(extra='forbid')``\nrejects unknown fields with HTTP 422 (D4 / D16 — ``expires_at`` is\nintentionally not yet supported; rejecting it is part of the\ncontract, not an oversight).",
+        "description": "Mint a fresh ``lmcp_…`` token for the caller. Returns the plaintext ONCE.\n\n``MintMcpTokenRequest.model_config = ConfigDict(extra='forbid')``\nrejects unknown fields with HTTP 422 (D4 / D16 — ``expires_at`` is\nintentionally not yet supported; rejecting it is part of the\ncontract, not an oversight).\n\nLUM-531: omitted/``null`` ``scopes`` default to least-privilege\n``[\"mcp:read\"]`` — the route NEVER mints a ``NULL`` (unrestricted) token.\nWriting requires explicitly sending ``mcp:write``. (Unrestricted/``NULL`` is\nreachable only via the internal service path, ``mcp_tokens.mint(scopes=None)``.)",
         "operationId": "mint_my_token_api_v1_me_mcp_tokens_post",
         "requestBody": {
           "content": {
@@ -10647,6 +13430,68 @@
         ]
       }
     },
+    "/api/v1/me/privacy-mode": {
+      "get": {
+        "operationId": "get_my_privacy_mode_api_v1_me_privacy_mode_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MePrivacyModeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get My Privacy Mode",
+        "tags": [
+          "v1",
+          "v1-privacy-mode"
+        ]
+      },
+      "patch": {
+        "operationId": "patch_my_privacy_mode_api_v1_me_privacy_mode_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MePrivacyModePatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MePrivacyModeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch My Privacy Mode",
+        "tags": [
+          "v1",
+          "v1-privacy-mode"
+        ]
+      }
+    },
     "/api/v1/me/sessions": {
       "get": {
         "operationId": "list_my_sessions_api_v1_me_sessions_get",
@@ -10700,6 +13545,28 @@
         "summary": "Delete My Session",
         "tags": [
           "me-sessions"
+        ]
+      }
+    },
+    "/api/v1/me/shared-items": {
+      "get": {
+        "description": "List everything the calling member has shared with the household (LUM-583).\n\nOwner-scoped by construction (each arm binds ``user_id = caller``), so it\ncan never surface another member's shared item. Returns ``{items: []}`` —\nnot 404 — when the member has shared nothing. Unshare is done via the\nexisting per-type ``DELETE /api/v1/{resource_type}/{resource_id}/publish``.",
+        "operationId": "list_my_shared_items_api_v1_me_shared_items_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SharedItemsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List My Shared Items",
+        "tags": [
+          "me"
         ]
       }
     },
@@ -13335,7 +16202,7 @@
     },
     "/v1/models": {
       "get": {
-        "description": "OpenAI-compatible model list — only returns enabled models.\n\nPlan llm_provider_keys_per_user_migration Pass 2.8: under\n``AUTH_ENABLED=true`` the response is filtered per-user (cloud models\nonly show up when the caller has a row in ``user_connector_credentials``\nfor the matching ``llm_*`` connector). Auth-off keeps legacy behaviour.\nPer-request memoisation: one ``SELECT`` against\n``user_connector_credentials`` for the entire response, regardless of\ncloud-model count (see ``services.llm_connector_map.get_user_credentials_snapshot``).",
+        "description": "OpenAI-compatible model list — only returns enabled models.\n\nPlan llm_provider_keys_per_user_migration Pass 2.8: under\n``AUTH_ENABLED=true`` the response is filtered per-user (cloud models\nonly show up when the caller has a row in ``user_connector_credentials``\nfor the matching ``llm_*`` connector). Auth-off keeps legacy behaviour.\nPer-request memoisation: one ``SELECT`` against\n``user_connector_credentials`` for the entire response, regardless of\ncloud-model count (see ``services.llm_connector_map.get_user_credentials_snapshot``).\n\nLUM-194: privacy mode filters remote models when local-only is effective.",
         "operationId": "list_models_v1_models_get",
         "responses": {
           "200": {

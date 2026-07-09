@@ -25,6 +25,8 @@ from fastapi.responses import JSONResponse
 from fastapi.responses import StreamingResponse
 from loop import ask
 from loop import ask_stream
+from models.context_injection import ContextInjectionResult
+from models.context_injection import DocumentCitation
 from models.memory import DocumentContextHit
 from models.stream import StreamEvent
 from pydantic import BaseModel
@@ -61,21 +63,36 @@ def list_models(request: Request):
     Per-request memoisation: one ``SELECT`` against
     ``user_connector_credentials`` for the entire response, regardless of
     cloud-model count (see ``services.llm_connector_map.get_user_credentials_snapshot``).
+
+    LUM-194: privacy mode filters remote models when local-only is effective.
     """
+    from services.privacy_mode import blocks_remote_models
+
     all_models = config.get_all_models_config()
     if auth_enabled():
         user_id = get_user(request).user_id
         present = get_user_credentials_snapshot(user_id)
+        blocks_remote = blocks_remote_models(user_id)
         data = [
             {"id": name, "object": "model", "owned_by": "lumogis"}
             for name in all_models
-            if config.is_model_enabled(name, user_id=user_id, _credentials_present=present)
+            if config.is_model_enabled(
+                name,
+                user_id=user_id,
+                _credentials_present=present,
+                _privacy_blocks_remote=blocks_remote,
+            )
         ]
     else:
+        user_id = get_user(request).user_id
+        blocks_remote = blocks_remote_models(user_id)
         data = [
             {"id": name, "object": "model", "owned_by": "lumogis"}
             for name in all_models
-            if config.is_model_enabled(name)
+            if config.is_model_enabled(
+                name,
+                _privacy_blocks_remote=blocks_remote,
+            )
         ]
     return {"object": "list", "data": data}
 
@@ -127,6 +144,20 @@ def _credential_unavailable_response(model: str) -> JSONResponse:
     )
 
 
+def _egress_blocked_response(model: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content={
+            "error": {
+                "code": "egress_blocked",
+                "message": "Outbound connection blocked by egress guard.",
+                "model": model,
+                "type": "server_error",
+            }
+        },
+    )
+
+
 def _internal_credential_error_response(model: str) -> JSONResponse:
     return JSONResponse(
         status_code=500,
@@ -136,6 +167,20 @@ def _internal_credential_error_response(model: str) -> JSONResponse:
                 "message": "Internal error resolving credential.",
                 "model": model,
                 "type": "server_error",
+            }
+        },
+    )
+
+
+def _privacy_mode_blocked_response(model: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=403,
+        content={
+            "error": {
+                "code": "privacy_mode_blocked",
+                "type": "invalid_request_error",
+                "message": f"Privacy mode is local-only. Cloud model '{model}' is not permitted.",
+                "model": model,
             }
         },
     )
@@ -186,6 +231,8 @@ def _sse_chunk(
     model: str,
     delta: dict,
     finish: str | None,
+    *,
+    lumogis: dict | None = None,
 ) -> str:
     payload = {
         "id": chunk_id,
@@ -194,6 +241,8 @@ def _sse_chunk(
         "model": model,
         "choices": [{"index": 0, "delta": delta, "finish_reason": finish}],
     }
+    if lumogis is not None:
+        payload["lumogis"] = lumogis
     return f"data: {json.dumps(payload)}\n\n"
 
 
@@ -218,10 +267,36 @@ def stream_completion(
     model: str,
     *,
     prepend_loading_note: bool = False,
+    context_citations: list[DocumentCitation] | None = None,
+    privacy_metadata: dict | None = None,
 ) -> Generator[str, None, None]:
     cid = "chatcmpl-lumogis"
     created = int(time.time())
-    yield _sse_chunk(cid, created, model, {"role": "assistant", "content": ""}, None)
+    lumogis_payload: dict | None = None
+    if context_citations:
+        lumogis_payload = {
+            "context_citations": [
+                {
+                    "chunk_index": c.chunk_index,
+                    "file_path": c.file_path,
+                    "score": c.score,
+                    "score_kind": c.score_kind,
+                }
+                for c in context_citations
+            ]
+        }
+    if privacy_metadata:
+        if lumogis_payload is None:
+            lumogis_payload = {}
+        lumogis_payload["privacy"] = privacy_metadata
+    yield _sse_chunk(
+        cid,
+        created,
+        model,
+        {"role": "assistant", "content": ""},
+        None,
+        lumogis=lumogis_payload,
+    )
     if prepend_loading_note:
         yield _sse_chunk(cid, created, model, {"content": LOCAL_MODEL_LOADING_NOTE}, None)
     for event in events:
@@ -282,15 +357,35 @@ def _memory_hint_ack_suffix() -> str:
     )
 
 
-def _inject_context(
+def _scoped_memory_hint_ack_suffix() -> str:
+    """Document-only hedge for scoped document chat (LUM-175)."""
+    return (
+        "Treat every retrieved excerpt above from the pinned document as unverified "
+        "hints, not established facts. Prefer the user's explicit statements when "
+        "anything conflicts, and hedge when uncertain."
+    )
+
+
+def build_injected_context(
     question: str,
     history: list[dict],
     model: str,
     user_id: str,
     *,
     auto_rag_point_ids: set[str] | None = None,
-) -> list[dict]:
+    scoped_file_path: str | None = None,
+) -> ContextInjectionResult:
     """Retrieve session memory / graph snippets, annotate corpus, trim history."""
+    if scoped_file_path:
+        return _build_scoped_injected_context(
+            question,
+            history,
+            model,
+            user_id,
+            auto_rag_point_ids=auto_rag_point_ids,
+            scoped_file_path=scoped_file_path,
+        )
+
     from datetime import datetime
     from datetime import timezone
 
@@ -414,8 +509,14 @@ def _inject_context(
     history_budget = budget_plan.get("history")
     trimmed_history = truncate_messages(history, max_tokens=history_budget)
 
+    point_ids = auto_rag_point_ids if auto_rag_point_ids is not None else set()
+
     if not fragments_plain:
-        return trimmed_history
+        return ContextInjectionResult(
+            messages=trimmed_history,
+            citations=[],
+            auto_rag_point_ids=point_ids,
+        )
 
     if config.is_injection_sanitiser_enabled():
         apply_retrieved_chunk_markup(
@@ -440,7 +541,11 @@ def _inject_context(
             "role": "assistant",
             "content": ack_body,
         }
-        return [context_msg, ack_msg] + trimmed_history
+        return ContextInjectionResult(
+            messages=[context_msg, ack_msg] + trimmed_history,
+            citations=[],
+            auto_rag_point_ids=point_ids,
+        )
 
     joined_plain = "\n\n".join(fragments_plain)
     pooled_budget = max(
@@ -462,11 +567,164 @@ def _inject_context(
         "role": "assistant",
         "content": ack_content,
     }
-    return [context_msg, ack_msg] + trimmed_history
+    return ContextInjectionResult(
+        messages=[context_msg, ack_msg] + trimmed_history,
+        citations=[],
+        auto_rag_point_ids=point_ids,
+    )
+
+
+def _build_scoped_injected_context(
+    question: str,
+    history: list[dict],
+    model: str,
+    user_id: str,
+    *,
+    auto_rag_point_ids: set[str] | None,
+    scoped_file_path: str,
+) -> ContextInjectionResult:
+    """Source-only injection pinned to one document (LUM-175)."""
+    from services.auto_rag import retrieve_document_context
+
+    budget = get_budget(model)
+    budget_plan = allocate(
+        budget,
+        {
+            "system": 0.10,
+            "session_context": 0.0,
+            "entities": 0.0,
+            "plugin_context": 0.0,
+            "history": 0.35,
+            "documents": 0.40,
+            "response": 0.15,
+        },
+    )
+
+    documents_budget = budget_plan.get("documents")
+    max_doc_tokens = min(documents_budget, config.get_auto_rag_max_tokens())
+
+    doc_hits = retrieve_document_context(
+        question,
+        user_id,
+        file_path=scoped_file_path,
+        scoped=True,
+        max_tokens=max_doc_tokens,
+    )
+
+    doc_pairs: list[tuple[DocumentContextHit, str]] = []
+    for hit in doc_hits:
+        stripped = hit.chunk_text.strip()
+        if stripped:
+            doc_pairs.append((hit, stripped))
+
+    fragments_plain = [text for _, text in doc_pairs]
+    origin_hints = [_resolved_document_origin(hit) for hit, _ in doc_pairs]
+
+    point_ids = auto_rag_point_ids if auto_rag_point_ids is not None else set()
+    for hit, _ in doc_pairs:
+        if hit.point_id:
+            point_ids.add(hit.point_id)
+
+    hooks.fire(
+        Event.CONTEXT_BUILDING,
+        query=question,
+        context_fragments=fragments_plain,
+        user_id=user_id,
+    )
+
+    doc_frags = list(fragments_plain)
+    doc_hints = list(origin_hints)
+    hits_kept = list(doc_pairs)
+
+    doc_frags, doc_hints = _fit_plaintext_bundle(doc_frags, doc_hints, documents_budget)
+    while len(hits_kept) > len(doc_frags):
+        hits_kept.pop()
+
+    citations = [
+        DocumentCitation(
+            chunk_index=hit.chunk_index,
+            file_path=hit.file_path,
+            score=hit.score,
+            score_kind=hit.score_kind,
+        )
+        for hit, _ in hits_kept
+    ]
+
+    history_budget = budget_plan.get("history")
+    trimmed_history = truncate_messages(history, max_tokens=history_budget)
+
+    if not doc_frags:
+        return ContextInjectionResult(
+            messages=trimmed_history,
+            citations=[],
+            auto_rag_point_ids=point_ids,
+        )
+
+    if config.is_injection_sanitiser_enabled():
+        apply_retrieved_chunk_markup(
+            doc_frags,
+            doc_hints,
+            user_id=user_id,
+            query=question,
+        )
+        nonce_tail = uuid.uuid4().hex
+        joined_inner = "\n\n".join(doc_frags)
+        outer = build_outer_injected_bundle(joined_inner, nonce=nonce_tail)
+        context_msg = {"role": "user", "content": outer}
+        nonce_ack = assistant_nonce_acknowledgement(nonce_tail)
+        if config.get_memory_hint_enabled():
+            ack_body = _scoped_memory_hint_ack_suffix() + "\n\n" + nonce_ack
+        else:
+            ack_body = nonce_ack
+        ack_msg = {"role": "assistant", "content": ack_body}
+        return ContextInjectionResult(
+            messages=[context_msg, ack_msg] + trimmed_history,
+            citations=citations,
+            auto_rag_point_ids=point_ids,
+        )
+
+    joined_plain = "\n\n".join(doc_frags)
+    pooled_budget = max(96, documents_budget)
+    joined_plain = truncate_text(joined_plain, max_tokens=pooled_budget)
+    context_msg = {
+        "role": "user",
+        "content": f"Retrieved excerpts for grounding:\n{joined_plain}",
+    }
+    ack_content = "Acknowledged excerpts are reference-only scaffolding."
+    if config.get_memory_hint_enabled():
+        ack_content = ack_content + " " + _scoped_memory_hint_ack_suffix()
+    ack_msg = {"role": "assistant", "content": ack_content}
+    return ContextInjectionResult(
+        messages=[context_msg, ack_msg] + trimmed_history,
+        citations=citations,
+        auto_rag_point_ids=point_ids,
+    )
+
+
+def _inject_context(
+    question: str,
+    history: list[dict],
+    model: str,
+    user_id: str,
+    *,
+    auto_rag_point_ids: set[str] | None = None,
+) -> list[dict]:
+    """Deprecated alias — returns message list only (legacy /v1/chat/completions)."""
+    return build_injected_context(
+        question,
+        history,
+        model,
+        user_id,
+        auto_rag_point_ids=auto_rag_point_ids,
+    ).messages
 
 
 @router.post("/v1/chat/completions")
 def chat_completions(body: ChatCompletionsRequest, request: Request) -> Any:
+    from services.privacy_mode import PrivacyModeBlocked
+    from services.privacy_mode import blocks_remote_models
+    from services.privacy_mode import resolve_model_for_request
+
     if not body.messages:
         if body.stream:
             return StreamingResponse(
@@ -488,16 +746,22 @@ def chat_completions(body: ChatCompletionsRequest, request: Request) -> Any:
             "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
         }
 
-    # Plan llm_provider_keys_per_user_migration Pass 2.8: resolve user_id
-    # FIRST so the per-user is_model_enabled call below sees the right
-    # credential context. Under auth-off, get_user returns the legacy default
-    # user; under auth-on, missing/invalid auth raises 401 here.
     user_id = get_user(request).user_id
+    blocks_remote = blocks_remote_models(user_id)
 
-    if not config.is_model_enabled(body.model, user_id=user_id):
+    try:
+        effective_model, privacy_meta = resolve_model_for_request(body.model, user_id)
+    except PrivacyModeBlocked:
+        return _privacy_mode_blocked_response(body.model)
+
+    if not config.is_model_enabled(
+        effective_model,
+        user_id=user_id,
+        _privacy_blocks_remote=blocks_remote,
+    ):
         raise HTTPException(
             status_code=404,
-            detail=f"Model '{body.model}' is not available. "
+            detail=f"Model '{effective_model}' is not available. "
             "Enable it in Settings and provide an API key, or choose another model.",
         )
 
@@ -507,44 +771,43 @@ def chat_completions(body: ChatCompletionsRequest, request: Request) -> Any:
     for m in body.messages[:-1]:
         text = _content_to_str(m.content)
         history.append({"role": m.role, "content": text})
-    use_tools = config.get_model_config(body.model).get("tools", False)
+    use_tools = config.get_model_config(effective_model).get("tools", False)
 
     auto_rag_point_ids: set[str] = set()
-    history = _inject_context(
-        question, history, body.model, user_id, auto_rag_point_ids=auto_rag_point_ids
-    )
-    # LUM-122 compaction hook: SITE_PRE_REQUEST (context injection today)
+    history = build_injected_context(
+        question, history, effective_model, user_id, auto_rag_point_ids=auto_rag_point_ids
+    ).messages
 
     if body.stream:
-        # Synchronous credential pre-flight — see plan §Modified files
-        # routes/chat.py + §Test cases test_chat_completions_424_streaming_returns_json_not_sse:
-        # loop.ask_stream wraps get_llm_provider in a broad except that yields
-        # SSE error events; if we let it resolve credentials lazily, a
-        # ConnectorNotConfigured/CredentialUnavailable would be smuggled out
-        # as HTTP 200 + text/event-stream instead of the documented 424/503.
-        # Once StreamingResponse is constructed the status code/headers are
-        # locked, so the pre-flight MUST run before that.
         try:
-            config.get_llm_provider(body.model, user_id=user_id)
+            config.get_llm_provider(effective_model, user_id=user_id)
+        except PrivacyModeBlocked:
+            auto_rag_point_ids.clear()
+            return _privacy_mode_blocked_response(body.model)
         except ConnectorNotConfigured:
             auto_rag_point_ids.clear()
-            return _connector_not_configured_response(body.model)
+            return _connector_not_configured_response(effective_model)
         except CredentialUnavailable:
             auto_rag_point_ids.clear()
-            return _credential_unavailable_response(body.model)
-        except Exception:
+            return _credential_unavailable_response(effective_model)
+        except Exception as exc:
+            from services.egress_guard import EgressBlockedError
+
+            if isinstance(exc, EgressBlockedError):
+                auto_rag_point_ids.clear()
+                return _egress_blocked_response(effective_model)
             _log.exception(
                 "chat.stream pre-flight failed for model=%s user=%s",
-                body.model,
+                effective_model,
                 user_id,
             )
             auto_rag_point_ids.clear()
-            return _internal_credential_error_response(body.model)
+            return _internal_credential_error_response(effective_model)
 
         events = ask_stream(
             question,
             history=history,
-            model=body.model,
+            model=effective_model,
             use_tools=use_tools,
             user_id=user_id,
             auto_rag_point_ids=auto_rag_point_ids,
@@ -554,8 +817,9 @@ def chat_completions(body: ChatCompletionsRequest, request: Request) -> Any:
             try:
                 yield from stream_completion(
                     events,
-                    body.model,
-                    prepend_loading_note=should_prepend_local_loading_note(body.model),
+                    effective_model,
+                    prepend_loading_note=should_prepend_local_loading_note(effective_model),
+                    privacy_metadata=privacy_meta,
                 )
             finally:
                 auto_rag_point_ids.clear()
@@ -569,30 +833,36 @@ def chat_completions(body: ChatCompletionsRequest, request: Request) -> Any:
         answer = ask(
             question,
             history=history,
-            model=body.model,
+            model=effective_model,
             use_tools=use_tools,
             user_id=user_id,
             auto_rag_point_ids=auto_rag_point_ids,
         )
+    except PrivacyModeBlocked:
+        return _privacy_mode_blocked_response(body.model)
     except ConnectorNotConfigured:
-        return _connector_not_configured_response(body.model)
+        return _connector_not_configured_response(effective_model)
     except CredentialUnavailable:
-        return _credential_unavailable_response(body.model)
-    except Exception:
+        return _credential_unavailable_response(effective_model)
+    except Exception as exc:
+        from services.egress_guard import EgressBlockedError
+
+        if isinstance(exc, EgressBlockedError):
+            return _egress_blocked_response(effective_model)
         _log.exception(
             "chat.completions failed for model=%s user=%s",
-            body.model,
+            effective_model,
             user_id,
         )
-        return _internal_credential_error_response(body.model)
+        return _internal_credential_error_response(effective_model)
     finally:
         auto_rag_point_ids.clear()
 
-    return {
+    response: dict = {
         "id": "chatcmpl-lumogis",
         "object": "chat.completion",
         "created": int(time.time()),
-        "model": body.model,
+        "model": effective_model,
         "choices": [
             {
                 "index": 0,
@@ -602,3 +872,6 @@ def chat_completions(body: ChatCompletionsRequest, request: Request) -> Any:
         ],
         "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
     }
+    if privacy_meta:
+        response["lumogis"] = {"privacy": privacy_meta}
+    return response

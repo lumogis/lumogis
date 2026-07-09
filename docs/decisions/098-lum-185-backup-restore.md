@@ -95,3 +95,4 @@ separate later opt-in (restic/S3); that the backup-status endpoint is read-only.
 
 - 2026-06-14: Draft created by /explore --headless LUM-185.
 - 2026-06-14: Finalised by /verify-plan --headless LUM-185 — implementation confirmed decision.
+- 2026-06-15: Hardening shipped — FalkorDB `BGSAVE` waits for `LASTSAVE` advance before copying `dump.rdb`; Qdrant backup fails when `/collections` is unreachable; restore enforces quiesce via orchestrator/lumogis-web `/healthz` probes; FalkorDB restore follows manifest inclusion (not current `GRAPH_MODE`). Operator runbook: `docs/guides/backup-restore.md`.

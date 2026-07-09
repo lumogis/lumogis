@@ -237,8 +237,22 @@ def _emit_audit(
 # ---------------------------------------------------------------------------
 
 
-def mint(user_id: str, label: str) -> tuple[InternalMcpToken, str]:
+def mint(
+    user_id: str, label: str, scopes: list[str] | None = None
+) -> tuple[InternalMcpToken, str]:
     """Mint a fresh `lmcp_…` token for ``user_id``. Returns the row + plaintext.
+
+    ``scopes`` (LUM-291): ``None`` (default) = unrestricted (the historical v1
+    semantic, preserved for every existing caller and the
+    ``test_mint_inserts_scopes_as_null_not_empty_array`` contract); a non-empty
+    list = allowlist (e.g. ``["mcp:write"]``). Enables minting a scoped token so
+    the `/mcp/*` write tools can enforce ``mcp:write``. NB (LUM-527): the API
+    mint route rejects ``[]`` (ambiguous); ``[]`` is not a reachable stored value
+    through the route, though ``_require_scope`` would still deny a token that
+    somehow carried it. **NB (LUM-531):** ``None`` ⇒ unrestricted ``NULL`` is a
+    **direct-service-caller** semantic only — the public mint **route** intercepts
+    ``None`` and substitutes least-privilege ``["mcp:read"]`` (it never mints
+    ``NULL``). Do not rely on "pass ``None`` for unrestricted" via the route.
 
     Parameters
     ----------
@@ -285,7 +299,7 @@ def mint(user_id: str, label: str) -> tuple[InternalMcpToken, str]:
                 "INSERT INTO mcp_tokens "
                 "(id, user_id, token_prefix, token_hash, label, scopes) "
                 "VALUES (%s, %s, %s, %s, %s, %s)",
-                (token_id, user_id, token_prefix, token_hash, label, None),
+                (token_id, user_id, token_prefix, token_hash, label, scopes),
             )
         except Exception as exc:
             # psycopg surfaces unique-violation as IntegrityError. We don't

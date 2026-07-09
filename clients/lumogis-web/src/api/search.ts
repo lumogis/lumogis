@@ -45,6 +45,11 @@ export interface RecentSessionsResponse {
 
 // ── KG / entity DTOs ─────────────────────────────────────────────────────
 
+// LUM-581 — household entity sharing lifecycle. Entity publish is synchronous
+// (single Qdrant point, no background job), so — unlike documents — only
+// ``personal``/``shared`` occur (no ``sharing``/``unsharing``/``partial``).
+export type EntityShareStatus = "personal" | "shared";
+
 export interface EntityCard {
   entity_id: string;
   name: string;
@@ -54,6 +59,14 @@ export interface EntityCard {
   sources: string[];
   scope: MemoryScope;
   owner_user_id: string | null;
+  // LUM-581 — additive + defaulted server-side, so older payloads still parse.
+  share_status?: EntityShareStatus;
+  is_owner?: boolean;
+}
+
+/** True when the entity is shared with the household (drives badge + filter). */
+export function isEntityShared(status: EntityShareStatus | undefined): boolean {
+  return status === "shared";
 }
 
 export interface RelatedEntity {
@@ -119,5 +132,33 @@ export async function getRelatedEntities(
   return client.getJson<RelatedEntitiesResponse>(
     `/api/v1/kg/entities/${encodeURIComponent(entityId)}/related?${params.toString()}`,
     { signal },
+  );
+}
+
+// ── Household sharing (LUM-581) ───────────────────────────────────────────
+//
+// Note the path split: the entity READ surface is `/api/v1/kg/entities/{id}`
+// while publish/unpublish target `/api/v1/entities/{id}/publish` (the Postgres
+// `entities` table). Both use the same `entities.entity_id` UUID — no id
+// translation is needed (confirmed against the shared PK).
+
+/** Share a personal entity with the household (LUM-581) → 200/204 (synchronous). */
+export async function publishEntity(
+  client: ApiClient,
+  entityId: string,
+): Promise<void> {
+  await client.postJson<{ scope: "shared" }, unknown>(
+    `/api/v1/entities/${encodeURIComponent(entityId)}/publish`,
+    { scope: "shared" },
+  );
+}
+
+/** Stop sharing an entity with the household (LUM-581) → 200/204 (synchronous). */
+export async function unpublishEntity(
+  client: ApiClient,
+  entityId: string,
+): Promise<void> {
+  await client.delete<void>(
+    `/api/v1/entities/${encodeURIComponent(entityId)}/publish`,
   );
 }

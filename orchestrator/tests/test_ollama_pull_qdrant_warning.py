@@ -7,8 +7,8 @@ import unittest
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
-from routes.admin import OllamaPullRequest
 from routes.admin import QDRANT_INIT_WARNING_MSG
+from routes.admin import OllamaPullRequest
 from routes.admin import ollama_pull
 
 

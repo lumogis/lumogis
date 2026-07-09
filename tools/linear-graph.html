@@ -234,6 +234,48 @@
       display: none;
       max-width: 80%;
       text-align: center;
+      pointer-events: auto;
+      padding-right: 28px;
+    }
+
+    #error-banner .dismiss {
+      position: absolute;
+      right: 8px;
+      top: 50%;
+      transform: translateY(-50%);
+      background: none;
+      border: none;
+      color: #fff;
+      font-size: 18px;
+      cursor: pointer;
+      padding: 0 4px;
+      line-height: 1;
+    }
+
+    #empty-state {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      text-align: center;
+      color: #555;
+      font-size: 14px;
+      line-height: 1.5;
+      z-index: 4;
+      pointer-events: none;
+    }
+
+    #empty-state.hidden { display: none; }
+
+    #empty-state p { max-width: 520px; margin: 0 auto; }
+
+    #empty-state code {
+      background: #eee;
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-size: 12px;
     }
 
     /* ── Legend ── */
@@ -653,8 +695,14 @@
     </div>
 
     <div id="graph-container">
+      <div id="empty-state">
+        <p><strong>Linear backlog graph</strong><br>
+          Open the <strong>API</strong> menu → paste your <code>lin_api_…</code> key → <strong>Load</strong>.<br>
+          Serve this file over HTTP if the browser blocks requests:
+          <code>make linear-graph</code> then open the printed URL.</p>
+      </div>
       <div id="loading-overlay"></div>
-      <div id="error-banner"></div>
+      <div id="error-banner"><button type="button" class="dismiss" id="error-dismiss" title="Dismiss">&times;</button><span id="error-text"></span></div>
       <div id="audit-banner"><button type="button" class="dismiss" id="audit-dismiss" title="Dismiss">&times;</button><span id="audit-text"></span></div>
       <div id="legend">
         <div id="legend-static">
@@ -679,6 +727,14 @@
   <script>
 (function () {
   "use strict";
+
+  if (typeof d3 === "undefined") {
+    document.body.innerHTML =
+      "<div style=\"padding:24px;font-family:sans-serif;max-width:560px;margin:40px auto\">" +
+      "<h2>Could not load D3</h2><p>The graph needs <code>d3@7</code> from jsDelivr. " +
+      "Check your network or ad blocker, then reload.</p></div>";
+    return;
+  }
 
   const API_URL = "https://api.linear.app/graphql";
   const TEAM_KEY = "LUM";
@@ -770,8 +826,10 @@
 
   /* ── DOM refs ── */
   const container = document.getElementById("graph-container");
+  const emptyStateEl = document.getElementById("empty-state");
   const loadingEl = document.getElementById("loading-overlay");
   const errorEl = document.getElementById("error-banner");
+  const errorTextEl = document.getElementById("error-text");
   const sidePanel = document.getElementById("side-panel");
   const panelContent = document.getElementById("panel-content");
   const legendNodes = document.getElementById("legend-nodes");
@@ -865,6 +923,7 @@
     personaBtn.disabled = true;
     execBtn.disabled = true;
     updateAuthToggle();
+    updateEmptyState();
   }
 
   /* ── Multi-select dropdown helpers ── */
@@ -961,14 +1020,49 @@
     loadingEl.style.display = "none";
   }
 
-  function showError(msg) {
-    errorEl.textContent = msg;
+  function showError(msg, { persistent = false } = {}) {
+    errorTextEl.textContent = msg;
     errorEl.style.display = "block";
-    setTimeout(() => { errorEl.style.display = "none"; }, 12000);
+    errorEl.dataset.persistent = persistent ? "1" : "0";
+    if (!persistent) {
+      setTimeout(() => {
+        if (errorEl.dataset.persistent !== "1") errorEl.style.display = "none";
+      }, 12000);
+    }
   }
 
   function hideError() {
     errorEl.style.display = "none";
+    errorEl.dataset.persistent = "0";
+  }
+
+  function updateEmptyState({ visibleCount = null, reason = null } = {}) {
+    if (loadingEl.style.display === "block") {
+      emptyStateEl.classList.add("hidden");
+      return;
+    }
+    if (!apiKey && !apiKeyInput.value.trim()) {
+      emptyStateEl.classList.remove("hidden");
+      emptyStateEl.querySelector("p").innerHTML =
+        "<strong>Linear backlog graph</strong><br>" +
+        "Open the <strong>API</strong> menu → paste your <code>lin_api_…</code> key → <strong>Load</strong>.<br>" +
+        "Serve over HTTP if fetch fails: <code>make linear-graph</code>, then open the printed URL.";
+      return;
+    }
+    if (reason) {
+      emptyStateEl.classList.remove("hidden");
+      emptyStateEl.querySelector("p").innerHTML = reason;
+      return;
+    }
+    if (visibleCount === 0 && graphData.nodes.length > 0) {
+      emptyStateEl.classList.remove("hidden");
+      emptyStateEl.querySelector("p").innerHTML =
+        "<strong>No issues match the current filters.</strong><br>" +
+        "Reset axis dropdowns to <strong>All</strong>, enable <strong>Done</strong> / <strong>Cancelled</strong> if needed, " +
+        "or turn on <strong>Linked targets</strong>.";
+      return;
+    }
+    emptyStateEl.classList.add("hidden");
   }
 
   async function gqlFetch(query, variables) {
@@ -1170,13 +1264,9 @@
   function nodePassesFilters(node, projects, milestones, products, personas, execs, term) {
     if (!projects.has(node.project)) return false;
     if (milestones && node.milestone && !milestones.has(node.milestone)) return false;
-    if (milestones && !node.milestone) return false;
     if (products && node.product && !products.has(node.product)) return false;
-    if (products && !node.product) return false;
     if (personas && node.personas.length > 0 && !node.personas.some(p => personas.has(p))) return false;
-    if (personas && node.personas.length === 0) return false;
     if (execs && node.exec && !execs.has(node.exec)) return false;
-    if (execs && !node.exec) return false;
     if (!isStatusVisible(node.statusCat)) return false;
     if (term) {
       return node.identifier.toLowerCase().includes(term) ||
@@ -1314,7 +1404,8 @@
   function getSelectedMilestones() {
     const values = getCheckedValues(milestoneOptions);
     const total = milestoneOptions.querySelectorAll('input[type="checkbox"]').length;
-    if (values.length === 0 || total === 0) return new Set(["__none__"]);
+    if (total === 0) return null;
+    if (values.length === 0) return new Set(["__none__"]);
     if (values.length === total) return null;
     return new Set(values);
   }
@@ -1322,7 +1413,8 @@
   function getAxisSelection(optionsEl) {
     const values = getCheckedValues(optionsEl);
     const total = optionsEl.querySelectorAll('input[type="checkbox"]').length;
-    if (values.length === 0 || total === 0) return new Set(["__none__"]);
+    if (total === 0) return null;
+    if (values.length === 0) return new Set(["__none__"]);
     if (values.length === total) return null;
     return new Set(values);
   }
@@ -1556,6 +1648,7 @@
     const { visibleNodes, linkTargets, searchMatch, neighbourDim, visibleLinks, hasSearch } = computeVisibility();
 
     const filteredNodes = graphData.nodes.filter(n => visibleNodes.has(n.id));
+    updateEmptyState({ visibleCount: filteredNodes.length });
     const nodeById = new Map(filteredNodes.map(n => [n.id, n]));
 
     const resolvedLinks = visibleLinks.map(link => ({
@@ -1831,7 +1924,16 @@
       renderGraph();
       showAuditBanner(auditRelationships());
     } catch (err) {
-      showError(`Failed to load data: ${err.message}`);
+      showError(
+        `Failed to load data: ${err.message}. Check API key (API → Clear → paste fresh lin_api_… key).`,
+        { persistent: true },
+      );
+      updateEmptyState({
+        reason:
+          "<strong>Could not load Linear issues.</strong><br>" +
+          escapeHtml(err.message) +
+          "<br>Use <strong>API → Clear</strong>, paste a fresh <code>lin_api_…</code> key, then <strong>Load</strong>.",
+      });
     } finally {
       hideLoading();
     }
@@ -1841,7 +1943,8 @@
   function startLoad() {
     const key = apiKeyInput.value.trim();
     if (!key) {
-      showError("Please enter your Linear API key.");
+      showError("Please enter your Linear API key (API menu → lin_api_… → Load).");
+      updateEmptyState();
       return;
     }
     apiKey = key.replace(/^Bearer\s+/i, "").trim();
@@ -1866,6 +1969,7 @@
   }
 
   document.getElementById("panel-close").addEventListener("click", deselectNode);
+  document.getElementById("error-dismiss").addEventListener("click", hideError);
   document.getElementById("audit-dismiss").addEventListener("click", () => {
     document.getElementById("audit-banner").style.display = "none";
   });
@@ -1896,6 +2000,7 @@
   });
 
   buildStaticLegend();
+  updateEmptyState();
 
 })();
   </script>

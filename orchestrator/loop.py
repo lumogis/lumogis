@@ -133,8 +133,7 @@ def _assistant_from_llm_response(response: LLMResponse) -> dict:
     assistant_msg: dict = {"role": "assistant", "content": response.text}
     if response.tool_calls:
         assistant_msg["tool_calls"] = [
-            {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
-            for tc in response.tool_calls
+            {"id": tc.id, "name": tc.name, "arguments": tc.arguments} for tc in response.tool_calls
         ]
     return assistant_msg
 
@@ -362,7 +361,10 @@ def ask(
     if not isinstance(user_id, str) or not user_id:
         raise TypeError("loop.ask: user_id (keyword-only) is required")
 
-    provider = config.get_llm_provider(model, user_id=user_id)
+    from services.privacy_mode import resolve_model_for_request
+
+    effective_model, _meta = resolve_model_for_request(model, user_id)
+    provider = config.get_llm_provider(effective_model, user_id=user_id)
 
     oop_tok = None
     if use_tools:
@@ -381,7 +383,7 @@ def ask(
     params, state = _build_session_params_and_state(
         question=question,
         history=history,
-        model=model,
+        model=effective_model,
         use_tools=use_tools,
         user_id=user_id,
         tools=tools,
@@ -434,11 +436,14 @@ def ask_stream(
 
     try:
         try:
-            provider = config.get_llm_provider(model, user_id=user_id)
+            from services.privacy_mode import resolve_model_for_request
+
+            effective_model, _meta = resolve_model_for_request(model, user_id)
+            provider = config.get_llm_provider(effective_model, user_id=user_id)
             params, state = _build_session_params_and_state(
                 question=question,
                 history=history,
-                model=model,
+                model=effective_model,
                 use_tools=use_tools,
                 user_id=user_id,
                 tools=tools,
@@ -446,9 +451,7 @@ def ask_stream(
                 chain_budget=chain_budget,
                 auto_rag_point_ids=auto_rag_point_ids,
             )
-            yield from _run_session_loop(
-                state, params, provider=provider, stream=True
-            )
+            yield from _run_session_loop(state, params, provider=provider, stream=True)
         except Exception as exc:
             _log.exception("ask_stream failed for model=%s", model)
             yield StreamEvent(type="error", content=_friendly_error(exc))
@@ -459,6 +462,10 @@ def ask_stream(
 
 def _friendly_error(exc: Exception) -> str:
     """Turn raw API exceptions into short, user-facing messages."""
+    from services.egress_guard import EgressBlockedError
+
+    if isinstance(exc, EgressBlockedError):
+        return "Connection blocked by egress guard. Check allowlist configuration."
     msg = str(exc).lower()
     if "rate_limit" in msg or "429" in msg:
         return "The AI provider's rate limit was reached. Please wait a minute and try again."

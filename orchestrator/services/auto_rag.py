@@ -19,6 +19,16 @@ _log = logging.getLogger(__name__)
 _META_ALLOW = frozenset({"file_path", "scope", "ingested"})
 
 
+def _merge_file_path_filter(base_filter: dict, file_path: str) -> dict:
+    """AND-merge file_path narrowing under a parent must (visibility.py contract)."""
+    return {
+        "must": [
+            base_filter,
+            {"key": "file_path", "match": {"value": file_path}},
+        ]
+    }
+
+
 def _parse_chunk_index(pl: dict) -> int | None:
     idx = pl.get("chunk_index")
     if idx is None:
@@ -63,15 +73,28 @@ def retrieve_document_context(
     *,
     scope_filter: str | None = None,
     max_tokens: int | None = None,
+    file_path: str | None = None,
+    scoped: bool = False,
 ) -> list[DocumentContextHit]:
-    """Retrieve gated document chunks for chat injection. Never raises."""
-    if not config.get_auto_rag_enabled():
-        return []
+    """Retrieve gated document chunks for chat injection.
+
+    Non-scoped path never raises (LUM-308). Scoped path propagates infra failures.
+    """
+    if not scoped and not file_path:
+        if not config.get_auto_rag_enabled():
+            return []
     try:
         return _retrieve_document_context_inner(
-            query, user_id, scope_filter=scope_filter, max_tokens=max_tokens
+            query,
+            user_id,
+            scope_filter=scope_filter,
+            max_tokens=max_tokens,
+            file_path=file_path,
+            scoped=scoped,
         )
     except Exception:
+        if scoped:
+            raise
         _log.warning(
             "auto_rag retrieval failed",
             extra={"event": "auto_rag_failed", "user_id": user_id},
@@ -86,22 +109,35 @@ def _retrieve_document_context_inner(
     *,
     scope_filter: str | None,
     max_tokens: int | None,
+    file_path: str | None,
+    scoped: bool,
 ) -> list[DocumentContextHit]:
     embedder = config.get_embedder()
     vs = config.get_vector_store()
     reranker = config.get_reranker()
     filt = visible_qdrant_filter(UserContext(user_id=user_id), scope_filter)
-    top_pre = config.get_auto_rag_top_k_pre()
-    top_post = config.get_auto_rag_top_k_post()
+    if file_path:
+        filt = _merge_file_path_filter(filt, file_path)
+
+    if scoped:
+        top_pre = config.get_document_chat_top_k_pre()
+        top_post = config.get_document_chat_top_k_post()
+        dense_threshold = 0.30
+        min_bi = 0.45
+    else:
+        top_pre = config.get_auto_rag_top_k_pre()
+        top_post = config.get_auto_rag_top_k_post()
+        dense_threshold = 0.40
+        min_bi = config.get_auto_rag_min_bi_encoder_score()
+
     min_rerank = config.get_auto_rag_min_rerank_score()
-    min_bi = config.get_auto_rag_min_bi_encoder_score()
 
     query_vec = embedder.embed(query)
     raw = vs.search(
         collection="documents",
         vector=query_vec,
         limit=top_pre,
-        threshold=0.40,
+        threshold=dense_threshold,
         filter=filt,
         sparse_query=query,
     )

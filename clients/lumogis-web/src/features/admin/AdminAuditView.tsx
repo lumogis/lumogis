@@ -4,25 +4,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { useAuth, useUser } from "../../auth/AuthProvider";
 import { ApiError } from "../../api/client";
+import type { AuditListResponse } from "../../api/audit";
+import { buildAuditStreamUrl, mergeAuditRows } from "../../api/audit";
 import { UserPicker, type UserRow } from "../_shared/UserPicker";
 import { RoleGate } from "../_shared/RoleGate";
-
-interface AuditEntryDTO {
-  id: number;
-  action_name: string;
-  connector: string;
-  mode: string;
-  input_summary: string | null;
-  result_summary: string | null;
-  reverse_token: string | null;
-  reverse_action: unknown;
-  executed_at: string | null;
-  reversed_at: string | null;
-}
-
-interface AuditListResponse {
-  audit: AuditEntryDTO[];
-}
+import { AuditLiveToggle } from "../audit/AuditLiveToggle";
+import { AuditTable } from "../audit/_shared/AuditTable";
+import { useAuditLiveTail } from "../audit/useAuditLiveTail";
 
 function parseErrorPayload(e: ApiError): { error?: string; detail?: string } {
   try {
@@ -66,7 +54,7 @@ function shouldInvalidateAfterReverseError(e: unknown): boolean {
 }
 
 export function AdminAuditView(): JSX.Element {
-  const { client } = useAuth();
+  const { client, tokens } = useAuth();
   const u = useUser();
   const isAdmin = u?.role === "admin";
   const qc = useQueryClient();
@@ -75,6 +63,7 @@ export function AdminAuditView(): JSX.Element {
   const [connector, setConnector] = useState("");
   const [actionType, setActionType] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
+  const [liveEnabled, setLiveEnabled] = useState(false);
 
   const auditUrl = useMemo(() => {
     const p = new URLSearchParams();
@@ -89,6 +78,21 @@ export function AdminAuditView(): JSX.Element {
     queryKey: ["admin", "audit", auditUrl],
     queryFn: () => client.getJson<AuditListResponse>(auditUrl),
   });
+
+  const baseRows = useMemo(() => listQ.data?.audit ?? [], [listQ.data]);
+  const sinceId = baseRows.reduce((max, row) => Math.max(max, row.id), 0);
+  const streamUrl = useMemo(
+    () =>
+      buildAuditStreamUrl({
+        sinceId,
+        connector,
+        actionType,
+        asUser: isAdmin && asUser ? asUser : undefined,
+      }),
+    [sinceId, connector, actionType, asUser, isAdmin],
+  );
+  const liveRows = useAuditLiveTail({ enabled: liveEnabled, streamUrl, tokens });
+  const displayRows = useMemo(() => mergeAuditRows(baseRows, liveRows), [baseRows, liveRows]);
 
   const revM = useMutation({
     mutationFn: (token: string) => client.postJson<Record<string, never>, { status: string }>(`/api/v1/audit/${encodeURIComponent(token)}/reverse`, {}),
@@ -146,53 +150,25 @@ export function AdminAuditView(): JSX.Element {
         <button type="button" onClick={() => void listQ.refetch()}>
           Refresh
         </button>
+        <AuditLiveToggle enabled={liveEnabled} onChange={setLiveEnabled} />
+        {liveEnabled ? (
+          <p className="lumogis-help-text" role="status">
+            Live tail on — new server activity appears automatically.
+          </p>
+        ) : null}
       </div>
-      {listQ.isPending && <p>Loading…</p>}
-      {listQ.isError && <p>Failed to load audit log.</p>}
-      {listQ.isSuccess && (
-        <div className="lumogis-table-scroll">
-          <table className="lumogis-dense-table">
-            <thead>
-              <tr>
-                <th>When</th>
-                <th>Action</th>
-                <th>Connector</th>
-                <th>Mode</th>
-                <th>Result</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {listQ.data.audit.map((row) => {
-                const canReverse =
-                  row.reverse_action != null && (row.reversed_at == null || row.reversed_at === "");
-                return (
-                  <tr key={row.id}>
-                    <td style={{ fontSize: "0.8rem" }}>{row.executed_at ?? "—"}</td>
-                    <td>{row.action_name}</td>
-                    <td>{row.connector}</td>
-                    <td>{row.mode}</td>
-                    <td className="lumogis-long-text">{row.result_summary}</td>
-                    <td>
-                      {canReverse && row.reverse_token ? (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setMsg(null);
-                            revM.mutate(row.reverse_token!);
-                          }}
-                        >
-                          Reverse
-                        </button>
-                      ) : null}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <AuditTable
+        variant="admin"
+        rows={displayRows}
+        loading={listQ.isPending}
+        error={listQ.isError}
+        onRetry={() => void listQ.refetch()}
+        showReverse
+        onReverse={(token) => {
+          setMsg(null);
+          revM.mutate(token);
+        }}
+      />
     </section>
   );
 }

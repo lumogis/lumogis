@@ -258,7 +258,6 @@ def test_tool_chain_cap_streaming_loop(monkeypatch):
     monkeypatch.setenv("TOOL_CHAIN_CAP", "2")
     import loop as loop_mod
     from models.llm import LLMEvent
-    from models.stream import StreamEvent
 
     calls: list[str] = []
 

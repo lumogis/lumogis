@@ -28,6 +28,13 @@ the whole multi-user phase. It exercises the *entire* hot path:
                         -> Qdrant search with payload.user_id filter
 
 Any break in the chain shows up here as a cross-user leak.
+
+Live Qdrant semantic-search isolation (real ``Filter(should=...)`` ANN against a
+real vector store) is proven in ``test_two_user_qdrant_isolation_live.py``
+(LUM-307, LUM-587, LUM-588). Live Postgres **conversation** isolation
+(``web_conversations`` / ``web_messages`` CRUD, LUM-395) is proven separately in
+``test_two_user_conversation_isolation_live.py``. This file remains the
+mock-based multi-user harness (auth, ingest, chat, permissions, paperless, etc.).
 """
 
 from __future__ import annotations
@@ -721,7 +728,7 @@ def fake_provider(monkeypatch):
     monkeypatch.setattr(_config, "get_llm_provider", lambda *_a, **_kw: provider)
     monkeypatch.setattr(_config, "is_model_enabled", lambda *_a, **_kw: True)
     monkeypatch.setattr(_config, "get_model_config", lambda *_a, **_kw: {"tools": True})
-    monkeypatch.setattr(_config, "is_local_model", lambda *_a, **_kw: False)
+    monkeypatch.setattr(_config, "is_local_model", lambda *_a, **_kw: True)
     monkeypatch.setattr(_config, "get_all_models_config", lambda: {"isolation-test-model": {}})
     return provider
 
@@ -933,10 +940,13 @@ def test_two_users_can_ingest_same_path(
     _ON_CONFLICT_PATTERNS = (
         # Inline column list: ON CONFLICT (user_id, file_path) DO UPDATE
         # OR ON CONFLICT (file_path, user_id) DO UPDATE
+        # LUM-157: an optional partial-index predicate
+        # (`WHERE published_from IS NULL`) may sit between the target column
+        # list and DO UPDATE now that file_index_user_path_uniq is partial.
         re.compile(
             r"on\s+conflict\s*\(\s*"
             r"(?:user_id\s*,\s*file_path|file_path\s*,\s*user_id)"
-            r"\s*\)\s+do\s+update",
+            r"\s*\)\s*(?:where\s+published_from\s+is\s+null\s+)?do\s+update",
         ),
         # Constraint reference: ON CONFLICT ON CONSTRAINT
         # file_index_user_path_uniq DO UPDATE

@@ -68,6 +68,13 @@ class RegisteredService(BaseModel):
     `last_seen_healthy` is populated only by successful health probes per
     the Area 3 prompt; failed probes flip `healthy` False but leave the
     last-known-good timestamp untouched.
+
+    `last_unhealthy_reason` carries a coarse structured code for the most
+    recent failed probe (`timeout`, `connection_error`, `network_error`, or
+    `http_<status>` — incl. `http_401` / `http_403` for a rejected bearer);
+    it is cleared back to `None` on the next successful probe. Read-only
+    consumers (e.g. the `/api/v1/me/tools` catalog facade) map it to specific
+    operator-facing copy instead of a generic "not healthy" string (LUM-61).
     """
 
     manifest: CapabilityManifest
@@ -75,6 +82,7 @@ class RegisteredService(BaseModel):
     registered_at: datetime
     last_seen_healthy: datetime | None = None
     healthy: bool = False
+    last_unhealthy_reason: str | None = None
 
     async def check_health(self, transport: httpx.AsyncBaseTransport | None = None) -> bool:
         """Probe the capability service's declared health endpoint.
@@ -97,6 +105,12 @@ class RegisteredService(BaseModel):
                 resp = await client.get(url)
         except httpx.HTTPError as exc:
             self.healthy = False
+            if isinstance(exc, httpx.TimeoutException):
+                self.last_unhealthy_reason = "timeout"
+            elif isinstance(exc, httpx.ConnectError):
+                self.last_unhealthy_reason = "connection_error"
+            else:
+                self.last_unhealthy_reason = "network_error"
             _log.warning(
                 "Capability service %s health probe failed: %s (%s)",
                 self.manifest.id,
@@ -107,6 +121,10 @@ class RegisteredService(BaseModel):
 
         if resp.status_code != 200:
             self.healthy = False
+            # Concrete status is preserved (incl. 401/403); the read-only
+            # catalog facade maps it to specific copy — auth-rejection for
+            # 401/403, generic HTTP for the rest (LUM-61).
+            self.last_unhealthy_reason = f"http_{resp.status_code}"
             _log.warning(
                 "Capability service %s health probe returned HTTP %d at %s",
                 self.manifest.id,
@@ -117,6 +135,7 @@ class RegisteredService(BaseModel):
 
         self.healthy = True
         self.last_seen_healthy = datetime.now(timezone.utc)
+        self.last_unhealthy_reason = None
         return True
 
 

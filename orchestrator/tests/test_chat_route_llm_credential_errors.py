@@ -161,7 +161,7 @@ def test_v1_models_per_user_filtering_under_auth_on(monkeypatch, chat_client):
     monkeypatch.setattr("routes.chat.config.get_all_models_config", lambda: fake_models)
     monkeypatch.setattr("routes.chat.get_user_credentials_snapshot", lambda uid: {"llm_anthropic"})
 
-    def _is_enabled(name, *, user_id=None, _credentials_present=None):
+    def _is_enabled(name, *, user_id=None, _credentials_present=None, _privacy_blocks_remote=None):
         cfg = fake_models[name]
         env = cfg.get("api_key_env")
         if not env:

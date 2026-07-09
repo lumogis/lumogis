@@ -13,9 +13,12 @@ from authz import require_user
 from fastapi import APIRouter
 from fastapi import Depends
 from fastapi import File
+from fastapi import Header
 from fastapi import HTTPException
 from fastapi import UploadFile
 from fastapi import status
+from models.api_v1 import IngestBatchSummaryResponse
+from models.api_v1 import IngestJobProgressResponse
 from models.api_v1 import IngestUploadQueuedResponse
 from services.media_storage import _reject_unsafe_path_component
 
@@ -69,6 +72,7 @@ def _stored_upload_path(*, user_id: str, file_id: str, basename: str) -> Path:
 async def upload_ingest_file(
     file: UploadFile = File(...),
     user: UserContext = Depends(require_user),
+    batch_id_header: str | None = Header(None, alias="X-Lumogis-Batch-Id"),
 ) -> IngestUploadQueuedResponse:
     """Stream upload to persistent storage and enqueue ``ingest_upload`` batch work."""
     if file.filename is None and file.size in (None, 0):
@@ -124,18 +128,41 @@ async def upload_ingest_file(
 
     try:
         from services.batch_queue import enqueue
+        from services import ingest_progress as ip
 
         from services import batch_handlers as _batch_handlers_registered  # noqa: F401
 
-        enqueue(
+        batch_id: str | None = None
+        if batch_id_header is not None:
+            try:
+                batch_id = ip.validate_batch_id(batch_id_header)
+            except ValueError as exc:
+                dest.unlink(missing_ok=True)
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="invalid X-Lumogis-Batch-Id",
+                ) from exc
+
+        payload: dict[str, object] = {
+            "stored_path": str(dest),
+            "file_id": file_id,
+            "original_filename": file.filename,
+        }
+        if batch_id is not None:
+            payload["batch_id"] = batch_id
+
+        job_id = enqueue(
             user_id=user.user_id,
             kind="ingest_upload",
-            payload={
-                "stored_path": str(dest),
-                "file_id": file_id,
-                "original_filename": file.filename,
-            },
+            payload=payload,
         )
+        ip.update_ingest_job_progress(
+            job_id=job_id,
+            user_id=user.user_id,
+            stage="queued",
+        )
+    except HTTPException:
+        raise
     except Exception as exc:
         dest.unlink(missing_ok=True)
         _log.exception("ingest_upload enqueue failed for user=%s", user.user_id)
@@ -144,4 +171,50 @@ async def upload_ingest_file(
             detail="failed to queue ingest",
         ) from exc
 
-    return IngestUploadQueuedResponse(file_id=file_id)
+    return IngestUploadQueuedResponse(file_id=file_id, job_id=job_id)
+
+
+@router.get(
+    "/jobs/{job_id}",
+    response_model=IngestJobProgressResponse,
+    responses={
+        401: {"description": "Unauthenticated"},
+        404: {"description": "Job not found"},
+    },
+    summary="Poll ingest job progress",
+)
+def get_ingest_job_progress(
+    job_id: int,
+    user: UserContext = Depends(require_user),
+) -> IngestJobProgressResponse:
+    from services import ingest_progress as ip
+
+    row = ip.get_ingest_job_row(job_id=job_id, user_id=user.user_id)
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job not found")
+    return IngestJobProgressResponse.model_validate(ip.job_row_to_progress_response(row))
+
+
+@router.get(
+    "/batches/{batch_id}",
+    response_model=IngestBatchSummaryResponse,
+    responses={
+        401: {"description": "Unauthenticated"},
+        400: {"description": "Invalid batch id"},
+    },
+    summary="Poll multi-file upload batch counters",
+)
+def get_ingest_batch_summary(
+    batch_id: str,
+    user: UserContext = Depends(require_user),
+) -> IngestBatchSummaryResponse:
+    from services import ingest_progress as ip
+
+    try:
+        summary = ip.get_ingest_batch_summary(batch_id=batch_id, user_id=user.user_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="invalid batch_id",
+        ) from exc
+    return IngestBatchSummaryResponse.model_validate(summary)

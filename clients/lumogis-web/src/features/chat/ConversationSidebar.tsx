@@ -18,22 +18,44 @@ import {
   groupConversationByEndedAt,
   type ConversationGroup,
 } from "./conversationGroups";
+import { ShareConversation } from "./ShareConversation";
+
+/**
+ * A conversation whose `session/end` was enqueued but whose `sessions` row has
+ * not yet been written by the batch summarisation job (LUM-417). The sidebar
+ * shows a "Summarising…" placeholder for these until the real row appears.
+ */
+export interface PendingSummary {
+  conversationId: string;
+  title: string;
+}
+
+/** Poll cadence + cap while waiting for a summary row to materialise. */
+const PENDING_POLL_INTERVAL_MS = 3000;
+const PENDING_POLL_MAX_ATTEMPTS = 20; // ~60s, then give up rather than spin forever.
 
 export interface ConversationSidebarProps {
   client: ApiClient;
   onContinue(seedMessages: import("../../api/chat").ChatMessageDTO[]): void;
   refreshToken?: number;
+  /** Sessions just ended locally, awaiting their summary row. */
+  pendingSummaries?: PendingSummary[];
+  /** Fired with ids that have resolved (row arrived) or expired (poll cap). */
+  onPendingResolved?(conversationIds: string[]): void;
 }
 
 export function ConversationSidebar({
   client,
   onContinue,
   refreshToken = 0,
+  pendingSummaries = [],
+  onPendingResolved,
 }: ConversationSidebarProps): JSX.Element {
   const [items, setItems] = useState<ConversationSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [partialToast, setPartialToast] = useState<string | null>(null);
+  const [shareOpenId, setShareOpenId] = useState<string | null>(null); // LUM-582
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -52,6 +74,51 @@ export function ConversationSidebar({
   useEffect(() => {
     void load();
   }, [load, refreshToken]);
+
+  // Pending summaries still absent from the fetched list — the only ones we
+  // render as "Summarising…" placeholders.
+  const unresolvedPending = useMemo(
+    () =>
+      pendingSummaries.filter(
+        (p) => !items.some((it) => it.conversation_id === p.conversationId),
+      ),
+    [pendingSummaries, items],
+  );
+
+  // When a pending row's real summary arrives, tell the parent to drop it.
+  useEffect(() => {
+    if (onPendingResolved === undefined) return;
+    const resolved = pendingSummaries
+      .filter((p) => items.some((it) => it.conversation_id === p.conversationId))
+      .map((p) => p.conversationId);
+    if (resolved.length > 0) onPendingResolved(resolved);
+  }, [items, pendingSummaries, onPendingResolved]);
+
+  // While any summary is still pending, poll the list so the placeholder
+  // auto-resolves without a manual refresh. Bounded so a failed batch job
+  // cannot leave the sidebar polling forever.
+  const pendingKey = useMemo(
+    () =>
+      unresolvedPending
+        .map((p) => p.conversationId)
+        .sort()
+        .join(","),
+    [unresolvedPending],
+  );
+  useEffect(() => {
+    if (pendingKey.length === 0) return;
+    let attempts = 0;
+    const timer = setInterval(() => {
+      attempts += 1;
+      if (attempts >= PENDING_POLL_MAX_ATTEMPTS) {
+        clearInterval(timer);
+        onPendingResolved?.(pendingKey.split(","));
+        return;
+      }
+      void load();
+    }, PENDING_POLL_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [pendingKey, load, onPendingResolved]);
 
   const grouped = useMemo(() => {
     const buckets: Record<ConversationGroup, ConversationSummary[]> = {
@@ -105,10 +172,34 @@ export function ConversationSidebar({
           {error}
         </p>
       )}
-      {!loading && items.length === 0 && (
+      {!loading && items.length === 0 && unresolvedPending.length === 0 && (
         <p className="lumogis-chat__history-empty">
           Ended chats appear here after summarization completes.
         </p>
+      )}
+      {unresolvedPending.length > 0 && (
+        <ul
+          className="lumogis-chat__history-pending"
+          role="list"
+          aria-label="Conversations being summarised"
+        >
+          {unresolvedPending.map((p) => (
+            <li
+              key={p.conversationId}
+              className="lumogis-chat__history-item lumogis-chat__history-item--pending"
+              data-conversation-id={p.conversationId}
+              data-testid="pending-summary"
+            >
+              <span className="lumogis-chat__history-title">{p.title}</span>
+              <span
+                role="status"
+                className="lumogis-chat__history-summary lumogis-chat__history-pending-label"
+              >
+                Summarising…
+              </span>
+            </li>
+          ))}
+        </ul>
       )}
       {partialToast !== null && (
         <p role="status" className="lumogis-chat__history-partial">
@@ -138,9 +229,35 @@ export function ConversationSidebar({
                       className="lumogis-chat__history-select"
                       onClick={() => void onSelectContinue(c.conversation_id)}
                     >
-                      <span className="lumogis-chat__history-title">{c.title}</span>
+                      <span className="lumogis-chat__history-title">
+                        {c.title}
+                        {c.share_status === "shared" ? (
+                          <span
+                            className="lumogis-chat__history-shared-badge"
+                            data-testid={`conversation-list-shared-badge-${c.conversation_id}`}
+                          >
+                            {" "}
+                            · Shared
+                          </span>
+                        ) : null}
+                      </span>
                       <span className="lumogis-chat__history-summary">{c.summary}</span>
                     </button>
+                    {c.is_owner !== false ? (
+                      <button
+                        type="button"
+                        className="lumogis-chat__history-share"
+                        aria-label={`Share ${c.title}`}
+                        data-testid={`share-conversation-${c.conversation_id}`}
+                        onClick={() =>
+                          setShareOpenId((cur) =>
+                            cur === c.conversation_id ? null : c.conversation_id,
+                          )
+                        }
+                      >
+                        Share
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       className="lumogis-chat__history-delete"
@@ -149,6 +266,13 @@ export function ConversationSidebar({
                     >
                       ×
                     </button>
+                    {shareOpenId === c.conversation_id ? (
+                      <ShareConversation
+                        client={client}
+                        conversationId={c.conversation_id}
+                        onChanged={() => void load()}
+                      />
+                    ) : null}
                   </li>
                 ))}
               </ul>

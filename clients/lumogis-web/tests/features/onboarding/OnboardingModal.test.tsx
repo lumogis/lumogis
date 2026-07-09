@@ -15,7 +15,12 @@ describe("OnboardingModal", () => {
     const clear = vi.fn();
     render(
       <MemoryRouter>
-        <OnboardingModal onComplete={onComplete} completeError={null} onClearCompleteError={clear} />
+        <OnboardingModal
+          inviteOnboarding={null}
+          onComplete={onComplete}
+          completeError={null}
+          onClearCompleteError={clear}
+        />
       </MemoryRouter>,
     );
     await user.click(screen.getByRole("button", { name: /^skip$/i }));
@@ -26,11 +31,33 @@ describe("OnboardingModal", () => {
     const user = userEvent.setup();
     render(
       <MemoryRouter>
-        <OnboardingModal onComplete={vi.fn()} completeError={null} onClearCompleteError={vi.fn()} />
+        <OnboardingModal
+          inviteOnboarding={null}
+          onComplete={vi.fn()}
+          completeError={null}
+          onClearCompleteError={vi.fn()}
+        />
       </MemoryRouter>,
     );
     expect(screen.getByRole("heading", { name: "Welcome" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /^next$/i }));
     expect(screen.getByRole("heading", { name: "Add knowledge" })).toBeInTheDocument();
+  });
+
+  it("invite hint adds Household as first step", async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter>
+        <OnboardingModal
+          inviteOnboarding={{ allows_shared: true }}
+          onComplete={vi.fn()}
+          completeError={null}
+          onClearCompleteError={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole("heading", { name: "Household" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^next$/i }));
+    expect(screen.getByRole("heading", { name: "Welcome" })).toBeInTheDocument();
   });
 });

@@ -1,0 +1,252 @@
+# LUM-453 — optional label-gated Playwright Ollama mutation e2e (admin pull/delete,
+# LUM-450 Phase 1 spec) against a slim Compose stack + the `ollama` service.
+# Phase 2 of LUM-60 / ADR-064: NOT in the default slim web-e2e.yml (which keeps its
+# "Ollama not running" assertion) and NOT auto-wired into verify-public-rc-full.
+# Trigger: add label `ci:run-web-e2e-ollama` on a same-repo PR, or workflow_dispatch.
+name: Web E2E Ollama (Playwright)
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: web-e2e-ollama-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Small model so the runner pull is quick; override via workflow_dispatch input if needed.
+  OLLAMA_PULL_MODEL: tinyllama:1.1b
+
+jobs:
+  web-e2e-ollama:
+    runs-on: ubuntu-latest
+    # Extended vs the slim job (45m): an Ollama image pull + model pull is added.
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate web-e2e path script syntax
+        run: bash -n .github/scripts/web-e2e-paths.sh
+
+      - name: Shellcheck web-e2e path script
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+          shellcheck .github/scripts/web-e2e-paths.sh
+
+      - name: Path gate
+        id: paths
+        shell: bash
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
+        run: bash -euo pipefail .github/scripts/web-e2e-paths.sh
+
+      - name: Skip web e2e ollama (path contract)
+        if: steps.paths.outputs.should_run != 'true'
+        run: |
+          echo 'SKIP_WEB_E2E_PATHS: no paths matched contract'
+          exit 0
+
+      - name: Decide cred-gated stack + Playwright
+        id: gate
+        if: steps.paths.outputs.should_run == 'true'
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            head_repo='${{ github.event.pull_request.head.repo.full_name }}'
+            if [[ "$head_repo" != "${{ github.repository }}" ]]; then
+              echo "SKIP_FORK_PR: cred-gated web e2e skipped for fork PRs"
+              echo "run_stack=false" >>"$GITHUB_OUTPUT"
+              exit 0
+            fi
+            if ! jq -e '.pull_request.labels | map(.name) | any(. == "ci:run-web-e2e-ollama")' "$GITHUB_EVENT_PATH" >/dev/null 2>&1; then
+              echo "SKIP_PR_MISSING_LABEL: add label ci:run-web-e2e-ollama to run the Ollama Playwright subset on this PR"
+              echo "run_stack=false" >>"$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          echo "run_stack=true" >>"$GITHUB_OUTPUT"
+
+      - name: Mask smoke credentials
+        if: steps.gate.outputs.run_stack == 'true'
+        run: |
+          echo "::add-mask::${{ secrets.LUMOGIS_WEB_SMOKE_PASSWORD }}"
+          echo "::add-mask::${{ secrets.LUMOGIS_WEB_SMOKE_EMAIL }}"
+
+      - name: Pre-flight secrets
+        if: steps.gate.outputs.run_stack == 'true'
+        env:
+          LUMOGIS_WEB_SMOKE_EMAIL: ${{ secrets.LUMOGIS_WEB_SMOKE_EMAIL }}
+          LUMOGIS_WEB_SMOKE_PASSWORD: ${{ secrets.LUMOGIS_WEB_SMOKE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${LUMOGIS_WEB_SMOKE_EMAIL:-}" || -z "${LUMOGIS_WEB_SMOKE_PASSWORD:-}" ]]; then
+            echo "FAIL_SECRETS_REQUIRED: set repository secrets LUMOGIS_WEB_SMOKE_EMAIL and LUMOGIS_WEB_SMOKE_PASSWORD" >&2
+            exit 1
+          fi
+          pip install -q pydantic email-validator
+          python3 <<'PY'
+          import os
+          import sys
+
+          from pydantic import EmailStr, TypeAdapter, ValidationError
+
+          email = os.environ.get("LUMOGIS_WEB_SMOKE_EMAIL", "").strip()
+          try:
+              TypeAdapter(EmailStr).validate_python(email)
+          except ValidationError:
+              print(
+                  "FAIL_EMAIL_FORMAT: LUMOGIS_WEB_SMOKE_EMAIL must satisfy auth EmailStr "
+                  "validation (use example.com — reserved/special-use TLDs like .test are "
+                  "rejected). Rotate the repository secret to a valid smoke identity.",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+          PY
+
+      - name: Bootstrap root .env for compose interpolation
+        if: steps.gate.outputs.run_stack == 'true'
+        run: |
+          test -f .env.example || (echo "web-e2e: missing .env.example" >&2; exit 1)
+          cp .env.example .env
+
+      - name: Docker compose build (slim services)
+        if: steps.gate.outputs.run_stack == 'true'
+        env:
+          LUMOGIS_BOOTSTRAP_ADMIN_EMAIL: ${{ secrets.LUMOGIS_WEB_SMOKE_EMAIL }}
+          LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD: ${{ secrets.LUMOGIS_WEB_SMOKE_PASSWORD }}
+          LUMOGIS_WEB_SMOKE_EMAIL: ${{ secrets.LUMOGIS_WEB_SMOKE_EMAIL }}
+          LUMOGIS_WEB_SMOKE_PASSWORD: ${{ secrets.LUMOGIS_WEB_SMOKE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.yml -f docker-compose.web-e2e-ollama-ci.yml \
+            --env-file config/test.env.example \
+            build orchestrator lumogis-web stack-control qdrant
+
+      - name: Docker compose up (slim services + ollama)
+        if: steps.gate.outputs.run_stack == 'true'
+        env:
+          LUMOGIS_BOOTSTRAP_ADMIN_EMAIL: ${{ secrets.LUMOGIS_WEB_SMOKE_EMAIL }}
+          LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD: ${{ secrets.LUMOGIS_WEB_SMOKE_PASSWORD }}
+          LUMOGIS_WEB_SMOKE_EMAIL: ${{ secrets.LUMOGIS_WEB_SMOKE_EMAIL }}
+          LUMOGIS_WEB_SMOKE_PASSWORD: ${{ secrets.LUMOGIS_WEB_SMOKE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.yml -f docker-compose.web-e2e-ollama-ci.yml \
+            --env-file config/test.env.example \
+            up -d --wait \
+            postgres qdrant stack-control lumogis-web orchestrator caddy ollama
+
+      - name: Assert Ollama container is running
+        if: steps.gate.outputs.run_stack == 'true'
+        run: |
+          set -euo pipefail
+          running=$(docker compose -f docker-compose.yml -f docker-compose.web-e2e-ollama-ci.yml \
+            --env-file config/test.env.example ps --services --status running || true)
+          if ! printf '%s\n' "$running" | grep -qx ollama; then
+            echo "FAIL: ollama must be running for the mutation subset (got: ${running:-<none>})" >&2
+            exit 1
+          fi
+          echo "OK: ollama in running services"
+
+      - name: Pre-pull Ollama model
+        if: steps.gate.outputs.run_stack == 'true'
+        run: |
+          set -euo pipefail
+          echo "==> pulling ${OLLAMA_PULL_MODEL} inside the ollama service"
+          docker compose -f docker-compose.yml -f docker-compose.web-e2e-ollama-ci.yml \
+            --env-file config/test.env.example \
+            exec -T ollama ollama pull "${OLLAMA_PULL_MODEL}"
+
+      - name: Host readiness (Caddy + orchestrator)
+        if: steps.gate.outputs.run_stack == 'true'
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 90); do
+            if curl -sf --connect-timeout 2 http://127.0.0.1/ >/dev/null \
+              && curl -sf --connect-timeout 2 http://127.0.0.1:8000/healthz >/dev/null; then
+              echo "OK: Caddy and orchestrator reachable"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "FAIL: readiness curl gate timed out" >&2
+          exit 1
+
+      - uses: actions/setup-node@v4
+        if: steps.gate.outputs.run_stack == 'true'
+        with:
+          node-version: "20"
+
+      - name: Install web deps + Playwright Chromium
+        if: steps.gate.outputs.run_stack == 'true'
+        run: |
+          set -euo pipefail
+          cd clients/lumogis-web && npm ci
+          npx playwright install --with-deps chromium
+
+      - name: make web-e2e-ollama-prove
+        if: steps.gate.outputs.run_stack == 'true'
+        env:
+          PLAYWRIGHT_BASE_URL: http://127.0.0.1
+          LUMOGIS_WEB_SMOKE_EMAIL: ${{ secrets.LUMOGIS_WEB_SMOKE_EMAIL }}
+          LUMOGIS_WEB_SMOKE_PASSWORD: ${{ secrets.LUMOGIS_WEB_SMOKE_PASSWORD }}
+          LUMOGIS_E2E_OLLAMA_PULL_MODEL: ${{ env.OLLAMA_PULL_MODEL }}
+          LUMOGIS_E2E_COMPOSE_FILES: docker-compose.yml:docker-compose.web-e2e-ollama-ci.yml
+          LUMOGIS_E2E_ENV_FILE: config/test.env.example
+          POSTGRES_HOST: 127.0.0.1
+          POSTGRES_PORT: "5432"
+          POSTGRES_USER: lumogis
+          POSTGRES_PASSWORD: lumogis-dev
+          POSTGRES_DB: lumogis
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client
+          make web-e2e-ollama-prove
+
+      - name: Collect compose diagnostics on failure
+        if: failure() && steps.gate.outputs.run_stack == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p compose-logs
+          docker compose -f docker-compose.yml -f docker-compose.web-e2e-ollama-ci.yml \
+            --env-file config/test.env.example logs --tail=2000 --no-color \
+            > compose-logs/docker-compose.log || true
+          docker ps -a >> compose-logs/docker-compose.log || true
+
+      - uses: actions/upload-artifact@v4
+        if: failure() && steps.gate.outputs.run_stack == 'true'
+        with:
+          name: web-e2e-ollama-compose-logs
+          path: compose-logs/
+          retention-days: 7
+
+      - uses: actions/upload-artifact@v4
+        if: failure() && steps.gate.outputs.run_stack == 'true'
+        with:
+          name: web-e2e-ollama-playwright-report
+          path: |
+            clients/lumogis-web/playwright-report/
+            clients/lumogis-web/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Teardown compose stack
+        if: always() && steps.gate.outputs.run_stack == 'true'
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.web-e2e-ollama-ci.yml \
+            --env-file config/test.env.example down -v || true

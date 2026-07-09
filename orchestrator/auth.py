@@ -20,13 +20,16 @@ attributed to a configured admin user via ``MCP_DEFAULT_USER_ID``
 from __future__ import annotations
 
 import hmac
+import ipaddress
 import logging
 import os
 import threading
 import time
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Literal
+from urllib.parse import urlsplit
 
 import jwt
 from fastapi import Request
@@ -50,6 +53,8 @@ class UserContext:
     user_id: str = _DEV_USER_ID
     is_authenticated: bool = False
     role: Role = "admin"
+    # None → resolve from users.allows_shared at visibility boundaries (LUM-577).
+    allows_shared: bool | None = None
 
 
 def auth_enabled() -> bool:
@@ -141,6 +146,50 @@ class _TTLVersionLRU:
 
 
 _TOKEN_VER_CACHE = _TTLVersionLRU(maxsize=_TOKEN_VER_CACHE_MAX)
+
+
+# ---------------------------------------------------------------------------
+# Per-user ``last_seen_at`` touch throttle (LUM-334) — reuse the bounded LRU/TTL
+# as a "touched recently in this worker?" marker so we don't dispatch a DB write
+# on every authenticated request. The DB-side conditional UPDATE is the
+# cross-worker backstop. Fire-and-forget: the touch never blocks or raises.
+# ---------------------------------------------------------------------------
+
+_LAST_SEEN_CACHE_MAX = 4096
+_LAST_SEEN_CACHE = _TTLVersionLRU(maxsize=_LAST_SEEN_CACHE_MAX)
+_LAST_SEEN_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="last-seen")
+
+
+def _maybe_touch_last_seen(user_id: str) -> None:
+    """Dispatch a throttled, fire-and-forget ``users.last_seen_at`` touch.
+
+    Skips entirely when this worker already touched ``user_id`` within the
+    throttle window (in-process LRU). Otherwise records the marker and submits
+    the conditional UPDATE to a background thread. Never blocks the request and
+    never raises (LUM-334).
+    """
+    throttle = config.get_user_last_seen_throttle_seconds()
+    if throttle <= 0:
+        return
+    if _LAST_SEEN_CACHE.get_fresh(user_id, throttle) is not None:
+        return  # already touched within the window in this worker
+    _LAST_SEEN_CACHE.put(user_id, 0)  # presence marker; the stored version is unused
+
+    def _run() -> None:
+        try:
+            from services import users as _users_service
+
+            _users_service.touch_last_seen(user_id, throttle)
+        except Exception:  # noqa: BLE001 — best-effort; must never affect the request
+            # Drop the throttle marker so the next request retries rather than
+            # suppressing the touch for the whole window after a transient failure.
+            _LAST_SEEN_CACHE.invalidate(user_id)
+            _log.debug("last_seen touch failed for user_id=%s", user_id, exc_info=True)
+
+    try:
+        _LAST_SEEN_EXECUTOR.submit(_run)
+    except RuntimeError:
+        _LAST_SEEN_CACHE.invalidate(user_id)  # never queued — allow a later retry
 
 
 # ---------------------------------------------------------------------------
@@ -315,6 +364,7 @@ def mint_access_token(
     *,
     session_id: str | None = None,
     token_version: int | None = None,
+    allows_shared: bool = True,
 ) -> str:
     """Mint an HS256 access JWT signed with ``AUTH_SECRET``.
 
@@ -325,6 +375,10 @@ def mint_access_token(
     mint bearers for synthetic ``sub`` values without a backing ``users`` row
     are not rejected by the token-version gate. The two arguments must be
     passed together or both omitted.
+
+    ``allows_shared`` (LUM-577) is embedded when false so personal-only members
+    carry enforcement input without a DB read on every request. Omitted from
+    the payload when true (legacy tokens default to full household union).
     """
     secret = _access_secret()
     if not secret:
@@ -341,6 +395,8 @@ def mint_access_token(
     if session_id is not None and token_version is not None:
         payload["sid"] = session_id
         payload["tv"] = int(token_version)
+    if not allows_shared:
+        payload["allows_shared"] = False
     return jwt.encode(payload, secret, algorithm="HS256")
 
 
@@ -489,6 +545,7 @@ def _check_mcp_bearer(request: Request) -> JSONResponse | None:
             return _mcp_401("invalid mcp token")
         request.state.mcp_token_id = row.id
         request.state.mcp_user_id = row.user_id
+        request.state.mcp_scopes = row.scopes  # LUM-291 — None = unrestricted
         return None
 
     # 3. AUTH_ENABLED=false — non-lmcp_… bearer.
@@ -526,6 +583,82 @@ def _check_mcp_bearer(request: Request) -> JSONResponse | None:
     return _mcp_401("invalid mcp token")
 
 
+def _mcp_403(message: str) -> JSONResponse:
+    return JSONResponse(status_code=403, content={"error": message})
+
+
+def _origin_host_is_local(origin: str) -> bool:
+    """True iff ``origin``'s host is loopback (``localhost`` / 127.0.0.0/8 /
+    ``::1``). Port and scheme are ignored — only the host matters for the
+    rebinding check.
+
+    ``origin`` is a scheme-bearing ``Origin`` header value such as
+    ``http://localhost:8000`` or ``https://evil.example``. The literal
+    ``"null"`` origin (sandboxed iframes, ``file://`` documents) and a bare
+    schemeless value both yield no parseable host and are therefore NOT
+    local. A malformed authority (e.g. an unterminated IPv6 bracket
+    ``http://[``) fails CLOSED — non-local — rather than raising.
+    """
+    try:
+        host = urlsplit(origin).hostname
+    except ValueError:
+        # Malformed authority (e.g. ``http://[``). Fail closed instead of
+        # letting the ValueError escape the gate and 500 the request.
+        return False
+    if host is None:
+        return False
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _check_mcp_origin(request: Request) -> JSONResponse | None:
+    """DNS-rebinding guard for ``/mcp/*`` (LUM-296).
+
+    The Streamable HTTP MCP endpoint is bearer-gated, but a malicious web
+    page the operator visits could still issue a cross-origin ``fetch`` to
+    ``http://localhost:<port>/mcp/`` in their browser. The browser attaches
+    an ``Origin`` header naming the attacker's site; bearer auth already
+    blocks the write (the page can't read Cursor's token), but per the MCP
+    spec we validate ``Origin`` as defence-in-depth against DNS rebinding.
+
+    Policy — **localhost only**:
+
+    * **No ``Origin`` header** → pass. Non-browser clients (Cursor, curl,
+      the stdio bridge) don't send one; this is the common local case.
+    * **Loopback origin** (``localhost`` / ``127.0.0.1`` / ``[::1]``, any
+      port) → pass.
+    * **Anything else** → 403. A browser is presenting a foreign origin.
+
+    This mirrors the MCP SDK's own built-in DNS-rebinding protection (the
+    mounted FastMCP app independently rejects non-localhost ``Origin`` with
+    its own ``403 Invalid Origin header``). We enforce the same policy one
+    layer earlier, at the Core gate, so the refusal is explicit, auditable,
+    co-located with the bearer gate, and independent of the SDK version. We
+    intentionally do NOT honour ``LUMOGIS_PUBLIC_ORIGIN`` here: the SDK
+    would reject a non-localhost browser origin downstream regardless, so
+    "allowing" it at this gate would only mask the real refusal.
+
+    Returns ``None`` to pass through, or a 403 ``JSONResponse`` to reject.
+    Runs BEFORE :func:`_check_mcp_bearer`; it is purely additive and does
+    not touch the load-bearing bearer evaluation order (D6 / ADR-017).
+    """
+    presented = request.headers.get("Origin", "").strip()
+    if not presented:
+        return None
+    if _origin_host_is_local(presented):
+        return None
+    _log.warning(
+        "mcp: rejecting /mcp request with non-local Origin %r (path=%s)",
+        presented,
+        request.url.path,
+    )
+    return _mcp_403("origin not allowed")
+
+
 # Endpoints exempt from JWT enforcement even when AUTH_ENABLED=true.
 # Login is the obvious one. /api/v1/auth/refresh and /logout consume the
 # refresh cookie, not a Bearer, so they live outside the bearer gate too —
@@ -543,6 +676,7 @@ _AUTH_BYPASS_PREFIXES: tuple[str, ...] = (
     "/api/v1/auth/login",
     "/api/v1/auth/refresh",
     "/api/v1/auth/logout",
+    "/api/v1/invites",
     "/healthz",
     "/bundled/start-library-index",
     "/web",
@@ -574,6 +708,12 @@ async def auth_middleware(request: Request, call_next):
     ``AUTH_ENABLED``.
     """
     if request.url.path.startswith("/mcp"):
+        # DNS-rebinding guard runs first: reject foreign-Origin browser
+        # requests before any token work (LUM-296). Absent Origin (Cursor,
+        # curl, stdio bridge) passes straight through to the bearer gate.
+        origin_rejection = _check_mcp_origin(request)
+        if origin_rejection is not None:
+            return origin_rejection
         rejection = _check_mcp_bearer(request)
         if rejection is not None:
             return rejection
@@ -594,18 +734,24 @@ async def auth_middleware(request: Request, call_next):
         # ContextVar is preserved for the JWT and legacy MCP_AUTH_TOKEN
         # branches, which still need string-level access to the bearer.
         from mcp_server import _reset_current_bearer
+        from mcp_server import _reset_current_mcp_scopes
         from mcp_server import _reset_current_mcp_token_id
         from mcp_server import _reset_current_mcp_user_id
         from mcp_server import _set_current_bearer
+        from mcp_server import _set_current_mcp_scopes
         from mcp_server import _set_current_mcp_token_id
         from mcp_server import _set_current_mcp_user_id
 
         bearer_reset = _set_current_bearer(presented or None)
         token_id_reset = _set_current_mcp_token_id(getattr(request.state, "mcp_token_id", None))
         user_id_reset = _set_current_mcp_user_id(getattr(request.state, "mcp_user_id", None))
+        # LUM-291 — scopes default None (unrestricted): JWT/legacy paths never
+        # set request.state.mcp_scopes, so getattr leaves the ContextVar at None.
+        scopes_reset = _set_current_mcp_scopes(getattr(request.state, "mcp_scopes", None))
         try:
             return await call_next(request)
         finally:
+            _reset_current_mcp_scopes(scopes_reset)
             _reset_current_mcp_user_id(user_id_reset)
             _reset_current_mcp_token_id(token_id_reset)
             _reset_current_bearer(bearer_reset)
@@ -637,11 +783,19 @@ async def auth_middleware(request: Request, call_next):
         # Strict typing — never silently demote an unknown role to "user".
         return JSONResponse(status_code=401, content={"error": "invalid role"})
 
+    allows_shared = payload.get("allows_shared", True)
+    if allows_shared is False or allows_shared == 0:
+        as_flag: bool | None = False
+    else:
+        as_flag = True if "allows_shared" in payload else None
+
     request.state.user = UserContext(
         user_id=payload["sub"],
         is_authenticated=True,
         role=role,
+        allows_shared=as_flag,
     )
+    _maybe_touch_last_seen(payload["sub"])  # LUM-334 — throttled, fire-and-forget
     return await call_next(request)
 
 

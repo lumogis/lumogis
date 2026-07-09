@@ -62,15 +62,21 @@ class FakeUsersStore:
         p = params or ()
 
         if q.startswith("insert into users"):
-            self.rows[p[0]] = {
-                "id": p[0],
-                "email": p[1],
-                "password_hash": p[2],
-                "role": p[3],
+            if len(p) >= 5:
+                uid, email, pw_hash, role, allows_shared = p[0], p[1], p[2], p[3], p[4]
+            else:
+                uid, email, pw_hash, role = p[:4]
+                allows_shared = True
+            self.rows[uid] = {
+                "id": uid,
+                "email": email,
+                "password_hash": pw_hash,
+                "role": role,
                 "disabled": False,
                 "created_at": datetime.now(timezone.utc),
                 "last_login_at": None,
                 "token_version": 1,
+                "allows_shared": allows_shared,
             }
             return
         if q.startswith("insert into app_settings"):
@@ -195,6 +201,11 @@ class FakeUsersStore:
             if not row:
                 return None
             return {"token_version": int(row.get("token_version") or 1)}
+        if q.startswith("select allows_shared from users where id ="):
+            row = self.rows.get(str(p[0]))
+            if not row:
+                return None
+            return {"allows_shared": row.get("allows_shared", True)}
         if "select value from app_settings where key =" in q:
             key = str(p[0])
             if key not in self.settings:
@@ -573,6 +584,146 @@ def test_bootstrap_if_empty_refuses_reserved_tld_email(users_store, monkeypatch)
     assert users_svc.count_users() == 0
 
 
+# ── LUM-548: bootstrap-admin password via 0600 temp-file (_FILE transport) ──
+
+
+def _set_pw_file(tmp_path, monkeypatch, contents, *, mode=0o600):
+    """Write a 0600 password file, point _FILE at it, clear the raw env var."""
+    import os
+
+    pw_file = tmp_path / "bootstrap-admin-pw"
+    pw_file.write_text(contents, encoding="utf-8")
+    os.chmod(pw_file, mode)
+    monkeypatch.setenv("LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD_FILE", str(pw_file))
+    monkeypatch.delenv("LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD", raising=False)
+    return pw_file
+
+
+def test_bootstrap_reads_password_from_file_and_unlinks(users_store, monkeypatch, tmp_path):
+    import services.users as users_svc
+
+    pw_file = _set_pw_file(tmp_path, monkeypatch, "verylongpassword12")
+    monkeypatch.setenv("LUMOGIS_BOOTSTRAP_ADMIN_EMAIL", "admin@home.lan")
+    admin = users_svc.bootstrap_if_empty()
+    assert admin is not None and admin.role == "admin"
+    assert users_svc.count_users() == 1
+    # Read-and-unlink: the file must be gone after a successful read.
+    assert not pw_file.exists()
+
+
+def test_bootstrap_file_takes_precedence_over_env(users_store, monkeypatch, tmp_path):
+    import services.users as users_svc
+
+    # _FILE and the raw env var hold DIFFERENT passwords.
+    _set_pw_file(tmp_path, monkeypatch, "filepassword1234")
+    monkeypatch.setenv("LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD", "envpassword12345")
+    monkeypatch.setenv("LUMOGIS_BOOTSTRAP_ADMIN_EMAIL", "admin@home.lan")
+    admin = users_svc.bootstrap_if_empty()
+    assert admin is not None
+    # The FILE value was stored, not the env value (precedence proven via the
+    # store's own credential check — no HTTP client needed).
+    assert users_svc.verify_credentials("admin@home.lan", "filepassword1234") is not None
+    assert users_svc.verify_credentials("admin@home.lan", "envpassword12345") is None
+
+
+def test_bootstrap_falls_back_to_env_when_file_unset(users_store, monkeypatch):
+    import services.users as users_svc
+
+    # No _FILE → Docker/CI raw-env path (no-regression).
+    monkeypatch.delenv("LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD_FILE", raising=False)
+    monkeypatch.setenv("LUMOGIS_BOOTSTRAP_ADMIN_EMAIL", "admin@home.lan")
+    monkeypatch.setenv("LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD", "verylongpassword12")
+    admin = users_svc.bootstrap_if_empty()
+    assert admin is not None and admin.role == "admin"
+
+
+def test_bootstrap_password_read_verbatim_no_trim(users_store, monkeypatch, tmp_path):
+    import services.users as users_svc
+
+    # A trailing space is a valid password character — it must NOT be trimmed.
+    _set_pw_file(tmp_path, monkeypatch, "trailingspace12 ")
+    monkeypatch.setenv("LUMOGIS_BOOTSTRAP_ADMIN_EMAIL", "admin@home.lan")
+    assert users_svc.bootstrap_if_empty() is not None
+    assert users_svc.verify_credentials("admin@home.lan", "trailingspace12 ") is not None
+    # The trimmed variant must NOT authenticate (proves verbatim storage).
+    assert users_svc.verify_credentials("admin@home.lan", "trailingspace12") is None
+
+
+def test_bootstrap_file_symlink_is_refused(users_store, monkeypatch, tmp_path):
+    import services.users as users_svc
+
+    # _FILE points at a SYMLINK to a valid password; raw env UNSET.
+    target = tmp_path / "secret"
+    target.write_text("verylongpassword12", encoding="utf-8")
+    link = tmp_path / "pw-link"
+    link.symlink_to(target)
+    monkeypatch.setenv("LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD_FILE", str(link))
+    monkeypatch.delenv("LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD", raising=False)
+    monkeypatch.setenv("LUMOGIS_BOOTSTRAP_ADMIN_EMAIL", "admin@home.lan")
+    # O_NOFOLLOW refuses the symlink → no password → no admin created.
+    assert users_svc.bootstrap_if_empty() is None
+    assert users_svc.count_users() == 0
+    # The symlink target must NOT have been read or unlinked.
+    assert target.exists()
+
+
+def test_bootstrap_guard_fail_falls_through_to_env(users_store, monkeypatch, tmp_path):
+    import services.users as users_svc
+
+    # _FILE is a symlink (guard fires) AND the raw env var IS set: the helper
+    # must fall through to the env value, not silently return "".
+    target = tmp_path / "secret"
+    target.write_text("ignoredfilepw123", encoding="utf-8")
+    link = tmp_path / "pw-link"
+    link.symlink_to(target)
+    monkeypatch.setenv("LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD_FILE", str(link))
+    monkeypatch.setenv("LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD", "envfallback12345")
+    monkeypatch.setenv("LUMOGIS_BOOTSTRAP_ADMIN_EMAIL", "admin@home.lan")
+    admin = users_svc.bootstrap_if_empty()
+    assert admin is not None
+    # The ENV value was used (fall-through), not the symlinked file value.
+    assert users_svc.verify_credentials("admin@home.lan", "envfallback12345") is not None
+    assert target.exists()
+
+
+def test_bootstrap_short_password_via_file_refused(users_store, monkeypatch, tmp_path):
+    import services.users as users_svc
+
+    # File-sourced passwords are validated identically to env-sourced ones.
+    _set_pw_file(tmp_path, monkeypatch, "short")
+    monkeypatch.setenv("LUMOGIS_BOOTSTRAP_ADMIN_EMAIL", "admin@home.lan")
+    assert users_svc.bootstrap_if_empty() is None
+    assert users_svc.count_users() == 0
+
+
+def test_bootstrap_file_missing_falls_back_to_env(users_store, monkeypatch, tmp_path):
+    import services.users as users_svc
+
+    # _FILE points at a nonexistent path, raw env unset → no creds → None.
+    monkeypatch.setenv(
+        "LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD_FILE", str(tmp_path / "does-not-exist")
+    )
+    monkeypatch.delenv("LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD", raising=False)
+    monkeypatch.setenv("LUMOGIS_BOOTSTRAP_ADMIN_EMAIL", "admin@home.lan")
+    assert users_svc.bootstrap_if_empty() is None
+    assert users_svc.count_users() == 0
+
+
+def test_bootstrap_file_missing_but_env_set_uses_env(users_store, monkeypatch, tmp_path):
+    import services.users as users_svc
+
+    # _FILE points at a nonexistent path (ENOENT) AND raw env IS set → the open
+    # fails, the helper falls through to the env value (not "").
+    monkeypatch.setenv(
+        "LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD_FILE", str(tmp_path / "does-not-exist")
+    )
+    monkeypatch.setenv("LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD", "envwhenfilegone1")
+    monkeypatch.setenv("LUMOGIS_BOOTSTRAP_ADMIN_EMAIL", "admin@home.lan")
+    admin = users_svc.bootstrap_if_empty()
+    assert admin is not None
+    assert users_svc.verify_credentials("admin@home.lan", "envwhenfilegone1") is not None
+
+
 def test_create_user_rejects_reserved_tld_email(users_store):
     import services.users as users_svc
 
@@ -638,6 +789,107 @@ def test_enforce_auth_consistency_passes_true_mode_with_admin(
 
     users_svc.create_user("a@home.lan", "verylongpassword12", "admin")
     main._enforce_auth_consistency()
+
+
+# ---------------------------------------------------------------------------
+# Unit: non-loopback exposure guard (LUM-473 Chunk A)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "host,expected",
+    [
+        ("127.0.0.1", True),
+        ("127.0.0.5", True),
+        ("::1", True),
+        ("localhost", True),
+        ("", True),  # unset → launcher defaults to loopback
+        ("0.0.0.0", False),
+        ("192.168.1.10", False),  # private LAN IP must count as exposed
+        ("10.0.0.4", False),
+        ("169.254.1.1", False),  # link-local
+        ("203.0.113.7", False),  # public
+        ("myhost", False),  # single-label hostname → cannot prove loopback → fail safe
+        ("server.lan", False),
+        ("::ffff:192.168.1.10", False),  # IPv4-mapped private must classify by v4
+        ("::ffff:127.0.0.1", True),  # IPv4-mapped loopback must de-map to loopback
+    ],
+)
+def test_bind_host_is_loopback_classification(host, expected):
+    import main
+
+    assert main._bind_host_is_loopback(host) is expected
+
+
+def test_enforce_auth_consistency_refuses_nonloopback_bind_auth_off(
+    dev_env, monkeypatch
+):
+    """0.0.0.0 + AUTH_ENABLED=false → refuse to boot (the core LUM-473 invariant)."""
+    import main
+
+    monkeypatch.setenv("LUMOGIS_BIND_HOST", "0.0.0.0")
+    with pytest.raises(RuntimeError, match="non-loopback"):
+        main._enforce_auth_consistency()
+
+
+def test_enforce_auth_consistency_refuses_private_ip_bind_auth_off(
+    dev_env, monkeypatch
+):
+    """A private LAN IP is still 'exposed' and must mandate auth."""
+    import main
+
+    monkeypatch.setenv("LUMOGIS_BIND_HOST", "192.168.1.10")
+    with pytest.raises(RuntimeError, match="non-loopback"):
+        main._enforce_auth_consistency()
+
+
+def test_enforce_auth_consistency_loopback_bind_auth_off_boots(dev_env, monkeypatch):
+    """Loopback bind + AUTH_ENABLED=false → no raise from the guard."""
+    import main
+
+    monkeypatch.setenv("LUMOGIS_BIND_HOST", "127.0.0.1")
+    # The conftest autouse escape hatch lets this return before the users gate.
+    main._enforce_auth_consistency()
+
+
+def test_enforce_auth_consistency_bind_host_unset_auth_off_boots(dev_env, monkeypatch):
+    """No-regression: LUMOGIS_BIND_HOST unset (Docker case) + auth off → boots."""
+    import main
+
+    monkeypatch.delenv("LUMOGIS_BIND_HOST", raising=False)
+    main._enforce_auth_consistency()
+
+
+def test_enforce_auth_consistency_nonloopback_bind_auth_on_passes_guard(
+    auth_env, monkeypatch
+):
+    """0.0.0.0 + AUTH_ENABLED=true → the guard does not raise (auth satisfies it).
+
+    Isolates the guard: the conftest escape hatch returns before the users-table
+    gate, so this exercises only the bind/auth combination.
+    """
+    import main
+
+    monkeypatch.setenv("LUMOGIS_BIND_HOST", "0.0.0.0")
+    main._enforce_auth_consistency()
+
+
+def test_exposure_guard_fires_even_with_test_skip_set(dev_env, monkeypatch):
+    """The exposure guard MUST run before the test escape hatch (security invariant).
+
+    Pins the ordering (LUM-473 review R2 P3): even with the consistency-skip env set
+    to 'true', a non-loopback bind + AUTH_ENABLED=false must still refuse to boot. If
+    a refactor ever moved the guard after the skip check, this fails cleanly as a
+    security regression instead of silently bypassing.
+    """
+    import main
+
+    monkeypatch.setenv(
+        "_LUMOGIS_TEST_SKIP_AUTH_CONSISTENCY_DO_NOT_SET_IN_PRODUCTION", "true"
+    )
+    monkeypatch.setenv("LUMOGIS_BIND_HOST", "0.0.0.0")
+    with pytest.raises(RuntimeError, match="non-loopback"):
+        main._enforce_auth_consistency()
 
 
 @pytest.mark.parametrize(

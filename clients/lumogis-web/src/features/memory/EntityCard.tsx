@@ -14,6 +14,8 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import type { ApiClient } from "../../api/client";
+import { ErrorState } from "../_shared/ErrorState";
+import { LoadingPlaceholder, Skeleton, SkeletonText } from "../_shared/Skeleton";
 import { buildAskAboutQuery, navigateToChatWithPrefill } from "../wow/askAboutEntity";
 import {
   getEntity,
@@ -21,6 +23,7 @@ import {
   type EntityCard,
   type RelatedEntity,
 } from "../../api/search";
+import { EntityShareToggle } from "./EntityShareToggle";
 
 // ── Hook ──────────────────────────────────────────────────────────────────
 
@@ -29,6 +32,7 @@ export interface EntityCardState {
   related: RelatedEntity[];
   loading: boolean;
   error: string | null;
+  reload: () => void;
 }
 
 export function useEntityCard(
@@ -39,6 +43,7 @@ export function useEntityCard(
   const [related, setRelated] = useState<RelatedEntity[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -82,9 +87,9 @@ export function useEntityCard(
     return () => {
       ctrl.abort();
     };
-  }, [client, entityId]);
+  }, [client, entityId, reloadKey]);
 
-  return { card, related, loading, error };
+  return { card, related, loading, error, reload: () => setReloadKey((k) => k + 1) };
 }
 
 // ── Component ─────────────────────────────────────────────────────────────
@@ -94,30 +99,49 @@ export interface EntityCardPanelProps {
   client: ApiClient;
   /** Initial data from the search result — shown while the full card loads. */
   initialCard?: EntityCard;
+  /** Re-run the search entity list after publish/unpublish (LUM-581 list badge). */
+  onShareChanged?: () => void;
 }
 
 export function EntityCardPanel({
   entityId,
   client,
   initialCard,
+  onShareChanged,
 }: EntityCardPanelProps): JSX.Element {
   const navigate = useNavigate();
-  const { card, related, loading, error } = useEntityCard(client, entityId);
+  const { card, related, loading, error, reload } = useEntityCard(client, entityId);
 
   const displayed = card ?? initialCard ?? null;
 
   return (
     <article className="lumogis-entity-card" aria-label={`Entity: ${displayed?.name ?? entityId}`}>
       {loading && !displayed && (
-        <div className="lumogis-entity-card__loading" aria-live="polite">
-          Loading…
-        </div>
+        <LoadingPlaceholder label="Loading entity…" className="lumogis-entity-card__loading">
+          <Skeleton width="55%" height="1.3rem" />
+          <SkeletonText lines={3} />
+        </LoadingPlaceholder>
       )}
 
-      {error && (
-        <p className="lumogis-entity-card__error" role="alert">
-          {error}
-        </p>
+      {error && !displayed && (
+        <ErrorState
+          title="Couldn't load this entity"
+          message={error}
+          onRetry={reload}
+          doctorHint={false}
+        />
+      )}
+
+      {/* Partial data from search (initialCard) is shown, but the full fetch
+          failed — surface a compact, non-blocking error with a retry rather
+          than silently leaving stale data. */}
+      {error && displayed && (
+        <div className="lumogis-entity-card__error" role="alert">
+          <span>{error}</span>{" "}
+          <button type="button" onClick={reload}>
+            Try again
+          </button>
+        </div>
       )}
 
       {displayed && (
@@ -138,6 +162,18 @@ export function EntityCardPanel({
           {displayed.summary && (
             <p className="lumogis-entity-card__summary">{displayed.summary}</p>
           )}
+
+          <EntityShareToggle
+            client={client}
+            entityId={displayed.entity_id}
+            displayName={displayed.name}
+            shareStatus={displayed.share_status}
+            isOwner={displayed.is_owner ?? true}
+            onChanged={() => {
+              reload();
+              onShareChanged?.();
+            }}
+          />
 
           <p className="lumogis-entity-card__actions">
             <button

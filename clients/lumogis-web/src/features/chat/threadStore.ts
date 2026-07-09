@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Lumogis
 //
-// Per-tab chat-thread state (parent plan §"Phase 1 Pass 1.2 item 8" +
-// §Implementation sequence step 8: "v1 persistence model — chat threads are
-// ephemeral and per-tab — they live only in the React useReducer for that
-// browser tab, are mirrored to sessionStorage so a reload of the same tab
-// restores the thread, and are NOT persisted server-side. Closing the tab
-// drops the thread.").
+// Per-tab chat-thread UI state for Lumogis Web.
+//
+// Server-backed transcript persistence exists at `/api/v1/conversations` (LUM-162).
+// This module still holds **per-tab ephemeral UI state** until LUM-205 wires full
+// server-side thread load into the chat surface.
 //
 // The reducer is intentionally a pure function so React 18 strict-mode double
 // invocation is harmless and Vitest can exercise it without the rendering
@@ -17,16 +16,8 @@
 // Why sessionStorage and not localStorage:
 //
 //  * sessionStorage is per-tab — opening Lumogis in two tabs gives two
-//    independent thread sets, matching the parent plan's "ephemeral and
-//    per-tab" contract.
-//  * localStorage would survive tab close, contradicting the explicit
-//    "closing the tab drops the thread" pin.
-//
-// Why no server persistence in v1:
-//
-//  * Plan: "Lumogis's 'memory' is the KG + Qdrant documents/signals, not the
-//    chat log."
-//  * Recorded as Open Question #12 (`web_conversations` table — deferred).
+//    independent thread sets.
+//  * localStorage would survive tab close; sessionStorage matches per-tab UX.
 
 import { useCallback, useEffect, useReducer, useRef } from "react";
 import type { Dispatch } from "react";

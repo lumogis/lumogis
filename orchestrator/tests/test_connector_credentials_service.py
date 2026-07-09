@@ -154,6 +154,13 @@ class _FakeStore:
         q = self._norm(query)
         p = params or ()
 
+        if "allows_shared" in q:
+            return {"allows_shared": True}
+        if "app_settings" in q and p and p[0] == "privacy_mode":
+            return {"value": "allow_cloud"}
+        if "privacy_user_settings" in q:
+            return None
+
         if q.startswith("select ciphertext from user_connector_credentials"):
             user_id, connector = p
             row = self.rows.get((user_id, connector))

@@ -47,6 +47,7 @@ export interface AuthValue {
   client: ApiClient;
   tokens: AccessTokenStore;
   login(email: string, password: string): Promise<LoginAttemptResult>;
+  adoptSession(response: LoginResponse): void;
   logout(): Promise<void>;
 }
 
@@ -196,6 +197,15 @@ function AuthProviderCore({
     [tokens, queryClient],
   );
 
+  const adoptSession = useCallback<AuthValue["adoptSession"]>(
+    (response) => {
+      tokens.set(response.access_token);
+      queryClient.setQueryData(ME_KEY, response.user);
+      setGate("probing");
+    },
+    [tokens, queryClient],
+  );
+
   const logout = useCallback<AuthValue["logout"]>(async () => {
     try {
       await fetch("/api/v1/auth/logout", { method: "POST", credentials: "include" });
@@ -208,8 +218,8 @@ function AuthProviderCore({
   }, [tokens, queryClient]);
 
   const value = useMemo<AuthValue>(
-    () => ({ status, user, client, tokens, login, logout }),
-    [status, user, client, tokens, login, logout],
+    () => ({ status, user, client, tokens, login, adoptSession, logout }),
+    [status, user, client, tokens, login, adoptSession, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

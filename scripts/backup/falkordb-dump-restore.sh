@@ -22,28 +22,10 @@ usage() {
 export_graph() {
   local dest="$1"
   mkdir -p "$(dirname "$dest")"
-  "${REDIS_CLI[@]}" BGSAVE >/dev/null
-  local last tries=0
-  last="$("${REDIS_CLI[@]}" LASTSAVE)"
-  while (( tries < 45 )); do
-    dump_src="$(falkordb_dump_rdb_path || true)"
-    if [[ -n "$dump_src" ]]; then
-      cp "$dump_src" "$dest"
-      return 0
-    fi
-    sleep 1
-    local last2
-    last2="$("${REDIS_CLI[@]}" LASTSAVE)"
-    if [[ "$last2" != "$last" ]]; then
-      dump_src="$(falkordb_dump_rdb_path || true)"
-      if [[ -n "$dump_src" ]]; then
-        cp "$dump_src" "$dest"
-        return 0
-      fi
-    fi
-    tries=$((tries + 1))
-  done
-  log_error "DUMP fallback: timed out waiting for dump.rdb"
+  if falkordb_wait_for_bgsave_dump "$dest"; then
+    return 0
+  fi
+  log_error "DUMP fallback: timed out waiting for fresh dump.rdb"
   return 1
 }
 

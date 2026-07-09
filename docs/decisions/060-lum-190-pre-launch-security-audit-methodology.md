@@ -7,7 +7,7 @@
 
 ## Context
 
-Lumogis is preparing the public AGPL `0.1` / HN-launch milestone. The launch sequence routes security first: **security audit (LUM-190) → CLA → README → GitHub with good-first-issues**. The audit is explicitly **not a penetration test** — it is an internal review with a findings deliverable (structured doc under **`docs/security-audit/`** in this tree — plan text used `docs/security/`; see findings doc path note) covering auth (JWT/session/CSRF/revocation), document-injection sanitisation, credential storage, `/api/v1/*` auth-gating, the LUM-23 privacy bug closure, Docker compose exposure, and **`make audit-local`** (pip-audit + npm audit) with honest default failure semantics (any reported advisory can fail the gate unless tooling flags change).
+Lumogis is preparing the public AGPL `0.1` / HN-launch milestone. The launch sequence routes security first: **security audit (LUM-190) → CLA → README → GitHub with good-first-issues**. The audit is explicitly **not a penetration test** — it is an internal review with a findings deliverable (structured doc under **`docs/security/`**; passive ZAP JSON under **`docs/security-audit/`**) covering auth (JWT/session/CSRF/revocation), document-injection sanitisation, credential storage, `/api/v1/*` auth-gating, the LUM-23 privacy bug closure, Docker compose exposure, and **`make audit-local`** (pip-audit + npm audit) with honest default failure semantics (any reported advisory can fail the gate unless tooling flags change).
 
 Lumogis already ships extensive security-relevant infrastructure: `scripts/audit_local.sh`, `SECURITY.md` + ADR 044, ADRs 006, 017, 018/024/026/027, 029, 035, 039, 041/050, 049, LUM-43 compose-policy CI, LUM-94 OpenAPI drift CI, LUM-276 attestation workflows. The question was **how** to conduct LUM-190 — methodology choice, not new security architecture.
 
@@ -34,7 +34,7 @@ See draft `.cursor/adrs/LUM-190-pre-launch-security-audit.md` and `.cursor/explo
 
 **Future chunks must know:**
 
-- Canonical written artefact: **`docs/security-audit/pre-launch-audit-2026.md`** (or **`docs/security/`** after optional `git mv` when host `docs/security` is not a root-owned mount).
+- Canonical written artefact: **`docs/security/pre-launch-audit-2026.md`**.
 - **`security-audit`** job is path-gated; Bandit is advisory; promote blocking only with a dedicated ticket.
 - **LUM-31**, **LUM-279**, **LUM-296** consume or extend audit conclusions — register Linear **`blocks`** edges from **LUM-190** when Product OS approves (`/linear-update`).
 

@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "description": "LUM-341 — keys doctor --fix may APPEND to .env when missing. Append-only, non-secret. A secret-shaped key name is hard-refused regardless of this list. See docs/decisions/065-lum-320-doctor-v2-shell-fix-remediation.md § Amendment — slice 2.",
+  "keys": {
+    "EMBEDDING_MODEL": {
+      "default": "BAAI/bge-small-en-v1.5",
+      "doc": "Default embedding model; matches .env.example."
+    },
+    "LUMOGIS_DEFAULT_LLM": {
+      "default": "llama3.1:8b",
+      "doc": "Default chat/generation model."
+    },
+    "GRAPH_MODE": {
+      "default": "off",
+      "doc": "Knowledge-graph mode; safe default is off."
+    },
+    "ORCHESTRATOR_HOST_PORT": {
+      "default": "8000",
+      "doc": "Host port the orchestrator binds; matches compose default."
+    },
+    "RERANKER_BACKEND": {
+      "default": "bge",
+      "doc": "Reranker backend selection."
+    }
+  }
+}

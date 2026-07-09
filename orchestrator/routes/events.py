@@ -55,6 +55,8 @@ _event_counter = 0
 WOW_READINESS_DEBOUNCE_S = 1.5
 _wow_debounce_lock = threading.Lock()
 _wow_debounce_timers: dict[str, threading.Timer] = {}
+_document_debounce_lock = threading.Lock()
+_document_debounce_timers: dict[str, threading.Timer] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -193,11 +195,41 @@ def on_wow_readiness_document_ingested(**kwargs) -> None:
     _schedule_wow_readiness_push(user_id)
 
 
+def _schedule_document_status_push(user_id: str) -> None:
+    """Debounced SSE hint so web clients invalidate document list queries (LUM-160)."""
+
+    def _fire() -> None:
+        with _document_debounce_lock:
+            _document_debounce_timers.pop(user_id, None)
+        try:
+            _push_to_connections("document_status_changed", {}, user_id=user_id)
+        except Exception as exc:
+            _log.debug("document_status_changed SSE push failed user_id=%s: %s", user_id, exc)
+
+    with _document_debounce_lock:
+        existing = _document_debounce_timers.pop(user_id, None)
+        if existing is not None:
+            existing.cancel()
+        timer = threading.Timer(WOW_READINESS_DEBOUNCE_S, _fire)
+        timer.daemon = True
+        _document_debounce_timers[user_id] = timer
+        timer.start()
+
+
+def on_document_status_document_ingested(**kwargs) -> None:
+    user_id = kwargs.get("user_id")
+    if not user_id:
+        _log.warning("document_ingested hook: missing user_id; dropping document SSE hint")
+        return
+    _schedule_document_status_push(user_id)
+
+
 def register_hooks() -> None:
     """Register SSE push callbacks on relevant events. Call from main.py."""
     hooks.register(Event.ACTION_EXECUTED, on_action_executed)
     hooks.register(Event.ENTITY_CREATED, on_wow_readiness_entity_created)
     hooks.register(Event.DOCUMENT_INGESTED, on_wow_readiness_document_ingested)
+    hooks.register(Event.DOCUMENT_INGESTED, on_document_status_document_ingested)
     _log.info("SSE hooks registered (notification types via InAppChannel)")
 
 

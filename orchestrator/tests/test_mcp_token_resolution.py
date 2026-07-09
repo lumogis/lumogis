@@ -250,7 +250,13 @@ def _mint_jwt_with_sid(user_id: str, *, sid: str, token_version: int, role: str 
 
 
 def _mint_lmcp(user_id: str, label: str = "k") -> str:
-    """Mint an ``lmcp_…`` token via the real service (uses ``store`` fixture)."""
+    """Mint an ``lmcp_…`` token via the real service (uses ``store`` fixture).
+
+    NB (LUM-531): this mints via the **service** (``mint(scopes=None)`` ⇒ NULL =
+    unrestricted), NOT via the route — so it is deliberately unaffected by the
+    route's least-privilege default. These resolution tests only care that the
+    bearer resolves to a user, not about scopes.
+    """
     from services import mcp_tokens
 
     _, plaintext = mcp_tokens.mint(user_id, label)

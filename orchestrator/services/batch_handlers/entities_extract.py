@@ -20,7 +20,7 @@ class EntitiesExtractPayload(BaseModel):
 
 
 @register_batch_handler("entities_extract", EntitiesExtractPayload)
-def handle(*, user_id: str, payload: EntitiesExtractPayload) -> None:
+def handle(*, user_id: str, payload: EntitiesExtractPayload, job_id: int) -> None:
     entities = extract_entities(payload.text, user_id=user_id)
     store_entities(
         entities,

@@ -88,86 +88,27 @@ for _stack_only_env in ("GRAPH_MODE", "CAPABILITY_SERVICE_URLS"):
 
 import config as _config  # noqa: E402 — after env/path bootstrap; see module docstring above.
 
-
-def _match_clause(payload: dict, clause: dict) -> bool:
-    """Evaluate a single Qdrant filter clause against a payload dict.
-
-    Supports the small subset Lumogis actually uses today:
-      * ``{"key": k, "match": {"value": v}}`` — equality
-      * ``{"key": k, "match": {"any": [...]}}`` — membership
-      * Nested ``{"must": [...]}`` / ``{"should": [...]}`` blocks
-
-    The real Qdrant filter language is much richer; mirroring just what
-    ``visibility.visible_qdrant_filter`` and the per-user/scope routes
-    actually emit keeps the mock honest without re-implementing Qdrant.
-    """
-    if "must" in clause or "should" in clause:
-        return _matches_qdrant_filter(payload, clause)
-    key = clause["key"]
-    match = clause["match"]
-    actual = payload.get(key)
-    if "value" in match:
-        return actual == match["value"]
-    if "any" in match:
-        return actual in match["any"]
-    raise NotImplementedError(f"MockVectorStore: unsupported match shape {match!r}")
+# Test doubles live in tests/_fakes.py so they can be imported without the heavy
+# conftest import chain; re-exported here for back-compat (test_entities,
+# test_adapters, test_recall_legs import these names).
+from tests._fakes import MockVectorStore  # noqa: E402,F401
+from tests._fakes import _match_clause  # noqa: E402,F401
+from tests._fakes import _matches_qdrant_filter  # noqa: E402,F401
 
 
-def _matches_qdrant_filter(payload: dict, flt: dict) -> bool:
-    """Top-level filter eval: AND across ``must``, OR across ``should``."""
-    if "must" in flt:
-        if not all(_match_clause(payload, c) for c in flt["must"]):
-            return False
-    if "should" in flt:
-        if not any(_match_clause(payload, c) for c in flt["should"]):
-            return False
-    return True
+def graph_store_cache_key(bank: str = "personal") -> str:
+    """Bank-scoped graph store singleton key (LUM-293) for test injection."""
+    return _config._graph_store_cache_key(bank)
 
 
-class MockVectorStore:
-    def __init__(self):
-        self._collections: dict[str, list] = {}
+def set_test_graph_store(gs) -> None:
+    """Inject a mock GraphStore for parameterless ``get_graph_store()`` paths."""
+    _config._instances[graph_store_cache_key()] = gs
 
-    def ping(self) -> bool:
-        return True
 
-    def create_collection(self, name: str, vector_size: int) -> None:
-        self._collections[name] = []
-
-    def ensure_payload_index(self, collection: str, field: str) -> None:
-        """No-op — in-memory mock has no payload-index API."""
-
-    def upsert(self, collection: str, id: str, vector: list[float], payload: dict) -> None:
-        self._collections.setdefault(collection, []).append(
-            {"id": id, "vector": vector, "payload": payload}
-        )
-
-    def search(
-        self,
-        collection: str,
-        vector: list[float],
-        limit: int,
-        threshold: float,
-        filter: dict | None = None,
-        sparse_query: str | None = None,
-    ) -> list[dict]:
-        items = self._collections.get(collection, [])
-        if filter:
-            items = [i for i in items if _matches_qdrant_filter(i.get("payload", {}), filter)]
-        return [{"id": i["id"], "score": 1.0, "payload": i["payload"]} for i in items[:limit]]
-
-    def delete(self, collection: str, id: str) -> None:
-        items = self._collections.get(collection, [])
-        self._collections[collection] = [i for i in items if i["id"] != id]
-
-    def delete_where(self, collection: str, filter: dict) -> None:
-        items = self._collections.get(collection, [])
-        self._collections[collection] = [
-            i for i in items if not _matches_qdrant_filter(i.get("payload", {}), filter)
-        ]
-
-    def count(self, collection: str) -> int:
-        return len(self._collections.get(collection, []))
+def disable_test_graph_store() -> None:
+    """Disable graph store for tests that expect projection no-ops."""
+    _config._instances[graph_store_cache_key()] = None
 
 
 class MockMetadataStore:
@@ -181,6 +122,15 @@ class MockMetadataStore:
         pass
 
     def fetch_one(self, query: str, params: tuple | None = None) -> dict | None:
+        q = (query or "").lower()
+        if "allows_shared" in q:
+            return {"allows_shared": True}
+        if "app_settings" in q and params:
+            key = params[0]
+            if key == "privacy_mode":
+                return {"value": "allow_cloud"}
+        if "privacy_user_settings" in q:
+            return None
         return None
 
     def fetch_all(self, query: str, params: tuple | None = None) -> list[dict]:
@@ -387,3 +337,9 @@ def _stub_lifespan_batch_enqueue(monkeypatch, request):
         return
     monkeypatch.setattr("services.ingest.enqueue_initial_ingest_scan", lambda: False)
     monkeypatch.setattr("services.batch_queue.enqueue", lambda **_kwargs: 1)
+
+
+@pytest.fixture(autouse=True)
+def _stub_post_bootstrap_default_user_remap(monkeypatch):
+    """``main.lifespan`` calls ``db_default_user_remap.main()`` which waits on Postgres."""
+    monkeypatch.setattr("db_default_user_remap.main", lambda: 0)

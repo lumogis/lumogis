@@ -11,6 +11,11 @@ fi
 export LUMOGIS_REPO_ROOT="${LUMOGIS_REPO_ROOT:?}"
 export DOCTOR_CONFIG_CACHE="${DOCTOR_CONFIG_CACHE:?}"
 
+# LUM-340 — versioned core-service allowlist (K) lives next to this script,
+# not in the operator's checkout root, so export the script's own directory.
+DOCTOR_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+export DOCTOR_SELF_DIR
+
 _doctor_repair_refuse_audit_dir() {
   echo "DOCTOR_REFUSED: cannot initialise audit log directory" >&2
   exit 4
@@ -61,6 +66,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -84,10 +90,38 @@ _raw_audit = os.environ.get("LUMOGIS_DOCTOR_AUDIT_DIR", "").strip()
 AUDIT_DIR = Path(_raw_audit) if _raw_audit else (ROOT / "scripts" / "doctor" / ".audit")
 
 TIMEOUT_UP = int(os.environ.get("LUMOGIS_DOCTOR_REPAIR_TIMEOUT_COMPOSE_UP", "120") or "120")
+TIMEOUT_RESTART = int(
+    os.environ.get("LUMOGIS_DOCTOR_REPAIR_TIMEOUT_COMPOSE_RESTART", "120") or "120"
+)
 TIMEOUT_PULL = int(os.environ.get("LUMOGIS_DOCTOR_REPAIR_TIMEOUT_OLLAMA_PULL", "1800") or "1800")
 TIMEOUT_MKDIR = int(os.environ.get("LUMOGIS_DOCTOR_REPAIR_TIMEOUT_MKDIR", "30") or "30")
 
-K_CORE = frozenset(
+
+def _int_env(name: str, default: int) -> int:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        val = int(raw, 10)
+    except ValueError:
+        return default
+    return val if val >= 0 else default
+
+
+# LUM-494 — restart-loop guard. Count recent applied `compose_restart_service`
+# rows per service in the audit NDJSON; refuse a further restart once the
+# threshold is reached within the window. Blind auto-restart does not fix
+# disk-full, volume corruption, or crash-recovery faults on stateful DBs.
+# Set RESTART_LOOP_MAX=0 to disable the guard entirely.
+RESTART_LOOP_MAX = _int_env("LUMOGIS_DOCTOR_RESTART_LOOP_MAX", 3)
+RESTART_LOOP_WINDOW_SEC = _int_env("LUMOGIS_DOCTOR_RESTART_LOOP_WINDOW_SEC", 3600)
+
+# LUM-340 — the core-service allowlist (K) is the set of services doctor may
+# `compose up` / `restart`. It is deliberately narrower than the compose
+# config (S) so doctor never mutates arbitrary services. The authoritative set
+# is the versioned manifest `scripts/doctor/core-services.json`; this frozen
+# set is the safety fallback used only if that manifest is missing/invalid.
+K_CORE_FALLBACK = frozenset(
     {
         "orchestrator",
         "postgres",
@@ -113,6 +147,124 @@ ALLOW_ROOTS = (
     Path("/var/lib"),
     Path("/media"),
 )
+
+
+def load_core_allowlist() -> frozenset[str]:
+    """Load the versioned core-service allowlist (K) — LUM-340.
+
+    Order of precedence:
+      1. LUMOGIS_DOCTOR_CORE_SERVICES_FILE (operator/test override)
+      2. core-services.json next to this script (shipped manifest)
+      3. <repo>/scripts/doctor/core-services.json
+      4. K_CORE_FALLBACK (built-in safety net)
+
+    A candidate must be a JSON object with a non-empty "services" list; only
+    entries matching SVC_RE are accepted. Malformed/unreadable candidates are
+    skipped so a broken manifest can never widen K beyond the fallback.
+    """
+    candidates: list[Path] = []
+    override = os.environ.get("LUMOGIS_DOCTOR_CORE_SERVICES_FILE", "").strip()
+    if override:
+        candidates.append(Path(override))
+    self_dir = os.environ.get("DOCTOR_SELF_DIR", "").strip()
+    if self_dir:
+        candidates.append(Path(self_dir) / "core-services.json")
+    candidates.append(ROOT / "scripts" / "doctor" / "core-services.json")
+    for path in candidates:
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        try:
+            doc = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        services = doc.get("services") if isinstance(doc, dict) else None
+        if not isinstance(services, list):
+            continue
+        valid = {s for s in services if isinstance(s, str) and SVC_RE.match(s)}
+        if valid:
+            return frozenset(valid)
+    return K_CORE_FALLBACK
+
+
+K_CORE = load_core_allowlist()
+
+
+# LUM-341 — slice-2 .env config-edit safelist. Doctor may only APPEND a missing,
+# non-secret, safelisted key with a known default. It never modifies, deletes,
+# or reorders existing lines, never writes a secret-shaped key, and is off
+# unless LUMOGIS_DOCTOR_ALLOW_ENV_EDITS=1 — a second opt-in on top of --apply.
+# See docs/decisions/065-...md § Amendment — slice 2 (LUM-341).
+ALLOW_ENV_EDITS = os.environ.get("LUMOGIS_DOCTOR_ALLOW_ENV_EDITS") == "1"
+
+# Hard denylist on the KEY NAME, independent of the manifest, so a future
+# manifest typo can never expose a credential.
+SECRET_KEY_RE = re.compile(r"(_PASSWORD|_SECRET|_KEY|_TOKEN|_DSN|_CREDENTIALS)$|^DEK|^JWT")
+
+# A safelist value must be a shell-safe token that needs no quoting and cannot
+# break `.env` (no quotes/spaces/$/backtick/control chars). A manifest default
+# failing this is DROPPED at load time so a bad value can never corrupt .env.
+ENV_VALUE_RE = re.compile(r"^[A-Za-z0-9_./:@=+,-]+$")
+
+# Built-in safety net used only if env-safelist.json is missing/invalid. Each
+# value is a non-secret default that is safe to add when the key is absent.
+ENV_SAFELIST_FALLBACK: dict[str, str] = {
+    "EMBEDDING_MODEL": "BAAI/bge-small-en-v1.5",
+    "LUMOGIS_DEFAULT_LLM": "llama3.1:8b",
+    "GRAPH_MODE": "off",
+    "ORCHESTRATOR_HOST_PORT": "8000",
+    "RERANKER_BACKEND": "bge",
+}
+
+
+def load_env_safelist() -> dict[str, str]:
+    """Load the versioned .env editable-key safelist — LUM-341.
+
+    Precedence mirrors load_core_allowlist():
+      1. LUMOGIS_DOCTOR_ENV_SAFELIST_FILE (operator/test override)
+      2. env-safelist.json next to this script (shipped manifest)
+      3. <repo>/scripts/doctor/env-safelist.json
+      4. ENV_SAFELIST_FALLBACK (built-in safety net)
+
+    A candidate must be a JSON object with a "keys" object; each entry must be
+    an object with a non-empty single-line string "default". Keys failing
+    KEY/SECRET_KEY_RE are dropped. Malformed candidates are skipped so a broken
+    manifest can never widen the safelist beyond the fallback.
+    """
+    candidates: list[Path] = []
+    override = os.environ.get("LUMOGIS_DOCTOR_ENV_SAFELIST_FILE", "").strip()
+    if override:
+        candidates.append(Path(override))
+    self_dir = os.environ.get("DOCTOR_SELF_DIR", "").strip()
+    if self_dir:
+        candidates.append(Path(self_dir) / "env-safelist.json")
+    candidates.append(ROOT / "scripts" / "doctor" / "env-safelist.json")
+    for path in candidates:
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        try:
+            doc = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        keys = doc.get("keys") if isinstance(doc, dict) else None
+        if not isinstance(keys, dict):
+            continue
+        out: dict[str, str] = {}
+        for k, spec in keys.items():
+            if not (isinstance(k, str) and KEY.match(k) and not SECRET_KEY_RE.search(k)):
+                continue
+            default = spec.get("default") if isinstance(spec, dict) else None
+            if isinstance(default, str) and ENV_VALUE_RE.match(default):
+                out[k] = default
+        if out:
+            return out
+    return dict(ENV_SAFELIST_FALLBACK)
+
+
+ENV_SAFELIST = load_env_safelist()
 
 
 def utc_now() -> str:
@@ -329,10 +481,66 @@ def path_allowed_for_mkdir(target: Path) -> tuple[bool, str]:
     return False, "path outside repo or allow-listed roots"
 
 
-def parse_stream() -> tuple[list[tuple[str, dict]], list[tuple[str, dict]], list[tuple[str, dict]]]:
+def count_recent_restarts(audit_path: Path, service: str, window_sec: int) -> int:
+    """Count applied compose_restart_service rows for `service` in the audit log.
+
+    Only rows with outcome == "applied" count as a real restart. When
+    `window_sec` > 0, rows older than the window are ignored; window_sec == 0
+    means "all history". Malformed lines and unparseable timestamps are skipped.
+    """
+    if not service or not audit_path.is_file():
+        return 0
+    try:
+        text = audit_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return 0
+    now = datetime.now(timezone.utc)
+    count = 0
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(rec, dict):
+            continue
+        if rec.get("kind") != "compose_restart_service":
+            continue
+        if rec.get("outcome") != "applied":
+            continue
+        tgt = rec.get("target")
+        if not isinstance(tgt, dict) or tgt.get("service") != service:
+            continue
+        if window_sec > 0:
+            ts = rec.get("ts")
+            if not isinstance(ts, str):
+                continue
+            try:
+                rec_dt = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(
+                    tzinfo=timezone.utc
+                )
+            except ValueError:
+                continue
+            if (now - rec_dt).total_seconds() > window_sec:
+                continue
+        count += 1
+    return count
+
+
+def parse_stream() -> tuple[
+    list[tuple[str, dict]],
+    list[tuple[str, dict]],
+    list[tuple[str, dict]],
+    list[tuple[str, dict]],
+    list[tuple[str, dict]],
+]:
     compose_rows: list[tuple[str, dict]] = []
+    compose_restart_rows: list[tuple[str, dict]] = []
     mkdir_rows: list[tuple[str, dict]] = []
     ollama_rows: list[tuple[str, dict]] = []
+    env_rows: list[tuple[str, dict]] = []
     for line in STREAM.read_text(encoding="utf-8", errors="replace").splitlines():
         parts = line.split("\t")
         if len(parts) != 7:
@@ -347,11 +555,15 @@ def parse_stream() -> tuple[list[tuple[str, dict]], list[tuple[str, dict]], list
             continue
         if fk == "compose_up_service":
             compose_rows.append((fk, ft))
+        elif fk == "compose_restart_service":
+            compose_restart_rows.append((fk, ft))
         elif fk == "mkdir_backup_dir":
             mkdir_rows.append((fk, ft))
         elif fk == "ollama_pull_model":
             ollama_rows.append((fk, ft))
-    return compose_rows, mkdir_rows, ollama_rows
+        elif fk == "set_env_key":
+            env_rows.append((fk, ft))
+    return compose_rows, compose_restart_rows, mkdir_rows, ollama_rows, env_rows
 
 
 def validate_compose(service: str, S: set[str]) -> tuple[bool, str, list[str] | None]:
@@ -368,6 +580,24 @@ def validate_compose(service: str, S: set[str]) -> tuple[bool, str, list[str] | 
         "compose",
         "up",
         "-d",
+        service,
+    ]
+    return True, "", argv
+
+
+def validate_compose_restart(service: str, S: set[str]) -> tuple[bool, str, list[str] | None]:
+    if not SVC_RE.match(service or ""):
+        return False, "invalid service name", None
+    if service not in S:
+        return False, "service not in compose config (S)", None
+    if service not in K_CORE:
+        return False, "service not in Lumogis core allowlist (K)", None
+    argv = [
+        "timeout",
+        f"{TIMEOUT_RESTART}s",
+        "docker",
+        "compose",
+        "restart",
         service,
     ]
     return True, "", argv
@@ -414,6 +644,80 @@ def validate_mkdir(path_s: str) -> tuple[bool, str, list[str] | None, str | None
     return True, "", argv, str(p)
 
 
+def dotenv_all_keys(path: Path) -> set[str]:
+    """Every key that appears in .env, INCLUDING commented-out forms, so
+    append-only can refuse a key the operator has intentionally parked."""
+    keys: set[str] = set()
+    if not path.is_file():
+        return keys
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        s = line.strip().lstrip("#").strip()
+        if s.startswith("export "):
+            s = s[7:].lstrip()
+        if "=" not in s:
+            continue
+        k = s.split("=", 1)[0].strip()
+        if KEY.match(k):
+            keys.add(k)
+    return keys
+
+
+def validate_env_key(key: str, present_keys: set[str]) -> tuple[bool, str, str, str | None]:
+    """Validate a set_env_key request. The value is resolved from the manifest
+    (NEVER trusted from the stream). Returns (ok, message, bad_outcome, line)."""
+    if not ALLOW_ENV_EDITS:
+        return (
+            False,
+            "env edits not enabled (set LUMOGIS_DOCTOR_ALLOW_ENV_EDITS=1)",
+            "skipped",
+            None,
+        )
+    if not key or not KEY.match(key):
+        return False, "invalid env key name", "error", None
+    if SECRET_KEY_RE.search(key):
+        return False, "refusing secret-shaped key name", "error", None
+    if key not in ENV_SAFELIST:
+        return False, "key not in env safelist", "error", None
+    if key in present_keys:
+        return False, "key already present (append-only)", "skipped", None
+    value = ENV_SAFELIST[key]
+    # Defence in depth: the loader already enforces ENV_VALUE_RE, but re-check so
+    # the writer can never emit a value that would need quoting / break .env.
+    if not ENV_VALUE_RE.match(value):
+        return False, "no safe value to set", "error", None
+    return True, "", "", f"{key}={value}"
+
+
+def apply_set_env_key(line: str) -> tuple[bool, str, str | None]:
+    """Append `line` to ${ROOT}/.env after backing it up. Append-only + atomic
+    (temp file + os.replace). Returns (ok, message, backup_path)."""
+    envp = ROOT / ".env"
+    stamp = utc_now().replace(":", "").replace("-", "")
+    backup: str | None = None
+    try:
+        existing = envp.read_text(encoding="utf-8") if envp.is_file() else ""
+        if envp.is_file():
+            bpath = envp.with_name(f".env.bak-{stamp}")
+            n = 0
+            while bpath.exists():
+                n += 1
+                bpath = envp.with_name(f".env.bak-{stamp}.{n}")
+            shutil.copy2(envp, bpath)
+            os.chmod(bpath, 0o600)
+            backup = str(bpath)
+        new = existing
+        if new and not new.endswith("\n"):
+            new += "\n"
+        new += f"# added by lumogis doctor (LUM-341) {utc_now()}\n{line}\n"
+        tmp = envp.with_name(f".env.doctor-tmp-{os.getpid()}")
+        tmp.write_text(new, encoding="utf-8")
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, envp)
+        return True, "", backup
+    except OSError as exc:
+        return False, str(exc), backup
+
+
 def main() -> int:
     try:
         cfg_raw = CFG_CACHE.read_text(encoding="utf-8", errors="replace")
@@ -425,8 +729,15 @@ def main() -> int:
     want_embed = dot.get("EMBEDDING_MODEL") or os.environ.get("EMBEDDING_MODEL", "") or ""
     want_llm = dot.get("LUMOGIS_DEFAULT_LLM") or os.environ.get("LUMOGIS_DEFAULT_LLM", "") or ""
 
-    compose_rows, mkdir_rows, ollama_rows = parse_stream()
-    ordered: list[tuple[str, dict]] = [*compose_rows, *mkdir_rows, *ollama_rows]
+    compose_rows, compose_restart_rows, mkdir_rows, ollama_rows, env_rows = parse_stream()
+    ordered: list[tuple[str, dict]] = [
+        *compose_rows,
+        *compose_restart_rows,
+        *mkdir_rows,
+        *ollama_rows,
+        *env_rows,
+    ]
+    present_env_keys = set(dot.keys()) | dotenv_all_keys(ROOT / ".env")
 
     secrets = load_redaction_values()
     try:
@@ -483,6 +794,48 @@ def main() -> int:
                 )
                 continue
             planned.append({"kind": fk, "target": tgt, "argv": argv or []})
+        elif fk == "compose_restart_service":
+            svc = str(ft.get("service", ""))
+            ok, msg, argv = validate_compose_restart(svc, S)
+            tgt = {"service": svc}
+            if not ok:
+                out = "error"
+                if "allowlist" in msg:
+                    out = "skipped"
+                planned.append(
+                    {
+                        "kind": fk,
+                        "target": tgt,
+                        "outcome": out,
+                        "message": msg,
+                        "command_argv": [],
+                    }
+                )
+                continue
+            if RESTART_LOOP_MAX > 0:
+                loop_n = count_recent_restarts(audit_path, svc, RESTART_LOOP_WINDOW_SEC)
+                if loop_n >= RESTART_LOOP_MAX:
+                    window_desc = (
+                        f"within {RESTART_LOOP_WINDOW_SEC}s"
+                        if RESTART_LOOP_WINDOW_SEC > 0
+                        else "in audit history"
+                    )
+                    planned.append(
+                        {
+                            "kind": fk,
+                            "target": tgt,
+                            "outcome": "skipped",
+                            "message": (
+                                f"restart-loop guard: {loop_n} applied restart(s) of "
+                                f"'{svc}' {window_desc} (limit {RESTART_LOOP_MAX}); "
+                                "refusing further restart — inspect logs, disk, and "
+                                "volumes before retrying"
+                            ),
+                            "command_argv": [],
+                        }
+                    )
+                    continue
+            planned.append({"kind": fk, "target": tgt, "argv": argv or []})
         elif fk == "mkdir_backup_dir":
             ps = str(ft.get("path", ""))
             ok, msg, argv, canon = validate_mkdir(ps)
@@ -515,6 +868,24 @@ def main() -> int:
                 )
                 continue
             planned.append({"kind": fk, "target": tgt, "argv": argv or []})
+        elif fk == "set_env_key":
+            key = str(ft.get("key", ""))
+            ok, msg, bad_out, line = validate_env_key(key, present_env_keys)
+            tgt = {"key": key, "value": ENV_SAFELIST.get(key, "")}
+            if not ok:
+                planned.append(
+                    {
+                        "kind": fk,
+                        "target": tgt,
+                        "outcome": bad_out,
+                        "message": msg,
+                        "command_argv": [],
+                    }
+                )
+                continue
+            planned.append(
+                {"kind": fk, "target": tgt, "py_action": "set_env_key", "env_line": line}
+            )
         else:
             planned.append(
                 {
@@ -527,11 +898,14 @@ def main() -> int:
             )
 
     do_mut = APPLY and audit_ok
-    exec_items = [p for p in planned if "argv" in p]
+    exec_items = [p for p in planned if "argv" in p or "py_action" in p]
     declined = False
     if do_mut and not YES and exec_items and sys.stdin.isatty() and sys.stderr.isatty():
         for i, item in enumerate(exec_items, 1):
-            disp = redact_text(shlex.join(item["argv"]), secrets)
+            if "argv" in item:
+                disp = redact_text(shlex.join(item["argv"]), secrets)
+            else:
+                disp = "append .env: " + redact_text(item.get("env_line", ""), secrets)
             print(
                 f"{i}. kind={item['kind']} target={item['target']} cmd={disp}",
                 file=sys.stderr,
@@ -562,6 +936,49 @@ def main() -> int:
             if item.get("command_argv") is not None:
                 r["command_argv"] = item.get("command_argv") or []
             repairs.append(r)
+            continue
+
+        if item.get("py_action") == "set_env_key":
+            tgt = item["target"]
+            line = item["env_line"]
+            disp = "append .env: " + redact_text(line, secrets)
+            if not do_mut:
+                repairs.append(
+                    {
+                        "kind": "set_env_key",
+                        "target": tgt,
+                        "outcome": "dry_run",
+                        "command_argv": [],
+                        "command_display": disp,
+                    }
+                )
+                continue
+            ok, msg, backup = apply_set_env_key(line)
+            outcome = "applied" if ok else "failed"
+            if ok:
+                any_applied = True
+            rec = {
+                "kind": "set_env_key",
+                "target": tgt,
+                "outcome": outcome,
+                "command_argv": [],
+                "command_display": disp,
+            }
+            if backup:
+                rec["backup"] = backup
+            if not ok and msg:
+                rec["message"] = redact_text(msg, secrets)
+            repairs.append(rec)
+            audit_append(
+                audit_path,
+                secrets=secrets,
+                kind="set_env_key",
+                target=tgt,
+                command_argv=[],
+                exit_status=(0 if ok else None),
+                outcome=outcome,
+                argv_full=argv_list,
+            )
             continue
 
         fk = item["kind"]

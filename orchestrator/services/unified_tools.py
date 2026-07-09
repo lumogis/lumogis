@@ -207,11 +207,38 @@ def _entries_for_capability_registry(registry: CapabilityRegistry) -> list[ToolC
     return out
 
 
+_CAPABILITY_UNHEALTHY_DEFAULT = "capability service not healthy (last probe failed)"
+_CAPABILITY_UNHEALTHY_COPY: dict[str, str] = {
+    "timeout": "capability service did not respond in time (last health probe timed out)",
+    "connection_error": "capability service unreachable (connection refused on last probe)",
+    "network_error": "capability service unreachable (network error on last probe)",
+}
+
+
+def _capability_unhealthy_reason(svc: RegisteredService) -> str:
+    """Map a service's structured probe-failure code to operator-facing copy.
+
+    Falls back to the generic string when the code is unknown or unset
+    (e.g. never probed). HTTP status failures keep the concrete status in the
+    copy so an operator can tell a 500 from a 404; 401/403 get auth-specific
+    copy since the action is "rotate Core's bearer", not "retry" (LUM-61).
+    """
+    reason = svc.last_unhealthy_reason or ""
+    if reason in _CAPABILITY_UNHEALTHY_COPY:
+        return _CAPABILITY_UNHEALTHY_COPY[reason]
+    if reason.startswith("http_"):
+        status = reason[len("http_"):]
+        if status in ("401", "403"):
+            return f"capability service rejected Core's credentials (last probe returned HTTP {status})"
+        return f"capability service health check failed (last probe returned HTTP {status})"
+    return _CAPABILITY_UNHEALTHY_DEFAULT
+
+
 def _entries_for_capability_service(svc: RegisteredService) -> list[ToolCatalogEntry]:
     out: list[ToolCatalogEntry] = []
     mid = svc.manifest.id
     healthy = bool(svc.healthy)
-    why: str | None = None if healthy else "capability service not healthy (last probe failed)"
+    why: str | None = None if healthy else _capability_unhealthy_reason(svc)
     conn = _permission_connector_for(svc.manifest)
     for t in svc.manifest.tools:
         out.append(

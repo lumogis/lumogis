@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Thomas Kohlborn, trading as Lumogis
 
 import { browser, expect } from "@wdio/globals";
-import { bootLoggedInAdmin } from "./helpers/bootOverlay.js";
+import { bootLoggedInAdmin, openSettingsPanel } from "./helpers/bootOverlay.js";
 import { mockInvokeImpl, mockInvokeReturn } from "./helpers/mockInvoke.js";
 import { defaultAdminSettings } from "./mocks/invokeFixtures.js";
 
@@ -14,26 +14,25 @@ describe("overlay restart banner", () => {
       defaultAdminSettings({ restartRequired: true }),
     );
 
-    await $("#btn-settings").click();
-    await $("#settings").waitForDisplayed({ timeout: 5_000 });
+    await openSettingsPanel();
     const banner = await $("#restart-banner");
     await banner.waitForDisplayed({ timeout: 5_000 });
     expect(await banner.isDisplayed()).toBe(true);
   });
 
   it("shows restart requested hint after confirm + mock restart", async () => {
-    await bootLoggedInAdmin();
     await mockInvokeReturn(
       "fetch_admin_settings",
       defaultAdminSettings({ restartRequired: true }),
     );
     await mockInvokeImpl("restart_orchestrator_stack", () => undefined);
 
-    await $("#btn-settings").click();
-    await $("#settings").waitForDisplayed({ timeout: 5_000 });
+    await openSettingsPanel();
 
+    await browser.tauri.execute(() => {
+      window.confirm = () => true;
+    });
     await $("#btn-restart-stack").click();
-    await browser.acceptAlert();
 
     const hint = await $("#ingest-admin-hint");
     await browser.waitUntil(async () => (await hint.getText()).includes("Restart requested"), {

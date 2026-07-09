@@ -35,6 +35,8 @@ import { useLocation, useNavigate } from "react-router-dom";
 
 import { patchMeWowDismissed } from "../../api/meWow";
 import { useAuth } from "../../auth/AuthProvider";
+import { ServiceDegradationBanner } from "../_shared/ServiceDegradationBanner";
+import { useServiceHealth } from "../_shared/useServiceHealth";
 import type { ChatPrefillState } from "../wow/askAboutEntity";
 import { WowGate } from "../wow/WowGate";
 import type { ChatMessageDTO } from "../../api/chat";
@@ -54,7 +56,7 @@ import {
 } from "../../pwa/drafts";
 import { useOnlineStatus } from "../../pwa/useOnlineStatus";
 import { consumeChatStream } from "./ChatStream";
-import { ConversationSidebar } from "./ConversationSidebar";
+import { ConversationSidebar, type PendingSummary } from "./ConversationSidebar";
 import { messageIdForServerSync } from "./messageIdForServerSync";
 import {
   useChatThreads,
@@ -70,6 +72,8 @@ export function ChatPage(): JSX.Element {
   const location = useLocation();
   const navigate = useNavigate();
   const online = useOnlineStatus();
+  const serviceHealth = useServiceHealth(client);
+  const refreshHealth = serviceHealth.refresh;
   const { models, modelError, refreshModels } = useModelCatalog(client);
   const initialModel = models[0]?.id ?? DEFAULT_MODEL;
 
@@ -94,6 +98,7 @@ export function ChatPage(): JSX.Element {
   const [streaming, setStreaming] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [historyRefresh, setHistoryRefresh] = useState(0);
+  const [pendingSummaries, setPendingSummaries] = useState<PendingSummary[]>([]);
   const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /** Mirrors composer text for IndexedDB flush on thread switches / unload. */
@@ -149,10 +154,23 @@ export function ChatPage(): JSX.Element {
           .filter((m) => m.role === "user" || m.role === "assistant")
           .map(messageToDto),
       });
+      // Show a "Summarising…" placeholder until the batch job writes the
+      // sessions row, so the history list never looks broken-empty (LUM-417).
+      setPendingSummaries((prev) =>
+        prev.some((p) => p.conversationId === thread.id)
+          ? prev
+          : [...prev, { conversationId: thread.id, title: thread.title }],
+      );
       setHistoryRefresh((n) => n + 1);
     },
     [client],
   );
+
+  const handlePendingResolved = useCallback((conversationIds: string[]) => {
+    setPendingSummaries((prev) =>
+      prev.filter((p) => !conversationIds.includes(p.conversationId)),
+    );
+  }, []);
 
   const registerServerThread = useCallback(
     (threadId: string, model: string, title: string) => {
@@ -399,6 +417,9 @@ export function ChatPage(): JSX.Element {
           });
           setSubmitError(humaniseChatError(res.status, detail));
           restoreComposer();
+          // A non-OK status (e.g. 503 when Ollama is down) is the strongest
+          // live signal a service is unavailable — reconcile the banner now.
+          refreshHealth();
           return;
         }
 
@@ -441,6 +462,8 @@ export function ChatPage(): JSX.Element {
           });
           setSubmitError(detail);
           restoreComposer();
+          // The request is the source of truth — reconcile the health banner now.
+          refreshHealth();
           return;
         }
 
@@ -498,13 +521,14 @@ export function ChatPage(): JSX.Element {
           });
           setSubmitError(detail);
           restoreComposer();
+          refreshHealth();
         }
       } finally {
         if (abortRef.current === controller) abortRef.current = null;
         setStreaming(false);
       }
     },
-    [active, client, dispatch, input, online, streaming, scheduleTurnSync],
+    [active, client, dispatch, input, online, streaming, scheduleTurnSync, refreshHealth],
   );
 
   return (
@@ -524,6 +548,8 @@ export function ChatPage(): JSX.Element {
           client={client}
           refreshToken={historyRefresh}
           onContinue={handleContinueFromHistory}
+          pendingSummaries={pendingSummaries}
+          onPendingResolved={handlePendingResolved}
         />
         <ul className="lumogis-chat__thread-list" role="list">
           {state.threads.map((t) => (
@@ -556,6 +582,8 @@ export function ChatPage(): JSX.Element {
             onRetry={() => void refreshModels()}
           />
         </header>
+
+        <ServiceDegradationBanner health={serviceHealth} />
 
         <div
           className="lumogis-chat__messages"
@@ -747,9 +775,24 @@ function MessageBubble({ message }: { message: ChatMessage }): JSX.Element {
         </time>
       </header>
       <div className="lumogis-chat__bubble-content">
-        {message.content}
-        {isAssistant && status === "streaming" && (
-          <span aria-hidden="true" className="lumogis-chat__caret">▍</span>
+        {isAssistant && status === "streaming" && message.content.length === 0 ? (
+          <span
+            className="lumogis-chat__typing"
+            role="status"
+            aria-label="Lumogis is typing"
+            data-testid="chat-typing-indicator"
+          >
+            <span className="lumogis-chat__typing-dot" aria-hidden="true" />
+            <span className="lumogis-chat__typing-dot" aria-hidden="true" />
+            <span className="lumogis-chat__typing-dot" aria-hidden="true" />
+          </span>
+        ) : (
+          <>
+            {message.content}
+            {isAssistant && status === "streaming" && (
+              <span aria-hidden="true" className="lumogis-chat__caret">▍</span>
+            )}
+          </>
         )}
       </div>
       {isAssistant && status === "error" && message.errorDetail !== undefined && (

@@ -82,6 +82,10 @@ def test_upload_returns_202_and_stores_file(
         return 1
 
     monkeypatch.setattr("services.batch_queue.enqueue", _capture_enqueue)
+    monkeypatch.setattr(
+        "services.ingest_progress.update_ingest_job_progress",
+        lambda **kw: {"job_id": kw["job_id"], "stage": kw["stage"]},
+    )
     body = b"hello ingest upload"
     resp = client.post(
         "/api/v1/ingest/upload",
@@ -92,6 +96,7 @@ def test_upload_returns_202_and_stores_file(
     data = resp.json()
     assert data["status"] == "queued"
     assert data["file_id"]
+    assert data["job_id"] == 1
     assert len(enqueued) == 1
     assert enqueued[0]["user_id"] == "alice-up"
     assert enqueued[0]["kind"] == "ingest_upload"
@@ -116,6 +121,10 @@ def test_upload_wrong_user_isolation(client: TestClient, monkeypatch: pytest.Mon
         return 1
 
     monkeypatch.setattr("services.batch_queue.enqueue", _capture_enqueue)
+    monkeypatch.setattr(
+        "services.ingest_progress.update_ingest_job_progress",
+        lambda **kw: kw,
+    )
     resp = client.post(
         "/api/v1/ingest/upload",
         headers=alice_h,
@@ -165,12 +174,23 @@ def test_ingest_upload_handler_retains_stored_file(
     stored.parent.mkdir(parents=True)
     stored.write_text("persist me", encoding="utf-8")
 
-    def _noop_ingest(path: str, *, user_id: str) -> IngestResult:
+    def _noop_ingest(
+        path: str,
+        *,
+        user_id: str,
+        force: bool = False,
+        on_progress=None,
+    ) -> IngestResult:
         return IngestResult(file_path=path, chunk_count=0, skipped=True)
 
     monkeypatch.setattr("services.batch_handlers.ingest_upload.ingest_file", _noop_ingest)
+    monkeypatch.setattr(
+        "services.ingest_progress.update_ingest_job_progress",
+        lambda **kw: kw,
+    )
     ingest_upload_handle(
         user_id="alice-up",
+        job_id=1,
         payload=IngestUploadPayload(
             stored_path=str(stored),
             file_id="fid",
@@ -189,15 +209,25 @@ def test_upload_same_file_twice_dedup_on_same_path(
     path.write_text("same content", encoding="utf-8")
     skipped_flags: list[bool] = []
 
-    def _fake_ingest(file_path: str, *, user_id: str) -> IngestResult:
+    def _fake_ingest(
+        file_path: str,
+        *,
+        user_id: str,
+        force: bool = False,
+        on_progress=None,
+    ) -> IngestResult:
         skipped = len(skipped_flags) > 0
         skipped_flags.append(skipped)
         return IngestResult(file_path=file_path, chunk_count=0, skipped=skipped)
 
     monkeypatch.setattr("services.batch_handlers.ingest_upload.ingest_file", _fake_ingest)
+    monkeypatch.setattr(
+        "services.ingest_progress.update_ingest_job_progress",
+        lambda **kw: kw,
+    )
     payload = IngestUploadPayload(stored_path=str(path), file_id="a", original_filename="doc.txt")
-    ingest_upload_handle(user_id="u1", payload=payload)
-    ingest_upload_handle(user_id="u1", payload=payload)
+    ingest_upload_handle(user_id="u1", job_id=1, payload=payload)
+    ingest_upload_handle(user_id="u1", job_id=2, payload=payload)
     assert skipped_flags == [False, True]
 
 

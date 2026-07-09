@@ -17,14 +17,14 @@ from models.api_v1 import OllamaModelNameRequest
 from models.api_v1 import OllamaPullActiveResponse
 from models.api_v1 import OllamaPullJob
 from models.api_v1 import OllamaPullStartResponse
-
-from services import admin_ollama as admin_ollama_svc
 from services.ollama_pull_jobs import JobAlreadyRunning
 from services.ollama_pull_jobs import create_job
 from services.ollama_pull_jobs import get_active_job
 from services.ollama_pull_jobs import get_job
 from services.ollama_pull_jobs import job_to_response
 from services.ollama_pull_jobs import run_pull_job
+
+from services import admin_ollama as admin_ollama_svc
 
 router = APIRouter(
     prefix="/api/v1/admin/ollama",

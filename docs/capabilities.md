@@ -25,7 +25,8 @@ Core is the FastAPI orchestrator: HTTP APIs, business logic, optional in-process
 
 - Default Compose runs Core with Postgres, Qdrant, Ollama, Lumogis Web, Caddy (same-origin routing to the SPA and Core APIs), and stack-control.
 - Ingestion and indexing pipeline feed semantic search; sessions and related metadata live in Postgres.
-- **Filesystem inbox auto-ingest (LUM-330):** drop supported files into **`ai-workspace/inbox/`** (container path **`/workspace/inbox`**); configurable **`LUMOGIS_INBOX_*`** modes (**`event`**, **`poll`**, **`off`**), write-stability before ingest, poll fallback for unreliable bind mounts, and **`ai-workspace/quarantine/`** for terminal failures — see **[ADR 070](decisions/070-lum-330-folder-watch-inbox.md)** and **`docs/LUMOGIS_REFERENCE_MANUAL.md`**.
+- **Filesystem inbox auto-ingest:** drop supported files into **`ai-workspace/inbox/`** (container path **`/workspace/inbox`**); configurable **`LUMOGIS_INBOX_*`** modes (**`event`**, **`poll`**, **`off`**), write-stability before ingest, poll fallback for unreliable bind mounts, and **`ai-workspace/quarantine/`** for terminal failures — see **[ADR 070](decisions/070-lum-330-folder-watch-inbox.md)** and **`docs/LUMOGIS_REFERENCE_MANUAL.md`**.
+- **Ingest job progress:** uploads and batch jobs expose per-stage progress (extract → chunk → embed → graph) via poll endpoints and SSE on **`/events`**; the Library upload panel shows multi-file batch status.
 - **Multi-path ingest compose binds (LUM-401):** admin **`PUT /settings`** can list multiple **`ingest_paths`**; indices **1..n** use **`orchestrator/compose_ingest_binds.py`** to generate tiered **`docker-compose.override.yml`** snippets (stack restart still required) — see **[ADR 072-lum-401](decisions/072-lum-401-compose-multibind-generator.md)** (ADR number collides with client-only overlay — see **`docs/decisions/`** index).
 - **Signals** ingest external or scheduled inputs (feeds, pages, calendars, and similar); monitors poll, score, and persist for downstream use.
 - **Routines** automate trusted **Ask** toward **Do** after repeated clean approvals (threshold from configuration).
@@ -78,10 +79,12 @@ Enable STT only when you accept extra CPU/RAM (and optional GPU) cost; use the S
 
 The first-party SPA is the primary household UI: chat, search, approvals, and Me/Admin settings on the same origin as Core via Caddy.
 
-- **Me**: profile (including password change), connectors, connector permissions, LLM providers, MCP tokens, **notification routing preferences** (editable matrix), export, tools/capabilities overview.
+- **Me**: profile (including password change), connectors, connector permissions, LLM providers, MCP tokens (read-only or read+write scope at mint time), **notification routing preferences** (editable matrix), **audit log** (personal activity with date presets and event-type filters), export, tools/capabilities overview, **shared items** inventory for household-published documents, entities, and conversations.
 - **Conversation history:** browse, continue, and delete past conversations with multi-store purge APIs; server-side transcript sync upserts the `web_conversations` header on `PUT` so active-tab messages persist before `POST /session/end` — see **[ADR 074-lum-162](decisions/074-lum-162-conversation-history-ui.md)** and amendment **[ADR 085](decisions/085-lum-439-conversation-put-upsert-fix.md)**.
-- **First wow moment (LUM-216):** guided first-query and entity-discovery cards with server-owned readiness and dismissal — see **[ADR 075](decisions/075-lum-216-first-wow-moment.md)** and **`CHANGELOG.md`** [Unreleased].
-- **Admin**: users (import/export, password reset), connector credentials (including household and instance-system tiers where exposed), per-user connector permissions, MCP tokens, audit, diagnostics.
+- **Household sharing (documents, entities, conversations):** owners publish library documents, search entities, or conversation summaries to shared scope; members discover shared material through Search, Library filters, and shared-items views; graph mode cascades document entities into shared stores when enabled.
+- **Household invites:** admins mint single-use invite links with optional shared-scope gate for new members; redeem flow sets credentials and optional welcome onboarding.
+- **First wow moment:** guided first-query and entity-discovery cards with server-owned readiness and dismissal — see **[ADR 075](decisions/075-lum-216-first-wow-moment.md)**.
+- **Admin**: users (import/export, password reset, member counts, last-active, promote/demote), connector credentials (including household and instance-system tiers where exposed), per-user connector permissions, MCP tokens (list/revoke only), shared-items oversight, audit, diagnostics.
 - **Admin stack health (LUM-178):** read-only **System status** panel combining curated admin diagnostics with stack-control service rows (no Docker socket in Core) — see **[ADR 074-lum-178](decisions/074-lum-178-stack-health-dashboard.md)**.
 - **Admin Ollama:** discovery, async model pull with job polling, and model delete via typed **`/api/v1/admin/ollama/*`** routes in the same panel — see **[ADR 088](decisions/088-lum-451-ollama-api-v1-promotion.md)**.
 - **Admin disaster-recovery backup:** last verified snapshot metadata (age, size, store coverage, stale warning) on **System status** — see **[ADR 098](decisions/098-lum-185-backup-restore.md)** and **`docs/guides/backup-restore.md`**.
@@ -96,7 +99,9 @@ Pin **`LUMOGIS_PUBLIC_ORIGIN`** when authentication is on; align trusted proxy s
 
 Retrieval combines structured metadata with dense vectors (and optional hybrid / sparse paths) so questions can pull relevant chunks under per-user isolation.
 
-- Qdrant-backed search applies **user_id** filtering on queries.
+- Qdrant-backed search applies household-union visibility filters (personal plus shared scope where the member is allowed).
+- **Document chat:** scoped chat against a single library document with citation metadata — **`POST /api/v1/chat/completions`** with **`document_id`** and Lumogis Web route **`/documents/:documentId/chat`**.
+- **Entity search and sharing:** **`GET /api/v1/kg/search`** lists entities for the signed-in user; owners can publish or unpublish entities to shared scope from Search.
 - Composed prompts sent to a **cloud LLM** (if configured) include retrieval excerpts and bounded context—not the entire local corpus; connectors still reach their own external APIs when used.
 - **Auto-RAG (LUM-308, opt-in via `LUMOGIS_AUTO_RAG_ENABLED`):** before each OpenAI-style **`POST /v1/chat/completions`** turn, Core may pull a small slate of relevant **`documents`** chunks (same visibility rules as **`search_files`**), optionally rerank with the configured BGE cross-encoder, wrap them through the injection sanitiser when enabled, and prepend them to the assembled context so the model does not need to call **`search_files`** first. **`search_files`** remains available and dedupes chunks already injected in the same request (matched by Qdrant point id). Operators should expect extra latency (embed + vector search + optional rerank) when auto-RAG is on; the first reranker batch after a cold process start can take seconds while the model loads. **Privacy:** injected **`document:{file_path}`** attribute tokens and chunk text follow the same exposure class as explicit **`search_files`** results—they are sent to whichever LLM you configure for that chat.
 
@@ -106,8 +111,9 @@ Retrieval combines structured metadata with dense vectors (and optional hybrid /
 
 Household auth and connector secrets are centered on Core with encrypted storage and scoped visibility.
 
-- Accounts use **`admin`** vs **`user`** roles; bootstrap admin creation applies when the database has no users and bootstrap env is set.
+- Accounts use **`admin`** vs **`user`** roles; bootstrap admin creation applies when the database has no users and bootstrap env is set; admins can invite members and gate **`allows_shared`** per user.
 - **`AUTH_ENABLED`** gates interactive auth; JWT access tokens and refresh via httpOnly cookie under **`/api/v1/auth`** implement session rotation.
+- **Cloud LLM privacy mode** defaults to local-only on fresh installs; operators and members can tighten or relax policy within admin bounds; blocked remote calls are audit-logged and chat falls back to local Ollama when configured.
 - Connector credentials are encrypted (including rotation-friendly key handling); saved secrets are not shown again in the UI after save.
 - Credential resolution walks **per-user**, **household**, then **instance-system** tiers where configured; decrypt failures fail closed without silent fallback across tiers.
 - **Connector permissions** (**Ask** / **Do** / blocked) are **per-user**; APIs exist for users to manage their own modes and for admins to manage others; legacy global permission endpoints are deprecated.
@@ -121,7 +127,10 @@ Treat the deployment as a trusted LAN; wide internet exposure requires extra har
 
 MCP exposes a **curated** subset of Core abilities over streamable HTTP at **`/mcp/`** (trailing slash sensitivity applies to some clients); it is transport for external agents, not the full internal tool registry.
 
-- Per-user opaque MCP tokens can be minted and revoked; when **`AUTH_ENABLED=true`**, MCP gates expect a JWT or an **`lmcp_…`** token as documented; legacy shared **`MCP_AUTH_TOKEN`** behaviour remains only in **`AUTH_ENABLED=false`** mode as described in policy docs.
+- Per-user opaque MCP tokens can be minted and revoked with optional **`mcp:read`** / **`mcp:write`** scopes; omitted scopes mint read-only tokens; when **`AUTH_ENABLED=true`**, MCP gates expect a JWT or an **`lmcp_…`** token as documented; legacy shared **`MCP_AUTH_TOKEN`** behaviour remains only in **`AUTH_ENABLED=false`** mode as described in policy docs.
+- **Read tools** include memory search, entity lookup, context building, and **`recall`** (hybrid semantic + keyword + graph + temporal fusion).
+- **Write tools** (**`add_memory`**, **`add_entity`**, **`add_relation`**, **`forget`**, **`update_observation`**, **`checkpoint`**) require a token carrying **`mcp:write`**; memories land in bank-scoped Postgres and Qdrant with optional graph projection.
+- **Cursor stdio bridge** — AGPL package **`clients/lumogis-mcp/`** forwards MCP over stdio to Core **`/mcp/`**; install with **`make lumogis-cursor-install`**.
 - Disabled users trigger MCP token revocation in the same transactional flow where the adapter supports it; in-flight JWTs remain valid until their TTL as documented.
 - The unified **tool catalog** describes tools and transports (**LLM loop**, **MCP surface**, **catalog-only** observation); **`GET /api/v1/me/tools`** exposes read-model permission labels (**ask** / **do** / **blocked** / **unknown**) without granting rights.
 - **`LUMOGIS_TOOL_CATALOG_ENABLED`** defaults **on** when unset; when **off** (explicit **`false`** / **`0`** / **`no`**), the LLM loop does not merge healthy out-of-process capability tools. When **on**, capability tools merge only with valid bearer trust and healthy endpoints, and teardown runs after each request so capability tools do not leak across turns.

@@ -3,7 +3,7 @@
 """Tests for the Area-4 MCP server surface.
 
 Covers:
-  * build_core_manifest() returns a valid CapabilityManifest with the 5
+  * build_core_manifest() returns a valid CapabilityManifest with the 6
     community tools.
   * GET /capabilities returns the manifest and round-trips through the
     Pydantic schema.
@@ -36,7 +36,7 @@ def test_build_core_manifest_round_trips_through_pydantic():
     assert isinstance(manifest, CapabilityManifest)
     assert manifest.id == "lumogis.core"
     assert manifest.transport.value == "mcp"
-    # 5 community tools, exact set, in order
+    # 6 community tools, exact set, in order
     names = [t.name for t in manifest.tools]
     assert names == [
         "memory.search",
@@ -44,6 +44,7 @@ def test_build_core_manifest_round_trips_through_pydantic():
         "entity.lookup",
         "entity.search",
         "context.build",
+        "recall",
     ]
     # Round-trip through JSON (proves model_dump and validators agree)
     reparsed = CapabilityManifest.model_validate_json(manifest.model_dump_json())
@@ -388,6 +389,118 @@ def test_capabilities_endpoint_not_gated_by_mcp_token(monkeypatch):
     with TestClient(main.app) as client:
         resp = client.get("/capabilities")
     assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# /mcp Origin-header DNS-rebinding guard (LUM-296)
+# ---------------------------------------------------------------------------
+
+
+def test_origin_host_is_local_unit():
+    """Unit coverage for the host classifier behind the /mcp Origin guard."""
+    from auth import _origin_host_is_local
+
+    assert _origin_host_is_local("http://localhost:8000") is True
+    assert _origin_host_is_local("http://127.0.0.1:3000") is True
+    assert _origin_host_is_local("http://[::1]:9000") is True
+    assert _origin_host_is_local("http://127.5.6.7") is True  # 127.0.0.0/8
+    assert _origin_host_is_local("HTTP://LOCALHOST") is True  # case-insensitive
+    assert _origin_host_is_local("https://evil.example") is False
+    assert _origin_host_is_local("http://localhost.evil.com") is False  # no prefix over-match
+    assert _origin_host_is_local("http://notlocalhost") is False
+    assert _origin_host_is_local("http://127.0.0.1.evil.com") is False
+    assert _origin_host_is_local("http://[") is False  # malformed bracket → fail closed, no raise
+    assert _origin_host_is_local("null") is False  # sandboxed iframe / file://
+    assert _origin_host_is_local("") is False
+
+
+def test_mcp_endpoint_blocks_foreign_origin(monkeypatch):
+    """A cross-origin browser fetch (foreign Origin) is rejected with 403,
+    even when no token is required — the guard runs before the bearer gate."""
+    monkeypatch.delenv("MCP_AUTH_TOKEN", raising=False)
+    import main
+
+    with TestClient(main.app) as client:
+        resp = _mcp_post(
+            client,
+            _mcp_initialize_payload(),
+            headers={"Origin": "https://evil.example"},
+        )
+    assert resp.status_code == 403
+    assert resp.json() == {"error": "origin not allowed"}
+
+
+def test_mcp_endpoint_allows_localhost_origin(monkeypatch):
+    monkeypatch.delenv("MCP_AUTH_TOKEN", raising=False)
+    import main
+
+    with TestClient(main.app) as client:
+        resp = _mcp_post(
+            client,
+            _mcp_initialize_payload(),
+            headers={"Origin": "http://localhost:8000"},
+        )
+    assert resp.status_code == 200, resp.text
+
+
+def test_mcp_endpoint_allows_loopback_ip_origin(monkeypatch):
+    monkeypatch.delenv("MCP_AUTH_TOKEN", raising=False)
+    import main
+
+    with TestClient(main.app) as client:
+        resp = _mcp_post(
+            client,
+            _mcp_initialize_payload(),
+            headers={"Origin": "http://127.0.0.1:3000"},
+        )
+    assert resp.status_code == 200, resp.text
+
+
+def test_mcp_endpoint_allows_ipv6_loopback_origin(monkeypatch):
+    """Bracketed IPv6 loopback is the most parse-fragile loopback form —
+    prove it passes end-to-end through the middleware, not just in the unit."""
+    monkeypatch.delenv("MCP_AUTH_TOKEN", raising=False)
+    import main
+
+    with TestClient(main.app) as client:
+        resp = _mcp_post(
+            client,
+            _mcp_initialize_payload(),
+            headers={"Origin": "http://[::1]:9000"},
+        )
+    assert resp.status_code == 200, resp.text
+
+
+def test_mcp_endpoint_allows_absent_origin(monkeypatch):
+    """No Origin header (Cursor / curl / stdio bridge) is a deliberate
+    pass-through — pin it so a future tightening can't silently break
+    non-browser clients."""
+    monkeypatch.delenv("MCP_AUTH_TOKEN", raising=False)
+    import main
+
+    with TestClient(main.app) as client:
+        # _mcp_post sends no Origin header.
+        resp = _mcp_post(client, _mcp_initialize_payload())
+    assert resp.status_code == 200, resp.text
+
+
+def test_mcp_origin_guard_precedes_bearer_check(monkeypatch):
+    """A foreign Origin is rejected with 403 even with a VALID token —
+    proving the rebinding guard runs ahead of _check_mcp_bearer."""
+    monkeypatch.setenv("MCP_AUTH_TOKEN", "topsecret")
+    import main
+
+    with TestClient(main.app) as client:
+        resp = _mcp_post(
+            client,
+            _mcp_initialize_payload(),
+            headers={
+                "Authorization": "Bearer topsecret",
+                "Origin": "https://evil.example",
+            },
+        )
+    assert resp.status_code == 403
+    assert resp.json() == {"error": "origin not allowed"}
 
 
 # ---------------------------------------------------------------------------

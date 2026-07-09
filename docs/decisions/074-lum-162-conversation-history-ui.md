@@ -1,13 +1,13 @@
 # ADR-074: Conversation history UI — persistence, API, and multi-store purge
 
 > Status: Active (numbering conflict)
-> Last reviewed: 2026-06-11
-> Verified against commit: c609ec4
-> Notes: **`docs/decisions/074-lum-178-stack-health-dashboard.md`** also claims **ADR 074** in its title. **[ADR 085](085-lum-439-conversation-put-upsert-fix.md)** amends this record as the canonical **ADR 074** conversation-history programme; renumber **`074-lum-178-*.md`** to **`098+`** in a coordinated pass (**096** is **LUM-477** cold-start resync; **097** is **LUM-470** pip hash-pinning). Filename prefixes **049–097** are already in use under `docs/decisions/` (duplicate clusters on **053**, **059**, **060**, **061**, **063**, **064**, **072**, **074**, plus **`065-lum-320-*.md`** through **`097-lum-470-pip-dependency-hash-pinning.md`**). Pick a **non-colliding** new slug (for example **`098-lum-178-*.md`**) when renumbering—coordinate with any **`034-linear-evidence-index.md`** / **046** / **072** rename in the same pass—see `docs/_librarian/docs-inventory.md`.
+> Last reviewed: 2026-07-08
+> Verified against commit: c9ac7ca
+> Notes: **`docs/decisions/074-lum-162-conversation-history-ui.md`** also claims **ADR 074** in its title. **[ADR 085](085-lum-439-conversation-put-upsert-fix.md)** amends this record as the canonical **ADR 074** conversation-history programme; renumber **`074-lum-178-*.md`** to **`158-lum-178-stack-health-dashboard.md`** in a coordinated pass (**110** is ingest job progress **LUM-511**; **111**–**157** retros now allocated — note three **154** and three **156** prefixes; **155** is LUM-157 content projection; **157** is post-ship sharing fixes). Filename prefixes **049–157** are already in use under `docs/decisions/` (duplicate clusters on **053**, **059**, **060**, **061**, **063**, **064**, **072**, **074**, **098**, **101**, **147**, **154**, **156**, plus **`065-lum-320-*.md`** through **`157-lum-157-577-post-ship-sharing-fixes.md`**). Pick a **non-colliding** new slug when renumbering—coordinate with any **`034-linear-evidence-index.md`** / **046** / **072** rename in the same pass—see `docs/_librarian/docs-inventory.md`.
 
 **Status:** Finalised
 **Created:** 2026-06-01
-**Last updated:** 2026-06-01
+**Last updated:** 2026-06-15
 **Decided by:** /explore --headless LUM-162; finalised by /verify-plan 2026-06-01
 
 ## Context
@@ -33,10 +33,11 @@ See `.cursor/explorations/LUM-162-conversation-history-ui.md` and draft ADR hist
 
 - **Easier:** trust surface and true delete ship together; LUM-91 can reuse purge primitives; transcript persistence is additive behind one API contract.
 - **Harder:** server-side chat transcripts are now stored in Postgres — documented in `SECURITY.md` and the reference manual; operators must run migration **027**.
-- **Follow-up:** reconciliation sweeper for orphan Qdrant/graph copies after `partial=true`; optional graph purge for published projection Session nodes; Playwright coverage; fix `/api/v1/memory/recent` empty list (`SessionSummary.updated_at`).
+- **Follow-up:** reconciliation sweeper for orphan Qdrant/graph copies after `partial=true` (**LUM-416**); optional graph purge for published projection Session nodes (**LUM-419**); Playwright coverage; **`GET /api/v1/memory/recent`** empty-list fix shipped (**LUM-418** — `SessionSummary.updated_at` projected from `sessions.updated_at`).
 
 ## Status history
 
 - 2026-06-01: Draft created by /explore --headless LUM-162
 - 2026-06-01: Revised during /review-plan --arbitrate R1 (bounded retry + honest partial UX)
 - 2026-06-01: Finalised by /verify-plan — implementation confirmed (LUM-162)
+- 2026-06-15: Amended consequences follow-up — **LUM-418** shipped `/api/v1/memory/recent` `ended_at` mapping via `SessionSummary.updated_at` (no ADR decision change)

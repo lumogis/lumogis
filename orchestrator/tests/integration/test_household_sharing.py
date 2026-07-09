@@ -201,11 +201,62 @@ class _ScopedStore:
         if sel_personal is not None:
             return sel_personal
 
+        # ---- KG read: shared-source ids (LUM-581 _fetch_shared_entity_source_ids)
+        if q.startswith("select distinct published_from from entities"):
+            me = params[0]
+            return [
+                {"published_from": r["published_from"]}
+                for k, r in self.rows.items()
+                if k[0] == "entities"
+                and r.get("user_id") == me
+                and r.get("scope") == "shared"
+                and r.get("published_from") is not None
+            ]
+
+        # ---- KG read: GET /kg/entities/{id} (household union + by-id) -----
+        if (
+            q.startswith("select entity_id")
+            and "from entities" in q
+            and "entity_id::text = %s" in q
+            and "ilike" not in q
+        ):
+            me = params[0]
+            target_id = str(params[-1])
+            for k, r in self.rows.items():
+                if k[0] != "entities" or str(r.get("entity_id")) != target_id:
+                    continue
+                if self._entity_visible(r, me):
+                    return dict(r)
+            return None
+
+        # ---- KG read: GET /kg/search (name ILIKE + owner-projection collapse)
+        if q.startswith("select entity_id") and "from entities" in q and "ilike" in q:
+            me = params[0]
+            pattern = str(params[1]).strip("%").lower()
+            limit = params[-1]
+            out = []
+            for k, r in self.rows.items():
+                if k[0] != "entities" or not self._entity_visible(r, me):
+                    continue
+                if pattern and pattern not in str(r.get("name", "")).lower():
+                    continue
+                # LUM-581 collapse: hide the caller's OWN shared projection rows.
+                if r.get("published_from") is not None and r.get("user_id") == me:
+                    continue
+                out.append(dict(r))
+            out.sort(key=lambda x: x.get("mention_count", 0), reverse=True)
+            return out[: int(limit)]
+
         # ---- list reads via visible_filter (notes only — illustrative) ---
         if q.startswith("select") and "from notes" in q and "scope" in q:
             return self._handle_notes_list(query, params)
 
         return None if expect == "one" else ([] if expect == "all" else None)
+
+    def _entity_visible(self, row: dict, me: str) -> bool:
+        """Emulate visibility.visible_filter household union for entities."""
+        scope = row.get("scope", "personal")
+        return (scope == "personal" and row.get("user_id") == me) or scope in ("shared", "system")
 
     # ----- INSERT helpers ---------------------------------------------------
 
@@ -441,6 +492,16 @@ class _PayloadVectorStore:
     def count(self, collection: str) -> int:
         return sum(1 for k in self.points if k[0] == collection)
 
+    def count_where(self, collection: str, filter: dict) -> int:
+        total = 0
+        for k, p in self.points.items():
+            if k[0] != collection:
+                continue
+            payload = p.get("payload") or {}
+            if all(payload.get(c["key"]) == c["match"]["value"] for c in filter.get("must", [])):
+                total += 1
+        return total
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -475,22 +536,62 @@ def app(store, monkeypatch):
 
 
 def _override_user(app, user_id: str, role: str = "user") -> None:
-    """Force routes that ``Depends(get_user)`` to resolve to a specific user.
+    """Force routes that ``Depends(require_user)`` to resolve to a specific user.
+
+    Scope publish routes depend on :func:`authz.require_user`, which calls
+    :func:`auth.get_user` directly (not via FastAPI DI), so overriding
+    ``get_user`` alone is insufficient.
 
     Bypasses the JWT/cookie path so we don't have to mint tokens for
     every scenario; the auth tests already cover that surface.
     """
-    from auth import get_user
+    from authz import require_user
 
-    def _stub() -> UserContext:
-        return UserContext(user_id=user_id, is_authenticated=True, role=role)
-
-    app.dependency_overrides[get_user] = _stub
+    ctx = UserContext(user_id=user_id, is_authenticated=True, role=role)
+    app.dependency_overrides[require_user] = lambda: ctx
 
 
 @pytest.fixture
 def client(app):
     return TestClient(app)
+
+
+@pytest.fixture
+def kg_app(store, monkeypatch):
+    """App with BOTH the scope router (publish) and the v1 KG read router.
+
+    Lets a test publish an entity through the real ``routes/scope.py`` path
+    and then read it back through the real ``routes/api_v1/kg.py`` derivation
+    (``_derive_entity_share_fields`` + owner-projection collapse) against one
+    store — the route-contract integration the ``_KgStore`` unit fake cannot
+    prove on its own (LUM-581).
+    """
+    from routes.api_v1.kg import router as kg_router
+    from routes.scope import router as scope_router
+
+    application = FastAPI()
+    application.include_router(scope_router)
+    application.include_router(kg_router)
+    return application
+
+
+def _override_kg_user(app, monkeypatch, user_id: str, role: str = "user") -> None:
+    """Resolve both the publish (``require_user``) and KG (``get_user``) deps.
+
+    The KG handlers read ``get_user(request).user_id`` directly (imported into
+    ``routes.api_v1.kg``), so overriding ``require_user`` alone is not enough.
+    ``allows_shared=True`` keeps the household union without a users-service DB
+    read; ``get_graph_mode`` is pinned so ``_graph_mode_guard`` never 502s.
+    """
+    import routes.api_v1.kg as kgmod
+    from authz import require_user
+
+    import config as _config
+
+    ctx = UserContext(user_id=user_id, is_authenticated=True, role=role, allows_shared=True)
+    app.dependency_overrides[require_user] = lambda: ctx
+    monkeypatch.setattr(kgmod, "get_user", lambda request: ctx)
+    monkeypatch.setattr(_config, "get_graph_mode", lambda: "disabled")
 
 
 # ---------------------------------------------------------------------------
@@ -708,6 +809,140 @@ def test_s11_invalid_scope_filter_value_raises(store):
 
     with pytest.raises(ValueError):
         visible_filter(UserContext(user_id=ALICE), scope_filter="bogus")
+
+
+# ---------------------------------------------------------------------------
+# S15–S17 — LUM-581 entity KG read-path derivation (share_status / is_owner)
+# through the real routes/scope.py publish + routes/api_v1/kg.py read contract
+# ---------------------------------------------------------------------------
+
+
+def test_s15_kg_read_derives_share_status_for_owner(store, kg_app, monkeypatch):
+    """Owner publishes an entity, then the real KG read path reports
+    share_status='shared' + is_owner=true, and search collapses the owner's
+    own projection to a single row."""
+    src = store.seed_entity(user_id=ALICE, name="Acme Corp")
+    _override_kg_user(kg_app, monkeypatch, ALICE)
+    client = TestClient(kg_app)
+
+    pub = client.post(f"/api/v1/entities/{src}/publish", json={"scope": "shared"})
+    assert pub.status_code == 200, pub.text
+
+    got = client.get(f"/api/v1/kg/entities/{src}")
+    assert got.status_code == 200, got.text
+    body = got.json()
+    assert body["share_status"] == "shared"
+    assert body["is_owner"] is True
+
+    res = client.get("/api/v1/kg/search", params={"q": "Acme"})
+    assert res.status_code == 200, res.text
+    ents = res.json()["entities"]
+    # Owner-projection collapse: exactly one row for this entity (the source).
+    matching = [e for e in ents if e["entity_id"] == src]
+    assert len(matching) == 1, ents
+    assert matching[0]["share_status"] == "shared"
+    assert matching[0]["is_owner"] is True
+    # No duplicate "Acme Corp" projection row leaks to the owner.
+    assert len([e for e in ents if e["name"] == "Acme Corp"]) == 1
+
+
+def test_s16_kg_read_member_sees_shared_projection_not_owner(store, kg_app, monkeypatch):
+    """A second household member reads the shared projection with
+    share_status='shared' + is_owner=false; the owner's personal source
+    stays invisible to them."""
+    src = store.seed_entity(user_id=ALICE, name="Beta Inc")
+    _override_kg_user(kg_app, monkeypatch, ALICE)
+    client = TestClient(kg_app)
+    assert (
+        client.post(f"/api/v1/entities/{src}/publish", json={"scope": "shared"}).status_code == 200
+    )
+
+    proj_id = next(
+        r["entity_id"]
+        for k, r in store.rows.items()
+        if k[0] == "entities" and r.get("published_from") == src and r.get("scope") == "shared"
+    )
+
+    _override_kg_user(kg_app, monkeypatch, BOB)
+    client_b = TestClient(kg_app)
+
+    got = client_b.get(f"/api/v1/kg/entities/{proj_id}")
+    assert got.status_code == 200, got.text
+    assert got.json()["share_status"] == "shared"
+    assert got.json()["is_owner"] is False
+
+    res = client_b.get("/api/v1/kg/search", params={"q": "Beta"})
+    assert res.status_code == 200, res.text
+    ents = res.json()["entities"]
+    ids = {e["entity_id"] for e in ents}
+    assert proj_id in ids
+    proj = next(e for e in ents if e["entity_id"] == proj_id)
+    assert proj["share_status"] == "shared"
+    assert proj["is_owner"] is False
+    # Bob must never see Alice's personal source row.
+    assert src not in ids
+
+
+def test_s17_kg_search_excludes_other_users_personal_entity(store, kg_app, monkeypatch):
+    """The collapse/derivation must not widen isolation: another member's
+    unshared personal entity never appears in the caller's KG read."""
+    bob_secret = store.seed_entity(user_id=BOB, name="Bob Private Co")
+
+    _override_kg_user(kg_app, monkeypatch, ALICE)
+    client = TestClient(kg_app)
+
+    res = client.get("/api/v1/kg/search", params={"q": "Bob Private"})
+    assert res.status_code == 200, res.text
+    ids = {e["entity_id"] for e in res.json()["entities"]}
+    assert bob_secret not in ids
+
+    got = client.get(f"/api/v1/kg/entities/{bob_secret}")
+    assert got.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# S18 — LUM-44/LUM-581 projection write-ordering orphan window
+# A Postgres failure after the Qdrant upsert must NOT leave an orphaned shared
+# vector (searchable by the household with no owner-visible Postgres row).
+# ---------------------------------------------------------------------------
+
+
+class _FailingProjectionStore(_ScopedStore):
+    """Store that fetches/guards normally but fails the entities projection
+    INSERT — simulating a Postgres error *after* the Qdrant upsert."""
+
+    def _handle_projection_insert(self, table: str, pk_col: str, params: tuple):
+        if table == "entities":
+            raise RuntimeError("simulated Postgres failure after Qdrant upsert")
+        return super()._handle_projection_insert(table, pk_col, params)
+
+
+def test_s18_projection_postgres_failure_rolls_back_orphan_qdrant_point(monkeypatch):
+    from routes.scope import router as scope_router
+
+    store = _FailingProjectionStore()
+    vector_store = _PayloadVectorStore()
+    config._instances["metadata_store"] = store
+    config._instances["vector_store"] = vector_store
+    try:
+        src = store.seed_entity(user_id=ALICE, name="Orphan Co")
+
+        application = FastAPI()
+        application.include_router(scope_router)
+        _override_user(application, ALICE)
+        client = TestClient(application, raise_server_exceptions=False)
+
+        resp = client.post(f"/api/v1/entities/{src}/publish", json={"scope": "shared"})
+        # Publish fails (Postgres error surfaces) …
+        assert resp.status_code >= 500, resp.text
+        # … and critically, NO orphaned shared vector is left behind.
+        assert vector_store.count("entities") == 0, (
+            "orphaned shared entity vector left in Qdrant after a failed publish "
+            "(projection write-ordering orphan window not compensated)"
+        )
+    finally:
+        config._instances.pop("metadata_store", None)
+        config._instances.pop("vector_store", None)
 
 
 # ---------------------------------------------------------------------------

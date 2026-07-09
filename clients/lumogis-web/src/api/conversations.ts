@@ -6,7 +6,15 @@
 import type { ChatMessageDTO } from "./chat";
 import type { ApiClient } from "./client";
 
-export interface ConversationSummary {
+// LUM-582 Rung 1 — household conversation sharing (synchronous publish).
+export interface ConversationShareFields {
+  share_status?: "personal" | "shared";
+  is_owner?: boolean;
+  can_share?: boolean;
+  shared_summary?: string | null;
+}
+
+export interface ConversationSummary extends ConversationShareFields {
   conversation_id: string;
   title: string;
   summary: string;
@@ -23,7 +31,7 @@ export interface ConversationMessage {
   model: string | null;
 }
 
-export interface ConversationDetail {
+export interface ConversationDetail extends ConversationShareFields {
   conversation_id: string;
   title: string;
   summary: string;
@@ -73,6 +81,29 @@ export async function deleteConversation(
 ): Promise<ConversationDeleteResponse> {
   return client.delete<ConversationDeleteResponse>(
     `/api/v1/conversations/${encodeURIComponent(conversationId)}`,
+  );
+}
+
+// LUM-582 Rung 1 — share a conversation with the household (synchronous). The
+// conversation id IS the backing session id; the publish route is keyed by
+// session. ``shared_summary`` is the editable household-facing summary.
+export async function publishConversation(
+  client: ApiClient,
+  conversationId: string,
+  body: { shared_summary?: string } = {},
+): Promise<unknown> {
+  return client.postJson<{ scope: "shared"; shared_summary?: string }, unknown>(
+    `/api/v1/sessions/${encodeURIComponent(conversationId)}/publish`,
+    { scope: "shared", ...body },
+  );
+}
+
+export async function unpublishConversation(
+  client: ApiClient,
+  conversationId: string,
+): Promise<void> {
+  return client.delete<void>(
+    `/api/v1/sessions/${encodeURIComponent(conversationId)}/publish`,
   );
 }
 

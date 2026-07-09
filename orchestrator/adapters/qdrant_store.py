@@ -22,6 +22,8 @@ from qdrant_client.models import FieldCondition
 from qdrant_client.models import Filter
 from qdrant_client.models import Fusion
 from qdrant_client.models import FusionQuery
+from qdrant_client.models import KeywordIndexParams
+from qdrant_client.models import KeywordIndexType
 from qdrant_client.models import MatchAny
 from qdrant_client.models import MatchValue
 from qdrant_client.models import Modifier
@@ -135,6 +137,35 @@ class QdrantStore:
             _log.warning(
                 "Qdrant payload index create failed for '%s.%s': %s — visible filter "
                 "will still work but searches may scan full payload.",
+                collection,
+                field,
+                exc,
+            )
+
+    def ensure_tenant_payload_index(self, collection: str, field: str) -> None:
+        """Create a tenant keyword payload index on ``field`` (LUM-293 ``bank`` isolation)."""
+        try:
+            self._client.create_payload_index(
+                collection_name=collection,
+                field_name=field,
+                field_schema=KeywordIndexParams(
+                    type=KeywordIndexType.KEYWORD,
+                    is_tenant=True,
+                ),
+            )
+            _log.info("Created Qdrant tenant payload index '%s.%s'", collection, field)
+        except Exception as exc:
+            msg = str(exc).lower()
+            if "already" in msg or "exist" in msg:
+                _log.debug(
+                    "Qdrant tenant payload index '%s.%s' already exists — skipping",
+                    collection,
+                    field,
+                )
+                return
+            _log.warning(
+                "Qdrant tenant payload index create failed for '%s.%s': %s — "
+                "bank filter will still work but searches may scan full payload.",
                 collection,
                 field,
                 exc,
@@ -280,22 +311,37 @@ class QdrantStore:
         info = self._client.get_collection(collection_name=collection)
         return info.points_count or 0
 
+    def count_where(self, collection: str, filter: dict) -> int:
+        """Exact server-side count of points matching a payload filter (LUM-584)."""
+        q_filter = self._build_filter(filter)
+        result = self._client.count(
+            collection_name=collection,
+            count_filter=q_filter,
+            exact=True,
+        )
+        return result.count or 0
+
     def scroll_collection(
         self,
         name: str,
         user_id: str | None = None,
         with_vectors: bool = False,
         batch_size: int = 100,
+        file_path: str | None = None,
     ) -> list[dict]:
         """Return all points in *name* as plain dicts.
 
-        Used by backup and export — not part of the VectorStore Protocol.
+        Used by backup/export and by the LUM-157 shared-document projection —
+        not part of the VectorStore Protocol. ``file_path`` narrows the scroll
+        to one document's chunks (selectivity for the projection path); combine
+        with ``user_id`` to scope to a single owner's copy of that document.
         """
-        query_filter = None
+        conds = []
         if user_id is not None:
-            query_filter = Filter(
-                must=[FieldCondition(key="user_id", match=MatchValue(value=user_id))]
-            )
+            conds.append(FieldCondition(key="user_id", match=MatchValue(value=user_id)))
+        if file_path is not None:
+            conds.append(FieldCondition(key="file_path", match=MatchValue(value=file_path)))
+        query_filter = Filter(must=conds) if conds else None
 
         points: list[dict] = []
         offset = None
@@ -335,14 +381,22 @@ class QdrantStore:
         return Filter(must=[QdrantStore._field_condition_from_clause(branch)])
 
     @staticmethod
+    def _must_entry_to_filter(entry: dict) -> FieldCondition | Filter:
+        """One element of a top-level ``must`` list — field clause or nested filter."""
+        if "key" in entry:
+            return QdrantStore._field_condition_from_clause(entry)
+        return QdrantStore._build_filter(entry)
+
+    @staticmethod
     def _build_filter(filter_dict: dict) -> Filter:
         """Translate portable filter dict to Qdrant :class:`Filter`.
 
         Supports the shapes emitted by :func:`visibility.visible_qdrant_filter`:
 
-        * Top-level ``must`` — AND of field clauses (``match.value`` or ``match.any``).
         * Top-level ``should`` — OR of branches; each branch is either a nested
           ``{"must": [ ...clauses ]}`` or a single field clause dict.
+        * Top-level ``must`` — AND of field clauses and/or nested filter dicts
+          (e.g. visibility ``should`` union AND ``file_path`` from auto-RAG).
 
         The default household-union visibility filter uses only ``should``; the
         previous implementation ignored that key and built ``Filter(must=[])``,
@@ -352,7 +406,5 @@ class QdrantStore:
             branches = filter_dict["should"]
             should_filters = [QdrantStore._should_branch_to_filter(b) for b in branches]
             return Filter(should=should_filters)
-        conditions = [
-            QdrantStore._field_condition_from_clause(c) for c in filter_dict.get("must", [])
-        ]
+        conditions = [QdrantStore._must_entry_to_filter(c) for c in filter_dict.get("must", [])]
         return Filter(must=conditions)

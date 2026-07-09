@@ -108,8 +108,13 @@ def summarize_session(
         if config.is_injection_sanitiser_enabled()
         else _SUMMARIZE_PROMPT
     )
+    from services.privacy_mode import resolve_job_model
+
     try:
-        provider = config.get_llm_provider("llama", user_id=user_id)
+        job_model = resolve_job_model("llama", user_id)
+        if not job_model:
+            return SessionSummary(session_id=sid, summary="")
+        provider = config.get_llm_provider(job_model, user_id=user_id)
         response = provider.chat(
             messages=[{"role": "user", "content": summarise_prompt_body + conversation_text}],
             system="You are a precise summarizer. Respond only with valid JSON.",
@@ -178,7 +183,8 @@ def store_session(
         try:
             ms.execute(
                 """
-                INSERT INTO sessions (session_id, summary, topics, entities, entity_ids, user_id, scope)
+                INSERT INTO sessions
+                    (session_id, summary, topics, entities, entity_ids, user_id, scope)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (session_id) DO UPDATE
                   SET summary   = EXCLUDED.summary,
@@ -295,7 +301,7 @@ def recent_sessions(
     where_clause, where_params = visible_filter(user, scope_filter)
     try:
         rows = ms.fetch_all(
-            "SELECT session_id, summary, topics, entities, entity_ids, scope "
+            "SELECT session_id, summary, topics, entities, entity_ids, scope, updated_at "
             "FROM sessions "
             f"WHERE {where_clause} "
             "ORDER BY updated_at DESC "
@@ -314,6 +320,7 @@ def recent_sessions(
             entities=r.get("entities") or [],
             entity_ids=r.get("entity_ids") or [],
             scope=r.get("scope", "personal"),
+            updated_at=r.get("updated_at"),
         )
         for r in rows
     ]

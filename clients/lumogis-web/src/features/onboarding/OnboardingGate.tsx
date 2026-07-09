@@ -1,18 +1,30 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Lumogis
-//
-// Hosts the first-run onboarding modal for authenticated shell routes (LUM-165).
 
-import { useCallback, type JSX } from "react";
+import { useCallback, useMemo, type JSX } from "react";
 
+import { INVITE_ONBOARDING_STORAGE_KEY, type InviteOnboardingHintStored } from "../../api/invites";
 import { describeApiError } from "../../api/webPush";
 import { useAuth } from "../../auth/AuthProvider";
 import { OnboardingModal } from "./OnboardingModal";
 import { useOnboardingStatus } from "./useOnboardingStatus";
 
+function readInviteOnboardingHint(): InviteOnboardingHintStored | null {
+  try {
+    const raw = sessionStorage.getItem(INVITE_ONBOARDING_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as InviteOnboardingHintStored;
+    if (typeof parsed.allows_shared !== "boolean") return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 export function OnboardingGate(): JSX.Element | null {
   const { client } = useAuth();
   const { query, completeOnboarding, completeError, clearCompleteError } = useOnboardingStatus(client);
+  const inviteOnboarding = useMemo(() => readInviteOnboardingHint(), []);
 
   const onComplete = useCallback(async () => {
     await completeOnboarding();
@@ -50,6 +62,7 @@ export function OnboardingGate(): JSX.Element | null {
 
   return (
     <OnboardingModal
+      inviteOnboarding={inviteOnboarding}
       onComplete={onComplete}
       completeError={completeError}
       onClearCompleteError={clearCompleteError}

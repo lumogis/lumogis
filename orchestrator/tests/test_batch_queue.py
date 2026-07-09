@@ -106,12 +106,12 @@ class _FakeBatchQueueStore:
                 }
             return None
 
-        if q.startswith("select attempt from user_batch_jobs"):
+        if q.startswith("select attempt") and "from user_batch_jobs" in q:
             (jid,) = p
             r = self.rows.get(int(jid))
             if not r or r["status"] != "running":
                 return None
-            return {"attempt": r["attempt"]}
+            return {"attempt": r["attempt"], "user_id": r["user_id"], "kind": r["kind"]}
         return None
 
     def execute(self, query: str, params: tuple | None = None) -> None:
@@ -236,7 +236,7 @@ def test_enqueue_inserts_row_with_pending_status(_fake_batch_store) -> None:
         pass
 
     @batch_queue.register_batch_handler("noop", P)
-    def _h(*, user_id: str, payload: P) -> None:
+    def _h(*, user_id: str, payload: P, job_id: int) -> None:
         pass
 
     jid = batch_queue.enqueue(user_id="alice", kind="noop", payload={})
@@ -259,7 +259,7 @@ def test_claim_next_respects_per_user_max_concurrent(monkeypatch, _fake_batch_st
         pass
 
     @batch_queue.register_batch_handler("noop", P)
-    def _h(*, user_id: str, payload: P) -> None:
+    def _h(*, user_id: str, payload: P, job_id: int) -> None:
         pass
 
     batch_queue.enqueue(user_id="alice", kind="noop", payload={})
@@ -280,7 +280,7 @@ def test_run_one_tick_dispatches_to_handler(_fake_batch_store) -> None:
         n: int = 0
 
     @batch_queue.register_batch_handler("rec", P)
-    def _h(*, user_id: str, payload: P) -> None:
+    def _h(*, user_id: str, payload: P, job_id: int) -> None:
         seen.append((user_id, payload.n))
 
     batch_queue.enqueue(user_id="bob", kind="rec", payload={"n": 7})
@@ -295,7 +295,7 @@ def test_cancel_pending_session_end_jobs_marks_matching_pending_dead(_fake_batch
         messages: list[dict] = []
 
     @batch_queue.register_batch_handler("session_end", P)
-    def _h(*, user_id: str, payload: P) -> None:
+    def _h(*, user_id: str, payload: P, job_id: int) -> None:
         pass
 
     sid = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"

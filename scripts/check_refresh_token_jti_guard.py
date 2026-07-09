@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Lumogis
-"""Fail if obsolete ``refresh_token_jti`` string appears in orchestrator prod code."""
+"""Fail if obsolete ``refresh_token_jti`` string appears in orchestrator prod code.
+
+The column was dropped in ``postgres/migrations/037-drop-users-refresh-token-jti.sql``
+(LUM-244), retiring the LUM-29 / ADR 041 dual-write window. This guard stays in
+place to prevent any new production code from referencing the now-nonexistent
+column. ``orchestrator/tests`` is excluded (mocks may still model historical SQL).
+"""
 
 from __future__ import annotations
 

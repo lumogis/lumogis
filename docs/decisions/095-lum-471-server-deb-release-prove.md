@@ -19,7 +19,7 @@
 
 **Treat Lumogis Server as a separate deb product with generated sidecar metadata and dual Linux lib-root resolution.**
 
-1. **Release prove:** `make server-prove-server-deb-build` runs `hub-build-server` and validates `Lumogis-Server_*.deb` (size logged, `dpkg-deb -I`, `Package` field `lumogis-server`).
+1. **Release prove:** `make server-prove-server-deb-build` runs **`make server-build`** and validates `Lumogis-Server_*.deb` (size logged, `dpkg-deb -I`, `Package` field `lumogis-server`).
 2. **Deb metadata generation:** `prepare-hub-deb-sidecars.sh` writes both Hub (`/usr/lib/Lumogis/`) and Server (`/usr/lib/Lumogis-Server/`) `deb.files` maps from the host triple — no static arch-specific JSON in source control.
 3. **Runtime resolution:** `paths.rs` resolves sidecar `.real` files and `core-venv/` under **both** `/usr/lib/Lumogis` and `/usr/lib/Lumogis-Server`, preferring `Lumogis-Server` when the running binary is `lumogis-server`.
 
@@ -27,7 +27,7 @@
 
 ## Alternatives considered
 
-- **Cargo-only prove (`hub-prove-server-profile`)** — sufficient for supervisor logic but does not catch deb sidecar / `productName` regressions; rejected as LUM-471 closure.
+- **Cargo-only prove (`make server-prove-server-profile`)** — sufficient for supervisor logic but does not catch deb sidecar / `productName` regressions; rejected as LUM-471 closure.
 - **Share Hub deb with two binaries** — rejected in LUM-469 arbitration; separate `Lumogis-Server_*.deb` required.
 - **Single `/usr/lib/Lumogis/` root for both products** — rejected; server deb metadata uses `Lumogis-Server` prefix.
 

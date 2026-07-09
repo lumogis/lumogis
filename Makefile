@@ -14,23 +14,26 @@ ARGS ?=
 # LUM-319 / POSIX: recipes use `set -o pipefail` (e.g. `compose-test-doctor`); Ubuntu `/bin/sh` is dash — use bash.
 SHELL := /bin/bash
 
-.PHONY: dev build test check-pytest test-integration test-integration-full e2e-ingest-restart lint ingest health logs doctor \
+.PHONY: dev build test check-pytest test-integration test-integration-full e2e-ingest-restart lint ingest health logs doctor doctor-fix doctor-fix-dry doctor-fix-apply \
         search-dev search-build search-build-client \
+        lumogis-cursor-install test-lumogis-mcp test-cursor-integration test-cursor-integration-full \
+        seed-cursor-integration-fixture prove-cursor-integration-full \
         audit-local bandit-check web-audit-fix \
         compose-policy-check \
         graph-relates-to-merge-policy-check \
         verify-public-rc verify-public-rc-full release-doc-sync-check \
         compose-test-backup backup backup-prune backup-verify restore \
+        migrate-dry-run update rollback \
         test-backup-retention \
         compose-policy-check compose-policy-check-baseline compose-policy-check-adversarial \
         compose-policy-check-adversarial-envfile \
         mock-capability-test \
-        sync-vendored test-kg test-kg-image compose-test-kg \
+        sync-vendored test-kg test-kg-image compose-test-kg compose-test-kg-integration \
         test-graph-parity \
         demo-seed demo-test demo-ready \
         web-install web-codegen web-codegen-check openapi-check openapi-breaking-check web-dockerfile-check shellcheck-web-docker-build-paths shellcheck-ci-paths web-docker-build web-test web-lint web-build web-dev web-e2e \
         test-web-e2e \
-        web-e2e-prove web-e2e-ollama-prove web-caddy-headers web-caddy-headers-prove \
+        web-e2e-prove web-e2e-ollama-prove web-demo overlay-e2e overlay-e2e-smoke web-caddy-headers web-caddy-headers-prove \
         m1-compat-with-retry \
         auth-sessions-grep-guard \
         changelog-check \
@@ -53,6 +56,17 @@ logs:
 # LUM-199 / LUM-320 — operator health CLI + optional --fix (see scripts/doctor/README.md).
 doctor:
 	@bash "$(CURDIR)/scripts/doctor/run.sh" $(ARGS)
+
+# LUM-343 — ergonomic sugar over `doctor ARGS=...`. No new behaviour or JSON
+# contract: each target just prepends the relevant --fix flags, then appends
+# $(ARGS) so extra flags (e.g. --json, --yes, --security) still pass through.
+# `doctor-fix` / `doctor-fix-dry` are dry-run (no mutations); `doctor-fix-apply`
+# mutates and still requires --yes in non-interactive contexts (CI/pipes).
+doctor-fix doctor-fix-dry:
+	@bash "$(CURDIR)/scripts/doctor/run.sh" --fix --dry-run $(ARGS)
+
+doctor-fix-apply:
+	@bash "$(CURDIR)/scripts/doctor/run.sh" --fix --apply $(ARGS)
 
 # LUM-319 — CI parity: disposable lumogis-test (docker-compose.yml + docker-compose.test-doctor.yml;
 # avoids docker-compose.test.yml include chain — GHA "orchestrator conflicts with imported resource"),
@@ -189,6 +203,24 @@ verify-public-rc: ## RC gate (smoke) — run before /publish-private-main-to-pub
 	$(MAKE) web-lint
 	$(MAKE) web-test
 	$(MAKE) web-build
+	@# LUM-313 — run the offline OpenAPI breaking-change gate locally so the RC
+	@# gate is closer to "runnable proof" (ADR-061 deferred this from LUM-303).
+	@# oasdiff is a Go dev tool that may be absent on dev machines; CI
+	@# (.github/workflows/ci.yml openapi-check job) is the binding gate, so a
+	@# missing oasdiff degrades to a documented WARN. Set
+	@# VERIFY_PUBLIC_RC_REQUIRE_OPENAPI_BREAKING=1 to make it a hard local gate.
+	@if command -v oasdiff >/dev/null 2>&1; then \
+	  echo "==> openapi-breaking-check (RC gate, LUM-313)"; \
+	  $(MAKE) openapi-breaking-check; \
+	elif [ "$${VERIFY_PUBLIC_RC_REQUIRE_OPENAPI_BREAKING:-}" = "1" ]; then \
+	  echo "ERROR: oasdiff not on PATH and VERIFY_PUBLIC_RC_REQUIRE_OPENAPI_BREAKING=1 (LUM-313)" >&2; \
+	  echo "       install Go 1.26+ then: go install github.com/oasdiff/oasdiff@v1.15.2" >&2; \
+	  exit 1; \
+	else \
+	  echo "WARN: openapi-breaking-check skipped — oasdiff not on PATH (LUM-313)."; \
+	  echo "      Binding gate is CI (ci.yml openapi-check job). Set"; \
+	  echo "      VERIFY_PUBLIC_RC_REQUIRE_OPENAPI_BREAKING=1 to require it locally."; \
+	fi
 	@if [ "$${VERIFY_PUBLIC_RC_FORCE_INTEGRATION:-}" = "1" ]; then \
 	  scripts/integration-public-rc.sh full-cycle; \
 	elif [ "$${VERIFY_PUBLIC_RC_SKIP_INTEGRATION:-}" = "1" ]; then \
@@ -253,10 +285,25 @@ compose-test-stack-control:
 compose-test-integration:
 	COMPOSE_FILE=docker-compose.yml:docker-compose.falkordb.yml \
 	QDRANT_HOST_PORT=$${QDRANT_HOST_PORT:-6335} \
+	docker compose up -d falkordb postgres qdrant
+	COMPOSE_FILE=docker-compose.yml:docker-compose.falkordb.yml \
+	QDRANT_HOST_PORT=$${QDRANT_HOST_PORT:-6335} \
 	docker compose run --rm \
+	  -e GRAPH_BACKEND=falkordb \
+	  -e FALKORDB_URL=redis://falkordb:6379 \
 	  -v $(PWD)/tests:/integration-tests:ro \
 	  orchestrator \
-	  sh -c "pip install -q -r requirements-dev.txt && python -m pytest /integration-tests/integration -v --tb=short -m 'integration and not slow and not manual'"
+	  sh -c "pip install -q -r /project/orchestrator/requirements-dev.txt && cd /project/orchestrator && PYTHONPATH=/project/services/lumogis-graph:. python -m pytest /integration-tests/integration tests/integration/test_entity_edges_reconcile_falkordb_live.py tests/integration/test_document_shared_entity_cascade_live.py tests/integration/test_document_shared_graph_recall_live.py tests/integration/test_document_entity_unshare_live.py tests/integration/test_document_reingest_entity_retraction_live.py -v --tb=short -m 'integration and not slow and not manual'"
+
+compose-test-temporal-compose:
+	COMPOSE_FILE=docker-compose.yml:docker-compose.test.yml:docker-compose.public-rc-stack.yml \
+	  docker compose --env-file config/test.env.example run --rm --no-deps \
+	  --entrypoint sh \
+	  -v $(PWD)/tests:/integration-tests:ro \
+	  -e LUMOGIS_GRAPH_HEALTH_URL=http://lumogis-graph:8001/health \
+	  -e LUMOGIS_API_URL=http://orchestrator:8000 \
+	  orchestrator \
+	  -c "pip install -q -r /project/orchestrator/requirements-dev.txt && python -m pytest /integration-tests/integration/test_temporal_compose.py -v --tb=short"
 
 # LUM-185 — DR backup sidecar (operator targets).
 backup:
@@ -276,11 +323,24 @@ SNAPSHOT ?=
 restore:
 	docker compose run --rm -it backup /scripts/backup/restore.sh $(SNAPSHOT) --yes
 
+# --- Update / lifecycle (LUM-187) ---
+migrate-dry-run: ## Preview pending DB migrations without applying them (LUM-187)
+	docker compose run --rm orchestrator python3 /app/db_migrations.py --dry-run
+
+update: ## Update Lumogis: pull images, restart, apply migrations, health-check (LUM-187)
+	bash scripts/update/update.sh
+
+rollback: ## Roll back to the previous images captured by `make update` (needs recent backup) (LUM-187)
+	bash scripts/update/rollback.sh
+
 compose-test-backup:
 	QDRANT_HOST_PORT=$${QDRANT_HOST_PORT:-6336} bash scripts/integration-backup-roundtrip.sh
 
 test-backup-retention:
 	bash tests/unit/test_backup_retention.sh
+
+test-backup-bgsave-wait:
+	bash tests/unit/test_backup_bgsave_wait.sh
 
 # Phase 5 dev-only second capability (not part of default compose); see services/lumogis-mock-capability/README.md
 mock-capability-test:
@@ -331,6 +391,7 @@ check-pytest:
 # supplies a bearer token. Host shells often export AUTH_ENABLED=true from compose.
 test: check-pytest
 	$(MAKE) test-backup-retention
+	$(MAKE) test-backup-bgsave-wait
 	cd orchestrator && AUTH_ENABLED=false $(PYTHON) -m pytest -x -q
 	cd stack-control && $(PYTHON) -m pytest test_main.py -q
 
@@ -400,7 +461,41 @@ compose-test-kg: test-kg-image
 	  -e KG_ALLOW_INSECURE_WEBHOOKS=true \
 	  -e KG_SCHEDULER_ENABLED=false \
 	  -e LOG_LEVEL=ERROR \
-	  lumogis-graph:test python -m pytest tests -x -q
+	  lumogis-graph:test python -m pytest tests -x -q -m "not integration"
+
+# LUM-567 — FalkorDB-backed temporal integration (requires lumogis-test network).
+compose-test-kg-integration: test-kg-image
+	docker run --rm --network $${COMPOSE_PROJECT_NAME:-lumogis-test}_default \
+	  -e KG_INTEGRATION_FALKORDB=1 \
+	  -e GRAPH_BACKEND=falkordb \
+	  -e FALKORDB_URL=redis://falkordb:6379 \
+	  -e POSTGRES_HOST=postgres \
+	  -e POSTGRES_PORT=5432 \
+	  -e POSTGRES_USER=lumogis \
+	  -e POSTGRES_PASSWORD=lumogis-dev \
+	  -e POSTGRES_DB=lumogis \
+	  -e KG_ALLOW_INSECURE_WEBHOOKS=true \
+	  -e KG_SCHEDULER_ENABLED=false \
+	  -e LOG_LEVEL=ERROR \
+	  lumogis-graph:test python -m pytest tests/test_temporal_integration.py -v --tb=short -m integration
+
+# LUM-567 — full P1 slice: KG unit + FalkorDB integration + premium temporal + live eval.
+compose-test-temporal-lum567: compose-test-kg compose-test-kg-integration compose-test-temporal-compose
+	$(MAKE) compose-test-temporal-eval
+
+compose-test-temporal-eval:
+	COMPOSE_FILE=docker-compose.yml:docker-compose.test.yml:docker-compose.public-rc-stack.yml \
+	  docker compose --env-file config/test.env.example run --rm --no-deps \
+	  --entrypoint sh \
+	  -v $(PWD):/project \
+	  -e LUMOGIS_TEMPORAL_EVAL=1 \
+	  -e LUMOGIS_FF_TEMPORAL_KG=true \
+	  -e OLLAMA_URL=http://ollama:11434 \
+	  -e LUMOGIS_TEMPORAL_JUDGE_MODEL=llama \
+	  -e LUMOGIS_TEMPORAL_EXTRACT_MODEL=llama \
+	  -e GRAPH_MODE=inprocess \
+	  orchestrator \
+	  -c "pip install -q -r /project/orchestrator/requirements.txt && pip install -q -r /project/orchestrator/requirements-dev.txt && cd /project/orchestrator && PYTHONPATH=/project/services/lumogis-graph:/project/orchestrator python -m pytest tests/premium/temporal_eval/test_contradiction_eval.py::test_contradiction_eval_runs_and_emits_report tests/premium/test_temporal_pipeline.py -q --tb=short"
 
 # Local-venv variant for contributors with a KG-side venv set up.
 test-kg:
@@ -500,6 +595,33 @@ search-dev:
 search-build search-build-client:
 	cd clients/lumogis-search && npm ci && npm run build && npm run tauri:build
 
+# LUM-292 — MCP stdio bridge for Cursor (`clients/lumogis-mcp/`). Public export includes this tree.
+lumogis-cursor-install:
+	bash scripts/install-cursor-mcp.sh
+
+test-lumogis-mcp:
+	cd clients/lumogis-mcp && $(PYTHON) -m pip install -q -e '.[dev]' && $(PYTHON) -m pytest -q
+
+# LUM-299: Cursor integration smoke (in-process breadth + stdio slice; no Docker).
+# Sets LUMOGIS_CURSOR_INTEGRATION=1 so the p95 recall gate runs (~220 MCP calls).
+test-cursor-integration:
+	cd orchestrator && LUMOGIS_CURSOR_INTEGRATION=1 $(PYTHON) -m pytest -q tests/test_cursor_integration.py
+	$(MAKE) test-lumogis-mcp
+
+# LUM-299 opt-in: real Postgres+Qdrant stack (lumogis-test compose); hard p95 < 200ms.
+# Prerequisites: full lumogis-test stack up, `make seed-cursor-integration-fixture`,
+# then export LUMOGIS_CURSOR_INTEGRATION_MCP_TOKEN (or `make prove-cursor-integration-full`).
+test-cursor-integration-full:
+	cd orchestrator && LUMOGIS_CURSOR_INTEGRATION_FULL=1 $(PYTHON) -m pytest -q tests/test_cursor_integration_full.py
+
+# LUM-540: seed coding_bank.json into lumogis-test (COMPOSE_PROJECT_NAME=lumogis-test).
+seed-cursor-integration-fixture:
+	bash scripts/seed-cursor-integration-fixture.sh
+
+prove-cursor-integration-full: seed-cursor-integration-fixture
+	@set -a && . ai-workspace/mcp/cursor-integration-full.env && set +a && \
+	  $(MAKE) test-cursor-integration-full
+
 # Optional extended Server targets when `Makefile.server.mk` is present.
 -include Makefile.server.mk
 
@@ -519,6 +641,15 @@ test-web-e2e: web-e2e
 web-e2e-prove:
 	cd clients/lumogis-web && npm run e2e:prove
 
+# Record the launch demo GIF (LUM-181): scripted two-user household-KB flow
+# (admin upload -> share -> member search + document-chat) -> .webm -> GIF.
+# Requires a running stack + admin creds (LUMOGIS_WEB_SMOKE_EMAIL/_PASSWORD) and
+# member creds (DEMO_MEMBER_EMAIL/DEMO_MEMBER_PASSWORD), plus ffmpeg for the GIF.
+# NOT part of CI. Runbook: clients/lumogis-web/tests/e2e/demo/README.md
+web-demo:
+	cd clients/lumogis-web && npx playwright test -c playwright.demo.config.ts
+	cd clients/lumogis-web && ./scripts/demo-to-gif.sh test-results/demo/video docs/assets/demo.gif
+
 # Opt-in Ollama mutation Playwright (LUM-450). Requires full stack (docker compose up -d
 # including ollama), smoke creds, LUMOGIS_E2E_EXPECT_ADMIN=1 and LUMOGIS_E2E_EXPECT_OLLAMA=1.
 # NOT part of web-e2e-prove or verify-public-rc-full (ADR-064).
@@ -528,6 +659,17 @@ web-e2e-ollama-prove:
 	  LUMOGIS_E2E_EXPECT_ADMIN=1 \
 	  LUMOGIS_E2E_EXPECT_OLLAMA=1 \
 	  npx playwright test admin_ollama_mutations --workers=1
+
+# LUM-402 — overlay GUI E2E (WebdriverIO + tauri-driver) for the Lumogis Search Tauri
+# overlay. Linux + xvfb only (WebKitGTK WebDriver); needs webkit2gtk-driver + Rust + Node.
+# overlay-e2e: 5 MVP scenarios with `invoke` mocked (no Docker). See ADR-110.
+# overlay-e2e-smoke: one live login+search round-trip — requires the RC compose Core up
+# and OVERLAY_E2E_SMOKE_EMAIL / OVERLAY_E2E_SMOKE_PASSWORD in the environment.
+overlay-e2e:
+	cd clients/lumogis-search && xvfb-run -a npm run e2e
+
+overlay-e2e-smoke:
+	cd clients/lumogis-search && OVERLAY_E2E_SMOKE=1 xvfb-run -a npm run e2e:smoke
 
 # Requires stack up (docker compose up -d). Uses the orchestrator image (pytest+httpx)
 # and fetches the Caddy service at http://caddy (set LUMOGIS_WEB_BASE_URL to override).
@@ -553,3 +695,6 @@ demo-test: ## Test all demo queries pass before recording
 	bash scripts/demo-test.sh
 
 demo-ready: demo-seed demo-test ## Full demo prep in one command
+
+linear-graph: ## Serve Linear backlog graph (paste lin_api_… key in browser)
+	bash scripts/serve-linear-graph.sh

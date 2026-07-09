@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "description": "Lumogis doctor repair allowlist (K) — the services doctor --fix may compose up/restart. Deliberately narrower than the compose config (S). See LUM-340 and docs/decisions/061-lum-199-lumogis-doctor.md. repair.sh falls back to a built-in copy of this set if this file is missing or invalid.",
+  "services": [
+    "orchestrator",
+    "postgres",
+    "caddy",
+    "lumogis-web",
+    "ollama",
+    "qdrant",
+    "falkordb",
+    "redis",
+    "paperless-ngx",
+    "gotenberg"
+  ]
+}

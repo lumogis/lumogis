@@ -11,11 +11,68 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [0.8.0] — 2026-06-15
+## [0.9.0] — 2026-07-09
 
 ### Added
 
-- **Automated disaster-recovery backups** — scheduled Postgres, Qdrant, and optional FalkorDB snapshots via a Compose backup sidecar; operator commands **`make backup`**, **`make backup-verify`**, **`make backup-prune`**, and **`make restore SNAPSHOT=…`**; integrity manifests and 7-daily / 4-weekly retention; operator guide **[`docs/guides/backup-restore.md`](docs/guides/backup-restore.md)**.
+- **Household document sharing** — owners can share library documents with the household; shared chunks become searchable and usable in document-chat for other members; large shares run as background jobs with honest partial-success reporting.
+- **Household entity sharing** — owners can publish extracted entities from Search; when graph mode is enabled, shared documents also cascade entities into shared Postgres, Qdrant, and (in service graph mode) FalkorDB with refcounted retraction on unshare or purge.
+- **Household conversation sharing** — share a conversation summary with the household from chat; members can discover shared threads through the existing sharing surfaces.
+- **Household invite flow** — admins mint single-use invite links; new members redeem, set credentials, and complete an optional welcome onboarding step; admins can gate whether invitees may access shared scope.
+- **Household admin panel** — member and admin counts, last-active column, promote/demote with confirmation, and self-guard rails on disable and delete.
+- **Member audit log** — **`/audit`** for all authenticated users with date presets, event-type filters, pagination, and privacy or cloud markers on external-call rows.
+- **Cloud LLM privacy mode** — hard local-only enforcement at the provider chokepoint; fresh installs default to local-only; per-user further restriction and instance-level admin lock; blocked remote attempts are audit-logged; plan or complex flows fall back to local Ollama with a warning.
+- **MCP stdio bridge for Cursor** — new AGPL client package **`clients/lumogis-mcp/`** (`lumogis-mcp`) forwards MCP tool calls to Core's Streamable HTTP endpoint; **`make lumogis-cursor-install`** merges server config into **`~/.cursor/mcp.json`**.
+- **MCP memory write surface** — **`add_memory`**, **`add_entity`**, and **`add_relation`** on **`/mcp/`** persist into Postgres and Qdrant with optional graph projection; **`forget`**, **`update_observation`**, and **`checkpoint`** support reversible archive and supersede flows.
+- **MCP `recall` fusion tool** — read tool combining semantic, BM25 keyword, one-hop graph, and temporal validity filters with reciprocal rank fusion and optional cross-encoder rerank.
+- **MCP token scopes** — mint-time **`mcp:read`** / **`mcp:write`** selection; the Web UI defaults to read-only unless write is explicitly granted; omitted scopes now mint read-only tokens instead of unrestricted ones.
+- **Multi-bank memory isolation** — separate **`coding`**, **`personal`**, and **`default`** banks for MCP memories and graph projections.
+- **Document chat mode** — scoped **`POST /api/v1/chat/completions`** with optional **`document_id`**, citation metadata on responses, and Lumogis Web route **`/documents/:documentId/chat`** with a context strip.
+- **Ingest job progress** — per-stage progress (extract → chunk → embed → graph) via poll endpoints and SSE on the events stream; uploads return **`job_id`**; the upload panel shows multi-file batch progress.
+- **Software update visibility** — admin System status card comparing the running version to the latest GitHub release; operator **`scripts/update/`** pull and rollback helpers with migration preview (**`make migrate-dry-run`**).
+- **Feature-flag registry** — experimental subsystems gated by **`LUMOGIS_FF_*`** env vars (all default off) with a read-only admin visibility endpoint.
+- **Household biography conflict review** — divergent shared-scope facts surface for admin review with represent-both, confirm-one, keep-both, and dismiss outcomes; losers are archived, not deleted.
+- **LLM circuit breaker** — consecutive-failure breaker on the central LLM provider path to limit runaway spend when a model or upstream is down.
+- **Lumogis Search Wayland recovery** — CLI **`--toggle`** / **`--show`** / **`--hide`**, cold-start show-once, and compositor-keybinding guidance when in-app global hotkeys fail on Wayland.
+- **`EVALUATION.md`** — public operator self-evaluation guide at repo root on AGPL export; linked from **`README.md`**.
+
+### Changed
+
+- **Household RBAC hardening** — scope publish and unpublish routes require authenticated users; **`last_seen_at`** is tracked for admin visibility.
+- **Privacy mode defaults** — new installs start local-only; existing cloud-using installs are migrated to explicit opt-in via settings migration.
+- **MCP tool annotations** — every Core and KG MCP tool advertises MCP **`ToolAnnotations`** hints so clients can auto-approve safe read-only tools.
+- **MCP `forget` / `update_observation`** — archived memories also purge projected FalkorDB relationships on the correct bank graph when graph mode is enabled.
+- **User data export/import** — FalkorDB export covers all configured banks; legacy combined export format is retained for backward compatibility.
+- **`make doctor`** — versioned core-service allowlist manifest, **`--fix`** Makefile shortcuts, and restart-loop guard on automated compose restarts.
+- **Unscoped v1 chat context** — **`POST /api/v1/chat/completions`** without **`document_id`** now receives session memory, optional auto-RAG, and graph snippets consistent with legacy chat posture.
+- **Web UX polish** — shared loading skeletons, plain-language error states with retry, and a non-admin service-health banner on chat when Ollama, Qdrant, or graph paths degrade.
+
+### Fixed
+
+- **Document re-ingest orphans** — sparse Qdrant chunks left after partial ingest blocks are cleared via payload-scoped delete before re-indexing.
+- **Share / unshare races** — rapid toggle no longer drops an unshare intent when a share job is still in flight.
+- **Shared-scope visibility for personal-only members** — knowledge-graph Qdrant and Cypher filters honour **`allows_shared=false`** in parity with orchestrator paths.
+- **Conversation purge leftovers** — background sweeper retries failed Qdrant or graph arms for partially purged conversations.
+- **Audit log routing** — browser navigations to **`/audit`** serve the Lumogis Web SPA instead of the legacy JSON API route.
+- **Shared entity badges on Search** — the entity list refreshes after publish or unpublish so household badges stay in sync with the card.
+- **LLM circuit breaker streaming** — successful streamed replies no longer leave a false consecutive-failure streak that could open the breaker.
+
+### Removed
+
+- **Dead admin Mint MCP-token control** — the Lumogis Web admin MCP-tokens view no longer exposes a Mint button for a route that was never implemented; minting remains self-service at **`/me/mcp-tokens`**.
+
+### Security
+
+- **Deterministic local-only LLM routing** — remote models are blocked, hidden from **`/v1/models`**, and audit-logged when privacy mode is on.
+- **MCP Origin-header DNS-rebinding guard** — Core **`/mcp/*`** rejects non-localhost **`Origin`** headers with **`403`** before token validation.
+- **Qdrant loopback-only host publish** — default Compose binds the Qdrant host port to **`127.0.0.1`** so the unauthenticated vector HTTP API is not reachable on the LAN.
+- **Legacy `users.refresh_token_jti` column** — dropped; refresh state lives only in **`auth_sessions`** and **`users.token_version`**.
+
+---
+
+## [0.8.0] — 2026-06-15
+
+### Added — scheduled Postgres, Qdrant, and optional FalkorDB snapshots via a Compose backup sidecar; operator commands **`make backup`**, **`make backup-verify`**, **`make backup-prune`**, and **`make restore SNAPSHOT=…`**; integrity manifests and 7-daily / 4-weekly retention; operator guide **[`docs/guides/backup-restore.md`](docs/guides/backup-restore.md)**.
 - **Admin backup status** — read-only **Disaster recovery backup** panel on **System status** (last verified snapshot, age, size, store coverage, stale warning).
 - **Notification routing (v1)** — in-process dispatcher with per-user preference storage, ntfy / Web Push / in-app SSE channel adapters, and producer migration off ad-hoc notification hooks.
 - **Notification preferences in Lumogis Web** — editable per-notification-type × per-channel matrix under **Me → Notifications** with optimistic saves.
@@ -40,6 +97,8 @@ Versions follow [Semantic Versioning](https://semver.org/).
 - **Backup artefacts** — instance-scoped snapshots live under operator-controlled host paths; restore requires explicit confirmation and quiesces Core before store writes.
 
 ---
+
+## [0.7.1] — 2026-06-15
 
 ### Added
 

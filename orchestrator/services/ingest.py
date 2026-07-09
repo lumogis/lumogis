@@ -150,6 +150,43 @@ def chunk_text(text: str) -> list[str]:
     return chunks
 
 
+def _delete_document_vectors_for_path(
+    *,
+    user_id: str,
+    file_path: str,
+    chunk_count_fallback: int,
+    point_id_for_chunk: Callable[[int], str],
+) -> None:
+    """Remove all Qdrant document vectors for a path before re-ingest.
+
+    Primary path uses ``user_id`` + ``file_path`` payload filters so sparse
+    chunk indices (when ``block_ingest`` skips early chunks) are cleared.
+    Legacy deterministic IDs remain as a fallback for pre-LUM-505 points.
+    """
+    vs = config.get_vector_store()
+    vs.delete_where(
+        collection="documents",
+        filter={
+            "must": [
+                {"key": "user_id", "match": {"value": user_id}},
+                {"key": "file_path", "match": {"value": file_path}},
+            ]
+        },
+    )
+    for i in range(chunk_count_fallback):
+        pid = point_id_for_chunk(i)
+        try:
+            vs.delete(collection="documents", id=pid)
+        except Exception:
+            _log.warning(
+                "ingest_vector_clear_failed point_id=%r file_path=%r user=%r",
+                pid,
+                file_path,
+                user_id,
+                exc_info=True,
+            )
+
+
 def _ingest_chunked_text(
     *,
     user_id: str,
@@ -290,7 +327,8 @@ def _emit_document_ingested_and_entities(
     user_id: str,
     text: str,
     ingestion_source_kind: str = "filesystem",
-) -> None:
+) -> list[str]:
+    """Extract/store document entities; return pruned relation ids (LUM-604)."""
     hooks.fire_background(
         Event.DOCUMENT_INGESTED,
         file_path=logical_path,
@@ -301,21 +339,33 @@ def _emit_document_ingested_and_entities(
     try:
         from services.entities import extract_entities
         from services.entities import store_entities
+        from services import document_entity_cascade
 
         entities = extract_entities(text, user_id=user_id)
+        entity_ids: list[str] = []
         if entities:
-            store_entities(
+            entity_ids = store_entities(
                 entities,
                 evidence_id=logical_path,
                 evidence_type="DOCUMENT",
                 user_id=user_id,
             )
-            _log.info("Stored %d entities from document %s", len(entities), logical_path)
+            _log.info("Stored %d entities from document %s", len(entity_ids), logical_path)
+        return document_entity_cascade.prune_stale_document_entity_relations(
+            config.get_metadata_store(), logical_path, user_id, entity_ids
+        )
     except Exception:
         _log.exception("Entity extraction failed for document %s", logical_path)
+        return []
 
 
-def ingest_file(file_path: str, *, user_id: str) -> IngestResult:
+def ingest_file(
+    file_path: str,
+    *,
+    user_id: str,
+    force: bool = False,
+    on_progress: Callable[[str, int | None, str | None], None] | None = None,
+) -> IngestResult:
     """Ingest one file and attribute every artifact to ``user_id``.
 
     Phase 3: ``user_id`` is keyword-only and required. The watcher and
@@ -343,19 +393,46 @@ def ingest_file(file_path: str, *, user_id: str) -> IngestResult:
         UserContext(user_id=user_id), scope_filter="personal"
     )
     existing = meta.fetch_one(
-        f"SELECT file_hash FROM file_index WHERE file_path = %s AND {where_clause}",
+        f"SELECT file_hash, chunk_count FROM file_index WHERE file_path = %s AND {where_clause}",
         (file_path, *where_params),
     )
-    if existing and existing["file_hash"] == new_hash:
+    old_chunk_count = int(existing["chunk_count"]) if existing else 0
+    if not force and existing and existing["file_hash"] == new_hash:
         _log.info("Skipping unchanged: %s", file_path)
         return IngestResult(file_path=file_path, chunk_count=0, skipped=True)
 
+    # Always clear path vectors before writing: partial block_ingest can leave
+    # Qdrant points without a file_index row; a later retry must not skip cleanup.
+    _delete_document_vectors_for_path(
+        user_id=user_id,
+        file_path=file_path,
+        chunk_count_fallback=old_chunk_count,
+        point_id_for_chunk=lambda i: document_chunk_point_id(user_id, file_path, i),
+    )
+
+    def _progress(stage: str, msg: str | None = None) -> None:
+        if on_progress is not None:
+            on_progress(stage, None, msg)
+
+    _progress("extracting")
     text = extractors[ext](file_path)
+    _progress("chunking")
     chunks = chunk_text(text)
     if not chunks:
+        if existing:
+            meta.execute(
+                (
+                    "UPDATE file_index SET chunk_count = 0, file_hash = %s, "
+                    "file_type = %s, updated_at = NOW() "
+                    f"WHERE file_path = %s AND {where_clause}"
+                ),
+                (new_hash, ext, file_path, *where_params),
+            )
+            return IngestResult(file_path=file_path, chunk_count=0)
         _log.info("No text extracted from %s", file_path)
         return IngestResult(file_path=file_path, chunk_count=0, skipped=True)
 
+    _progress("embedding")
     chunk_count_written, drops_blocked_high = _ingest_chunked_text(
         user_id=user_id,
         logical_path=file_path,
@@ -402,19 +479,28 @@ def ingest_file(file_path: str, *, user_id: str) -> IngestResult:
             len(chunks),
             drops_blocked_high,
         )
-        _emit_document_ingested_and_entities(
+        if config.get_graph_mode() != "disabled":
+            _progress("graph")
+        removed = _emit_document_ingested_and_entities(
             logical_path=file_path,
             chunk_count_written=chunk_count_written,
             user_id=user_id,
             text=text,
             ingestion_source_kind="filesystem",
         )
-        return IngestResult(file_path=file_path, chunk_count=chunk_count_written)
+        return IngestResult(
+            file_path=file_path,
+            chunk_count=chunk_count_written,
+            removed_document_entity_ids=removed,
+        )
 
     meta.execute(
         "INSERT INTO file_index (file_path, file_hash, file_type, chunk_count, user_id, scope) "
         "VALUES (%s, %s, %s, %s, %s, 'personal') "
-        "ON CONFLICT (user_id, file_path) DO UPDATE SET "
+        # LUM-157: file_index_user_path_uniq is PARTIAL (WHERE published_from IS
+        # NULL) since migration 046, so the ON CONFLICT arbiter must name that
+        # index predicate. Source ingest rows always have published_from NULL.
+        "ON CONFLICT (user_id, file_path) WHERE published_from IS NULL DO UPDATE SET "
         "file_hash = EXCLUDED.file_hash, "
         "chunk_count = EXCLUDED.chunk_count, "
         "updated_at = NOW()",
@@ -428,7 +514,9 @@ def ingest_file(file_path: str, *, user_id: str) -> IngestResult:
         len(chunks),
         drops_blocked_high,
     )
-    _emit_document_ingested_and_entities(
+    if config.get_graph_mode() != "disabled":
+        _progress("graph")
+    removed = _emit_document_ingested_and_entities(
         logical_path=file_path,
         chunk_count_written=chunk_count_written,
         user_id=user_id,
@@ -436,7 +524,11 @@ def ingest_file(file_path: str, *, user_id: str) -> IngestResult:
         ingestion_source_kind="filesystem",
     )
 
-    return IngestResult(file_path=file_path, chunk_count=chunk_count_written)
+    return IngestResult(
+        file_path=file_path,
+        chunk_count=chunk_count_written,
+        removed_document_entity_ids=removed,
+    )
 
 
 def ingest_external_document(
@@ -502,10 +594,38 @@ def ingest_external_document(
 
     old_chunk_count = int(existing["chunk_count"]) if existing else 0
 
+    # Same no-index-row partial ingest contract as ingest_file (block_ingest).
+    _delete_document_vectors_for_path(
+        user_id=user_id,
+        file_path=logical_path,
+        chunk_count_fallback=old_chunk_count,
+        point_id_for_chunk=lambda i: external_document_chunk_point_id(
+            user_id, source_id, external_kind, external_document_id, i
+        ),
+    )
+
     chunks = chunk_text(content)
     if not chunks:
         _log.info("No chunks for external document %s", logical_path)
         with meta.transaction():
+            if existing:
+                # SCOPE-EXEMPT: same table contract as the SELECT above.
+                meta.execute(
+                    (
+                        "UPDATE external_documents SET chunk_count = 0, "
+                        "content_hash = %s, logical_path = %s, updated_at = NOW() "
+                        "WHERE user_id = %s AND source_id = %s::uuid AND external_kind = %s "
+                        "AND external_id = %s"
+                    ),
+                    (
+                        new_hash,
+                        logical_path,
+                        user_id,
+                        source_id,
+                        external_kind,
+                        external_document_id,
+                    ),
+                )
             meta.execute(
                 (
                     "UPDATE sources SET poll_cursor = %s WHERE id = %s::uuid "
@@ -516,21 +636,9 @@ def ingest_external_document(
         return IngestResult(
             file_path=logical_path,
             chunk_count=0,
-            skipped=True,
+            skipped=not existing,
             advance_external_poll_cursor=True,
         )
-
-    vs = config.get_vector_store()
-    new_n = len(chunks)
-    if old_chunk_count > new_n:
-        for j in range(new_n, old_chunk_count):
-            pid = external_document_chunk_point_id(
-                user_id, source_id, external_kind, external_document_id, j
-            )
-            try:
-                vs.delete(collection="documents", id=pid)
-            except Exception:
-                _log.warning("external_ingest_orphan_delete_failed point_id=%r", pid, exc_info=True)
 
     chunk_count_written, drops_blocked_high = _ingest_chunked_text(
         user_id=user_id,
@@ -574,7 +682,7 @@ def ingest_external_document(
                 "external_ingest_blocked_high_before_row logical_path=%s",
                 logical_path,
             )
-        _emit_document_ingested_and_entities(
+        removed = _emit_document_ingested_and_entities(
             logical_path=logical_path,
             chunk_count_written=chunk_count_written,
             user_id=user_id,
@@ -585,6 +693,7 @@ def ingest_external_document(
             file_path=logical_path,
             chunk_count=chunk_count_written,
             advance_external_poll_cursor=False,
+            removed_document_entity_ids=removed,
         )
 
     with meta.transaction():
@@ -624,7 +733,7 @@ def ingest_external_document(
         chunk_count_written,
         drops_blocked_high,
     )
-    _emit_document_ingested_and_entities(
+    removed = _emit_document_ingested_and_entities(
         logical_path=logical_path,
         chunk_count_written=chunk_count_written,
         user_id=user_id,
@@ -635,6 +744,7 @@ def ingest_external_document(
         file_path=logical_path,
         chunk_count=chunk_count_written,
         advance_external_poll_cursor=True,
+        removed_document_entity_ids=removed,
     )
 
 
@@ -1286,9 +1396,9 @@ def enqueue_initial_ingest_scan() -> bool:
         return False
 
     from services.batch_queue import enqueue
+    from services.index_bootstrap import mark_scan_queued
 
     from services import batch_handlers as _batch_handlers_registered  # noqa: F401
-    from services.index_bootstrap import mark_scan_queued
 
     enqueued_any = False
     for root_str in config.get_effective_ingest_paths():
@@ -1350,11 +1460,9 @@ def ingest_folder(folder_path: str, *, user_id: str) -> IngestStats:
     supported_exts = set(extractors.keys())
     guard = _PerformanceGuard()
 
-    from services.index_bootstrap import (
-        begin_folder_scan,
-        complete_folder_scan,
-        report_folder_scan_progress,
-    )
+    from services.index_bootstrap import begin_folder_scan
+    from services.index_bootstrap import complete_folder_scan
+    from services.index_bootstrap import report_folder_scan_progress
 
     expected_total = _count_supported_files(root, supported_exts)
     begin_folder_scan(total_files=expected_total)

@@ -2,12 +2,16 @@
 .env.local
 .env.*.local
 !.env.example
+.env.bak-*
+.env.doctor-tmp-*
+.env.lum400-restart-e2e.bak
 .compose-root
 __pycache__/
 *.pyc
 .pytest_cache/
 venv/
 .venv/
+.venv-hub-build/
 .venv-audit/
 .venv-bandit-check/
 
@@ -45,6 +49,7 @@ ai-workspace/review/*
 !ai-workspace/review/.gitkeep
 ai-workspace/backups/*.zip
 ai-workspace/backups-test/
+ai-workspace/mcp/*.env
 
 # LibreChat — regenerated at runtime from models.yaml + Ollama; do not commit.
 # Tracked template: config/librechat.coldstart.yaml
@@ -80,3 +85,6 @@ lumogis-data/
 
 # LUM-377 — debug runner tee logs (local only)
 target/debug-logs/
+
+# LUM-187 — `make update` rollback state (records previous image refs; local only)
+.lumogis-state/

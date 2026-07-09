@@ -12,7 +12,7 @@ import config
 
 _log = logging.getLogger(__name__)
 
-_EMBED_COLLECTIONS = ("documents", "conversations", "entities", "signals")
+_EMBED_COLLECTIONS = ("documents", "conversations", "entities", "signals", "memories")
 
 
 def try_activate_embedding(app_state: Any) -> bool:
@@ -31,9 +31,15 @@ def try_activate_embedding(app_state: Any) -> bool:
             vs.create_collection(coll, dim)
             vs.ensure_payload_index(coll, "scope")
             vs.ensure_payload_index(coll, "user_id")
+            # file_path is filtered only on the documents collection (document-scoped
+            # chat, LUM-175 Bridge A); index it there to keep that filter selective as
+            # the library grows (LUM-505).
+            if coll == "documents":
+                vs.ensure_payload_index(coll, "file_path")
         app_state.embedding_ready = True
         _log.info(
-            "Embedder ready (%s) — collections + payload indexes initialised",
+            "Embedder ready (%s) — collections + payload indexes initialised "
+            "(documents also indexed on file_path)",
             os.environ.get("EMBEDDING_MODEL", "nomic-embed-text"),
         )
         return True

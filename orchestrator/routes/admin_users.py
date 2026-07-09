@@ -52,8 +52,12 @@ from models.user_export import ImportPlan
 from models.user_export import ImportReceipt
 from models.user_export import ImportRefused
 from models.user_export import ImportRequest
+from models.user_invite import InviteAdminRow
+from models.user_invite import InviteMintRequest
+from models.user_invite import InviteMintResponse
 
 from services import auth_sessions as auth_sessions_service
+from services import user_invites as user_invites_service
 from services import user_export as user_export_service
 from services import users as users_service
 
@@ -75,6 +79,8 @@ def _to_admin_view(internal) -> UserAdminView:
         disabled=internal.disabled,
         created_at=internal.created_at,
         last_login_at=internal.last_login_at,
+        last_seen_at=internal.last_seen_at,
+        display_name=internal.display_name,  # LUM-585
     )
 
 
@@ -106,6 +112,51 @@ def create_user(body: UserCreateRequest) -> UserAdminView:
 def list_users() -> list[UserAdminView]:
     """List every user. Order: oldest-first (creation order)."""
     return [_to_admin_view(u) for u in users_service.list_users()]
+
+
+@router.post(
+    "/invites",
+    response_model=InviteMintResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_same_origin)],
+)
+def mint_invite(body: InviteMintRequest, request: Request) -> InviteMintResponse:
+    caller = get_user(request)
+    internal, plaintext = user_invites_service.mint_invite(
+        role=body.role,
+        allows_shared=body.allows_shared,
+        created_by=caller.user_id,
+    )
+    invite_url = user_invites_service.build_invite_url(plaintext)
+    _log.info(
+        "admin: minted invite id=%s role=%s by=%s",
+        internal.id,
+        internal.role,
+        caller.user_id,
+    )
+    return InviteMintResponse(
+        invite=user_invites_service.to_admin_row(internal),
+        invite_url=invite_url,
+        token=plaintext,
+    )
+
+
+@router.get("/invites", response_model=dict)
+def list_invites() -> dict[str, list[InviteAdminRow]]:
+    rows = [user_invites_service.to_admin_row(i) for i in user_invites_service.list_invites()]
+    return {"invites": rows}
+
+
+@router.delete(
+    "/invites/{invite_id}",
+    dependencies=[Depends(require_same_origin)],
+)
+def revoke_invite(invite_id: str, request: Request) -> dict:
+    caller = get_user(request)
+    ok = user_invites_service.revoke_invite(invite_id, actor_admin_id=caller.user_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="invite not found")
+    return {"ok": True}
 
 
 @router.post(
@@ -144,19 +195,22 @@ def reset_user_password(
     dependencies=[Depends(require_same_origin)],
 )
 def patch_user(user_id: str, body: UserPatchRequest, request: Request) -> UserAdminView:
-    """Update ``role`` and/or ``disabled``. Either field may be omitted.
+    """Update ``role``, ``disabled``, and/or ``display_name``. Any field may be
+    omitted; at least one is required.
 
     Refuses changes that would leave zero active admins, and refuses
-    self-disable to avoid locking the calling admin out mid-session.
+    self-disable to avoid locking the calling admin out mid-session. Setting
+    ``display_name`` to ``""`` / whitespace clears it (LUM-585 — the attribution
+    label then falls back to the email local-part).
     """
     target = users_service.get_user_by_id(user_id)
     if target is None:
         raise HTTPException(status_code=404, detail="user not found")
 
-    if body.role is None and body.disabled is None:
+    if body.role is None and body.disabled is None and body.display_name is None:
         raise HTTPException(
             status_code=400,
-            detail="at least one of {role, disabled} required",
+            detail="at least one of {role, disabled, display_name} required",
         )
 
     caller = get_user(request)
@@ -191,6 +245,13 @@ def patch_user(user_id: str, body: UserPatchRequest, request: Request) -> UserAd
             user_id,
             body.disabled,
             by_admin_user_id=caller.user_id,
+        )
+    if body.display_name is not None:
+        # LUM-585 — admin-managed attribution label; "" / whitespace clears it
+        # (→ NULL → email local-part fallback). Audited below with the acting admin.
+        users_service.set_display_name(user_id, body.display_name)
+        _log.info(
+            "admin: set display_name user_id=%s by=%s", user_id, caller.user_id
         )
 
     updated = users_service.get_user_by_id(user_id)

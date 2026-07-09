@@ -25,15 +25,17 @@ def test_mcp_and_llm_tool_name_sets_and_docstring_contract() -> None:
     mcp_names = {t.name for t in mcp_server.MCP_TOOLS_FOR_MANIFEST}
     llm_names = {s.name for s in services_tools.TOOL_SPECS}
 
-    # Documented in mcp_server module header: five MCP community tools, separate
-    # from the LLM tool registry list.
+    # Documented in mcp_server module header: the MCP community read tools,
+    # separate from the LLM tool registry list. `recall` (LUM-295) is the
+    # TEMPR fusion read tool added to the manifest.
     assert mcp_names == {
         "memory.search",
         "memory.get_recent",
         "entity.lookup",
         "entity.search",
         "context.build",
-    }
+        "recall",
+    }  # VERIFY-PLAN: added `recall` (LUM-295) to match implementation
     # Current Core design: no shared tool name between MCP manifest and
     # TOOL_SPECS; bridge work is Phase 3+ if that changes.
     assert mcp_names & llm_names == set()

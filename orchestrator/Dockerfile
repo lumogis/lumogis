@@ -1,6 +1,10 @@
 FROM python:3.12-slim
+# jq (LUM-337): required by scripts/doctor/run.sh in --json mode so an operator
+# running `make doctor ARGS="--json"` inside the orchestrator container works
+# (run.sh exits "DOCTOR_FATAL: jq not found" without it). The pytest suite stubs
+# jq, so this is the operator-path fix rather than a test-pass fix.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    tesseract-ocr poppler-utils curl git nodejs && rm -rf /var/lib/apt/lists/* \
+    tesseract-ocr poppler-utils curl git jq nodejs && rm -rf /var/lib/apt/lists/* \
     && git config --global --add safe.directory '*'
 WORKDIR /app
 COPY orchestrator/requirements-core.txt orchestrator/requirements.txt .

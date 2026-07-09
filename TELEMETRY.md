@@ -28,7 +28,7 @@ When you configure a cloud LLM provider (Anthropic, OpenAI, etc.)
 and use cloud routing:
 - Document excerpts are sent to that provider's API for processing
 - This is disclosed in the UI before each cloud-routed query
-- You can disable cloud routing entirely in Settings → Privacy Mode
+- You can disable cloud routing entirely in Admin → Privacy Mode (`/admin/privacy-mode`)
 
 When you use Tailscale for remote access:
 - Your device registers with Tailscale's coordination server

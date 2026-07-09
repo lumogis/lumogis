@@ -67,8 +67,13 @@ Non-defer deployments (default Docker Compose) are unaffected.
 
 - **Unit tests added:** `test_prior_library_index_exists_false_without_rows`, `test_prior_library_index_exists_true_when_rows_present` in `orchestrator/tests/test_index_bootstrap.py`.
 - **Run:** `pytest orchestrator/tests/test_index_bootstrap.py` — **6 passed** post-merge.
-- **Gap:** no integration/lifespan test for full defer + resync path.
-- **Follow-up:** [LUM-478](https://linear.app/lumogis/issue/LUM-478/p2-integration-test-for-hub-defer-cold-start-library-resync) (P2, Backlog).
+- **Gap closed (LUM-478):** five lifespan integration tests added in the same file:
+  - `test_lifespan_defer_resync_enqueues_when_prior_index_exists` — happy path: defer + resync flags set, embedder ready, prior index present → `enqueue_initial_ingest_scan` called once. Patches `_file_index_count` (not `prior_library_index_exists`) so the real helper runs.
+  - `test_lifespan_defer_skips_resync_when_no_prior_index` — first-run wizard path: same flags, empty `file_index` → no enqueue.
+  - `test_lifespan_defer_skips_resync_when_embedder_not_ready` — embedder cold: prior index present but embedder reports not ready → no enqueue (retry job handles it).
+  - `test_lifespan_defer_skips_resync_when_resync_flag_absent` — explicit opt-in gate: prior index + ready embedder but `LUMOGIS_LIBRARY_RESYNC_ON_START` unset → no enqueue.
+  - `test_embedding_readiness_retry_enqueues_resync_when_prior_index` — ADR-096 branch #3: lifespan starts with cold embedder, retry closure is captured via `scheduler.add_job` spy and invoked directly; verifies `enqueue_initial_ingest_scan` called once when embedder warms.
+- **Prove:** `pytest orchestrator/tests/test_index_bootstrap.py` — **12 passed** (LUM-478).
 
 ## Status history
 

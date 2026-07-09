@@ -29,7 +29,9 @@ def sessions_ms(monkeypatch: pytest.MonkeyPatch) -> SessionsMemoryMetadataStore:
 
 
 def test_purge_inserts_tombstone(sessions_ms, mock_vector_store, monkeypatch):
-    monkeypatch.setitem(config._instances, "graph_store", None)
+    monkeypatch.setitem(
+        config._instances, config._graph_store_cache_key("personal"), None
+    )
     sid = str(uuid.uuid4())
     sessions_ms.sessions[sid] = {
         "session_id": uuid.UUID(sid),
@@ -47,7 +49,9 @@ def test_purge_inserts_tombstone(sessions_ms, mock_vector_store, monkeypatch):
 
 
 def test_store_session_skipped_after_purge(sessions_ms, mock_vector_store, monkeypatch):
-    monkeypatch.setitem(config._instances, "graph_store", None)
+    monkeypatch.setitem(
+        config._instances, config._graph_store_cache_key("personal"), None
+    )
     sid = str(uuid.uuid4())
     sessions_ms.purged_conversations.add(("alice", sid))
     summary = SessionSummary(session_id=sid, summary="ghost", topics=[], entities=[])
@@ -64,12 +68,14 @@ def test_session_end_handler_skips_purged_conversation(sessions_ms, monkeypatch)
         messages=[{"role": "user", "content": "hello"}],
     )
     with patch("services.batch_handlers.session_end.summarize_session") as mock_sum:
-        session_end_handle(user_id="alice", payload=payload)
+        session_end_handle(user_id="alice", job_id=1, payload=payload)
     mock_sum.assert_not_called()
 
 
 def test_purge_after_delete_allows_qdrant_retry(sessions_ms, mock_vector_store, monkeypatch):
-    monkeypatch.setitem(config._instances, "graph_store", None)
+    monkeypatch.setitem(
+        config._instances, config._graph_store_cache_key("personal"), None
+    )
     sid = str(uuid.uuid4())
     uid = "alice"
     pid = session_conversation_point_id(uid, sid)
@@ -109,7 +115,9 @@ def test_purge_tombstone_retry_cleans_orphaned_web_rows(
     sessions_ms, mock_vector_store, monkeypatch
 ):
     """Retry after partial purge must delete web_* rows even without a sessions row."""
-    monkeypatch.setitem(config._instances, "graph_store", None)
+    monkeypatch.setitem(
+        config._instances, config._graph_store_cache_key("personal"), None
+    )
     sid = str(uuid.uuid4())
     uid = "alice"
     sessions_ms.purged_conversations.add((uid, sid))
@@ -129,7 +137,9 @@ def test_purge_tombstone_retry_cleans_orphaned_web_rows(
 
 def test_purge_resurrection_race_blocked(sessions_ms, mock_vector_store, monkeypatch):
     """Simulate delete then in-flight session_end: tombstone blocks store_session."""
-    monkeypatch.setitem(config._instances, "graph_store", None)
+    monkeypatch.setitem(
+        config._instances, config._graph_store_cache_key("personal"), None
+    )
     sid = str(uuid.uuid4())
     uid = "alice"
     sessions_ms.sessions[sid] = {

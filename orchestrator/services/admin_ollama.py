@@ -11,10 +11,10 @@ from typing import Any
 import ollama_client
 from fastapi import HTTPException
 from ollama_client import _prettify_name
+from services.ollama_pull_jobs import finalize_ollama_pull
 from settings_store import get_setting
 
 import config
-from services.ollama_pull_jobs import finalize_ollama_pull
 
 
 def _safe_get_setting(key: str, store) -> str | None:

@@ -94,7 +94,12 @@ def test_delete_removes_published_from_projection_rows(client, sessions_ms, monk
     }
     with patch(
         "services.conversations.purge_session_memory",
-        return_value=PurgeResult(postgres_deleted=True, qdrant_deleted=True, graph_deleted=True),
+        return_value=PurgeResult(
+            postgres_deleted=True,
+            qdrant_deleted=True,
+            graph_deleted=True,
+            qdrant_entities_deleted=True,
+        ),
     ):
         resp = client.delete(f"/api/v1/conversations/{sid}")
     assert resp.status_code == 200
@@ -104,7 +109,12 @@ def test_delete_removes_from_list_subsequent_get(client, sessions_ms, monkeypatc
     sid = _insert_session(sessions_ms)
     with patch(
         "services.conversations.purge_session_memory",
-        return_value=PurgeResult(postgres_deleted=True, qdrant_deleted=True, graph_deleted=True),
+        return_value=PurgeResult(
+            postgres_deleted=True,
+            qdrant_deleted=True,
+            graph_deleted=True,
+            qdrant_entities_deleted=True,
+        ),
     ):
         client.delete(f"/api/v1/conversations/{sid}")
     sessions_ms.sessions.pop(sid, None)
@@ -129,17 +139,22 @@ def test_list_maps_updated_at_to_ended_at(client, sessions_ms):
     assert "ended_at" in row
 
 
-def test_list_defaults_to_personal_scope_only(client, sessions_ms):
-    _insert_session(sessions_ms, scope="shared")
-    personal = _insert_session(sessions_ms, scope="personal")
+def test_list_uses_household_union_and_isolates_personal(client, sessions_ms):
+    """LUM-582 P0 — the sidebar now shows own-personal + household-shared, but a
+    member's PERSONAL conversations are never exposed to another caller."""
+    own_personal = _insert_session(sessions_ms, scope="personal")  # user "default"
+    shared_from_other = _insert_session(sessions_ms, user_id="bob", scope="shared")
+    other_personal = _insert_session(sessions_ms, user_id="bob", scope="personal")
     resp = client.get("/api/v1/conversations")
-    ids = {c["conversation_id"] for c in resp.json()["conversations"]}
-    assert personal in ids
-    assert all(
-        sessions_ms.sessions[cid]["scope"] == "personal"
-        for cid in ids
-        if cid in sessions_ms.sessions
-    )
+    by_id = {c["conversation_id"]: c for c in resp.json()["conversations"]}
+    assert own_personal in by_id  # own personal
+    assert shared_from_other in by_id  # household-shared (the P0)
+    assert other_personal not in by_id  # another member's personal — never leaked
+    # The shared row is correctly labelled (not mislabelled personal), and the
+    # viewer is not its owner.
+    assert by_id[shared_from_other]["share_status"] == "shared"
+    assert by_id[shared_from_other]["is_owner"] is False
+    assert by_id[own_personal]["share_status"] == "personal"
 
 
 def test_delete_returns_partial_true_when_qdrant_fails_after_retries(
@@ -162,7 +177,12 @@ def test_delete_partial_purge_retry_succeeds(client, sessions_ms, monkeypatch):
     assert first.json()["partial"] is True
     sessions_ms.sessions.pop(sid, None)
     sessions_ms.purged_conversations.add(("default", sid))
-    ok = PurgeResult(postgres_deleted=True, qdrant_deleted=True, graph_deleted=True)
+    ok = PurgeResult(
+        postgres_deleted=True,
+        qdrant_deleted=True,
+        graph_deleted=True,
+        qdrant_entities_deleted=True,
+    )
     with patch("services.conversations.purge_session_memory", return_value=ok) as mock_retry:
         second = client.delete(f"/api/v1/conversations/{sid}")
     assert second.status_code == 200
@@ -206,10 +226,13 @@ def test_put_upserts_web_header_before_session_row(client, sessions_ms):
 
 def test_put_then_append_message_persists_transcript(client, sessions_ms):
     sid = str(uuid.uuid4())
-    assert client.put(
-        f"/api/v1/conversations/{sid}",
-        json={"title": "Chat", "model": "m"},
-    ).status_code == 200
+    assert (
+        client.put(
+            f"/api/v1/conversations/{sid}",
+            json={"title": "Chat", "model": "m"},
+        ).status_code
+        == 200
+    )
     mid = str(uuid.uuid4())
     resp = client.post(
         f"/api/v1/conversations/{sid}/messages",
@@ -228,20 +251,26 @@ def test_put_then_append_message_persists_transcript(client, sessions_ms):
 def test_get_and_continue_web_only_transcript_before_session_end(client, sessions_ms):
     """Slice-2 sync must be readable before POST /session/end creates a sessions row."""
     sid = str(uuid.uuid4())
-    assert client.put(
-        f"/api/v1/conversations/{sid}",
-        json={"title": "Live chat", "model": "m"},
-    ).status_code == 200
+    assert (
+        client.put(
+            f"/api/v1/conversations/{sid}",
+            json={"title": "Live chat", "model": "m"},
+        ).status_code
+        == 200
+    )
     mid = str(uuid.uuid4())
-    assert client.post(
-        f"/api/v1/conversations/{sid}/messages",
-        json={
-            "message_id": mid,
-            "role": "user",
-            "content": "persisted before end",
-            "model": "m",
-        },
-    ).status_code == 201
+    assert (
+        client.post(
+            f"/api/v1/conversations/{sid}/messages",
+            json={
+                "message_id": mid,
+                "role": "user",
+                "content": "persisted before end",
+                "model": "m",
+            },
+        ).status_code
+        == 201
+    )
 
     detail = client.get(f"/api/v1/conversations/{sid}")
     assert detail.status_code == 200
@@ -287,9 +316,7 @@ def test_continue_uses_verbatim_transcript_when_user_messages_present(client, se
     assert seeds[1]["content"] == "2400"
 
 
-def test_continue_falls_back_to_summary_when_transcript_has_no_user_messages(
-    client, sessions_ms
-):
+def test_continue_falls_back_to_summary_when_transcript_has_no_user_messages(client, sessions_ms):
     """Assistant-only slice-2 rows must not shadow the slice-1 summary on continue."""
     sid = _insert_session(sessions_ms)
     key = f"{sid}:default"
@@ -359,10 +386,13 @@ def test_append_message_id_conflict_other_user_returns_404(client, sessions_ms):
         "model": "m",
         "created_at": datetime.now(timezone.utc),
     }
-    assert client.put(
-        f"/api/v1/conversations/{sid_b}",
-        json={"title": "B", "model": "m"},
-    ).status_code == 200
+    assert (
+        client.put(
+            f"/api/v1/conversations/{sid_b}",
+            json={"title": "B", "model": "m"},
+        ).status_code
+        == 200
+    )
     resp = client.post(
         f"/api/v1/conversations/{sid_b}/messages",
         json={
@@ -377,13 +407,21 @@ def test_append_message_id_conflict_other_user_returns_404(client, sessions_ms):
 
 def test_delete_web_only_conversation(client, sessions_ms, monkeypatch):
     sid = str(uuid.uuid4())
-    assert client.put(
-        f"/api/v1/conversations/{sid}",
-        json={"title": "Web only", "model": "m"},
-    ).status_code == 200
+    assert (
+        client.put(
+            f"/api/v1/conversations/{sid}",
+            json={"title": "Web only", "model": "m"},
+        ).status_code
+        == 200
+    )
     with patch(
         "services.conversations.purge_session_memory",
-        return_value=PurgeResult(postgres_deleted=True, qdrant_deleted=True, graph_deleted=True),
+        return_value=PurgeResult(
+            postgres_deleted=True,
+            qdrant_deleted=True,
+            graph_deleted=True,
+            qdrant_entities_deleted=True,
+        ),
     ) as mock_purge:
         resp = client.delete(f"/api/v1/conversations/{sid}")
     assert resp.status_code == 200
@@ -426,3 +464,170 @@ def test_session_end_to_list_e2e(client, sessions_ms, monkeypatch):
     store_session(summary, user_id="default")
     listed = client.get("/api/v1/conversations")
     assert any(c["conversation_id"] == sid for c in listed.json()["conversations"])
+
+
+def _mint_conversation(client) -> str:
+    sid = str(uuid.uuid4())
+    assert (
+        client.put(
+            f"/api/v1/conversations/{sid}",
+            json={"title": "Chat", "model": "m"},
+        ).status_code
+        == 200
+    )
+    return sid
+
+
+def test_append_message_round_trips_source_refs(client, sessions_ms):
+    sid = _mint_conversation(client)
+    mid = str(uuid.uuid4())
+    refs = [{"document_id": 1, "chunk_index": 0, "quote": "citation proof"}]
+    resp = client.post(
+        f"/api/v1/conversations/{sid}/messages",
+        json={
+            "message_id": mid,
+            "role": "user",
+            "content": "with refs",
+            "model": "m",
+            "source_refs": refs,
+        },
+    )
+    assert resp.status_code == 201
+    detail = client.get(f"/api/v1/conversations/{sid}")
+    assert detail.status_code == 200
+    msg = detail.json()["messages"][0]
+    assert msg["source_refs"] == refs
+
+
+def test_append_message_round_trips_action_proposal_id(client, sessions_ms):
+    sid = _mint_conversation(client)
+    mid = str(uuid.uuid4())
+    sessions_ms.action_proposals[42] = {
+        "id": 42,
+        "user_id": "default",
+        "action_name": "test_action",
+        "payload": {},
+        "status": "pending",
+    }
+    resp = client.post(
+        f"/api/v1/conversations/{sid}/messages",
+        json={
+            "message_id": mid,
+            "role": "user",
+            "content": "linked",
+            "model": "m",
+            "action_proposal_id": 42,
+        },
+    )
+    assert resp.status_code == 201
+    assert resp.json()["action_proposal_id"] == 42
+    detail = client.get(f"/api/v1/conversations/{sid}")
+    assert detail.json()["messages"][0]["action_proposal_id"] == 42
+
+
+def test_append_message_action_proposal_other_user_returns_404(client, sessions_ms):
+    sid = _mint_conversation(client)
+    sessions_ms.action_proposals[7] = {
+        "id": 7,
+        "user_id": "alice",
+        "action_name": "alice_action",
+        "payload": {},
+        "status": "pending",
+    }
+    resp = client.post(
+        f"/api/v1/conversations/{sid}/messages",
+        json={
+            "message_id": str(uuid.uuid4()),
+            "role": "user",
+            "content": "cross-user proposal",
+            "action_proposal_id": 7,
+        },
+    )
+    assert resp.status_code == 404
+    assert resp.json()["detail"]["error"] == "conversation_not_found"
+
+
+def test_append_message_action_proposal_unknown_id_returns_422(client, sessions_ms):
+    sid = _mint_conversation(client)
+    resp = client.post(
+        f"/api/v1/conversations/{sid}/messages",
+        json={
+            "message_id": str(uuid.uuid4()),
+            "role": "user",
+            "content": "unknown proposal",
+            "action_proposal_id": 999_999,
+        },
+    )
+    assert resp.status_code == 422
+    assert resp.json()["detail"]["error"] == "invalid_action_proposal"
+
+
+def test_append_message_omits_new_fields_by_default(client, sessions_ms):
+    sid = _mint_conversation(client)
+    mid = str(uuid.uuid4())
+    resp = client.post(
+        f"/api/v1/conversations/{sid}/messages",
+        json={
+            "message_id": mid,
+            "role": "user",
+            "content": "plain",
+            "model": "m",
+        },
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body.get("source_refs") in (None, [])
+    assert body.get("action_proposal_id") is None
+    detail = client.get(f"/api/v1/conversations/{sid}")
+    msg = detail.json()["messages"][0]
+    assert msg.get("source_refs") in (None, [])
+    assert msg.get("action_proposal_id") is None
+
+
+def test_append_message_idempotent_conflict_preserves_first_write(client, sessions_ms):
+    sid = _mint_conversation(client)
+    mid = str(uuid.uuid4())
+    sessions_ms.action_proposals[1] = {
+        "id": 1,
+        "user_id": "default",
+        "action_name": "first",
+        "payload": {},
+        "status": "pending",
+    }
+    sessions_ms.action_proposals[2] = {
+        "id": 2,
+        "user_id": "default",
+        "action_name": "second",
+        "payload": {},
+        "status": "pending",
+    }
+    first_refs = [{"document_id": 1, "quote": "first"}]
+    second_refs = [{"document_id": 2, "quote": "second"}]
+    assert (
+        client.post(
+            f"/api/v1/conversations/{sid}/messages",
+            json={
+                "message_id": mid,
+                "role": "user",
+                "content": "first write",
+                "source_refs": first_refs,
+                "action_proposal_id": 1,
+            },
+        ).status_code
+        == 201
+    )
+    resp = client.post(
+        f"/api/v1/conversations/{sid}/messages",
+        json={
+            "message_id": mid,
+            "role": "user",
+            "content": "second write",
+            "source_refs": second_refs,
+            "action_proposal_id": 2,
+        },
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["content"] == "first write"
+    assert body["source_refs"] == first_refs
+    assert body["action_proposal_id"] == 1

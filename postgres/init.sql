@@ -62,7 +62,15 @@ CREATE TABLE IF NOT EXISTS entities (
     memory_type        TEXT
                        CHECK (memory_type IS NULL OR memory_type IN (
                            'user_preference', 'correction', 'relationship')),
-    last_verified_at   TIMESTAMPTZ
+    last_verified_at   TIMESTAMPTZ,
+    -- LUM-358: OCC version + summary staging (migration 044).
+    version            BIGINT NOT NULL DEFAULT 1,
+    summary            TEXT NOT NULL DEFAULT '',
+    staged_summary     TEXT NULL,
+    -- LUM-586: provenance of a scope=shared projection (migration 050):
+    -- 'document' | 'user' | 'multiple'. NULL for scope=personal rows and
+    -- pre-migration shared rows. Drives refcounted retraction on unshare/purge.
+    share_origin       TEXT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS entities_published_from_scope_uniq
     ON entities (published_from, scope) WHERE published_from IS NOT NULL;
@@ -360,6 +368,14 @@ CREATE TABLE IF NOT EXISTS app_settings (
     key         TEXT PRIMARY KEY,
     value       TEXT NOT NULL,
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS privacy_user_settings (
+    user_id      TEXT NOT NULL DEFAULT 'default',
+    restriction  TEXT NOT NULL DEFAULT 'inherit'
+                 CHECK (restriction IN ('inherit', 'local_only')),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (user_id)
 );
 
 -- ==========================================================================

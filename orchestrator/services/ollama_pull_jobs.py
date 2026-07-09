@@ -10,16 +10,16 @@ import time
 from datetime import datetime
 from typing import Any
 
-import config
 import ollama_client
+
+import config
 
 _log = logging.getLogger(__name__)
 
 _EMBED_COLLECTIONS = ("documents", "conversations", "entities", "signals")
 
 QDRANT_INIT_WARNING_MSG = (
-    "Qdrant collections could not be initialized after pull. "
-    "Restart the orchestrator to retry."
+    "Qdrant collections could not be initialized after pull. Restart the orchestrator to retry."
 )
 
 
@@ -63,8 +63,7 @@ def job_to_response(row: dict[str, Any]) -> dict[str, Any]:
 
 def assert_no_running_job() -> None:
     row = _meta().fetch_one(
-        "SELECT job_id FROM ollama_pull_jobs "
-        "WHERE status IN ('pending', 'running') LIMIT 1"
+        "SELECT job_id FROM ollama_pull_jobs WHERE status IN ('pending', 'running') LIMIT 1"
     )
     if row is not None:
         raise JobAlreadyRunning()
@@ -140,8 +139,7 @@ def finalize_ollama_pull(name: str, app_state: Any) -> str | None:
 
 def _set_running(job_id: str) -> None:
     _meta().execute(
-        "UPDATE ollama_pull_jobs SET status = 'running', started_at = NOW() "
-        "WHERE job_id = %s",
+        "UPDATE ollama_pull_jobs SET status = 'running', started_at = NOW() WHERE job_id = %s",
         (job_id,),
     )
 
@@ -153,8 +151,7 @@ def _update_progress(
 ) -> None:
     msg = (status_message or "")[:500] or None
     _meta().execute(
-        "UPDATE ollama_pull_jobs SET progress_pct = %s, status_message = %s "
-        "WHERE job_id = %s",
+        "UPDATE ollama_pull_jobs SET progress_pct = %s, status_message = %s WHERE job_id = %s",
         (progress_pct, msg, job_id),
     )
 

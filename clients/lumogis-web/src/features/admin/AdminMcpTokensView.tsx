@@ -1,22 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Lumogis
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useAuth, useUser } from "../../auth/AuthProvider";
 import { ApiError } from "../../api/client";
-import { UserPicker, type UserRow } from "../_shared/UserPicker";
-import { CopyOnceModal } from "../_shared/CopyOnceModal";
+import { UserPicker } from "../_shared/UserPicker";
+import { accessLabel } from "../me/mcpTokenDisplay";
 
 interface McpRow {
   id: string;
   user_id: string;
   label: string;
   created_at: string;
-}
-
-interface MintRes {
-  plaintext: string;
-  token: McpRow;
+  scopes: string[] | null;
 }
 
 function errMsg(e: unknown): string {
@@ -24,26 +20,17 @@ function errMsg(e: unknown): string {
   return "Request failed";
 }
 
+// Admins list + revoke other users' MCP tokens; minting is self-service only
+// (each user mints their own at /me/mcp-tokens — LUM-291 D12). The former
+// admin Mint button POSTed to a route that never existed (405) and was removed
+// in LUM-530.
 export function AdminMcpTokensView(): JSX.Element {
   const { client } = useAuth();
   const me = useUser();
   const isAdmin = me?.role === "admin";
   const qc = useQueryClient();
   const [userId, setUserId] = useState("");
-  const [label, setLabel] = useState("");
   const [err, setErr] = useState<string | null>(null);
-  const [plain, setPlain] = useState<string | null>(null);
-  const [showModal, setShowModal] = useState(false);
-
-  const usersQ = useQuery({
-    queryKey: ["admin", "users"],
-    queryFn: () => client.getJson<UserRow[]>("/api/v1/admin/users"),
-    enabled: isAdmin,
-  });
-  const targetEmail = useMemo(
-    () => (userId ? usersQ.data?.find((u) => u.id === userId)?.email : undefined),
-    [userId, usersQ.data],
-  );
 
   const base = userId
     ? `/api/v1/admin/users/${encodeURIComponent(userId)}/mcp-tokens`
@@ -55,23 +42,10 @@ export function AdminMcpTokensView(): JSX.Element {
     enabled: Boolean(base),
   });
 
-  const mintM = useMutation({
-    mutationFn: () =>
-      client.postJson<{ label: string }, MintRes>(base!, { label: label.trim() }),
-    onSuccess: (data) => {
-      setPlain(data.plaintext);
-      setShowModal(true);
-      setLabel("");
-      void qc.invalidateQueries({ queryKey: ["mcp", "admin", userId] });
-    },
-    onError: (e) => {
-      setErr(errMsg(e));
-    },
-  });
-
   const delM = useMutation({
     mutationFn: (id: string) => client.delete(`${base!}/${encodeURIComponent(id)}`),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["mcp", "admin", userId] }),
+    onError: (e) => setErr(errMsg(e)),
   });
 
   return (
@@ -79,68 +53,30 @@ export function AdminMcpTokensView(): JSX.Element {
       <h2>MCP tokens (admin)</h2>
       {err && <p role="alert">{err}</p>}
       <UserPicker value={userId} onChange={setUserId} isAdmin={isAdmin} />
-      {!userId && <p role="status">Select a user to list or mint tokens.</p>}
+      {!userId && <p role="status">Select a user to list their tokens.</p>}
       {userId && listQ.isPending && <p>Loading…</p>}
       {userId && listQ.isError && <p>Failed to load tokens.</p>}
       {userId && listQ.isSuccess && (
-        <>
-          <div className="lumogis-mcp-mint-row">
-            <input
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-              placeholder="label (1–64 chars)"
-              minLength={1}
-              maxLength={64}
-            />
-            <button
-              type="button"
-              onClick={() => {
-                setErr(null);
-                mintM.mutate();
-              }}
-            >
-              Mint
-            </button>
-          </div>
-          <ul className="lumogis-mcp-token-list">
-            {listQ.data?.map((t) => (
-              <li key={t.id} style={{ marginBottom: "0.5rem" }}>
-                {t.label}{" "}
-                <code className="lumogis-long-text" style={{ fontSize: "0.8rem" }}>
-                  {t.id}
-                </code>{" "}
-                <button type="button" onClick={() => delM.mutate(t.id)}>
-                  Revoke
-                </button>
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-      {plain !== null && (
-        <CopyOnceModal
-          open={showModal}
-          title="New MCP token"
-          plaintext={plain}
-          onClose={() => {
-            setShowModal(false);
-            setPlain(null);
-          }}
-          extraBanner={
-            targetEmail ? (
-              <p
-                style={{
-                  background: "rgba(255, 200, 100, 0.15)",
-                  padding: "0.5rem",
-                  borderRadius: 4,
-                  fontSize: "0.9rem",
+        <ul className="lumogis-mcp-token-list">
+          {listQ.data?.map((t) => (
+            <li key={t.id} style={{ marginBottom: "0.5rem" }}>
+              {t.label}{" "}
+              <code className="lumogis-long-text" style={{ fontSize: "0.8rem" }}>
+                {t.id}
+              </code>{" "}
+              <span style={{ fontSize: "0.8rem", opacity: 0.8 }}>[{accessLabel(t.scopes)}]</span>{" "}
+              <button
+                type="button"
+                onClick={() => {
+                  setErr(null);
+                  delM.mutate(t.id);
                 }}
               >
-                This token is for {targetEmail}. Deliver it via a secure out-of-band channel; do not paste it into chat.
-              </p>
-            ) : null
-          }
-        />
+                Revoke
+              </button>
+            </li>
+          ))}
+        </ul>
       )}
     </section>
   );

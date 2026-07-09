@@ -10,3 +10,15 @@ services:
   orchestrator:
     env_file:
       - config/test.env.example
+    # `config/test.env.example` sets POSTGRES_HOST=127.0.0.1:5433 for host-side
+    # pytest (published port). Inside the compose network, services must use the
+    # `postgres` service name — otherwise Core/lumogis-graph crash-loop on boot.
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+
+  # Host-side integration gates (LUM-540 full cursor integration) probe Postgres
+  # from pytest on the developer machine — publish beside default dev stack (5432).
+  postgres:
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5433}:5432"

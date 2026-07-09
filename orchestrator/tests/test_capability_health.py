@@ -101,6 +101,7 @@ async def test_check_health_200_marks_healthy_and_sets_timestamp():
     assert svc.healthy is True
     assert svc.last_seen_healthy is not None
     assert svc.last_seen_healthy.tzinfo is not None  # timezone-aware
+    assert svc.last_unhealthy_reason is None
 
 
 async def test_check_health_non_200_marks_unhealthy_preserves_timestamp():
@@ -122,6 +123,8 @@ async def test_check_health_non_200_marks_unhealthy_preserves_timestamp():
     assert svc.healthy is False
     # last_seen_healthy preserved across failure
     assert svc.last_seen_healthy == first_seen
+    # Concrete status preserved so the catalog facade can show HTTP 503 (LUM-61).
+    assert svc.last_unhealthy_reason == "http_503"
 
 
 async def test_check_health_connection_error_marks_unhealthy():
@@ -135,6 +138,83 @@ async def test_check_health_connection_error_marks_unhealthy():
     assert result is False
     assert svc.healthy is False
     assert svc.last_seen_healthy is None
+    assert svc.last_unhealthy_reason == "connection_error"
+
+
+async def test_check_health_timeout_sets_reason():
+    svc = _service()
+
+    def slow(request):
+        raise httpx.ReadTimeout("too slow", request=request)
+
+    result = await svc.check_health(transport=httpx.MockTransport(slow))
+
+    assert result is False
+    assert svc.healthy is False
+    assert svc.last_unhealthy_reason == "timeout"
+
+
+async def test_check_health_network_error_sets_reason():
+    svc = _service()
+
+    def broken(request):
+        # Not a timeout, not a connect error → the network_error bucket.
+        raise httpx.ReadError("stream broke", request=request)
+
+    result = await svc.check_health(transport=httpx.MockTransport(broken))
+
+    assert result is False
+    assert svc.healthy is False
+    assert svc.last_unhealthy_reason == "network_error"
+
+
+@pytest.mark.parametrize("status", [401, 403])
+async def test_check_health_auth_status_preserved_as_http_code(status):
+    svc = _service()
+
+    def reject(request):
+        return httpx.Response(status)
+
+    result = await svc.check_health(transport=httpx.MockTransport(reject))
+
+    assert result is False
+    # Concrete status preserved (not collapsed); the facade adds auth copy.
+    assert svc.last_unhealthy_reason == f"http_{status}"
+
+
+async def test_check_health_success_clears_prior_reason():
+    svc = _service()
+
+    # First a failure stamps a reason …
+    await svc.check_health(transport=httpx.MockTransport(lambda r: httpx.Response(500)))
+    assert svc.last_unhealthy_reason == "http_500"
+
+    # … then a recovery clears it.
+    await svc.check_health(transport=httpx.MockTransport(lambda r: httpx.Response(200)))
+    assert svc.healthy is True
+    assert svc.last_unhealthy_reason is None
+
+
+@pytest.mark.parametrize(
+    "reason, expected_fragment",
+    [
+        ("timeout", "did not respond in time"),
+        ("connection_error", "connection refused"),
+        ("network_error", "network error"),
+        ("http_401", "rejected Core's credentials (last probe returned HTTP 401)"),
+        ("http_403", "rejected Core's credentials (last probe returned HTTP 403)"),
+        ("http_500", "health check failed (last probe returned HTTP 500)"),
+        ("http_404", "health check failed (last probe returned HTTP 404)"),
+        (None, "not healthy (last probe failed)"),
+        ("something_unmapped", "not healthy (last probe failed)"),
+    ],
+)
+def test_capability_unhealthy_reason_copy(reason, expected_fragment):
+    from services.unified_tools import _capability_unhealthy_reason
+
+    svc = _service()
+    svc.last_unhealthy_reason = reason
+    assert expected_fragment in _capability_unhealthy_reason(svc)
 
 
 async def test_check_health_uses_manifest_health_endpoint():

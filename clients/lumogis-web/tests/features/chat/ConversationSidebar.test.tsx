@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Lumogis
 
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -72,5 +72,104 @@ describe("ConversationSidebar", () => {
         /Deletion incomplete — some copies may remain\. Tap to retry\./,
       ),
     ).toBeTruthy();
+  });
+});
+
+describe("ConversationSidebar pending summaries (LUM-417)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  const PENDING_ID = "22222222-2222-4222-8222-222222222222";
+
+  it("renders a Summarising… placeholder for a session awaiting its row", async () => {
+    const client = {
+      getJson: vi.fn().mockResolvedValue({ conversations: [] }),
+    } as unknown as ApiClient;
+
+    render(
+      <ConversationSidebar
+        client={client}
+        onContinue={vi.fn()}
+        pendingSummaries={[{ conversationId: PENDING_ID, title: "Roof repair" }]}
+      />,
+    );
+
+    expect(await screen.findByTestId("pending-summary")).toBeTruthy();
+    expect(screen.getByText("Roof repair")).toBeTruthy();
+    expect(screen.getByText("Summarising…")).toBeTruthy();
+    // The generic empty copy is suppressed while a pending row is showing.
+    expect(screen.queryByText(/Ended chats appear here/)).toBeNull();
+  });
+
+  it("hides the placeholder and notifies the parent once the row arrives", async () => {
+    const conversation = {
+      conversation_id: PENDING_ID,
+      title: "Roof repair",
+      summary: "Quote for the garage roof.",
+      ended_at: new Date().toISOString(),
+      scope: "personal",
+      message_count: null,
+    };
+    const client = {
+      getJson: vi.fn().mockResolvedValue({ conversations: [conversation] }),
+    } as unknown as ApiClient;
+    const onPendingResolved = vi.fn();
+
+    render(
+      <ConversationSidebar
+        client={client}
+        onContinue={vi.fn()}
+        pendingSummaries={[{ conversationId: PENDING_ID, title: "Roof repair" }]}
+        onPendingResolved={onPendingResolved}
+      />,
+    );
+
+    // Real summary row is present, so no placeholder is rendered…
+    await screen.findByText("Quote for the garage roof.");
+    expect(screen.queryByTestId("pending-summary")).toBeNull();
+    // …and the parent is told the pending id resolved so it can prune state.
+    await waitFor(() =>
+      expect(onPendingResolved).toHaveBeenCalledWith([PENDING_ID]),
+    );
+  });
+
+  it("polls the list while a summary is pending so it auto-resolves", async () => {
+    vi.useFakeTimers();
+    const conversation = {
+      conversation_id: PENDING_ID,
+      title: "Roof repair",
+      summary: "Quote for the garage roof.",
+      ended_at: new Date().toISOString(),
+      scope: "personal",
+      message_count: null,
+    };
+    // First fetch empty (row not written yet), later fetches return the row.
+    const getJson = vi
+      .fn()
+      .mockResolvedValueOnce({ conversations: [] })
+      .mockResolvedValue({ conversations: [conversation] });
+    const client = { getJson } as unknown as ApiClient;
+
+    render(
+      <ConversationSidebar
+        client={client}
+        onContinue={vi.fn()}
+        pendingSummaries={[{ conversationId: PENDING_ID, title: "Roof repair" }]}
+        onPendingResolved={vi.fn()}
+      />,
+    );
+
+    // Initial load resolves empty → placeholder visible.
+    await vi.waitFor(() => expect(getJson).toHaveBeenCalledTimes(1));
+    expect(screen.getByTestId("pending-summary")).toBeTruthy();
+
+    // Advancing past one poll interval triggers a re-fetch that returns the row.
+    await vi.advanceTimersByTimeAsync(3000);
+    await vi.waitFor(() => expect(getJson).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() =>
+      expect(screen.queryByTestId("pending-summary")).toBeNull(),
+    );
   });
 });

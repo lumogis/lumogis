@@ -61,7 +61,68 @@ def _graph_mode_guard() -> None:
         )
 
 
-def _row_to_card(row: dict) -> EntityCard:
+def _fetch_shared_entity_source_ids(user_id: str) -> set[str]:
+    """Source entity ids the caller currently has a shared projection for (LUM-581).
+
+    Mirrors :func:`services.documents._fetch_shared_source_ids`. A shared
+    projection row carries the publisher's ``user_id`` and a ``published_from``
+    pointing at the personal source; this returns the set of those source ids so
+    an owner's personal entity can be marked ``share_status='shared'``.
+    """
+    ms = config.get_metadata_store()
+    try:
+        rows = ms.fetch_all(
+            # SCOPE-EXEMPT: caller-owned shared entity projection sources.
+            "SELECT DISTINCT published_from FROM entities "
+            "WHERE user_id = %s AND scope = 'shared' AND published_from IS NOT NULL",
+            (user_id,),
+        )
+    except Exception:  # noqa: BLE001 — DB outage → treat as no shared projections
+        _log.warning(
+            "kg._fetch_shared_entity_source_ids: query failed user_id=%s",
+            user_id,
+            exc_info=True,
+        )
+        return set()
+    return {str(r["published_from"]) for r in rows if r.get("published_from") is not None}
+
+
+def _derive_entity_share_fields(
+    row: dict,
+    *,
+    caller_user_id: str,
+    shared_source_ids: set[str],
+) -> tuple[str, bool]:
+    """Return ``(share_status, is_owner)`` for an entity row (LUM-581).
+
+    Synchronous analogue of :func:`services.documents._derive_share_fields`:
+    entity publish has no background job, so only ``personal``/``shared`` occur.
+
+    * A shared projection carries the *publisher's* ``user_id``. A member viewing
+      another owner's projection (``scope='shared'`` and not the caller) →
+      ``('shared', False)``.
+    * The owner's personal source is ``shared`` when a projection exists for it
+      (its id is in ``shared_source_ids``), else ``personal``.
+    """
+    is_owner = row.get("user_id") == caller_user_id
+    scope = row.get("scope") or "personal"
+    if scope == "shared" and not is_owner:
+        return "shared", False
+    if str(row.get("entity_id")) in shared_source_ids:
+        return "shared", is_owner
+    if scope == "shared" and is_owner:
+        # A projection row the caller owns fetched directly by id (the list path
+        # collapses these away; the single-fetch path may still hit one).
+        return "shared", True
+    return "personal", is_owner
+
+
+def _row_to_card(
+    row: dict,
+    *,
+    share_status: str = "personal",
+    is_owner: bool = True,
+) -> EntityCard:
     return EntityCard(
         entity_id=str(row["entity_id"]),
         name=row["name"],
@@ -71,6 +132,8 @@ def _row_to_card(row: dict) -> EntityCard:
         sources=list(row.get("sources") or []),
         scope=row.get("scope", "personal"),
         owner_user_id=row.get("user_id") if row.get("scope") in {"shared", "system"} else None,
+        share_status=share_status,  # type: ignore[arg-type]
+        is_owner=is_owner,
     )
 
 
@@ -84,7 +147,7 @@ def get_entity(entity_id: str, request: Request) -> EntityCard:
     try:
         row = ms.fetch_one(
             "SELECT entity_id, name, entity_type, aliases, context_tags, "
-            "       mention_count, scope, user_id "
+            "       mention_count, scope, user_id, published_from "
             "FROM entities WHERE " + where_clause + " AND entity_id::text = %s "
             "LIMIT 1",
             (*where_params, entity_id),
@@ -101,7 +164,12 @@ def get_entity(entity_id: str, request: Request) -> EntityCard:
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"error": "entity_not_found"},
         )
-    return _row_to_card(row)
+    share_status, is_owner = _derive_entity_share_fields(
+        row,
+        caller_user_id=user_id,
+        shared_source_ids=_fetch_shared_entity_source_ids(user_id),
+    )
+    return _row_to_card(row, share_status=share_status, is_owner=is_owner)
 
 
 @router.get("/entities/{entity_id}/related", response_model=RelatedEntitiesResponse)
@@ -201,18 +269,30 @@ def search(
     pattern = f"%{q.strip()}%"
     try:
         rows = ms.fetch_all(
-            "SELECT entity_id, name, entity_type, aliases, mention_count, scope, user_id "
+            "SELECT entity_id, name, entity_type, aliases, mention_count, scope, "
+            "       user_id, published_from "
             "FROM entities WHERE " + where_clause + " AND name ILIKE %s "
+            # LUM-581 collapse: hide the caller's OWN shared projection rows so
+            # they see one entity (the personal source, marked share_status
+            # 'shared'), not a duplicate. A projection carries the publisher's
+            # user_id, so other members' shared rows (user_id != caller) are kept.
+            "AND NOT (published_from IS NOT NULL AND user_id = %s) "
             "ORDER BY mention_count DESC "
             "LIMIT %s",
-            (*where_params, pattern, limit),
+            (*where_params, pattern, user_id, limit),
         )
     except Exception:  # noqa: BLE001 — DB outage → empty answer
         _log.warning("kg.search: DB query failed q=%r", q, exc_info=True)
         return EntitySearchResponse(entities=[])
 
+    shared_source_ids = _fetch_shared_entity_source_ids(user_id)
     cards: list[EntityCard] = []
     for r in rows:
+        share_status, is_owner = _derive_entity_share_fields(
+            r,
+            caller_user_id=user_id,
+            shared_source_ids=shared_source_ids,
+        )
         cards.append(
             EntityCard(
                 entity_id=str(r["entity_id"]),
@@ -223,6 +303,8 @@ def search(
                 sources=[],
                 scope=r.get("scope", "personal"),
                 owner_user_id=r.get("user_id") if r.get("scope") in {"shared", "system"} else None,
+                share_status=share_status,  # type: ignore[arg-type]
+                is_owner=is_owner,
             )
         )
     return EntitySearchResponse(entities=cards)

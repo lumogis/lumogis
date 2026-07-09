@@ -1,0 +1,39 @@
+# LUM-453 — GitHub Actions stack for the Ollama mutation Playwright subset
+# (admin pull/delete, LUM-450). Sibling of docker-compose.web-e2e-ci.yml but brings
+# up the base `ollama` service so LUMOGIS_E2E_EXPECT_OLLAMA=1 specs can run.
+# Merge last: docker compose -f docker-compose.yml -f docker-compose.web-e2e-ollama-ci.yml ...
+# Optional / label-gated only (ci:run-web-e2e-ollama) — NOT in default web-e2e.yml or
+# verify-public-rc-full (ADR-064: the slim stack keeps its "Ollama not running" assertion).
+#
+# Bootstrap + Playwright smoke credentials must be supplied by the host environment
+# (CI secrets) so they match; see CONTRIBUTING.md / web-e2e-ollama workflow.
+services:
+  orchestrator:
+    env_file:
+      - config/test.env.example
+    depends_on: !override
+      qdrant:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      stack-control:
+        condition: service_started
+      ollama:
+        condition: service_healthy
+    environment:
+      COMPOSE_FILE: docker-compose.yml:docker-compose.web-e2e-ollama-ci.yml
+      GRAPH_MODE: disabled
+      # Unlike the slim stack this run HAS Ollama, so no session_end stub is needed.
+      LUMOGIS_BOOTSTRAP_ADMIN_EMAIL: ${LUMOGIS_BOOTSTRAP_ADMIN_EMAIL}
+      LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD: ${LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD}
+      LUMOGIS_WEB_SMOKE_EMAIL: ${LUMOGIS_WEB_SMOKE_EMAIL}
+      LUMOGIS_WEB_SMOKE_PASSWORD: ${LUMOGIS_WEB_SMOKE_PASSWORD}
+
+  stack-control:
+    environment:
+      COMPOSE_FILE: docker-compose.yml:docker-compose.web-e2e-ollama-ci.yml
+
+  # Host psql for onboarding_dismiss_persists reset (Playwright on GHA runner).
+  postgres:
+    ports:
+      - "127.0.0.1:5432:5432"

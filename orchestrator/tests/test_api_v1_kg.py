@@ -60,21 +60,48 @@ class _KgStore:
                         )
             others.sort(key=lambda r: (r["weight"] is None, -(r["weight"] or 0)))
             return others[: p[-1]]
-        if "from entities" in q and "ilike" in q:
-            pattern = p[-2].strip("%").lower()
+        # LUM-581 — shared-projection source ids for the caller.
+        if "distinct published_from" in q:
+            me = p[0]
             return [
-                {
-                    "entity_id": e["entity_id"],
-                    "name": e["name"],
-                    "entity_type": e.get("entity_type"),
-                    "aliases": e.get("aliases", []),
-                    "mention_count": e.get("mention_count", 0),
-                    "scope": e.get("scope", "personal"),
-                    "user_id": e.get("user_id"),
-                }
+                {"published_from": e["published_from"]}
                 for e in self.entities
-                if pattern in e["name"].lower()
-            ][: p[-1]]
+                if e.get("user_id") == me
+                and e.get("scope") == "shared"
+                and e.get("published_from") is not None
+            ]
+        if "from entities" in q and "ilike" in q:
+            # Query params: (me, pattern, collapse_me, limit) for the default
+            # household-union visibility clause (visible_filter → (me,)).
+            me = p[0]
+            pattern = p[1].strip("%").lower()
+            limit = p[-1]
+            out = []
+            for e in self.entities:
+                if pattern not in e["name"].lower():
+                    continue
+                scope = e.get("scope", "personal")
+                uid = e.get("user_id")
+                # Household-union visibility: personal&mine OR shared/system.
+                if not ((scope == "personal" and uid == me) or scope in ("shared", "system")):
+                    continue
+                # LUM-581 owner-projection collapse: hide the caller's own
+                # shared projection rows (they see the personal source instead).
+                if e.get("published_from") is not None and uid == me:
+                    continue
+                out.append(
+                    {
+                        "entity_id": e["entity_id"],
+                        "name": e["name"],
+                        "entity_type": e.get("entity_type"),
+                        "aliases": e.get("aliases", []),
+                        "mention_count": e.get("mention_count", 0),
+                        "scope": scope,
+                        "user_id": uid,
+                        "published_from": e.get("published_from"),
+                    }
+                )
+            return out[:limit]
         return []
 
     def close(self):
@@ -192,3 +219,149 @@ def test_graph_mode_service_returns_502(client, kg_store, monkeypatch):
         _cfg.clear_graph_mode_env_cache()
     assert resp.status_code == 502
     assert resp.json()["detail"]["error"] == "kg_unavailable"
+
+
+# ---------------------------------------------------------------------------
+# LUM-581 — household entity sharing: is_shared / is_owner derivation + collapse
+# ---------------------------------------------------------------------------
+
+ALICE_SRC = "11111111-1111-4111-9111-111111111111"
+ALICE_PROJ = "aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa"
+BOB_PROJ = "bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb"
+
+
+def _seed_shared_projection(store, *, entity_id, published_from, user_id, name):
+    store.entities.append(
+        {
+            "entity_id": entity_id,
+            "name": name,
+            "entity_type": "person",
+            "aliases": [],
+            "mention_count": 1,
+            "scope": "shared",
+            "user_id": user_id,
+            "published_from": published_from,
+        }
+    )
+
+
+def test_get_entity_owner_personal_unshared_defaults(client, kg_store):
+    _seed_alice(kg_store)
+    resp = client.get(f"/api/v1/kg/entities/{ALICE_SRC}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["share_status"] == "personal"
+    assert body["is_owner"] is True
+
+
+def test_get_entity_owner_shows_shared_when_projection_exists(client, kg_store):
+    _seed_alice(kg_store)
+    _seed_shared_projection(
+        kg_store,
+        entity_id=ALICE_PROJ,
+        published_from=ALICE_SRC,
+        user_id="default",
+        name="Alice",
+    )
+    resp = client.get(f"/api/v1/kg/entities/{ALICE_SRC}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["share_status"] == "shared"
+    assert body["is_owner"] is True
+
+
+def test_search_collapses_owner_projection(client, kg_store):
+    """Owner sees ONE row (the personal source, marked shared) — not a duplicate."""
+    _seed_alice(kg_store)
+    _seed_shared_projection(
+        kg_store,
+        entity_id=ALICE_PROJ,
+        published_from=ALICE_SRC,
+        user_id="default",
+        name="Alice",
+    )
+    resp = client.get("/api/v1/kg/search", params={"q": "ali"})
+    assert resp.status_code == 200
+    entities = resp.json()["entities"]
+    assert len(entities) == 1
+    assert entities[0]["entity_id"] == ALICE_SRC
+    assert entities[0]["share_status"] == "shared"
+    assert entities[0]["is_owner"] is True
+
+
+def test_search_member_sees_shared_projection_as_non_owner(client, kg_store):
+    """A projection owned by another member is visible with is_owner=false."""
+    _seed_shared_projection(
+        kg_store,
+        entity_id=BOB_PROJ,
+        published_from="99999999-9999-4999-9999-999999999999",
+        user_id="bob",
+        name="Bespoke",
+    )
+    resp = client.get("/api/v1/kg/search", params={"q": "bespoke"})
+    assert resp.status_code == 200
+    entities = resp.json()["entities"]
+    assert len(entities) == 1
+    assert entities[0]["entity_id"] == BOB_PROJ
+    assert entities[0]["share_status"] == "shared"
+    assert entities[0]["is_owner"] is False
+
+
+def test_search_excludes_other_users_personal_entity(client, kg_store):
+    """A member's UNSHARED personal entity never appears in another member's list."""
+    kg_store.entities.append(
+        {
+            "entity_id": "cccccccc-cccc-4ccc-9ccc-cccccccccccc",
+            "name": "Carol Private",
+            "entity_type": "person",
+            "aliases": [],
+            "mention_count": 1,
+            "scope": "personal",
+            "user_id": "carol",
+            "published_from": None,
+        }
+    )
+    resp = client.get("/api/v1/kg/search", params={"q": "carol"})
+    assert resp.status_code == 200
+    assert resp.json()["entities"] == []
+
+
+# ---------------------------------------------------------------------------
+# Pure derivation helper (no DB) — the core LUM-581 logic.
+# ---------------------------------------------------------------------------
+
+
+def test_derive_share_fields_owner_personal_no_projection():
+    from routes.api_v1.kg import _derive_entity_share_fields
+
+    row = {"entity_id": ALICE_SRC, "user_id": "default", "scope": "personal"}
+    assert _derive_entity_share_fields(
+        row, caller_user_id="default", shared_source_ids=set()
+    ) == ("personal", True)
+
+
+def test_derive_share_fields_owner_personal_with_projection():
+    from routes.api_v1.kg import _derive_entity_share_fields
+
+    row = {"entity_id": ALICE_SRC, "user_id": "default", "scope": "personal"}
+    assert _derive_entity_share_fields(
+        row, caller_user_id="default", shared_source_ids={ALICE_SRC}
+    ) == ("shared", True)
+
+
+def test_derive_share_fields_member_views_foreign_projection():
+    from routes.api_v1.kg import _derive_entity_share_fields
+
+    row = {"entity_id": BOB_PROJ, "user_id": "bob", "scope": "shared"}
+    assert _derive_entity_share_fields(
+        row, caller_user_id="default", shared_source_ids=set()
+    ) == ("shared", False)
+
+
+def test_derive_share_fields_owner_views_own_projection_directly():
+    from routes.api_v1.kg import _derive_entity_share_fields
+
+    row = {"entity_id": ALICE_PROJ, "user_id": "default", "scope": "shared"}
+    assert _derive_entity_share_fields(
+        row, caller_user_id="default", shared_source_ids=set()
+    ) == ("shared", True)

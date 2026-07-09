@@ -51,6 +51,7 @@ class WebhookEvent(str, Enum):
     ENTITY_MERGED = "on_entity_merged"
     NOTE_CAPTURED = "on_note_captured"
     AUDIO_TRANSCRIBED = "on_audio_transcribed"
+    DOCUMENT_SHARED = "on_document_shared"
 
 
 class DocumentIngestedPayload(BaseModel):
@@ -95,6 +96,38 @@ class AudioTranscribedPayload(BaseModel):
     file_path: str
     duration_seconds: float = 0.0
     user_id: str
+
+
+class SharedEntityRef(BaseModel):
+    """One (personal source, shared projection) entity pair in a document share.
+
+    ``src_entity_id`` is the owner's personal ``entities.entity_id`` (the graph
+    node the KG service sweeps incident edges from); ``proj_entity_id`` is the
+    deterministic uuid5 PK of the ``scope='shared'`` projection row (the shared
+    graph node the KG service MERGEs). ``name`` / ``entity_type`` mirror the
+    projection so the KG side can materialise the node without a Postgres
+    round-trip.
+    """
+
+    src_entity_id: str
+    proj_entity_id: str
+    name: str
+    entity_type: str
+
+
+class DocumentSharedPayload(BaseModel):
+    """Payload for :attr:`WebhookEvent.DOCUMENT_SHARED` (LUM-586).
+
+    Fired once per share (batched for large documents) after the orchestrator
+    commits the Postgres+Qdrant shared entity projections. The KG service
+    MERGEs each shared node and sweeps incident ``RELATES_TO`` edges into the
+    shared graph, then stamps ``graph_projected_at`` on the source rows.
+    """
+
+    file_path: str
+    user_id: str
+    target_scope: Literal["shared", "system"] = "shared"
+    entities: list[SharedEntityRef]
 
 
 def _require_aware_utc(v: datetime) -> datetime:
@@ -154,6 +187,7 @@ _PAYLOAD_BY_EVENT: dict[WebhookEvent, type[BaseModel]] = {
     WebhookEvent.ENTITY_MERGED: EntityMergedPayload,
     WebhookEvent.NOTE_CAPTURED: NoteCapturedPayload,
     WebhookEvent.AUDIO_TRANSCRIBED: AudioTranscribedPayload,
+    WebhookEvent.DOCUMENT_SHARED: DocumentSharedPayload,
 }
 """Single source of truth for envelope.payload validation.
 

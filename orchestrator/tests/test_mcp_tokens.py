@@ -723,14 +723,50 @@ def test_mint_request_rejects_expires_at_field():
 
 
 def test_mint_request_rejects_arbitrary_unknown_fields():
-    """D16: any unknown field is 422 — defends D4 explicitly."""
+    """D16: any unknown field is 422 — defends D4 explicitly.
+
+    LUM-527: `scopes` is now a VALID field, so this uses a genuinely-unknown
+    key (`foo`) to prove `extra_forbidden` still fires.
+    """
+    from models.mcp_token import MintMcpTokenRequest
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError) as exc_info:
+        MintMcpTokenRequest(label="x", foo="bar")
+    errors = exc_info.value.errors()
+    assert any(e["type"] == "extra_forbidden" for e in errors)
+
+
+def test_mint_request_rejects_unknown_scope_value():
+    """LUM-527: a known field with an off-allowlist scope is rejected (NOT
+    `extra_forbidden`). The `McpScope` Literal item type rejects it as a
+    `literal_error` before the validator; `[]` is the validator's `value_error`."""
     from models.mcp_token import MintMcpTokenRequest
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError) as exc_info:
         MintMcpTokenRequest(label="x", scopes=["memory.search"])
     errors = exc_info.value.errors()
-    assert any(e["type"] == "extra_forbidden" for e in errors)
+    assert any(e["type"] == "literal_error" for e in errors)
+    assert not any(e["type"] == "extra_forbidden" for e in errors)
+
+    # `[]` is rejected by the validator itself (ambiguous) as a value_error.
+    with pytest.raises(ValidationError) as empty_exc:
+        MintMcpTokenRequest(label="x", scopes=[])
+    assert any(e["type"] == "value_error" for e in empty_exc.value.errors())
+
+
+def test_mint_request_scopes_none_parses_to_none():
+    """The model parses omitted/explicit-null `scopes` to `None` (parse-only).
+
+    What `None` *means* is layer-dependent (LUM-531): the route reads it as
+    least-privilege read-only; the service treats it as unrestricted NULL. This
+    asserts only the model's parse result.
+    """
+    from models.mcp_token import MintMcpTokenRequest
+
+    assert MintMcpTokenRequest(label="x", scopes=None).scopes is None
+    assert MintMcpTokenRequest(label="x").scopes is None
 
 
 # ---------------------------------------------------------------------------

@@ -1,25 +1,26 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Lumogis
-//
-// First-run onboarding modal shell (LUM-165).
 
-import { useCallback, useState, type JSX } from "react";
+import { useCallback, useMemo, useState, type JSX } from "react";
 import { useNavigate } from "react-router-dom";
 
+import type { InviteOnboardingHintStored } from "../../api/invites";
 import { ModalFrame } from "./modalFrame";
 import { OnboardingStepBody } from "./OnboardingSteps";
 
-const LAST_STEP = 3;
+const DEFAULT_LAST_STEP = 3;
+const INVITE_LAST_STEP = 4;
 const TITLE_ID = "lumogis-onboarding-title";
 
 export interface OnboardingModalProps {
+  inviteOnboarding: InviteOnboardingHintStored | null;
   onComplete: () => Promise<void>;
-  /** User-visible PATCH failure (already mapped). */
   completeError: string | null;
   onClearCompleteError: () => void;
 }
 
 export function OnboardingModal({
+  inviteOnboarding,
   onComplete,
   completeError,
   onClearCompleteError,
@@ -27,6 +28,22 @@ export function OnboardingModal({
   const navigate = useNavigate();
   const [step, setStep] = useState(0);
   const [busy, setBusy] = useState(false);
+
+  const lastStep = inviteOnboarding ? INVITE_LAST_STEP : DEFAULT_LAST_STEP;
+
+  const stepLabel = useMemo(() => {
+    if (inviteOnboarding) {
+      if (step === 0) return "Household";
+      if (step === 1) return "Welcome";
+      if (step === 2) return "Add knowledge";
+      if (step === 3) return "Connect sources";
+      return "Done";
+    }
+    if (step === 0) return "Welcome";
+    if (step === 1) return "Add knowledge";
+    if (step === 2) return "Connect sources";
+    return "Done";
+  }, [inviteOnboarding, step]);
 
   const finish = useCallback(async () => {
     onClearCompleteError();
@@ -48,8 +65,8 @@ export function OnboardingModal({
 
   const onNext = useCallback(() => {
     onClearCompleteError();
-    setStep((s) => Math.min(LAST_STEP, s + 1));
-  }, [onClearCompleteError]);
+    setStep((s) => Math.min(lastStep, s + 1));
+  }, [onClearCompleteError, lastStep]);
 
   const onBack = useCallback(() => {
     onClearCompleteError();
@@ -60,21 +77,16 @@ export function OnboardingModal({
     void finish();
   }, [finish]);
 
-  const stepLabel =
-    step === 0
-      ? "Welcome"
-      : step === 1
-        ? "Add knowledge"
-        : step === 2
-          ? "Connect sources"
-          : "Done";
-
   return (
     <ModalFrame open titleId={TITLE_ID} onClose={onSkip}>
       <h2 id={TITLE_ID} style={{ marginTop: 0 }}>
         {stepLabel}
       </h2>
-      <OnboardingStepBody step={step} onGoToConnectors={onGoToConnectors} />
+      <OnboardingStepBody
+        step={step}
+        inviteOnboarding={inviteOnboarding}
+        onGoToConnectors={onGoToConnectors}
+      />
       {completeError !== null && completeError.length > 0 ? (
         <p role="alert" style={{ color: "salmon", fontSize: "0.9rem" }}>
           {completeError}
@@ -89,7 +101,7 @@ export function OnboardingModal({
         <button type="button" onClick={onSkip} disabled={busy}>
           Skip
         </button>
-        {step < LAST_STEP ? (
+        {step < lastStep ? (
           <button type="button" onClick={onNext} disabled={busy}>
             Next
           </button>
@@ -102,3 +114,6 @@ export function OnboardingModal({
     </ModalFrame>
   );
 }
+
+/** Exported for Vitest regression checks (non-invite flow step count). */
+export const ONBOARDING_LAST_STEP_WITHOUT_INVITE = DEFAULT_LAST_STEP;

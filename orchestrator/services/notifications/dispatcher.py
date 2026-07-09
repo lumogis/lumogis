@@ -149,11 +149,7 @@ def emit(notification: TypedNotification) -> DispatchResult:
             )
             continue
 
-        if (
-            in_quiet
-            and not tier_policy.bypass_quiet_hours
-            and ch in _PUSH_CHANNELS
-        ):
+        if in_quiet and not tier_policy.bypass_quiet_hours and ch in _PUSH_CHANNELS:
             quiet_skipped_push.append(ch)
             results.append(
                 ChannelDeliveryResult(channel=ch, status="skipped", reason="quiet_hours")
@@ -196,9 +192,7 @@ def emit(notification: TypedNotification) -> DispatchResult:
 
     results.extend(delivery_results)
 
-    push_delivered = any(
-        r.channel in _PUSH_CHANNELS and r.status == "delivered" for r in results
-    )
+    push_delivered = any(r.channel in _PUSH_CHANNELS and r.status == "delivered" for r in results)
     if tier == NotificationTier.URGENT and not push_delivered:
         in_app_delivered = any(
             r.channel == ChannelId.IN_APP and r.status == "delivered" for r in results

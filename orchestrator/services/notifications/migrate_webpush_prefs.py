@@ -6,9 +6,10 @@ from __future__ import annotations
 
 import logging
 
-import config
 from models.notifications import ChannelId
 from models.notifications import NotificationType
+
+import config
 
 _log = logging.getLogger(__name__)
 

@@ -304,8 +304,42 @@ assert_search_overlay_ci_export_contract() {
   done
 }
 
+# --- Required absence (LUM-492) ---
+# Inverse of the Search overlay contract: the private Lumogis Server deb build CI
+# (.github/workflows/server-build.yml) is proprietary and must NEVER ship on
+# lumogis/lumogis. It must be listed on the strip list and absent from the export
+# tree. Keep in sync with orchestrator/tests/test_check_public_export_script.py.
+assert_server_build_ci_private_contract() {
+  local root="$1"
+  local listf="$SCRIPT_DIR/public-export-strip-list.txt"
+  local workflow_path=".github/workflows/server-build.yml"
+
+  [[ -f "$listf" ]] || die "server-build-ci-private-contract (LUM-492): missing strip list: $listf"
+
+  local listed=0
+  while IFS= read -r raw_line || [[ -n "${raw_line}" ]]; do
+    local line="${raw_line%%#*}"
+    line="$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    [[ -z "$line" ]] && continue
+    if [[ "$line" == "$workflow_path" ]]; then
+      listed=1
+    fi
+  done <"$listf"
+
+  if [[ "$listed" -ne 1 ]]; then
+    echo "server-build-ci-private-contract LUM-492: $workflow_path must be on the strip list" >&2
+    die "server-build-ci-private-contract (LUM-492): private Server CI missing from strip list"
+  fi
+
+  if [[ -e "$root/$workflow_path" ]]; then
+    echo "server-build-ci-private-contract LUM-492: forbidden private Server CI in export tree: $workflow_path" >&2
+    die "server-build-ci-private-contract (LUM-492): private Server CI leaked into export"
+  fi
+}
+
 assert_openapi_ci_export_contract "$TARGET"
 assert_search_overlay_ci_export_contract "$TARGET"
+assert_server_build_ci_private_contract "$TARGET"
 
 # --- Public export doc hygiene (LUM-376 / LUM-378) ---
 PUBLIC_EXPORT_FORBIDDEN_PATTERNS=(
@@ -379,7 +413,26 @@ assert_public_beginners_doc() {
   fi
 }
 
+# --- Required presence (LUM-363) ---
+# Canonical operator evaluation doc export contract (keep in sync with
+# orchestrator/tests/test_check_public_export_script.py and README.md):
+#   1.  EVALUATION.md
+
+assert_public_evaluation_doc() {
+  local root="$1"
+  local evaluation="$root/EVALUATION.md"
+  if [[ ! -f "$evaluation" ]]; then
+    die "public evaluation doc (LUM-363): missing required path: EVALUATION.md"
+  fi
+  local content
+  content="$(cat "$evaluation")"
+  if ! _scan_public_export_forbidden_patterns "$content" "EVALUATION.md (LUM-363)"; then
+    die "public evaluation doc (LUM-363): private maintainer leakage in EVALUATION.md"
+  fi
+}
+
 assert_public_agent_orientation "$TARGET"
 assert_public_beginners_doc "$TARGET"
+assert_public_evaluation_doc "$TARGET"
 
 echo "check-public-export.sh: OK ($TARGET)"

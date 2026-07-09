@@ -38,12 +38,18 @@ from loop import ask_stream
 from models.api_v1 import ChatCompletionRequest
 from models.api_v1 import ChatCompletionResponse
 from models.api_v1 import ChatMessageDTO
+from models.api_v1 import DocumentCitationDTO
+from models.api_v1 import LumogisChatExtensions
 from models.api_v1 import ModelDescriptor
 from models.api_v1 import ModelsResponse
+from routes.chat import build_injected_context
 from routes.chat import should_prepend_local_loading_note
 from routes.chat import stream_completion
+from routes.chat import _privacy_mode_blocked_response
 from services.connector_credentials import ConnectorNotConfigured
 from services.connector_credentials import CredentialUnavailable
+from services.document_scope import DocumentNotFoundError
+from services.document_scope import resolve_document_file_path
 
 import config
 
@@ -83,60 +89,192 @@ def _split_messages(messages: list[ChatMessageDTO]) -> tuple[str, list[dict]]:
     return question, history
 
 
+def _citations_to_dto(citations) -> list[DocumentCitationDTO]:
+    return [
+        DocumentCitationDTO(
+            chunk_index=c.chunk_index,
+            file_path=c.file_path,
+            score=c.score,
+            score_kind=c.score_kind,
+        )
+        for c in citations
+    ]
+
+
+def _resolve_scoped_injection(
+    body: ChatCompletionRequest,
+    request: Request,
+    *,
+    chat_model: str,
+) -> tuple[str, list[dict], set[str], list[DocumentCitationDTO], bool]:
+    """When document_id is set, resolve path and inject scoped context."""
+    user = get_user(request)
+    if body.document_id is not None and body.document_id <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error": "invalid_document_id"},
+        )
+
+    question, history = _split_messages(body.messages)
+    use_tools = False
+
+    if body.document_id is None:
+        use_tools = config.get_model_config(chat_model).get("tools", False)
+        auto_rag_point_ids: set[str] = set()
+        try:
+            injection = build_injected_context(
+                question,
+                history,
+                chat_model,
+                user.user_id,
+                auto_rag_point_ids=auto_rag_point_ids,
+            )
+        except Exception:
+            _log.warning(
+                "api_v1.chat unscoped context injection failed user=%s",
+                user.user_id,
+                exc_info=True,
+            )
+            return question, history, set(), [], use_tools
+        return question, injection.messages, auto_rag_point_ids, [], use_tools
+
+    try:
+        scoped_path = resolve_document_file_path(user, body.document_id)
+    except DocumentNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "document_not_found"},
+        ) from exc
+
+    auto_rag_point_ids: set[str] = set()
+    try:
+        injection = build_injected_context(
+            question,
+            history,
+            chat_model,
+            user.user_id,
+            auto_rag_point_ids=auto_rag_point_ids,
+            scoped_file_path=scoped_path,
+        )
+    except Exception as exc:
+        _log.warning(
+            "scoped document chat retrieval failed document_id=%s user=%s",
+            body.document_id,
+            user.user_id,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "auto_rag_failed"},
+        ) from exc
+
+    if not injection.citations:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "document_context_unavailable",
+                "message": "No grounded chunks available for the pinned document.",
+            },
+        )
+
+    citation_dtos = _citations_to_dto(injection.citations)
+    return question, injection.messages, auto_rag_point_ids, citation_dtos, use_tools
+
+
 @router.post("/chat/completions")
 def chat_completions(body: ChatCompletionRequest, request: Request) -> Any:
+    from services.privacy_mode import PrivacyModeBlocked
+    from services.privacy_mode import blocks_remote_models
+    from services.privacy_mode import resolve_model_for_request
+
     user_id = get_user(request).user_id
 
     _validate_messages(body.messages)
 
-    if not config.is_model_enabled(body.model, user_id=user_id):
+    blocks_remote = blocks_remote_models(user_id)
+    try:
+        effective_model, privacy_meta = resolve_model_for_request(body.model, user_id)
+    except PrivacyModeBlocked:
+        return _privacy_mode_blocked_response(body.model)
+
+    if not config.is_model_enabled(
+        effective_model,
+        user_id=user_id,
+        _privacy_blocks_remote=blocks_remote,
+    ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"invalid_model:{body.model}",
+            detail=f"invalid_model:{effective_model}",
         )
 
-    question, history = _split_messages(body.messages)
-    use_tools = config.get_model_config(body.model).get("tools", False)
+    question, history, auto_rag_point_ids, citation_dtos, use_tools = _resolve_scoped_injection(
+        body, request, chat_model=effective_model
+    )
 
     if body.stream:
-        # Synchronous credential pre-flight — see the parallel comment in
-        # ``routes/chat.py``. Doing this lazily inside the SSE generator
-        # leaks credential errors out as HTTP 200 + text/event-stream.
         try:
-            config.get_llm_provider(body.model, user_id=user_id)
+            config.get_llm_provider(effective_model, user_id=user_id)
+        except PrivacyModeBlocked:
+            return _privacy_mode_blocked_response(body.model)
         except ConnectorNotConfigured as exc:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail={"error": "llm_provider_unavailable", "model": body.model},
+                detail={"error": "llm_provider_unavailable", "model": effective_model},
             ) from exc
         except CredentialUnavailable as exc:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail={"error": "llm_provider_key_missing", "model": body.model},
+                detail={"error": "llm_provider_key_missing", "model": effective_model},
             ) from exc
         except Exception as exc:  # noqa: BLE001 — chat hot path, must surface
+            from services.egress_guard import EgressBlockedError
+
+            if isinstance(exc, EgressBlockedError):
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={"error": "egress_blocked", "model": effective_model},
+                ) from exc
             _log.exception(
                 "api_v1.chat.stream pre-flight failed model=%s user=%s",
-                body.model,
+                effective_model,
                 user_id,
             )
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail={"error": "llm_provider_unavailable", "model": body.model},
+                detail={"error": "llm_provider_unavailable", "model": effective_model},
             ) from exc
 
         events = ask_stream(
             question,
             history=history,
-            model=body.model,
+            model=effective_model,
             use_tools=use_tools,
             user_id=user_id,
+            auto_rag_point_ids=auto_rag_point_ids or None,
         )
+        from models.context_injection import DocumentCitation
+
+        context_citations = (
+            [
+                DocumentCitation(
+                    chunk_index=c.chunk_index,
+                    file_path=c.file_path,
+                    score=c.score,
+                    score_kind=c.score_kind,
+                )
+                for c in citation_dtos
+            ]
+            if citation_dtos
+            else None
+        )
+
         return StreamingResponse(
             stream_completion(
                 events,
-                body.model,
-                prepend_loading_note=should_prepend_local_loading_note(body.model),
+                effective_model,
+                prepend_loading_note=should_prepend_local_loading_note(effective_model),
+                context_citations=context_citations,
+                privacy_metadata=privacy_meta,
             ),
             media_type="text/event-stream",
         )
@@ -145,36 +283,52 @@ def chat_completions(body: ChatCompletionRequest, request: Request) -> Any:
         answer = ask(
             question,
             history=history,
-            model=body.model,
+            model=effective_model,
             use_tools=use_tools,
             user_id=user_id,
+            auto_rag_point_ids=auto_rag_point_ids or None,
         )
     except ConnectorNotConfigured as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"error": "llm_provider_unavailable", "model": body.model},
+            detail={"error": "llm_provider_unavailable", "model": effective_model},
         ) from exc
     except CredentialUnavailable as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"error": "llm_provider_key_missing", "model": body.model},
+            detail={"error": "llm_provider_key_missing", "model": effective_model},
         ) from exc
     except Exception as exc:  # noqa: BLE001
+        from services.egress_guard import EgressBlockedError
+
+        if isinstance(exc, EgressBlockedError):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"error": "egress_blocked", "model": effective_model},
+            ) from exc
         _log.exception(
             "api_v1.chat.completions failed model=%s user=%s",
-            body.model,
+            effective_model,
             user_id,
         )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"error": "llm_provider_unavailable", "model": body.model},
+            detail={"error": "llm_provider_unavailable", "model": effective_model},
         ) from exc
+
+    lumogis = None
+    if citation_dtos or privacy_meta:
+        lumogis = LumogisChatExtensions(
+            context_citations=citation_dtos or [],
+            privacy=privacy_meta,
+        )
 
     return ChatCompletionResponse(
         id=f"chatcmpl-{uuid4().hex[:12]}",
-        model=body.model,
+        model=effective_model,
         message=ChatMessageDTO(role="assistant", content=answer),
         finished_at=_utcnow(),
+        lumogis=lumogis,
     )
 
 

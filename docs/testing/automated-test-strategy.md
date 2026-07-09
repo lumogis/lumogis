@@ -1,7 +1,7 @@
 # Automated testing strategy
 
-Last reviewed: 2026-06-14
-Verified against commit: a36f022
+Last reviewed: 2026-07-08
+Verified against commit: c9ac7ca
 
 Lumogis ships a **permanent, layered** automated test setup. **Where** you run the **full** stack matters: see **Dev vs `main` (comprehensive testing)** below.
 
@@ -42,6 +42,7 @@ Lumogis ships a **permanent, layered** automated test setup. **Where** you run t
 | **Search overlay unit** | `cd clients/lumogis-search && npm test` | Node 20+ in `clients/lumogis-search` | Vitest for overlay UI (`searchClient`, `overlayUi`, onboarding DOM helpers) — **no** full Tauri shell required. |
 | **Search overlay Rust** | `cd clients/lumogis-search/src-tauri && cargo test` | Rust toolchain | Tauri crate unit tests (auth, path allowlist, overlay config) — invoked via `scripts/debug/rust.sh` or directly. |
 | **Web e2e (Playwright)** | `make web-e2e` or `make web-e2e-prove` | Stack + env creds (see `clients/lumogis-web/README.md`) | **Real browser**: gate UI flows, workflows, mobile viewports; **`verify-public-rc`** uses a **narrow** Playwright gate; **`verify-public-rc-full`** adds **full** signed-in navigation after seeding a smoke user. |
+| **Overlay GUI e2e (WDIO + tauri-driver)** | `make overlay-e2e` (mock) / `make overlay-e2e-smoke` (live) | **Linux + xvfb**; `webkit2gtk-driver` + Rust + Node 20 (LUM-402, [ADR 114](../decisions/114-lum-402-overlay-gui-e2e.md)) | **Real WebKitGTK webview** for the Lumogis Search Tauri overlay (login, search, admin `ingest_paths`, upload, restart banner). Mock leg mocks the Tauri `invoke` IPC (no Docker); smoke leg does one live login+search round-trip against the RC Core. WDIO is a **second e2e idiom** alongside web Playwright; **macOS has no WebDriver** (Linux-only v1). |
 | **Caddy security headers** | `make web-caddy-headers` / `make web-caddy-headers-prove` | Caddy + web + orchestrator | Same-origin / security header contracts at the edge. |
 | **Graph inprocess vs service parity** | `make test-graph-parity` | Docker; **destructive** to dev volumes — see `Makefile` | Core behaviour against **in-process** graph plugin vs **lumogis-graph** HTTP path — optional tail of **`verify-public-rc-full`**. |
 | **DB migrations gate** | `scripts/check-migrations-fresh-db.sh` (via **`verify-public-rc-full`** on `main`) | Docker / tooling per script | Fresh DB bootstrap + migration continuity — part of the **full** RC gate on `main`. |
@@ -51,6 +52,7 @@ Lumogis ships a **permanent, layered** automated test setup. **Where** you run t
 
 - **CI today:** `ruff check` / `ruff format --check` on `orchestrator/`, `pytest` on `orchestrator/tests/`, `pytest` on `stack-control/test_main.py`.
 - **Optional path/label-gated Playwright:** **`.github/workflows/web-e2e.yml`** (LUM-60) runs **`make web-e2e-prove`** against a slim Compose stack when a maintainer adds **`ci:run-web-e2e`** on same-repo PRs that touch the gated paths, or on **`workflow_dispatch`** (see [CONTRIBUTING.md](../../CONTRIBUTING.md) § *Optional CI — web Playwright*). It does **not** replace **`make verify-public-rc`** / **`verify-public-rc-full`**.
+- **Private overlay GUI e2e:** **`.github/workflows/overlay-e2e.yml`** (LUM-402, [ADR 114](../decisions/114-lum-402-overlay-gui-e2e.md)) runs the WDIO + `tauri-driver` mock leg on PRs that touch **`clients/lumogis-search/**`** (path-gated, no label — mock uses no secrets), and a live-compose smoke leg on **`workflow_dispatch`** only. The workflow + `.github/scripts/overlay-e2e-paths.sh` are **strip-listed** from the public export (heavy maintainer runner; smoke uses secrets); the harness **source** under `clients/lumogis-search/e2e/**` exports with the AGPL tree. Distinct from LUM-433's public `search-overlay-build.yml` (release builds).
 - **Not in default CI:** Docker integration, Playwright (except the optional LUM-60 workflow above), KG image tests, and parity — not because they are optional forever, but because they need heavier runners; contributors on **`dev`** still run the **relevant** subset when touching those surfaces. **Maintainers** run the **full** `make verify-public-rc-full` on the **release line** before treating `main` as publish-ready.
 
 ## Release gates (LUM-225)
@@ -62,7 +64,9 @@ These Makefile targets are for **maintainers on `main`** (or a `promote/clean-ma
 | **RC smoke gate** | `make verify-public-rc` | Docker; `.env` from `.env.example`; no running Core required for unit layers (including **`web-codegen-check`** / **`openapi-check`**, which use offline `dump_openapi` — not a live stack) |
 | **RC full gate** | `make verify-public-rc-full` | As above + `LUMOGIS_WEB_SMOKE_EMAIL` / `LUMOGIS_WEB_SMOKE_PASSWORD` for Playwright |
 
-`verify-public-rc` chains (in order): `scripts/check-main-hygiene.sh` → `compose-policy-check` → `compose-test` → `web-codegen-check` (offline `dump_openapi` vs committed snapshot — **no** live orchestrator; skippable via `VERIFY_PUBLIC_RC_SKIP_WEB_CODEGEN_CHECK=1`) → `web-lint` → `web-test` → `web-build` → `scripts/integration-public-rc.sh full-cycle` → `scripts/create-upstream-export-tree.sh` → `scripts/check-public-export.sh`.
+`verify-public-rc` chains (in order): `scripts/check-main-hygiene.sh` → `compose-policy-check` → `compose-test` → `web-codegen-check` (offline `dump_openapi` vs committed snapshot — **no** live orchestrator; skippable via `VERIFY_PUBLIC_RC_SKIP_WEB_CODEGEN_CHECK=1`) → `web-lint` → `web-test` → `web-build` → `openapi-breaking-check` (LUM-313; offline oasdiff gate on the committed snapshot, base `HEAD~1`) → `scripts/integration-public-rc.sh full-cycle` → `scripts/create-upstream-export-tree.sh` → `scripts/check-public-export.sh`.
+
+The `openapi-breaking-check` step (ADR-061 deferred this "runnable proof" of the OpenAPI gate from LUM-303 to LUM-313) needs the `oasdiff` Go dev tool. Because **CI** (`.github/workflows/ci.yml` `openapi-check` job) is the **binding** gate, a missing `oasdiff` degrades to a documented `WARN` rather than failing the local smoke gate. Set `VERIFY_PUBLIC_RC_REQUIRE_OPENAPI_BREAKING=1` to make it a hard local gate (recommended on the release line, where `oasdiff` should be installed: `go install github.com/oasdiff/oasdiff@v1.15.2`).
 
 `verify-public-rc-full` runs the full smoke chain first, then adds `web-e2e-prove` (skippable via `VERIFY_PUBLIC_RC_SKIP_WEB_E2E=1`) and optional `test-graph-parity` (opt-in via `LUMOGIS_RC_GRAPH_PARITY=1`).
 
@@ -93,7 +97,7 @@ Machine-readable source: **`scripts/debug/inventory.tsv`**. Human view: **`make 
 | search-rust | `cargo test` (lumogis-search) | rust | local-dev | no | no |
 | web-e2e | `make web-e2e` | web | opt-in-heavy | yes | no |
 | lint-python | `make lint` | lint | local-dev | no | no |
-| openapi-codegen / breaking | `make web-codegen-check`, `openapi-breaking-check` | none | ci-main | no | no |
+| openapi-codegen / breaking | `make web-codegen-check`, `openapi-breaking-check` | none | ci-main, release-rc | no | no |
 | compose-policy | `make compose-policy-check` | none | ci-main | no | no |
 | export-hygiene | export tree + `check-public-export.sh` | none | release-rc | no | no |
 | verify-public-rc | `make verify-public-rc` | none | release-rc | yes | no |

@@ -297,6 +297,98 @@ describe("SearchPage", () => {
     });
   });
 
+  it("renders a Shared badge for shared entities (LUM-581)", async () => {
+    mountSearchPage({
+      kgSearch: () =>
+        jsonResponse(200, {
+          entities: [
+            {
+              entity_id: "ent-shared",
+              name: "Acme",
+              type: "Org",
+              aliases: [],
+              summary: null,
+              sources: [],
+              scope: "shared",
+              owner_user_id: "u2",
+              share_status: "shared",
+              is_owner: false,
+            },
+          ],
+        }),
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("textbox", { name: /search query/i })).toBeInTheDocument();
+    });
+
+    await user.type(screen.getByRole("textbox", { name: /search query/i }), "acme");
+    await act(async () => {
+      vi.advanceTimersByTime(400);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Acme")).toBeInTheDocument();
+    }, { timeout: 3000 });
+    // The friendly "Shared" badge (distinct from the lowercase scope pill).
+    expect(screen.getByText("Shared")).toBeInTheDocument();
+  });
+
+  it("filters to shared entities when the household filter is enabled (LUM-581)", async () => {
+    mountSearchPage({
+      kgSearch: () =>
+        jsonResponse(200, {
+          entities: [
+            {
+              entity_id: "ent-shared",
+              name: "Acme",
+              type: "Org",
+              aliases: [],
+              summary: null,
+              sources: [],
+              scope: "shared",
+              owner_user_id: "u2",
+              share_status: "shared",
+              is_owner: false,
+            },
+            {
+              entity_id: "ent-personal",
+              name: "Beta",
+              type: "Org",
+              aliases: [],
+              summary: null,
+              sources: [],
+              scope: "personal",
+              owner_user_id: null,
+              share_status: "personal",
+              is_owner: true,
+            },
+          ],
+        }),
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("textbox", { name: /search query/i })).toBeInTheDocument();
+    });
+
+    await user.type(screen.getByRole("textbox", { name: /search query/i }), "co");
+    await act(async () => {
+      vi.advanceTimersByTime(400);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Beta")).toBeInTheDocument();
+    }, { timeout: 3000 });
+    expect(screen.getByText("Acme")).toBeInTheDocument();
+
+    // Enable the "Shared with household" filter → the personal entity drops out.
+    await user.click(
+      screen.getByRole("checkbox", { name: /shared with household/i }),
+    );
+    await waitFor(() => {
+      expect(screen.queryByText("Beta")).toBeNull();
+    });
+    expect(screen.getByText("Acme")).toBeInTheDocument();
+  });
+
   it("shows no hits message when search returns empty results", async () => {
     mountSearchPage({
       memory: () => jsonResponse(200, { hits: [], degraded: false, reason: null }),

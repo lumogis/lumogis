@@ -8,9 +8,9 @@ from models.notifications import ChannelDeliveryResult
 from models.notifications import ChannelId
 from models.notifications import NotificationType
 from models.notifications import TypedNotification
-from services import webpush as webpush_svc
 from services.webpush import WebPushTemplate
 
+from services import webpush as webpush_svc
 
 _TYPE_TO_TEMPLATE: dict[NotificationType, WebPushTemplate] = {
     NotificationType.ROUTINE_ELEVATION: WebPushTemplate.APPROVAL_REQUIRED,

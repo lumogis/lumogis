@@ -31,10 +31,25 @@ default "ignore extras" posture.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
+from typing import get_args
 
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
+from pydantic import field_validator
+
+
+# Canonical MCP token scopes (LUM-527). `McpScope` is a Literal so the OpenAPI
+# schema for the mint request emits an `enum` (codegen clients see the
+# allowlist); `KNOWN_MCP_SCOPES` is derived from it for the validator's
+# canonical-order de-dupe — single source of truth, no drift. The enforcement
+# side (`mcp_server._require_scope`) checks literal scope strings, so this is
+# intentionally NOT imported there (no cycle). `mcp:write` gates the write
+# tools; read tools are ungated, so `["mcp:read"]` means "read-only" and a bare
+# `["mcp:write"]` is functionally read+write.
+McpScope = Literal["mcp:read", "mcp:write"]
+KNOWN_MCP_SCOPES: tuple[str, ...] = get_args(McpScope)
 
 
 class InternalMcpToken(BaseModel):
@@ -95,6 +110,33 @@ class MintMcpTokenRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     label: str = Field(min_length=1, max_length=64)
+    scopes: list[McpScope] | None = None
+
+    @field_validator("scopes")
+    @classmethod
+    def _validate_scopes(cls, v: list[str] | None) -> list[str] | None:
+        """Normalise the optional scope allowlist (LUM-527).
+
+        Membership is enforced by the ``McpScope`` Literal item type (an
+        off-allowlist value is a ``literal_error`` → 422 before this runs), so
+        this validator only: passes ``None`` through (parse-only) — **the ``if v
+        is None`` guard MUST be first**, as Pydantic v2 runs this on explicit
+        JSON ``null`` and iterating would raise ``TypeError``; rejects ``[]``
+        (ambiguous "no access"); and de-dupes preserving canonical
+        ``KNOWN_MCP_SCOPES`` order for deterministic storage/audit/assertions.
+
+        Note the layering: the **model** returns ``None`` for omitted/``null``;
+        the **route** (LUM-531) interprets that ``None`` as least-privilege
+        read-only (``["mcp:read"]``); the **service** ``mint(scopes=None)`` still
+        treats ``None`` as unrestricted (``NULL``) for internal callers.
+        """
+        if v is None:
+            return v
+        if not v:
+            raise ValueError(
+                "scopes must be omitted (defaults to read-only) or a non-empty allowlist subset"
+            )
+        return [s for s in KNOWN_MCP_SCOPES if s in v]
 
 
 class MintMcpTokenResponse(BaseModel):

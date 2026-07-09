@@ -25,8 +25,15 @@ function auditResponse(): Response {
         reverse_action: { name: "reverse" },
         executed_at: "2026-04-24T00:00:00Z",
         reversed_at: null,
+        event_type: "action.executed",
+        scope: "personal",
+        source: "test/DO",
+        description: "test.action via test",
       },
     ],
+    total: 1,
+    limit: 50,
+    offset: 0,
   });
 }
 

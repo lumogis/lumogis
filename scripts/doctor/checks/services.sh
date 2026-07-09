@@ -235,12 +235,14 @@ def main() -> int:
         elif health_s == "healthy":
             row("services", svc, "ok", "healthy", "")
         elif health_s == "unhealthy":
-            row(
+            row7(
                 "services",
                 svc,
                 "error",
                 "health=unhealthy",
-                f"docker compose logs {svc}",
+                f"docker compose restart {svc}",
+                "compose_restart_service",
+                {"service": svc},
             )
         elif health_s == "starting":
             row(

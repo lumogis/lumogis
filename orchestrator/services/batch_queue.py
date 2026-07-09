@@ -202,7 +202,7 @@ def complete(job_id: int) -> None:
 def fail(job_id: int, error: str, *, max_attempts: int) -> None:
     ms = config.get_metadata_store()
     row = ms.fetch_one(
-        "SELECT attempt FROM user_batch_jobs WHERE id = %s AND status = 'running'",
+        "SELECT attempt, user_id, kind FROM user_batch_jobs WHERE id = %s AND status = 'running'",
         (job_id,),
     )
     if not row:
@@ -212,6 +212,16 @@ def fail(job_id: int, error: str, *, max_attempts: int) -> None:
     ms.execute(
         _FAIL_SQL,
         (error, max_attempts, max_attempts, max_attempts, backoff_minutes, job_id),
+    )
+    from services import ingest_progress as ingest_progress
+
+    ingest_progress.maybe_handle_ingest_job_failure(
+        job_id=job_id,
+        user_id=str(row["user_id"]),
+        kind=str(row["kind"]),
+        new_attempt=new_attempt,
+        max_attempts=max_attempts,
+        error=error,
     )
 
 
@@ -270,7 +280,11 @@ def _run_one_tick(worker_id: str) -> bool:
                 "attempt": job.attempt,
             },
         )
-        handler(user_id=job.user_id, payload=model)
+        handler(user_id=job.user_id, payload=model, job_id=job.id)
+        if job.kind in ("ingest_upload", "ingest_watch_file"):
+            from services import ingest_progress as ingest_progress
+
+            ingest_progress.mark_ingest_job_done(job_id=job.id, user_id=job.user_id)
         complete(job.id)
         _log.info(
             "batch_queue: complete kind=%s job_id=%s",

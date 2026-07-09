@@ -1,0 +1,609 @@
+{
+  "version": 1,
+  "banks": {
+    "coding": {
+      "memories": [
+        {
+          "memory_id": "cd-001",
+          "content": "Chose FalkorDB over Neo4j for graph leg because of embedded Redis compatibility",
+          "entity_type": "CODING_DECISION",
+          "tags": [
+            "decision",
+            "coding-bank"
+          ],
+          "entities": [
+            {
+              "name": "FalkorDB",
+              "entity_type": "LIBRARY"
+            }
+          ],
+          "relations": []
+        },
+        {
+          "memory_id": "cd-002",
+          "content": "Decided to use TEMPR fusion with RRF k=60 for recall ranking",
+          "entity_type": "CODING_DECISION",
+          "tags": [
+            "decision",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "cd-003",
+          "content": "Selected FastMCP streamable HTTP for Cursor MCP transport",
+          "entity_type": "CODING_DECISION",
+          "tags": [
+            "decision",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "cd-004",
+          "content": "Adopted bank-scoped memory isolation for coding vs personal contexts",
+          "entity_type": "CODING_DECISION",
+          "tags": [
+            "decision",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "cd-005",
+          "content": "Picked pytest in-process harness over Docker for default CI gate",
+          "entity_type": "CODING_DECISION",
+          "tags": [
+            "decision",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "cd-006",
+          "content": "Chose soft-archive forget semantics over hard delete for MCP writes",
+          "entity_type": "CODING_DECISION",
+          "tags": [
+            "decision",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "cd-007",
+          "content": "Decided on lmcp_ bearer tokens with explicit mcp:write scope",
+          "entity_type": "CODING_DECISION",
+          "tags": [
+            "decision",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "cd-008",
+          "content": "Selected hand-rolled p95 perf_counter gate for MCP recall latency",
+          "entity_type": "CODING_DECISION",
+          "tags": [
+            "decision",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "cc-001",
+          "content": "All MCP read tools must expose readOnlyHint true for Cursor auto-approve",
+          "entity_type": "CODING_CONVENTION",
+          "tags": [
+            "convention",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "cc-002",
+          "content": "Entity types use UPPER_SNAKE_CASE tokens matching Cypher charset",
+          "entity_type": "CODING_CONVENTION",
+          "tags": [
+            "convention",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "cc-003",
+          "content": "Bank parameter defaults to coding for MCP write tools",
+          "entity_type": "CODING_CONVENTION",
+          "tags": [
+            "convention",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "cc-004",
+          "content": "JSON-RPC tools/call uses namespaced tool names like memory.search",
+          "entity_type": "CODING_CONVENTION",
+          "tags": [
+            "convention",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "cc-005",
+          "content": "Fixture banks version field must bump on schema changes",
+          "entity_type": "CODING_CONVENTION",
+          "tags": [
+            "convention",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "cc-006",
+          "content": "Integration tests stub LLM extraction with lambda returning empty lists",
+          "entity_type": "CODING_CONVENTION",
+          "tags": [
+            "convention",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "cc-007",
+          "content": "Stdio bridge tests must not import orchestrator.tests packages",
+          "entity_type": "CODING_CONVENTION",
+          "tags": [
+            "convention",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "cmp-001",
+          "content": "RecallService orchestrates semantic bm25 graph temporal legs in thread pool",
+          "entity_type": "COMPONENT",
+          "tags": [
+            "component",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "cmp-002",
+          "content": "lumogis-mcp stdio bridge proxies JSON-RPC to Core streamable HTTP",
+          "entity_type": "COMPONENT",
+          "tags": [
+            "component",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "cmp-003",
+          "content": "mcp_server.py registers twelve unified namespace MCP tools",
+          "entity_type": "COMPONENT",
+          "tags": [
+            "component",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "cmp-004",
+          "content": "FakeVS filters Qdrant hits by user_id and bank in must clause",
+          "entity_type": "COMPONENT",
+          "tags": [
+            "component",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "cmp-005",
+          "content": "CursorIntegrationFakeStore dispatches SQL by normalized query text",
+          "entity_type": "COMPONENT",
+          "tags": [
+            "component",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "cmp-006",
+          "content": "context.build combines document search and session memory hits",
+          "entity_type": "COMPONENT",
+          "tags": [
+            "component",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "cmp-007",
+          "content": "entity_edges table backs Postgres graph leg for recall",
+          "entity_type": "COMPONENT",
+          "tags": [
+            "component",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "fl-001",
+          "content": "Pop-queue fake stores fail under threaded recall leg execution order",
+          "entity_type": "FAILURE",
+          "tags": [
+            "failure",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "fl-002",
+          "content": "Separate FakeMS plus token store singleton collision broke scope tests",
+          "entity_type": "FAILURE",
+          "tags": [
+            "failure",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "fl-003",
+          "content": "Vacuous memories key presence check in stdio smoke missed wrong memory_id",
+          "entity_type": "FAILURE",
+          "tags": [
+            "failure",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "fl-004",
+          "content": "Flat dict Qdrant filter leaked memories across bank boundaries",
+          "entity_type": "FAILURE",
+          "tags": [
+            "failure",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "fl-005",
+          "content": "Session summary tools read sessions table not coding bank memories",
+          "entity_type": "FAILURE",
+          "tags": [
+            "failure",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "fl-006",
+          "content": "p95 measured via bare service call missed MCP JSON-RPC stack overhead",
+          "entity_type": "FAILURE",
+          "tags": [
+            "failure",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "fl-007",
+          "content": "Makefile cd clients path broke when invoked from orchestrator directory",
+          "entity_type": "FAILURE",
+          "tags": [
+            "failure",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "ss-001",
+          "content": "Session 2026-06-25 implemented MCP read-side batch LUM-295 recall fusion",
+          "entity_type": "SESSION",
+          "tags": [
+            "session",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "ss-002",
+          "content": "Session 2026-06-24 shipped lumogis-mcp stdio bridge for Cursor LUM-292",
+          "entity_type": "SESSION",
+          "tags": [
+            "session",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "ss-003",
+          "content": "Session 2026-06-25 authored LUM-299 cursor integration smoke test plan",
+          "entity_type": "SESSION",
+          "tags": [
+            "session",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "ss-004",
+          "content": "Session 2026-06-25 registered seven coding entity types in LUM-294",
+          "entity_type": "SESSION",
+          "tags": [
+            "session",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "ss-005",
+          "content": "Session 2026-06-22 merged OpenAPI RC breaking change detection LUM-453",
+          "entity_type": "SESSION",
+          "tags": [
+            "session",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "ss-006",
+          "content": "Session 2026-06-25 arbitrated composite metadata store for integration harness",
+          "entity_type": "SESSION",
+          "tags": [
+            "session",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "ss-007",
+          "content": "Session 2026-06-25 hardened recall e2e fakes for lifespan and auth gates",
+          "entity_type": "SESSION",
+          "tags": [
+            "session",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "tk-001",
+          "content": "Implement tests/fixtures/coding_bank.json with fifty seeded memories",
+          "entity_type": "TASK",
+          "tags": [
+            "task",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "tk-002",
+          "content": "Create orchestrator/tests/cursor_integration helper package",
+          "entity_type": "TASK",
+          "tags": [
+            "task",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "tk-003",
+          "content": "Add make test-cursor-integration default CI gate target",
+          "entity_type": "TASK",
+          "tags": [
+            "task",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "tk-004",
+          "content": "Extend CI path regex for coding_bank.json fixture changes",
+          "entity_type": "TASK",
+          "tags": [
+            "task",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "tk-005",
+          "content": "Refactor stdio harness into clients/lumogis-mcp/tests/_stdio_harness.py",
+          "entity_type": "TASK",
+          "tags": [
+            "task",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "tk-006",
+          "content": "Assert annotation matrix readOnlyHint on all twelve MCP tools",
+          "entity_type": "TASK",
+          "tags": [
+            "task",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "tk-007",
+          "content": "Prove bank isolation with ten randomised recall queries",
+          "entity_type": "TASK",
+          "tags": [
+            "task",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "lib-001",
+          "content": "FalkorDB provides embedded graph database with Redis protocol compatibility",
+          "entity_type": "LIBRARY",
+          "tags": [
+            "library",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "lib-002",
+          "content": "Neo4j was evaluated but rejected for heavier operational footprint",
+          "entity_type": "LIBRARY",
+          "tags": [
+            "library",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "lib-003",
+          "content": "FastMCP SDK exposes streamable HTTP transport for MCP servers",
+          "entity_type": "LIBRARY",
+          "tags": [
+            "library",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "lib-004",
+          "content": "Qdrant stores memory embeddings with user_id and bank payload filters",
+          "entity_type": "LIBRARY",
+          "tags": [
+            "library",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "lib-005",
+          "content": "pytest TestClient drives in-process ASGI MCP JSON-RPC integration tests",
+          "entity_type": "LIBRARY",
+          "tags": [
+            "library",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "lib-006",
+          "content": "uvicorn serves Core app for subprocess lumogis-mcp stdio bridge tests",
+          "entity_type": "LIBRARY",
+          "tags": [
+            "library",
+            "coding-bank"
+          ]
+        },
+        {
+          "memory_id": "lib-007",
+          "content": "tree-sitter powers codegraph ingest path in services/lumogis-graph",
+          "entity_type": "LIBRARY",
+          "tags": [
+            "library",
+            "coding-bank"
+          ]
+        }
+      ],
+      "entities": [
+        {
+          "entity_id": "ent-falkordb",
+          "name": "FalkorDB",
+          "entity_type": "LIBRARY",
+          "mention_count": 12,
+          "aliases": [],
+          "context_tags": [
+            "graph"
+          ],
+          "scope": "personal"
+        },
+        {
+          "entity_id": "ent-neo4j",
+          "name": "Neo4j",
+          "entity_type": "LIBRARY",
+          "mention_count": 5,
+          "aliases": [],
+          "context_tags": [
+            "graph"
+          ],
+          "scope": "personal"
+        },
+        {
+          "entity_id": "ent-recall",
+          "name": "RecallService",
+          "entity_type": "COMPONENT",
+          "mention_count": 8,
+          "aliases": [],
+          "context_tags": [
+            "mcp"
+          ],
+          "scope": "personal"
+        },
+        {
+          "entity_id": "ent-fastmcp",
+          "name": "FastMCP",
+          "entity_type": "LIBRARY",
+          "mention_count": 6,
+          "aliases": [],
+          "context_tags": [
+            "mcp"
+          ],
+          "scope": "personal"
+        }
+      ],
+      "edges": [
+        {
+          "src_entity_id": "ent-falkordb",
+          "dst_entity_id": "ent-recall",
+          "relation_type": "DEPENDS_ON",
+          "evidence_id": "cd-001"
+        }
+      ]
+    },
+    "personal": {
+      "memories": [
+        {
+          "memory_id": "per-001",
+          "content": "Planted tomatoes and basil in the backyard garden this spring",
+          "entity_type": "TASK",
+          "tags": [
+            "garden"
+          ]
+        },
+        {
+          "memory_id": "per-002",
+          "content": "Sunday family dinner recipe uses slow-roasted chicken with herbs",
+          "entity_type": "CODING_CONVENTION",
+          "tags": [
+            "cooking"
+          ]
+        },
+        {
+          "memory_id": "per-003",
+          "content": "Booked summer vacation to the coast for two weeks in August",
+          "entity_type": "SESSION",
+          "tags": [
+            "travel"
+          ]
+        },
+        {
+          "memory_id": "per-004",
+          "content": "Kids soccer practice moved to Saturday mornings at the park",
+          "entity_type": "TASK",
+          "tags": [
+            "family"
+          ]
+        }
+      ],
+      "entities": [],
+      "edges": []
+    }
+  },
+  "sessions": [
+    {
+      "session_id": "sess-cursor-001",
+      "summary": "Chose FalkorDB for graph leg in recall pipeline",
+      "topics": [
+        "falkordb",
+        "graph"
+      ],
+      "entities": [
+        "FalkorDB"
+      ],
+      "scope": "personal"
+    }
+  ],
+  "recall_mappings": [
+    {
+      "query": "why FalkorDB",
+      "bank": "coding",
+      "memory_ids": [
+        "cd-001"
+      ]
+    },
+    {
+      "query": "TEMPR fusion RRF",
+      "bank": "coding",
+      "memory_ids": [
+        "cd-002"
+      ]
+    },
+    {
+      "query": "LUM-292",
+      "bank": "coding",
+      "memory_ids": [
+        "ss-002"
+      ]
+    },
+    {
+      "query": "readOnlyHint true for Cursor",
+      "bank": "coding",
+      "memory_ids": [
+        "cc-001"
+      ]
+    },
+    {
+      "query": "tomatoes basil backyard",
+      "bank": "personal",
+      "memory_ids": [
+        "per-001"
+      ]
+    }
+  ]
+}

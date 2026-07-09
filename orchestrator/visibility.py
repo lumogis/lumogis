@@ -42,6 +42,23 @@ DEFAULT_SCOPE: Scope = "personal"
 _VALID_SCOPES: frozenset[str] = frozenset({"personal", "shared", "system"})
 
 
+def _effective_allows_shared(user: UserContext) -> bool:
+    """Admins always see the household union; members honour ``allows_shared``.
+
+    Only *authenticated* admins bypass ``allows_shared``. ``UserContext`` defaults
+  ``role='admin'`` for dev ergonomics, so call sites that reconstruct context with
+    only ``user_id`` must not inherit admin read privileges (LUM-577 / KG, memory,
+    chat RAG paths).
+    """
+    if user.role == "admin" and user.is_authenticated:
+        return True
+    if user.allows_shared is not None:
+        return user.allows_shared
+    from services import users as users_service
+
+    return users_service.get_allows_shared(user.user_id)
+
+
 def _validate_scope_filter(scope_filter: Optional[str]) -> Optional[Scope]:
     """Reject any value not in the locked literal set.
 
@@ -71,6 +88,9 @@ def visible_filter(
 
         ((scope = 'personal' AND user_id = %s) OR scope IN ('shared','system'))
 
+    When ``allows_shared`` is false for a non-admin member, shared rows are
+    excluded from the default union; system rows remain visible (LUM-577).
+
     Narrowed paths::
 
         scope_filter='personal' →  (scope = 'personal' AND user_id = %s)
@@ -83,15 +103,22 @@ def visible_filter(
     """
     sf = _validate_scope_filter(scope_filter)
     me = user.user_id
+    allows_shared = _effective_allows_shared(user)
     if sf == "personal":
         return ("(scope = 'personal' AND user_id = %s)", (me,))
     if sf == "shared":
+        if not allows_shared:
+            return ("(FALSE)", ())
         return ("(scope = 'shared')", ())
     if sf == "system":
         return ("(scope = 'system')", ())
-    # Default: union of personal-mine + shared + system.
+    if allows_shared:
+        return (
+            "((scope = 'personal' AND user_id = %s) OR scope IN ('shared','system'))",
+            (me,),
+        )
     return (
-        "((scope = 'personal' AND user_id = %s) OR scope IN ('shared','system'))",
+        "((scope = 'personal' AND user_id = %s) OR scope = 'system')",
         (me,),
     )
 
@@ -147,6 +174,7 @@ def visible_qdrant_filter(
     """
     sf = _validate_scope_filter(scope_filter)
     me = user.user_id
+    allows_shared = _effective_allows_shared(user)
     if sf == "personal":
         return {
             "must": [
@@ -155,9 +183,23 @@ def visible_qdrant_filter(
             ]
         }
     if sf == "shared":
+        if not allows_shared:
+            return {"must": [{"key": "user_id", "match": {"value": "__no_shared_access__"}}]}
         return {"must": [{"key": "scope", "match": {"value": "shared"}}]}
     if sf == "system":
         return {"must": [{"key": "scope", "match": {"value": "system"}}]}
+    if allows_shared:
+        return {
+            "should": [
+                {
+                    "must": [
+                        {"key": "scope", "match": {"value": "personal"}},
+                        {"key": "user_id", "match": {"value": me}},
+                    ]
+                },
+                {"key": "scope", "match": {"any": ["shared", "system"]}},
+            ]
+        }
     return {
         "should": [
             {
@@ -166,7 +208,7 @@ def visible_qdrant_filter(
                     {"key": "user_id", "match": {"value": me}},
                 ]
             },
-            {"key": "scope", "match": {"any": ["shared", "system"]}},
+            {"key": "scope", "match": {"value": "system"}},
         ]
     }
 
@@ -207,14 +249,22 @@ def visible_cypher_fragment(
     sf = _validate_scope_filter(scope_filter)
     me = user.user_id
     a = alias
+    allows_shared = _effective_allows_shared(user)
     if sf == "personal":
         return (f"({a}.scope = 'personal' AND {a}.user_id = $vis_me)", {"vis_me": me})
     if sf == "shared":
+        if not allows_shared:
+            return ("(FALSE)", {})
         return (f"({a}.scope = 'shared')", {})
     if sf == "system":
         return (f"({a}.scope = 'system')", {})
+    if allows_shared:
+        return (
+            f"(({a}.scope = 'personal' AND {a}.user_id = $vis_me) OR {a}.scope IN ['shared','system'])",
+            {"vis_me": me},
+        )
     return (
-        f"(({a}.scope = 'personal' AND {a}.user_id = $vis_me) OR {a}.scope IN ['shared','system'])",
+        f"(({a}.scope = 'personal' AND {a}.user_id = $vis_me) OR {a}.scope = 'system')",
         {"vis_me": me},
     )
 

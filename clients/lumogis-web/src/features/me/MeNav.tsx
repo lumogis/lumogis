@@ -9,8 +9,11 @@ const links: { to: string; label: string }[] = [
   { to: "/me/tools-capabilities", label: "Tools & capabilities" },
   { to: "/me/llm-providers", label: "LLM providers" },
   { to: "/me/mcp-tokens", label: "MCP tokens" },
+  { to: "/me/shared-items", label: "Shared items" },
   { to: "/me/notifications", label: "Notifications" },
+  { to: "/me/privacy-mode", label: "Privacy mode" },
   { to: "/me/export", label: "Export" },
+  { to: "/audit", label: "Audit log" },
 ];
 
 export function MeNav(): JSX.Element {

@@ -3,7 +3,10 @@
 
 //! OS system tray — shared AGPL seam (LUM-457).
 
-use crate::{show_overlay_window, toggle_overlay_window};
+// LUM-455: route tray summons through `apply_summon` (Source::Tray) so a verified
+// Wayland tray summon confirms recovery. (Shared with Hub: harmless there — Hub
+// ignores the recovery_confirmed flag; show/toggle behaviour is unchanged.)
+use crate::{apply_summon, SummonAction, SummonSource};
 use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -106,7 +109,7 @@ fn dispatch_custom_menu_event(app: &AppHandle, item_id: &str, quit_mode: TrayQui
         return;
     }
     if item_id == TRAY_MENU_SHOW_ID {
-        show_overlay_window(app);
+        apply_summon(app, SummonAction::Show, SummonSource::Tray);
         return;
     }
     let Some(hooks) = app.try_state::<TrayHostHooks>() else {
@@ -236,7 +239,7 @@ pub fn install_system_tray(
             let id = event.id().as_ref();
             match &menu_spec {
                 TrayMenuSpec::Hub => match id {
-                    TRAY_MENU_SHOW_ID => show_overlay_window(app),
+                    TRAY_MENU_SHOW_ID => apply_summon(app, SummonAction::Show, SummonSource::Tray),
                     TRAY_MENU_QUIT_ID => handle_tray_quit(app, quit_mode),
                     _ => {}
                 },
@@ -253,7 +256,7 @@ pub fn install_system_tray(
                 ..
             } = event
             {
-                toggle_overlay_window(tray.app_handle());
+                apply_summon(tray.app_handle(), SummonAction::Toggle, SummonSource::Tray);
             }
         })
         .build(app)

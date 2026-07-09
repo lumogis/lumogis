@@ -177,6 +177,11 @@ def _call_llm(title: str, content: str, *, user_id: str | None = None) -> dict:
             model_name,
         )
         return {}
+    from services.privacy_mode import resolve_job_model
+
+    model_name = resolve_job_model(model_name, user_id) or ""
+    if not model_name:
+        return {}
     try:
         from services.connector_credentials import ConnectorNotConfigured
         from services.connector_credentials import CredentialUnavailable

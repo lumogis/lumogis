@@ -1,0 +1,16 @@
+.root {
+  width: 100%;
+}
+
+.doctorHint {
+  margin: var(--lumogis-space-2, 0.5rem) 0 0;
+  font-size: 0.85rem;
+  color: var(--lumogis-fg-muted, #999);
+}
+
+.doctorHint code {
+  font-family: var(--lumogis-font-mono, ui-monospace, monospace);
+  background: var(--lumogis-border, #2b2b2b);
+  border-radius: var(--lumogis-radius-sm, 6px);
+  padding: 0 0.35em;
+}

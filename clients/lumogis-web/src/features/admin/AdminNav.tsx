@@ -7,9 +7,11 @@ const mainLinks: { to: string; label: string }[] = [
   { to: "/admin/connector-credentials", label: "Connector credentials" },
   { to: "/admin/connector-permissions", label: "Connector permissions" },
   { to: "/admin/mcp-tokens", label: "MCP tokens" },
+  { to: "/admin/shared-items", label: "Shared items" },
   { to: "/admin/audit", label: "Audit" },
   { to: "/admin/diagnostics", label: "Diagnostics" },
   { to: "/admin/system-status", label: "System status" },
+  { to: "/admin/privacy-mode", label: "Privacy mode" },
 ];
 
 const legacy: { href: string; label: string }[] = [

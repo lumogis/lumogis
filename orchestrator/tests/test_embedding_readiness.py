@@ -4,6 +4,7 @@
 
 from types import SimpleNamespace
 from unittest.mock import MagicMock
+from unittest.mock import call
 from unittest.mock import patch
 
 from services.embedding_readiness import try_activate_embedding
@@ -37,3 +38,12 @@ def test_try_activate_embedding_sets_ready_on_success():
     assert state.embedding_ready is True
     vs.create_collection.assert_called()
     vs.ensure_payload_index.assert_called()
+
+    index_calls = vs.ensure_payload_index.call_args_list
+    # file_path is indexed exactly once, and only on the documents collection.
+    file_path_calls = [c for c in index_calls if c.args[1] == "file_path"]
+    assert file_path_calls == [call("documents", "file_path")]
+    # scope / user_id are still indexed on every embed collection.
+    for coll in ("documents", "conversations", "entities", "signals"):
+        assert call(coll, "scope") in index_calls
+        assert call(coll, "user_id") in index_calls

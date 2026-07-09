@@ -23,7 +23,9 @@ def client():
         yield c
 
 
-def _auth_header(monkeypatch: pytest.MonkeyPatch, user_id: str, role: str = "user") -> dict[str, str]:
+def _auth_header(
+    monkeypatch: pytest.MonkeyPatch, user_id: str, role: str = "user"
+) -> dict[str, str]:
     monkeypatch.setenv("AUTH_SECRET", "test-notification-prefs-secret")
     monkeypatch.setenv("AUTH_ENABLED", "true")
     from auth import mint_access_token

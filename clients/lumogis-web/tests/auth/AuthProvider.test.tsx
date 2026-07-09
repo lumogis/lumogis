@@ -10,7 +10,7 @@ import userEvent from "@testing-library/user-event";
 
 import { ApiClient } from "../../src/api/client";
 import { AccessTokenStore } from "../../src/api/tokens";
-import { AuthProvider, RequireAuth, useUser } from "../../src/auth/AuthProvider";
+import { AuthProvider, RequireAuth, useAuth, useUser } from "../../src/auth/AuthProvider";
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -167,6 +167,52 @@ describe("AuthProvider — login flow", () => {
       expect(screen.getByRole("alert")).toHaveTextContent(/email or password is incorrect/i);
     });
     expect(tokens.get()).toBeNull();
+  });
+});
+
+describe("AuthProvider — adoptSession", () => {
+  it("sets token, seeds ME cache, and advances gate for authenticated shell", async () => {
+    const tokens = new AccessTokenStore();
+    const fetchImpl = vi.fn(async (input: RequestInfo) => {
+      const url = String(input);
+      if (url.includes("/auth/me")) {
+        return jsonResponse(200, { id: "u2", email: "invited@example.com", role: "user" });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    const client = new ApiClient({ tokens, fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    function AdoptProbe(): JSX.Element {
+      const { adoptSession } = useAuth();
+      return (
+        <button
+          type="button"
+          onClick={() =>
+            adoptSession({
+              access_token: "invite-access",
+              token_type: "bearer",
+              expires_in: 900,
+              user: { id: "u2", email: "invited@example.com", role: "user" },
+            })
+          }
+        >
+          adopt
+        </button>
+      );
+    }
+
+    render(
+      <AuthProvider client={client} tokens={tokens} skipRefreshOnMount>
+        <AdoptProbe />
+        <MeProbe />
+      </AuthProvider>,
+    );
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "adopt" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("me").textContent).toBe("invited@example.com|user");
+    });
+    expect(tokens.get()).toBe("invite-access");
   });
 });
 

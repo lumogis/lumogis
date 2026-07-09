@@ -6,13 +6,14 @@ from __future__ import annotations
 
 import os
 
-import config
 from models.notifications import ChannelDeliveryResult
 from models.notifications import ChannelId
 from models.notifications import NotificationTier
 from models.notifications import TypedNotification
 from services.notifications.taxonomy import NTFY_PRIORITY_BY_TIER
 from services.notifications.taxonomy import tier_for_type
+
+import config
 
 
 class NtfyChannel:
@@ -28,6 +29,7 @@ class NtfyChannel:
             )
 
         from services.ntfy_runtime import load_ntfy_runtime_config
+
         from services import connector_credentials as ccs
 
         try:

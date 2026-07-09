@@ -17,10 +17,12 @@ from models.webhook import AudioTranscribedPayload
 from models.webhook import ContextRequest
 from models.webhook import ContextResponse
 from models.webhook import DocumentIngestedPayload
+from models.webhook import DocumentSharedPayload
 from models.webhook import EntityCreatedPayload
 from models.webhook import EntityMergedPayload
 from models.webhook import NoteCapturedPayload
 from models.webhook import SessionEndedPayload
+from models.webhook import SharedEntityRef
 from models.webhook import WebhookEnvelope
 from models.webhook import WebhookEvent
 from pydantic import ValidationError
@@ -87,6 +89,33 @@ def test_audio_transcribed_default_duration():
     assert p.duration_seconds == 0.0
     restored = AudioTranscribedPayload.model_validate_json(p.model_dump_json())
     assert restored == p
+
+
+def test_document_shared_roundtrip_and_default_scope():
+    p = DocumentSharedPayload(
+        file_path="/d.pdf",
+        user_id="u1",
+        entities=[
+            SharedEntityRef(
+                src_entity_id="e1", proj_entity_id="s1", name="Ada", entity_type="PERSON"
+            )
+        ],
+    )
+    assert p.target_scope == "shared"
+    restored = DocumentSharedPayload.model_validate_json(p.model_dump_json())
+    assert restored == p
+
+
+def test_document_shared_rejects_bad_target_scope():
+    with pytest.raises(ValidationError):
+        DocumentSharedPayload(
+            file_path="/d.pdf", user_id="u1", target_scope="personal", entities=[]
+        )
+
+
+def test_shared_entity_ref_requires_both_ids():
+    with pytest.raises(ValidationError):
+        SharedEntityRef(src_entity_id="e1", name="Ada", entity_type="PERSON")
 
 
 # ---------------------------------------------------------------------------
@@ -200,6 +229,18 @@ def test_payload_dispatch_classes_validate_their_payloads():
         WebhookEvent.ENTITY_MERGED: {"winner_id": "w", "loser_id": "l", "user_id": "u1"},
         WebhookEvent.NOTE_CAPTURED: {"note_id": "n", "user_id": "u1"},
         WebhookEvent.AUDIO_TRANSCRIBED: {"audio_id": "a", "file_path": "/x.wav", "user_id": "u1"},
+        WebhookEvent.DOCUMENT_SHARED: {
+            "file_path": "/d.pdf",
+            "user_id": "u1",
+            "entities": [
+                {
+                    "src_entity_id": "e1",
+                    "proj_entity_id": "s1",
+                    "name": "Ada",
+                    "entity_type": "PERSON",
+                }
+            ],
+        },
     }
     for event, model_cls in _PAYLOAD_BY_EVENT.items():
         good = model_cls.model_validate(samples[event])

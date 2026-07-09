@@ -133,7 +133,9 @@ class RestartRequest(BaseModel):
 # "Could not import module main"). When HOST_PROJECT_DIR is set (RC gates bind-mount the repo
 # at that same absolute host path), compose runs from there and relative sources resolve to
 # real host paths. Unset (production default) preserves the historical /project behaviour.
-_PROJECT_DIR = os.environ.get("HOST_PROJECT_DIR", "").strip() or "/project"
+# Read at call time — HOST_PROJECT_DIR may be injected after module import in RC overlays.
+def _project_dir() -> str:
+    return os.environ.get("HOST_PROJECT_DIR", "").strip() or "/project"
 
 
 @app.post("/restart")
@@ -163,7 +165,7 @@ def restart(request: Request, body: RestartRequest = RestartRequest()):
             capture_output=True,
             text=True,
             timeout=120,
-            cwd=_PROJECT_DIR,
+            cwd=_project_dir(),
         )
     except subprocess.TimeoutExpired:
         raise HTTPException(status_code=504, detail="Command timed out.")
@@ -225,7 +227,7 @@ def _run_compose_ps() -> list[dict]:
         capture_output=True,
         text=True,
         timeout=_COMPOSE_PS_TIMEOUT_SEC,
-        cwd=_PROJECT_DIR,
+        cwd=_project_dir(),
     )
     if result.returncode != 0:
         raise RuntimeError(
@@ -243,7 +245,7 @@ def _run_system_df() -> tuple[object | None, str | None]:
             capture_output=True,
             text=True,
             timeout=_DF_TIMEOUT_SEC,
-            cwd=_PROJECT_DIR,
+            cwd=_project_dir(),
         )
     except subprocess.TimeoutExpired:
         raise

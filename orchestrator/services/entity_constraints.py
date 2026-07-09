@@ -42,6 +42,7 @@ _ALLOWED_EDGE_TYPES = frozenset(
         # Provenance edges — inserted by store_entities() on every ingest
         "MENTIONED_IN_SESSION",
         "MENTIONED_IN_DOCUMENT",
+        "MENTIONED_IN_MEMORY",  # LUM-291 — MCP-originated entity provenance
         "RELATED_TO",
         # Semantic edges — used by future passes and graph projection
         "MENTIONS",

@@ -214,7 +214,7 @@ jobs:
         with:
           name: web-e2e-compose-logs
           path: compose-logs/
-          retention-days: 14
+          retention-days: 7
 
       - uses: actions/upload-artifact@v4
         if: failure() && steps.gate.outputs.run_stack == 'true'
@@ -224,7 +224,7 @@ jobs:
             clients/lumogis-web/playwright-report/
             clients/lumogis-web/test-results/
           if-no-files-found: ignore
-          retention-days: 14
+          retention-days: 7
 
       - name: Teardown compose stack
         if: always() && steps.gate.outputs.run_stack == 'true'

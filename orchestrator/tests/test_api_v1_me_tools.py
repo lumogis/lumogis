@@ -149,6 +149,7 @@ def test_me_tools_capability_row_safe_metadata(client, monkeypatch) -> None:
                     base_url="http://example:1",
                     registered_at=datetime.now(timezone.utc),
                     healthy=False,
+                    last_unhealthy_reason="http_403",
                 )
             ]
 
@@ -168,7 +169,11 @@ def test_me_tools_capability_row_safe_metadata(client, monkeypatch) -> None:
     assert row["connector"] == "capability.com.example.facade"
     assert row["action_type"] == "cap.discovered.tool"
     assert row["available"] is False
-    assert row["why_not_available"]
+    # LUM-61: the facade surfaces the specific probe-failure reason, not a
+    # generic "not healthy" string.
+    assert row["why_not_available"] == (
+        "capability service rejected Core's credentials (last probe returned HTTP 403)"
+    )
     raw = json.dumps(row)
     assert "properties" not in raw  # no JSON Schema leakage
 

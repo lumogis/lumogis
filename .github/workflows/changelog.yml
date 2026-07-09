@@ -4,10 +4,17 @@
 # default read-only GITHUB_TOKEN (read-only). Never interpolate `github.event.pull_request.body`
 # directly in `run:`.
 #
-# Checkout: `dangoslen/changelog-enforcer` uses the GitHub API — `actions/checkout` omitted by design.
+# LUM-258 — the path filter is JOB-level, not workflow-level: the workflow ALWAYS runs on
+# pull_request so the required status check always reports a conclusion (a workflow-level
+# `paths:` filter would leave docs-only PRs with no status → a required-check merge footgun).
+# The `changes` job computes whether product paths were touched (mirroring the include +
+# negated mock-capability rules), and the `changelog` job enforces only when they were.
 #
-# Path list: keep in sync with `scripts/changelog-gate-paths.txt` (local `make changelog-check`).
-# Mock capability subtree is excluded with a negated `paths` entry (`paths-ignore` cannot pair with `paths` on the same event).
+# Checkout: `dangoslen/changelog-enforcer` uses the GitHub API — the `changelog` job omits
+# `actions/checkout` by design; path detection runs in the separate `changes` job.
+#
+# Path list: keep in sync with `scripts/changelog-gate-paths.txt` (single source of truth,
+# also used by `.github/scripts/changelog-paths.sh` and local `make changelog-check`).
 name: Changelog
 
 on:
@@ -18,22 +25,6 @@ on:
   pull_request:
     branches: [main, master]
     types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
-    paths:
-      - "orchestrator/**"
-      - "clients/**"
-      - "stack-control/**"
-      - "services/**"
-      - "!services/lumogis-mock-capability/**"
-      - "mcp-servers/**"
-      - "docker-compose*.yml"
-      - "postgres/migrations/**"
-      - "scripts/**"
-      - "docker/**"
-      - "config/**"
-      - "branding/**"
-      - "Makefile"
-      - "pyproject.toml"
-      - ".github/workflows/changelog.yml"
 
 permissions:
   contents: read
@@ -44,12 +35,46 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    # Job-level path detection (LUM-258). Always runs on pull_request; its output gates
+    # changelog enforcement without a workflow-level `paths:` filter.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      should_run: ${{ steps.paths.outputs.should_run }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate changelog path script syntax
+        run: bash -n .github/scripts/changelog-paths.sh
+
+      - name: Path gate
+        id: paths
+        shell: bash
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
+        run: bash -euo pipefail .github/scripts/changelog-paths.sh
+
   changelog:
+    # Always runs on pull_request (so the required check always reports). Enforcement is
+    # gated on the `changes` job: product paths touched AND no [skip changelog] bypass.
+    needs: changes
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - name: No product paths changed (changelog gate not applicable)
+        if: needs.changes.outputs.should_run != 'true'
+        run: |
+          echo 'SKIP_CHANGELOG_PATHS: no product paths changed; changelog gate not applicable'
+
       - id: skip
+        if: needs.changes.outputs.should_run == 'true'
         env:
           PR_BODY: ${{ github.event.pull_request.body || '' }}
         run: |
@@ -58,7 +83,7 @@ jobs:
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
-      - if: steps.skip.outputs.skip != 'true'
+      - if: needs.changes.outputs.should_run == 'true' && steps.skip.outputs.skip != 'true'
         uses: dangoslen/changelog-enforcer@8b5e9dc3121363bb7c0115f8533404d92af382de # v3.7.0
         with:
           changeLogPath: CHANGELOG.md

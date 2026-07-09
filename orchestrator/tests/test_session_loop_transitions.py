@@ -107,7 +107,10 @@ def test_tool_round_atomic_replace_no_assistant_only_state(monkeypatch: pytest.M
     for event, snap in collector:
         if event == SessionLoopEvent.SITE_TOOL_DISPATCH:
             assert len(snap.messages) >= n_start + 2
-        elif event == SessionLoopEvent.SITE_MODEL_CALL and snap.transition == TransitionReason.MODEL_CALL:
+        elif (
+            event == SessionLoopEvent.SITE_MODEL_CALL
+            and snap.transition == TransitionReason.MODEL_CALL
+        ):
             if snap.terminal is None and len(snap.messages) == n_start + 1:
                 assert any(m.get("role") == "tool" for m in snap.messages)
 
@@ -230,13 +233,10 @@ def test_mid_tool_exception_no_assistant_only_published_state(
         messages=[{"role": "user", "content": "hi"}],
         chain_budget=None,
     )
-    n = len(state.messages)
 
     with pytest.raises(RuntimeError, match="tool boom"):
         loop_mod._finish_session_loop(
-            loop_mod._run_session_loop(
-                state, params, provider=StubProvider(), stream=False
-            )
+            loop_mod._run_session_loop(state, params, provider=StubProvider(), stream=False)
         )
 
 
@@ -311,9 +311,7 @@ def test_sync_stop_reason_stops_without_dispatch(monkeypatch: pytest.MonkeyPatch
     )
     n = len(state.messages)
     terminal, final = loop_mod._finish_session_loop(
-        loop_mod._run_session_loop(
-            state, params, provider=StubProvider(), stream=False
-        )
+        loop_mod._run_session_loop(state, params, provider=StubProvider(), stream=False)
     )
     assert terminal == SessionTerminal.COMPLETED
     assert len(final.messages) == n + 1
@@ -334,9 +332,7 @@ def test_terminal_completed_no_tools(monkeypatch: pytest.MonkeyPatch) -> None:
         chain_budget=None,
     )
     terminal, final = loop_mod._finish_session_loop(
-        loop_mod._run_session_loop(
-            state, params, provider=StubProvider(), stream=False
-        )
+        loop_mod._run_session_loop(state, params, provider=StubProvider(), stream=False)
     )
     assert terminal == SessionTerminal.COMPLETED
     assert final.messages[-1]["role"] == "assistant"
@@ -371,9 +367,7 @@ def test_terminal_max_tool_rounds(monkeypatch: pytest.MonkeyPatch) -> None:
         chain_budget=None,
     )
     terminal, final = loop_mod._finish_session_loop(
-        loop_mod._run_session_loop(
-            state, params, provider=StubProvider(), stream=False
-        )
+        loop_mod._run_session_loop(state, params, provider=StubProvider(), stream=False)
     )
     assert terminal == SessionTerminal.MAX_TOOL_ROUNDS
     assert final.messages[-1]["content"] == "forced final"
@@ -423,14 +417,10 @@ def test_ask_and_ask_stream_same_message_outcome(monkeypatch: pytest.MonkeyPatch
     stream_stub = SharedStub()
 
     _, final_sync = loop_mod._finish_session_loop(
-        loop_mod._run_session_loop(
-            state_sync, params, provider=sync_stub, stream=False
-        )
+        loop_mod._run_session_loop(state_sync, params, provider=sync_stub, stream=False)
     )
     _, final_stream = loop_mod._finish_session_loop(
-        loop_mod._run_session_loop(
-            state_stream, params, provider=stream_stub, stream=True
-        )
+        loop_mod._run_session_loop(state_stream, params, provider=stream_stub, stream=True)
     )
 
     assert final_sync.messages == final_stream.messages
@@ -463,9 +453,7 @@ def test_max_tool_rounds_model_call_count(monkeypatch: pytest.MonkeyPatch) -> No
         chain_budget=None,
     )
     loop_mod._finish_session_loop(
-        loop_mod._run_session_loop(
-            state, params, provider=StubProvider(), stream=False
-        )
+        loop_mod._run_session_loop(state, params, provider=StubProvider(), stream=False)
     )
     assert call_count["n"] == 4
 

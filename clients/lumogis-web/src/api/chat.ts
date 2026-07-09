@@ -34,6 +34,19 @@ export interface ChatCompletionRequest {
   messages: ChatMessageDTO[];
   /** Default true on the wire; we always set it explicitly so it is auditable. */
   stream: boolean;
+  /** When set, scopes retrieval to one library document (LUM-175). */
+  document_id?: number;
+}
+
+export interface DocumentCitationDTO {
+  chunk_index: number | null;
+  file_path: string;
+  score: number;
+  score_kind: string;
+}
+
+export interface LumogisChatExtensions {
+  context_citations?: DocumentCitationDTO[];
 }
 
 /**
@@ -55,6 +68,7 @@ export interface ChatCompletionChunk {
     delta: { role?: ChatRole; content?: string };
     finish_reason: "stop" | "length" | null;
   }>;
+  lumogis?: LumogisChatExtensions;
 }
 
 /** Wire-literal error details verified against shipped `routes/api_v1/chat.py`. */
@@ -67,4 +81,7 @@ export const CHAT_ERROR_LITERALS = {
   LLM_PROVIDER_KEY_MISSING: "llm_provider_key_missing",
   /** `detail` prefixed with `invalid_model:` then the model id */
   INVALID_MODEL_PREFIX: "invalid_model:",
+  DOCUMENT_NOT_FOUND: "document_not_found",
+  DOCUMENT_CONTEXT_UNAVAILABLE: "document_context_unavailable",
+  INVALID_DOCUMENT_ID: "invalid_document_id",
 } as const;

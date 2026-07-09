@@ -9,6 +9,8 @@ never raise.
 """
 
 import logging
+from datetime import datetime
+from datetime import timezone
 
 import config as _config
 
@@ -26,6 +28,7 @@ def test_recent_sessions_returns_empty_when_table_empty():
 def test_recent_sessions_maps_rows_to_session_summary(monkeypatch):
     from services.memory import recent_sessions
 
+    ts = datetime(2026, 4, 20, 12, 0, tzinfo=timezone.utc)
     rows = [
         {
             "session_id": "s1",
@@ -33,6 +36,8 @@ def test_recent_sessions_maps_rows_to_session_summary(monkeypatch):
             "topics": ["a", "b"],
             "entities": ["Ada"],
             "entity_ids": ["uuid-a"],
+            "scope": "personal",
+            "updated_at": ts,
         },
         {
             "session_id": "s2",
@@ -40,6 +45,8 @@ def test_recent_sessions_maps_rows_to_session_summary(monkeypatch):
             "topics": [],
             "entities": [],
             "entity_ids": [],
+            "scope": "shared",
+            "updated_at": datetime(2026, 4, 19, 9, 0, tzinfo=timezone.utc),
         },
     ]
     ms = _config.get_metadata_store()
@@ -52,8 +59,39 @@ def test_recent_sessions_maps_rows_to_session_summary(monkeypatch):
     assert out[0].topics == ["a", "b"]
     assert out[0].entities == ["Ada"]
     assert out[0].entity_ids == ["uuid-a"]
+    assert out[0].updated_at == ts
     assert out[1].session_id == "s2"
     assert out[1].topics == []
+
+
+def test_recent_sessions_maps_updated_at_from_row(monkeypatch):
+    from services.memory import recent_sessions
+
+    ts = datetime(2026, 5, 1, 8, 30, tzinfo=timezone.utc)
+    rows = [
+        {
+            "session_id": "s-updated",
+            "summary": "with timestamp",
+            "topics": [],
+            "entities": [],
+            "entity_ids": [],
+            "scope": "personal",
+            "updated_at": ts,
+        }
+    ]
+    captured = {}
+
+    def _capture_fetch_all(q, p=None):
+        captured["query"] = q
+        return rows
+
+    ms = _config.get_metadata_store()
+    monkeypatch.setattr(ms, "fetch_all", _capture_fetch_all)
+
+    out = recent_sessions(limit=1, user_id="default")
+    assert len(out) == 1
+    assert out[0].updated_at == ts
+    assert "updated_at" in captured["query"]
 
 
 def test_recent_sessions_returns_empty_and_warns_on_db_error(monkeypatch, caplog):
@@ -136,6 +174,8 @@ def test_lookup_by_name_returns_none_and_warns_on_db_error(monkeypatch, caplog):
     from services.entities import lookup_by_name
 
     def boom(q, p=None):
+        if "allows_shared" in (q or "").lower():
+            return {"allows_shared": True}
         raise RuntimeError("postgres down")
 
     ms = _config.get_metadata_store()

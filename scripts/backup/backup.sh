@@ -54,8 +54,14 @@ run_backup() {
   unset PGPASSWORD
 
   local qdrant_json='{"collections":[],"collections_meta":{},"files":{}}'
-  local collections
-  collections="$(curl -sf "${QDRANT_URL}/collections" | jq -r '.result.collections[].name' 2>/dev/null || true)"
+  local collections collections_resp
+  if ! collections_resp="$(curl -sf "${QDRANT_URL}/collections")"; then
+    log_error "qdrant /collections request failed — refusing backup with empty vectors"
+    cleanup_tmp
+    release_backup_lock
+    exit 1
+  fi
+  collections="$(echo "$collections_resp" | jq -r '.result.collections[].name' 2>/dev/null || true)"
   if [[ -n "$collections" ]]; then
     mkdir -p "${tmp_dir}/qdrant"
     local coll meta_json files_json
@@ -105,28 +111,9 @@ run_backup() {
       method="redis_rdb"
       falkor_engine="$(redis-cli -h "${FALKORDB_HOST:-falkordb}" -p "${FALKORDB_PORT:-6379}" INFO server 2>/dev/null | awk -F: '/redis_version/ {gsub(/\r/,"",$2); print $2; exit}')"
     elif [[ -d "$(falkordb_data_dir)" || -d /falkordb-data ]]; then
-      redis-cli -h "${FALKORDB_HOST:-falkordb}" -p "${FALKORDB_PORT:-6379}" BGSAVE >/dev/null || true
-      tries=0
-      last="$(redis-cli -h "${FALKORDB_HOST:-falkordb}" -p "${FALKORDB_PORT:-6379}" LASTSAVE)"
-      while (( tries < 45 )); do
-        dump_src="$(falkordb_dump_rdb_path || true)"
-        if [[ -n "$dump_src" ]]; then
-          break
-        fi
-        sleep 1
-        last2="$(redis-cli -h "${FALKORDB_HOST:-falkordb}" -p "${FALKORDB_PORT:-6379}" LASTSAVE)"
-        if [[ "$last2" != "$last" ]]; then
-          dump_src="$(falkordb_dump_rdb_path || true)"
-          if [[ -n "$dump_src" ]]; then
-            break
-          fi
-        fi
-        tries=$((tries + 1))
-      done
-      dump_src="$(falkordb_dump_rdb_path || true)"
-      if [[ -n "$dump_src" ]]; then
-        cp "$dump_src" "${tmp_dir}/${falkor_file}"
-        falkor_engine="$(redis-cli -h "${FALKORDB_HOST:-falkordb}" -p "${FALKORDB_PORT:-6379}" INFO server 2>/dev/null | awk -F: '/redis_version/ {gsub(/\r/,"",$2); print $2; exit}')"
+      if falkordb_wait_for_bgsave_dump "${tmp_dir}/${falkor_file}"; then
+        method="bgsave"
+        falkor_engine="$(falkordb_redis_cli INFO server 2>/dev/null | awk -F: '/redis_version/ {gsub(/\r/,"",$2); print $2; exit}')"
       elif ! "${SCRIPT_DIR}/falkordb-dump-restore.sh" export "${tmp_dir}/${falkor_file}"; then
         log_error "falkordb backup failed after BGSAVE"
         cleanup_tmp

@@ -21,6 +21,9 @@ export type BootOverlayOptions = {
   mockInvoke?: boolean;
 };
 
+/** Set after the first successful WDIO session priming (bridge + reboot hook). */
+let overlaySessionPrimed = false;
+
 const DEFAULT_ADMIN: AdminSettingsPublic = {
   ingestPaths: ["/data/ingest"],
   pendingIngestPaths: null,
@@ -190,12 +193,22 @@ async function rebootOverlayApp(): Promise<void> {
   });
 }
 
-async function waitForShell(): Promise<void> {
+async function waitForShell(settings: OverlaySettingsPayload): Promise<void> {
+  if (settings.authMode === "on" && !settings.sessionPresent) {
+    await browser.waitUntil(async () => await $("#login-panel").isExisting(), {
+      timeout: 60_000,
+      timeoutMsg: "login panel not found after mocked reboot",
+    });
+    return;
+  }
   await browser.waitUntil(
     async () => {
       const login = await $("#login-panel").isExisting().catch(() => false);
       const q = await $("#q").isExisting().catch(() => false);
       const onboarding = await $("#onboarding").isExisting().catch(() => false);
+      if (settings.sessionPresent) {
+        return q && !login;
+      }
       return login || q || onboarding;
     },
     { timeout: 60_000, timeoutMsg: "Overlay shell did not render" },
@@ -240,30 +253,26 @@ export async function bootOverlay(options: BootOverlayOptions = {}): Promise<voi
       : loggedOutProbe());
   const adminSettings = options.adminSettings === undefined ? DEFAULT_ADMIN : options.adminSettings;
 
-  await waitForFrontendEntry();
-  await assertEmbedOrigin();
-  const bootProbe = await probeRebootHook();
-  console.info("[bootOverlay] embed probe:", bootProbe);
-  await waitForRebootHook();
-  await waitForTauriPlugin();
+  if (!overlaySessionPrimed) {
+    await waitForFrontendEntry();
+    await assertEmbedOrigin();
+    const bootProbe = await probeRebootHook();
+    console.info("[bootOverlay] embed probe:", bootProbe);
+    await waitForRebootHook();
+    await waitForTauriPlugin();
+    overlaySessionPrimed = true;
+  }
 
   if (!mockInvoke) {
     await showMainWindow();
-    await waitForShell();
+    await waitForShell(settings);
     return;
   }
 
   await registerBootMocks(settings, probe, adminSettings);
   await rebootOverlayApp();
   await showMainWindow();
-  await waitForShell();
-
-  if (settings.authMode === "on" && !settings.sessionPresent) {
-    await browser.waitUntil(async () => $("#login-panel").isExisting(), {
-      timeout: 30_000,
-      timeoutMsg: "login panel not found after mocked reboot",
-    });
-  }
+  await waitForShell(settings);
 }
 
 export async function bootLoggedInAdmin(
@@ -280,8 +289,44 @@ export async function bootLoggedInMember(
   over: Partial<OverlaySettingsPayload> = {},
 ): Promise<void> {
   await bootOverlay({
-    settings: loggedInSettings("member", over),
-    probe: loggedInProbe("member"),
+    settings: loggedInSettings("user", over),
+    probe: loggedInProbe("user"),
     adminSettings: null,
+  });
+}
+
+/** Close settings when a prior test left the panel open. */
+export async function closeSettingsPanelIfOpen(): Promise<void> {
+  const settings = await $("#settings");
+  const open = await settings.isDisplayed().catch(() => false);
+  if (!open) {
+    return;
+  }
+  const btn = await $("#btn-settings");
+  await btn.click();
+  await browser.waitUntil(async () => !(await settings.isDisplayed().catch(() => false)), {
+    timeout: 10_000,
+    timeoutMsg: "#settings did not close after gear toggle",
+  });
+}
+
+/** Open the settings panel and wait for the async toggle + render to finish. */
+export async function openSettingsPanel(): Promise<void> {
+  const settingsVisible = async (): Promise<boolean> => {
+    try {
+      return await (await $("#settings")).isDisplayed();
+    } catch {
+      return false;
+    }
+  };
+  if (await settingsVisible()) {
+    return;
+  }
+  const btn = await $("#btn-settings");
+  await btn.waitForClickable({ timeout: 10_000 });
+  await btn.click();
+  await browser.waitUntil(settingsVisible, {
+    timeout: 15_000,
+    timeoutMsg: "#settings not visible after gear click",
   });
 }

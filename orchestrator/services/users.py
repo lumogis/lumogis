@@ -107,7 +107,31 @@ def _row_to_internal(row: dict) -> InternalUser:
         disabled=row["disabled"],
         created_at=row["created_at"],
         last_login_at=row.get("last_login_at"),
+        last_seen_at=row.get("last_seen_at"),
         token_version=int(row.get("token_version") or 1),
+        allows_shared=bool(row.get("allows_shared", True)),
+        display_name=row.get("display_name"),  # LUM-585
+    )
+
+
+def touch_last_seen(user_id: str, throttle_seconds: int) -> None:
+    """Best-effort update of ``users.last_seen_at`` for an authenticated request.
+
+    Single conditional UPDATE — no read-before-write, race-safe across workers,
+    throttled at the DB: only writes when the stored value is NULL or older than
+    ``throttle_seconds`` (LUM-334). Callers dispatch this fire-and-forget; it must
+    never raise into the request path.
+    """
+    ms = config.get_metadata_store()
+    # Prefer a dedicated short-lived connection so this background write never
+    # contends with request handlers on the shared connection (LUM-334 review).
+    # Stores without execute_isolated (fakes/alternates) fall back to execute.
+    run = getattr(ms, "execute_isolated", ms.execute)
+    run(
+        "UPDATE users SET last_seen_at = now() "
+        "WHERE id = %s "
+        "AND (last_seen_at IS NULL OR last_seen_at < now() - (%s * interval '1 second'))",
+        (user_id, int(throttle_seconds)),
     )
 
 
@@ -122,6 +146,8 @@ def create_user(
     email: str,
     password: str,
     role: Role = "user",
+    *,
+    allows_shared: bool = True,
 ) -> InternalUser:
     """Insert a new user. Raises ``ValueError`` on duplicate email."""
     email = validate_user_email(email)
@@ -136,9 +162,9 @@ def create_user(
     if existing is not None:
         raise ValueError(f"email already exists: {email}")
     ms.execute(
-        "INSERT INTO users (id, email, password_hash, role, disabled) "
-        "VALUES (%s, %s, %s, %s, FALSE)",
-        (user_id, email, pw_hash, role),
+        "INSERT INTO users (id, email, password_hash, role, disabled, allows_shared) "
+        "VALUES (%s, %s, %s, %s, FALSE, %s)",
+        (user_id, email, pw_hash, role, allows_shared),
     )
     row = ms.fetch_one("SELECT * FROM users WHERE id = %s", (user_id,))
     if row is None:
@@ -150,6 +176,18 @@ def get_user_by_id(user_id: str) -> InternalUser | None:
     ms = config.get_metadata_store()
     row = ms.fetch_one("SELECT * FROM users WHERE id = %s", (user_id,))
     return _row_to_internal(row) if row else None
+
+
+def get_allows_shared(user_id: str) -> bool:
+    """Return whether ``user_id`` may read household shared scope (LUM-577).
+
+    Defaults to ``True`` when the row is missing (synthetic dev users).
+    """
+    ms = config.get_metadata_store()
+    row = ms.fetch_one("SELECT allows_shared FROM users WHERE id = %s", (user_id,))
+    if row is None:
+        return True
+    return bool(row.get("allows_shared", True))
 
 
 def get_user_by_email(email: str) -> InternalUser | None:
@@ -171,6 +209,44 @@ def update_role(user_id: str, role: Role) -> InternalUser | None:
     ms = config.get_metadata_store()
     ms.execute("UPDATE users SET role = %s WHERE id = %s", (role, user_id))
     return get_user_by_id(user_id)
+
+
+def set_display_name(user_id: str, display_name: str | None) -> InternalUser | None:
+    """Set (or clear) a user's admin-managed display name (LUM-585).
+
+    Empty or whitespace-only normalizes to ``NULL`` so the read-time label
+    falls back to the email local-part and the stored value is always either a
+    non-empty trimmed string or ``NULL``.
+    """
+    normalized = (display_name or "").strip() or None
+    ms = config.get_metadata_store()
+    ms.execute("UPDATE users SET display_name = %s WHERE id = %s", (normalized, user_id))
+    return get_user_by_id(user_id)
+
+
+def display_label_for(user_id: str) -> str | None:
+    """Resolve a user id to their attribution label, or ``None`` (LUM-585).
+
+    Precedence: the admin-set ``display_name`` (when non-empty) → the email
+    local-part (``tommstar`` from ``tommstar@pm.me``) → ``None``. Returns the
+    label only, **never** the full email. ``None`` (missing/deleted user, the
+    synthetic single-user ``default``, or no email) makes the caller fall back
+    to the generic "Shared with your household" indicator.
+    """
+    # The synthetic single-user dev id (AUTH_ENABLED=false) has no household to
+    # attribute to; kept as a literal to avoid the auth<->users import cycle.
+    if not user_id or user_id == "default":
+        return None
+    user = get_user_by_id(user_id)
+    if user is None:
+        return None
+    if user.display_name and user.display_name.strip():
+        return user.display_name.strip()
+    email = (user.email or "").strip()
+    if "@" in email:
+        local = email.split("@", 1)[0]
+        return local or None
+    return None
 
 
 def set_disabled(
@@ -522,26 +598,76 @@ def set_wow_dismissed(user_id: str) -> datetime:
     return val
 
 
-def bootstrap_if_empty() -> InternalUser | None:
-    """Seed the bootstrap admin from env if the table is empty.
+def _read_bootstrap_admin_password() -> str:
+    """Resolve the bootstrap-admin password, preferring a 0600 file over env.
 
-    Reads ``LUMOGIS_BOOTSTRAP_ADMIN_EMAIL`` and
-    ``LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD``. Logs a ``CRITICAL`` warning and
-    returns ``None`` when the table is empty AND either env var is unset:
-    ``main.py`` is responsible for refusing to boot in that situation when
-    ``AUTH_ENABLED=true``.
+    LUM-548: the native server passes the password via
+    ``LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD_FILE`` (a 0600 file it writes, then we
+    unlink) so the secret never transits the process environment
+    (``/proc/{pid}/environ``) nor is inherited by child processes. Docker/CI
+    still set ``LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD`` directly; that raw env var
+    remains the fallback. Precedence: ``_FILE`` wins when it resolves.
+
+    The file is opened with ``O_NOFOLLOW`` so a symlink at the path is refused
+    atomically (no ``is_file()``/``is_symlink()`` TOCTOU window); its contents
+    are read **verbatim** (no strip — a trailing space is a valid password
+    character) and the file is unlinked immediately after read. Any failure
+    (missing, symlinked, unreadable) logs without the value and falls through
+    to the env var — a transport error never crashes the boot.
+    """
+    file_path = (os.environ.get("LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD_FILE") or "").strip()
+    if file_path:
+        try:
+            # O_NOFOLLOW → ELOOP if the final component is a symlink. The path is
+            # set by the trusted supervisor; this is defence-in-depth. O_NOFOLLOW
+            # is Unix-only — on Windows (LUM-474) it is absent, so degrade to no
+            # flag (mirrors write_private's non-unix branch; the /proc/environ
+            # threat this hardens against is itself Unix-only).
+            nofollow = getattr(os, "O_NOFOLLOW", 0)
+            fd = os.open(file_path, os.O_RDONLY | nofollow)
+        except OSError as exc:
+            _log.warning(
+                "bootstrap password file present but unreadable/symlinked (%s) "
+                "— ignoring and falling back to env",
+                exc.__class__.__name__,
+            )
+        else:
+            try:
+                with os.fdopen(fd, "r", encoding="utf-8") as fh:
+                    return fh.read()  # verbatim — never strip (LUM-548)
+            except Exception:  # noqa: BLE001 — never crash the boot on a read error
+                _log.critical("failed to read bootstrap password file — ignoring")
+            finally:
+                try:
+                    os.unlink(file_path)
+                except OSError:
+                    _log.debug("could not unlink bootstrap password file")
+    return os.environ.get("LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD") or ""
+
+
+def bootstrap_if_empty() -> InternalUser | None:
+    """Seed the bootstrap admin from env/file if the table is empty.
+
+    Reads ``LUMOGIS_BOOTSTRAP_ADMIN_EMAIL`` and the password via
+    :func:`_read_bootstrap_admin_password` — which prefers a 0600 file named
+    by ``LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD_FILE`` (native server) and falls back
+    to the raw ``LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD`` env var (Docker/CI). Logs a
+    ``CRITICAL`` warning and returns ``None`` when the table is empty AND no
+    password/email is available: ``main.py`` is responsible for refusing to
+    boot in that situation when ``AUTH_ENABLED=true``.
 
     Idempotent: if the table already has any user, this is a no-op.
     """
     if count_users() > 0:
         return None
     email = (os.environ.get("LUMOGIS_BOOTSTRAP_ADMIN_EMAIL") or "").strip()
-    password = os.environ.get("LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD") or ""
+    password = _read_bootstrap_admin_password()
     if not email or not password:
         _log.critical(
-            "Users table is empty and bootstrap admin env not set "
-            "(LUMOGIS_BOOTSTRAP_ADMIN_EMAIL / LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD). "
-            "Set both and restart, or set AUTH_ENABLED=false for single-user dev."
+            "Users table is empty and bootstrap admin credentials not set "
+            "(LUMOGIS_BOOTSTRAP_ADMIN_EMAIL + LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD "
+            "or LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD_FILE). Set them and restart, "
+            "or set AUTH_ENABLED=false for single-user dev."
         )
         return None
     try:
