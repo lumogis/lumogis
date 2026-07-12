@@ -11,6 +11,14 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.10.1] — 2026-07-12
+
+### Fixed
+
+- **Public repository CI** — ruff lint on the captures status-filter pytest module (fixture reuse via `pytest_plugins` instead of shadowing imports).
+
+---
+
 ## [0.10.0] — 2026-07-12
 
 ### Added

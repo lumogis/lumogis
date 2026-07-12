@@ -11,13 +11,9 @@ COUNT handlers parse the new ``AND status = ANY(%s)`` clause by structure.
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
-
 from tests.captures_memory_store import CapturesMemoryMetadataStore
 
-# Reuse the capture route fixtures.
-from tests.test_api_v1_captures import capture_media_root  # noqa: F401
-from tests.test_api_v1_captures import captures_ms  # noqa: F401
-from tests.test_api_v1_captures import client  # noqa: F401
+pytest_plugins = ("tests.test_api_v1_captures",)
 
 
 def _seed_three(client: TestClient, captures_ms: CapturesMemoryMetadataStore) -> dict[str, str]:
