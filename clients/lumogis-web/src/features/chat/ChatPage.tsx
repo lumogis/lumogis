@@ -35,6 +35,8 @@ import { useLocation, useNavigate } from "react-router-dom";
 
 import { patchMeWowDismissed } from "../../api/meWow";
 import { useAuth } from "../../auth/AuthProvider";
+import { ChatComposer } from "../../components/ChatComposer";
+import { Button } from "../../components/Button";
 import { ServiceDegradationBanner } from "../_shared/ServiceDegradationBanner";
 import { useServiceHealth } from "../_shared/useServiceHealth";
 import type { ChatPrefillState } from "../wow/askAboutEntity";
@@ -63,7 +65,6 @@ import {
   type ChatMessage,
   type ChatThread,
 } from "./threadStore";
-import { EmptyState } from "../_shared/EmptyState";
 
 const DEFAULT_MODEL = "claude";
 
@@ -347,8 +348,8 @@ export function ChatPage(): JSX.Element {
   }, [state.activeId]);
 
   const onSubmit = useCallback(
-    async (e: FormEvent<HTMLFormElement>): Promise<void> => {
-      e.preventDefault();
+    async (e?: FormEvent<HTMLFormElement>): Promise<void> => {
+      e?.preventDefault();
       if (!online) return;
       if (active === null || streaming) return;
       const text = input.trim();
@@ -536,13 +537,15 @@ export function ChatPage(): JSX.Element {
       <aside className="lumogis-chat__threads" aria-label="Conversations">
         <div className="lumogis-chat__threads-head">
           <h2 className="lumogis-chat__heading">Conversations</h2>
-          <button
+          <Button
             type="button"
+            variant="secondary"
+            size="sm"
             onClick={handleNewThread}
             className="lumogis-chat__new-thread"
           >
             + New chat
-          </button>
+          </Button>
         </div>
         <ConversationSidebar
           client={client}
@@ -594,20 +597,10 @@ export function ChatPage(): JSX.Element {
           aria-label="Conversation transcript"
         >
           {active === null || active.messages.length === 0 ? (
-            <EmptyState
-              className="lumogis-chat__empty"
-              title="Start your first message"
-              helperText="Lumogis chats are ephemeral and live only in this browser tab. Closing the tab discards them — use Capture or Search when you want durable notes."
-              actions={[
-                {
-                  label: "Focus message box",
-                  primary: true,
-                  onClick: () => {
-                    composerRef.current?.focus();
-                  },
-                },
-              ]}
-            />
+            <p className="lumogis-chat__empty">
+              Lumogis chats are ephemeral and live only in this browser tab. Closing the tab
+              discards them — use Capture or Search when you want durable notes.
+            </p>
           ) : (
             active.messages.map((m) => <MessageBubble key={m.id} message={m} />)
           )}
@@ -621,52 +614,26 @@ export function ChatPage(): JSX.Element {
 
         <WowGate onPrefillComposer={applyComposerPrefill} />
 
-        <form className="lumogis-chat__compose" onSubmit={(e) => void onSubmit(e)}>
-          <label htmlFor="lumogis-chat-input" className="lumogis-chat__compose-label">
-            Message
-          </label>
-          <textarea
-            ref={composerRef}
-            id="lumogis-chat-input"
-            value={input}
-            onChange={(e) => {
-              const next = e.target.value;
-              setInput(next);
-              schedulePersistDraft(next);
-            }}
-            placeholder="Ask Lumogis…"
-            rows={2}
-            disabled={streaming}
-            aria-describedby="lumogis-chat-ephemeral-note"
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                if (online && !streaming && input.trim().length > 0) {
-                  e.currentTarget.form?.requestSubmit();
-                }
-              }
-            }}
-          />
-          <div className="lumogis-chat__compose-actions">
-            {streaming ? (
-              <button
-                type="button"
-                onClick={() => cancelStream()}
-                className="lumogis-chat__stop"
-              >
-                Stop
-              </button>
-            ) : (
-              <button
-                type="submit"
-                disabled={input.trim().length === 0 || !online}
-                className="lumogis-chat__send"
-              >
-                Send
-              </button>
-            )}
-          </div>
-        </form>
+        <ChatComposer
+          value={input}
+          onChange={(next) => {
+            setInput(next);
+            schedulePersistDraft(next);
+          }}
+          onSubmit={() => void onSubmit()}
+          streaming={streaming}
+          onStop={() => cancelStream()}
+          disabled={streaming}
+          sendDisabled={!online}
+          placeholder="Ask Lumogis…"
+          describedBy="lumogis-chat-ephemeral-note"
+          textareaRef={composerRef}
+          minRows={3}
+          maxRows={8}
+        />
+        <p id="lumogis-chat-ephemeral-note" className="lumogis-chat__threads-note">
+          Ephemeral — closing this tab discards the thread.
+        </p>
       </section>
     </div>
   );
@@ -693,14 +660,16 @@ function ThreadRow({ thread, active, onSelect, onDelete }: ThreadRowProps): JSX.
           {thread.messages.length === 0 ? "Empty" : `${thread.messages.length} msg`}
         </span>
       </button>
-      <button
+      <Button
         type="button"
+        variant="ghost"
+        size="sm"
         onClick={onDelete}
         aria-label={`Delete ${thread.title}`}
         className="lumogis-chat__thread-delete"
       >
         ×
-      </button>
+      </Button>
     </div>
   );
 }
@@ -726,12 +695,22 @@ function ModelPicker({
     return (
       <div className="lumogis-chat__model-error" role="alert">
         <span>Unable to load models: {error}.</span>
-        <button type="button" onClick={onRetry}>Retry</button>
+        <Button type="button" variant="ghost" size="sm" onClick={onRetry}>
+          Retry
+        </Button>
       </div>
     );
   }
   if (models.length === 0) {
-    return <span className="lumogis-chat__model-loading">Loading models…</span>;
+    return (
+      <label className="lumogis-chat__model-picker">
+        <span>Model</span>
+        <span className="lumogis-chat__model-loading" aria-busy="true">
+          <span className="lumogis-chat__model-spinner" aria-hidden />
+          Loading…
+        </span>
+      </label>
+    );
   }
   return (
     <label className="lumogis-chat__model-picker">

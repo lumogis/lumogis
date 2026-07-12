@@ -7,6 +7,12 @@ import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthProvider";
+import { MetadataCaption } from "../../components/MetadataCaption";
+import { Button } from "../../components/Button";
+import {
+  documentMetadataCaption,
+  humanizeStoredName,
+} from "../../util/humanizeStoredName";
 import {
   useDeleteDocument,
   useDocument,
@@ -96,12 +102,18 @@ export function DocumentDetailView(): JSX.Element {
     await reingestMutation.mutateAsync({ documentId, force });
   };
 
+  const title = humanizeStoredName(doc.display_name, doc.file_path);
+
   return (
     <section className="lumogis-document-detail" data-testid="document-detail">
       <p>
         <Link to="/documents">← Library</Link>
       </p>
-      <h1>{doc.display_name}</h1>
+      <h1>{title}</h1>
+      <MetadataCaption
+        value={documentMetadataCaption(documentId, doc.display_name, doc.file_path)}
+        label="Copy id"
+      />
       {deleteErrors !== null && (
         <div role="alert" className="lumogis-document-detail__partial-alert">
           <p>Deletion incomplete:</p>
@@ -114,9 +126,9 @@ export function DocumentDetailView(): JSX.Element {
             <p>Retrying…</p>
           ) : (
             <>
-              <button type="button" onClick={() => void handleRetry()}>
+              <Button type="button" variant="secondary" size="sm" onClick={() => void handleRetry()}>
                 Retry cleanup
-              </button>
+              </Button>
               <p className="lumogis-document-detail__partial-escalation">
                 If this persists after retrying, contact your administrator.
                 Reference: document #{documentId}.
@@ -125,52 +137,60 @@ export function DocumentDetailView(): JSX.Element {
           )}
         </div>
       )}
-      <dl className="lumogis-document-detail__meta">
-        <dt>Status</dt>
-        <dd>
-          <span className={`lumogis-documents__status lumogis-documents__status--${doc.status}`}>
-            {statusLabel(doc.status)}
-          </span>
-        </dd>
+      <dl className="lumogis-document-detail__meta lumogis-kv-list">
+        <div className="lumogis-kv-row">
+          <dt className="lumogis-kv-row__label">Status</dt>
+          <dd className="lumogis-kv-row__value">
+            <span className={`lumogis-documents__status lumogis-documents__status--${doc.status}`}>
+              {statusLabel(doc.status)}
+            </span>
+          </dd>
+        </div>
         {doc.status === "indexing" && activeJobId && ingestProgress ? (
-          <>
-            <dt>Progress</dt>
-            <dd>
+          <div className="lumogis-kv-row">
+            <dt className="lumogis-kv-row__label">Progress</dt>
+            <dd className="lumogis-kv-row__value">
               <IngestProgressBar
                 stage={ingestProgress.stage}
                 progressPct={ingestProgress.progress_pct ?? 0}
                 statusMessage={ingestProgress.status_message}
               />
             </dd>
-          </>
+          </div>
         ) : null}
-        <dt>Sharing</dt>
-        <dd>
-          <ShareToggle
-            client={client}
-            documentId={documentId}
-            displayName={doc.display_name}
-            shareStatus={doc.share_status}
-            isOwner={doc.is_owner ?? true}
-            sharedBy={doc.shared_by}
-          />
-          {shareJobId && shareProgress ? (
-            <IngestProgressBar
-              stage={shareProgress.stage}
-              progressPct={shareProgress.progress_pct ?? 0}
-              statusMessage={shareProgress.status_message}
+        <div className="lumogis-kv-row">
+          <dt className="lumogis-kv-row__label">Sharing</dt>
+          <dd className="lumogis-kv-row__value">
+            <ShareToggle
+              client={client}
+              documentId={documentId}
+              displayName={title}
+              shareStatus={doc.share_status}
+              isOwner={doc.is_owner ?? true}
+              sharedBy={doc.shared_by}
             />
-          ) : null}
-        </dd>
-        <dt>Chunks</dt>
-        <dd>{doc.chunk_count}</dd>
-        <dt>Entities</dt>
-        <dd>{doc.entity_count}</dd>
+            {shareJobId && shareProgress ? (
+              <IngestProgressBar
+                stage={shareProgress.stage}
+                progressPct={shareProgress.progress_pct ?? 0}
+                statusMessage={shareProgress.status_message}
+              />
+            ) : null}
+          </dd>
+        </div>
+        <div className="lumogis-kv-row">
+          <dt className="lumogis-kv-row__label">Chunks</dt>
+          <dd className="lumogis-kv-row__value">{doc.chunk_count}</dd>
+        </div>
+        <div className="lumogis-kv-row">
+          <dt className="lumogis-kv-row__label">Entities</dt>
+          <dd className="lumogis-kv-row__value">{doc.entity_count}</dd>
+        </div>
         {doc.error_message ? (
-          <>
-            <dt>Error</dt>
-            <dd>{doc.error_message}</dd>
-          </>
+          <div className="lumogis-kv-row">
+            <dt className="lumogis-kv-row__label">Error</dt>
+            <dd className="lumogis-kv-row__value">{doc.error_message}</dd>
+          </div>
         ) : null}
       </dl>
       {doc.entities.length > 0 ? (
@@ -188,20 +208,20 @@ export function DocumentDetailView(): JSX.Element {
           </ul>
         </section>
       ) : null}
-      <div className="lumogis-document-detail__actions">
+      <div className="lumogis-document-detail__actions lumogis-form-actions">
         {doc.scope === "personal" && deleteErrors === null ? (
-          <button type="button" onClick={() => void handleDelete()}>
+          <Button type="button" variant="danger-solid" onClick={() => void handleDelete()}>
             Delete document
-          </button>
+          </Button>
         ) : null}
         {doc.source_available ? (
           <>
-            <button type="button" onClick={() => void handleReingest(false)}>
+            <Button type="button" variant="secondary" onClick={() => void handleReingest(false)}>
               Re-ingest
-            </button>
-            <button type="button" onClick={() => void handleReingest(true)}>
+            </Button>
+            <Button type="button" variant="secondary" onClick={() => void handleReingest(true)}>
               Force re-ingest
-            </button>
+            </Button>
           </>
         ) : (
           <p>Source file is no longer on disk — re-upload via Capture to index again.</p>

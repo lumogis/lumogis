@@ -13,7 +13,7 @@ test.describe("Lumogis Web member audit log", () => {
   test("audit: /audit page renders heading and table or empty state", async ({ page }) => {
     await loginWithSmokeCredentials(page);
     await page.goto("/audit");
-    await expect(page.getByRole("heading", { name: /audit log/i })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /my activity/i })).toBeVisible();
     const table = page.getByRole("table");
     const empty = page.getByText(/no audit events match your filters/i);
     await expect(table.or(empty)).toBeVisible();

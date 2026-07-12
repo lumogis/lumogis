@@ -6,6 +6,8 @@ import { useState } from "react";
 import { ApiError } from "../../api/client";
 import { MIN_PASSWORD_LENGTH, changeMyPassword } from "../../api/passwordManagement";
 import { useAuth, useUser } from "../../auth/AuthProvider";
+import { MetadataCaption } from "../../components/MetadataCaption";
+import { Button } from "../../components/Button";
 
 export function MeProfileView(): JSX.Element {
   const u = useUser();
@@ -65,20 +67,26 @@ export function MeProfileView(): JSX.Element {
   return (
     <section>
       <h2>Profile</h2>
-      <dl>
-        <dt>Email</dt>
-        <dd>{u.email}</dd>
-        <dt>Role</dt>
-        <dd>{u.role}</dd>
-        <dt>User id</dt>
-        <dd>
-          <code>{u.id}</code>
-        </dd>
+      <dl className="lumogis-kv-list">
+        <div className="lumogis-kv-row">
+          <dt className="lumogis-kv-row__label">Email</dt>
+          <dd className="lumogis-kv-row__value">{u.email}</dd>
+        </div>
+        <div className="lumogis-kv-row">
+          <dt className="lumogis-kv-row__label">Role</dt>
+          <dd className="lumogis-kv-row__value">{u.role}</dd>
+        </div>
+        <div className="lumogis-kv-row">
+          <dt className="lumogis-kv-row__label">User id</dt>
+          <dd className="lumogis-kv-row__value">
+            <MetadataCaption value={u.id} label="Copy" />
+          </dd>
+        </div>
       </dl>
       <p>
-        <button type="button" onClick={() => setFormOpen((v) => !v)}>
+        <Button type="button" variant="secondary" onClick={() => setFormOpen((v) => !v)}>
           {formOpen ? "Cancel" : "Change password"}
-        </button>
+        </Button>
       </p>
       {formOpen && (
         <form
@@ -125,12 +133,12 @@ export function MeProfileView(): JSX.Element {
               {localError}
             </p>
           )}
-          <button type="submit" disabled={pwMut.isPending}>
+          <Button type="submit" variant="primary" disabled={pwMut.isPending}>
             {pwMut.isPending ? "Saving…" : "Save new password"}
-          </button>
+          </Button>
         </form>
       )}
-      <p style={{ fontSize: "0.85rem", maxWidth: "32rem" }}>
+      <p className="lumogis-prose-mono" style={{ fontSize: "0.85rem" }}>
         Forgot your password? Ask a household admin to reset it from Admin → Users, or if you have shell
         access, from the <code>orchestrator/</code> directory run{" "}
         <code>python -m scripts.reset_password</code> (see script docstring).

@@ -16,7 +16,7 @@
 //   - Empty state when no pending items
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { ApiClient } from "../../../src/api/client";
@@ -341,9 +341,11 @@ describe("ApprovalsPage", () => {
       expect(screen.getByRole("dialog")).toBeInTheDocument();
     });
 
-    // The confirm button in the modal matches the same text — pick by looking inside dialog
+    // Confirm inside the dialog (same label as the row trigger).
     const dialog = screen.getByRole("dialog");
-    const modalConfirm = dialog.querySelector(".lumogis-approvals__btn--confirm") as HTMLElement;
+    const modalConfirm = within(dialog).getByRole("button", {
+      name: /switch filesystem to do mode/i,
+    });
     await userEvent.click(modalConfirm);
 
     await waitFor(() => {

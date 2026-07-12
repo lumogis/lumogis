@@ -16,6 +16,11 @@ import {
 import { fetchAdminStackStatus, type StackServiceState } from "../../api/adminStackStatus";
 import { fetchAdminBackupStatus } from "../../api/adminBackupStatus";
 import { fetchAdminUpdateStatus, type UpdateStatusResponse } from "../../api/adminUpdateStatus";
+import {
+  BGE_RERANKER_RAM_ESTIMATE,
+  fetchAdminSearchSettings,
+  isRerankerBackendActive,
+} from "../../api/searchSettings";
 import { ApiError } from "../../api/client";
 import { useAuth } from "../../auth/AuthProvider";
 
@@ -207,6 +212,13 @@ export function AdminSystemStatusView(): JSX.Element {
     refetchIntervalInBackground: false,
   });
 
+  const searchSettings = useQuery({
+    queryKey: ["admin", "search-settings"],
+    queryFn: () => fetchAdminSearchSettings(client),
+    enabled: status.isSuccess,
+    staleTime: 30_000,
+  });
+
   const backupStatus = useQuery({
     queryKey: ["admin", "backup-status"],
     queryFn: () => fetchAdminBackupStatus(client),
@@ -376,15 +388,8 @@ export function AdminSystemStatusView(): JSX.Element {
   return (
     <section className="lumogis-admin-dense-section">
       <h2>System status</h2>
-      <p style={{ maxWidth: "42rem", opacity: 0.9 }}>
-        Live stack health for household operators — services, host storage, and Ollama models.
-        Pull and delete models below; pulls run in the background with a progress bar. Polls every
-        30s while this
-        tab is visible. For legacy JSON counts, see{" "}
-        <a href="/health" target="_blank" rel="noopener noreferrer">
-          stack health (legacy tab)
-        </a>{" "}
-        — prefer this panel for day-to-day checks.
+      <p className="lumogis-prose-mono" style={{ opacity: 0.9 }}>
+        Live stack health for household operators — services, storage, and Ollama models on your hardware.
       </p>
 
       {showStackControlBanner ? (
@@ -400,6 +405,24 @@ export function AdminSystemStatusView(): JSX.Element {
           {d.meta.cache_age_sec != null ? ` (cache ${d.meta.cache_age_sec}s)` : null}
         </div>
         <div style={{ fontSize: "0.85rem", opacity: 0.85 }}>Generated: {d.meta.generated_at}</div>
+        {searchSettings.data &&
+        isRerankerBackendActive(searchSettings.data.reranker_backend_live) &&
+        !searchSettings.data.reranker_pending_restart ? (
+          <span
+            data-testid="reranker-active-chip"
+            style={{
+              display: "inline-block",
+              marginTop: "0.5rem",
+              padding: "0.2rem 0.5rem",
+              borderRadius: 4,
+              fontSize: "0.8rem",
+              background: "#e8f5e9",
+              color: "#2e7d32",
+            }}
+          >
+            Reranker active ({BGE_RERANKER_RAM_ESTIMATE})
+          </span>
+        ) : null}
       </div>
 
       {backupStatus.data ? (
@@ -477,7 +500,7 @@ export function AdminSystemStatusView(): JSX.Element {
 
       <h3 style={{ fontSize: "1rem", marginTop: "1.25rem" }}>Services</h3>
       <div className="lumogis-table-scroll">
-        <table className="lumogis-dense-table">
+        <table className="lumogis-dense-table lumogis-responsive-table">
           <thead>
             <tr>
               <th>Service</th>
@@ -489,10 +512,10 @@ export function AdminSystemStatusView(): JSX.Element {
           <tbody>
             {d.services.map((s) => (
               <tr key={s.id}>
-                <td>{s.display_name}</td>
-                <td style={{ color: stateColour(s.state), fontWeight: 600 }}>{s.state}</td>
-                <td style={{ fontSize: "0.85rem" }}>{s.runtime_kind}</td>
-                <td style={{ fontSize: "0.85rem" }} className="lumogis-long-text">
+                <td data-label="Service" className="lumogis-cell-identifier">{s.display_name}</td>
+                <td data-label="State" className="lumogis-cell-identifier" style={{ color: stateColour(s.state), fontWeight: 600 }}>{s.state}</td>
+                <td data-label="Runtime" className="lumogis-cell-identifier" style={{ fontSize: "0.85rem" }}>{s.runtime_kind}</td>
+                <td data-label="Note" style={{ fontSize: "0.85rem" }} className="lumogis-long-text">
                   {s.message ?? "—"}
                 </td>
               </tr>
@@ -626,7 +649,7 @@ export function AdminSystemStatusView(): JSX.Element {
         <p style={{ fontSize: "0.9rem" }}>No local models reported (Ollama may be down).</p>
       ) : (
         <div className="lumogis-table-scroll">
-          <table className="lumogis-dense-table">
+          <table className="lumogis-dense-table lumogis-responsive-table">
             <thead>
               <tr>
                 <th>Name</th>
@@ -648,10 +671,10 @@ export function AdminSystemStatusView(): JSX.Element {
 
                 return (
                   <tr key={m.name}>
-                    <td style={{ fontFamily: "monospace", fontSize: "0.85rem" }} className="lumogis-long-text">
+                    <td data-label="Name" style={{ fontFamily: "monospace", fontSize: "0.85rem" }} className="lumogis-long-text">
                       {m.name}
                     </td>
-                    <td style={{ fontSize: "0.85rem" }}>
+                    <td data-label="Role" style={{ fontSize: "0.85rem" }}>
                       {embedding ? (
                         <span
                           style={{
@@ -678,9 +701,9 @@ export function AdminSystemStatusView(): JSX.Element {
                         "—"
                       )}
                     </td>
-                    <td>{formatBytes(m.size_bytes)}</td>
-                    <td>{m.loaded == null ? "—" : m.loaded ? "yes" : "no"}</td>
-                    <td>
+                    <td data-label="Size">{formatBytes(m.size_bytes)}</td>
+                    <td data-label="Loaded">{m.loaded == null ? "—" : m.loaded ? "yes" : "no"}</td>
+                    <td data-label="Actions">
                       <button
                         type="button"
                         disabled={pullBusy}

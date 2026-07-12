@@ -221,8 +221,17 @@ class CapturesMemoryMetadataStore:
             return {"status": r["status"]}
 
         if "SELECT COUNT(*) AS c FROM captures WHERE user_id = %s" in q:
+            # LUM-606: parse params by structure, not fixed position — the list/count
+            # queries gain an optional `AND status = ANY(%s)` clause, which shifts the
+            # params tuple. Filter by status when the clause is present.
             uid = str(p[0])
-            n = sum(1 for r in self.captures.values() if r["user_id"] == uid)
+            status_filter = list(p[1]) if "status = ANY(%s)" in q else None
+            n = sum(
+                1
+                for r in self.captures.values()
+                if r["user_id"] == uid
+                and (status_filter is None or r["status"] in status_filter)
+            )
             return {"c": n}
 
         if "INSERT INTO capture_attachments" in q and "RETURNING" in q:
@@ -454,9 +463,22 @@ class CapturesMemoryMetadataStore:
             return rows
 
         if "FROM captures c WHERE user_id = %s" in q and "attachment_count" in q:
+            # LUM-606: parse params by structure. When the optional
+            # `AND status = ANY(%s)` clause is present the params tuple is
+            # (user_id, status_list, limit, offset); otherwise (user_id, limit, offset).
             uid = str(p[0])
-            limit, offset = int(p[1]), int(p[2])
-            rows = [dict(r) for r in self.captures.values() if r["user_id"] == uid]
+            if "status = ANY(%s)" in q:
+                status_filter = list(p[1])
+                limit, offset = int(p[2]), int(p[3])
+            else:
+                status_filter = None
+                limit, offset = int(p[1]), int(p[2])
+            rows = [
+                dict(r)
+                for r in self.captures.values()
+                if r["user_id"] == uid
+                and (status_filter is None or r["status"] in status_filter)
+            ]
             rows.sort(key=lambda r: r["updated_at"], reverse=True)
             sliced = rows[offset : offset + limit]
             out = []

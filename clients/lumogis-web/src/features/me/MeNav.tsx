@@ -4,16 +4,17 @@ import { NavLink } from "react-router-dom";
 
 const links: { to: string; label: string }[] = [
   { to: "/me/profile", label: "Profile" },
+  { to: "/me/appearance", label: "Appearance" },
   { to: "/me/connectors", label: "Connectors" },
   { to: "/me/permissions", label: "Permissions" },
   { to: "/me/tools-capabilities", label: "Tools & capabilities" },
   { to: "/me/llm-providers", label: "LLM providers" },
   { to: "/me/mcp-tokens", label: "MCP tokens" },
-  { to: "/me/shared-items", label: "Shared items" },
+  { to: "/me/shared-items", label: "My shared items" },
   { to: "/me/notifications", label: "Notifications" },
   { to: "/me/privacy-mode", label: "Privacy mode" },
   { to: "/me/export", label: "Export" },
-  { to: "/audit", label: "Audit log" },
+  { to: "/audit", label: "My activity" },
 ];
 
 export function MeNav(): JSX.Element {

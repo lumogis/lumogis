@@ -111,7 +111,8 @@ export function AdminSharedItemsView(): JSX.Element | null {
       )}
 
       {listQ.isSuccess && items.length > 0 && (
-        <table className="lumogis-admin-table">
+        <div className="lumogis-table-scroll">
+        <table className="lumogis-dense-table lumogis-responsive-table">
           <thead>
             <tr>
               <th>Type</th>
@@ -126,12 +127,12 @@ export function AdminSharedItemsView(): JSX.Element | null {
               const type = RESOURCE_LABELS[item.resource_type];
               return (
                 <tr key={key}>
-                  <td>{type}</td>
-                  <td>{ownerLabel(item)}</td>
-                  <td>
+                  <td data-label="Type">{type}</td>
+                  <td data-label="Shared by">{ownerLabel(item)}</td>
+                  <td data-label="Item">
                     <span className="lumogis-long-text">{item.label ?? item.resource_id}</span>
                   </td>
-                  <td>
+                  <td data-label="">
                     {confirming === key ? (
                       <span data-testid={`confirm-${key}`}>
                         <span style={{ marginRight: "0.5rem" }}>
@@ -174,6 +175,7 @@ export function AdminSharedItemsView(): JSX.Element | null {
             })}
           </tbody>
         </table>
+        </div>
       )}
     </section>
   );

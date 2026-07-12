@@ -65,6 +65,21 @@ def handle_share(*, user_id: str, payload: ShareDocumentPayload, job_id: int) ->
     ip.update_ingest_job_progress(job_id=job_id, user_id=user_id, stage="projecting")
     actor = UserContext(user_id=user_id, is_authenticated=True)
     with share_document_lock(doc_id):
+        # Re-check under the lock: a concurrent purge may have removed the
+        # source between the pre-lock fetch and lock acquisition.
+        src = _fetch_personal_source(user_id, doc_id)
+        if src is None:
+            _log.info(
+                "share_document: source gone before projection document_id=%s — no-op",
+                doc_id,
+            )
+            ip.update_ingest_job_progress(
+                job_id=job_id,
+                user_id=user_id,
+                stage="done",
+                status_message="No longer shareable",
+            )
+            return
         _row, projected, failed = proj.project_file_with_status(
             src, target_scope="shared", actor=actor
         )
@@ -111,5 +126,18 @@ def handle_unshare(*, user_id: str, payload: ShareDocumentPayload, job_id: int) 
 
     ip.update_ingest_job_progress(job_id=job_id, user_id=user_id, stage="projecting")
     with share_document_lock(doc_id):
+        src = _fetch_personal_source(user_id, doc_id)
+        if src is None:
+            _log.info(
+                "unshare_document: source gone before unproject document_id=%s — no-op",
+                doc_id,
+            )
+            ip.update_ingest_job_progress(
+                job_id=job_id,
+                user_id=user_id,
+                stage="done",
+                status_message="No longer shared",
+            )
+            return
         proj.unproject_file(doc_id, target_scope="shared")
     ip.update_ingest_job_progress(job_id=job_id, user_id=user_id, stage="done")

@@ -192,11 +192,17 @@ def list_captures(
         default=None,
         description="MVP: only personal captures exist; shared/system return an empty page.",
     ),
+    status: Optional[list[Literal["pending", "failed", "indexed"]]] = Query(
+        default=None,
+        description="Filter to these statuses; omit for all. The inbox passes "
+        "pending+failed (LUM-606).",
+    ),
 ):
     """Return summary rows for the authenticated user's captures.
 
     Ordered by ``updated_at DESC``. Use ``limit`` / ``offset`` for
-    pagination (plan §12.4).
+    pagination (plan §12.4). ``status`` (repeatable) restricts the set — the
+    capture Inbox requests ``status=pending&status=failed`` (LUM-606).
     """
     ms = config.get_metadata_store()
     items, total = capture_svc.list_captures(
@@ -205,6 +211,7 @@ def list_captures(
         scope=scope,
         limit=limit,
         offset=offset,
+        status_filter=list(status) if status else None,
     )
     return CaptureListResponse(captures=items, total=total, limit=limit, offset=offset)
 

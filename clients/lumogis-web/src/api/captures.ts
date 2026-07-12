@@ -9,6 +9,10 @@ import type { components } from "./generated/openapi";
 export type CaptureCreateRequest = components["schemas"]["CaptureCreateRequest"];
 export type CaptureCreated = components["schemas"]["CaptureCreated"];
 export type CaptureDetail = components["schemas"]["CaptureDetail"];
+export type CaptureListItem = components["schemas"]["CaptureListItem"];
+export type CaptureListResponse = components["schemas"]["CaptureListResponse"];
+export type CapturePatchRequest = components["schemas"]["CapturePatchRequest"];
+export type CaptureStatus = "pending" | "failed" | "indexed";
 export type CaptureAttachmentSummary = components["schemas"]["CaptureAttachmentSummary"];
 export type CaptureTranscriptSummary = components["schemas"]["CaptureTranscriptSummary"];
 export type CaptureTranscribeRequest = components["schemas"]["CaptureTranscribeRequest"];
@@ -158,4 +162,36 @@ export async function indexCapture(client: ApiClient, captureId: string): Promis
     `/api/v1/captures/${encodeURIComponent(captureId)}/index`,
     {},
   );
+}
+
+// LUM-606 — capture inbox: list (status-filtered), edit, delete.
+
+export async function listCaptures(
+  client: ApiClient,
+  opts: { status?: CaptureStatus[]; limit?: number; offset?: number } = {},
+): Promise<CaptureListResponse> {
+  const qs = new URLSearchParams();
+  if (opts.limit != null) qs.set("limit", String(opts.limit));
+  if (opts.offset != null) qs.set("offset", String(opts.offset));
+  // repeatable `status` query param (?status=pending&status=failed)
+  for (const s of opts.status ?? []) qs.append("status", s);
+  const suffix = qs.toString();
+  return client.getJson<CaptureListResponse>(
+    `/api/v1/captures${suffix ? `?${suffix}` : ""}`,
+  );
+}
+
+export async function patchCapture(
+  client: ApiClient,
+  captureId: string,
+  body: CapturePatchRequest,
+): Promise<CaptureDetail> {
+  return client.patchJson<CapturePatchRequest, CaptureDetail>(
+    `/api/v1/captures/${encodeURIComponent(captureId)}`,
+    body,
+  );
+}
+
+export async function deleteCapture(client: ApiClient, captureId: string): Promise<void> {
+  await client.delete(`/api/v1/captures/${encodeURIComponent(captureId)}`);
 }

@@ -1,9 +1,9 @@
 # ADR-074: Stack Health Dashboard — service status, storage, Ollama management
 
 > Status: Active (numbering conflict)
-> Last reviewed: 2026-07-08
-> Verified against commit: c9ac7ca
-> Notes: **`docs/decisions/074-lum-162-conversation-history-ui.md`** also claims **ADR 074** in its title; **[ADR 085](085-lum-439-conversation-put-upsert-fix.md)** amends **074-lum-162** as canonical **ADR 074** — renumber **this** file to **`158-lum-178-stack-health-dashboard.md`** (**110** is **LUM-511** ingest progress; **155** is LUM-157 content projection; **157** is post-ship sharing fixes; **152** is LUM-473 default-user remap). Filename prefixes **049–157** are already in use under `docs/decisions/` (duplicate clusters on **053**, **059**, **060**, **061**, **063**, **064**, **072**, **074**, **098**, **101**, **147**, **154**, **156**, plus **`065-lum-320-*.md`** through **`157-lum-157-577-post-ship-sharing-fixes.md`**). Pick a **non-colliding** new slug when renumbering—coordinate with any **`034-linear-evidence-index.md`** / **046** / **072** rename in the same pass—see `docs/_librarian/docs-inventory.md`.
+> Last reviewed: 2026-07-10
+> Verified against commit: 01a7d31
+> Notes: **`docs/decisions/074-lum-162-conversation-history-ui.md`** also claims **ADR 074** in its title; **[ADR 085](085-lum-439-conversation-put-upsert-fix.md)** amends **074-lum-162** as canonical **ADR 074** — renumber **this** file to **`159-lum-178-stack-health-dashboard.md`** (**110** is **LUM-511** ingest progress; **155** is LUM-157 content projection; **157** is post-ship sharing fixes; **152** is LUM-473 default-user remap; **158** is LUM-586 graph-aware entity sharing). Filename prefixes **049–158** are already in use under `docs/decisions/` (duplicate clusters on **053**, **059**, **060**, **061**, **063**, **064**, **072**, **074**, **098**, **101**, **147**, **154**, **156**, plus **`065-lum-320-*.md`** through **`158-graph-aware-entity-sharing-lum586.md`**). Pick a **non-colliding** new slug when renumbering—coordinate with any **`034-linear-evidence-index.md`** / **046** / **072** rename in the same pass—see `docs/_librarian/docs-inventory.md`.
 
 **Status:** Finalised
 **Created:** 2026-06-01

@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Lumogis
-"""Per-document advisory lock serialising share vs re-ingest (LUM-157).
+"""Per-document advisory lock serialising share vs re-ingest vs purge (LUM-157).
 
-A share/unshare projection job and a re-ingest re-projection for the **same**
-document must not interleave (the re-ingest chunk wipe has no scope filter, so a
-concurrent share could race a half-projected state). Both paths acquire this
-blocking ``pg_advisory_lock`` keyed on the document id on a dedicated checkout
+A share/unshare projection job, a re-ingest re-projection, or a document purge
+for the **same** document must not interleave (the re-ingest chunk wipe has no
+scope filter, and purge deletes Qdrant chunks while a share job may be
+upserting from a cached scroll). All three paths acquire this blocking
+``pg_advisory_lock`` keyed on the document id on a dedicated checkout
 connection (mirrors ``services/consolidation_lock.py`` / ADR 022), so the
 process-wide connection is never held for the duration of the projection I/O.
 """

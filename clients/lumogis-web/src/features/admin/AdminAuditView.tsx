@@ -6,9 +6,8 @@ import { useAuth, useUser } from "../../auth/AuthProvider";
 import { ApiError } from "../../api/client";
 import type { AuditListResponse } from "../../api/audit";
 import { buildAuditStreamUrl, mergeAuditRows } from "../../api/audit";
-import { UserPicker, type UserRow } from "../_shared/UserPicker";
-import { RoleGate } from "../_shared/RoleGate";
-import { AuditLiveToggle } from "../audit/AuditLiveToggle";
+import type { UserRow } from "../_shared/UserPicker";
+import { AuditFilters } from "../audit/AuditFilters";
 import { AuditTable } from "../audit/_shared/AuditTable";
 import { useAuditLiveTail } from "../audit/useAuditLiveTail";
 
@@ -113,50 +112,28 @@ export function AdminAuditView(): JSX.Element {
     queryFn: () => client.getJson<UserRow[]>("/api/v1/admin/users"),
     enabled: isAdmin,
   });
-  const asLabel = useMemo(() => {
-    if (!asUser) return "Self (no as_user filter)";
-    return usersQ.data?.find((x) => x.id === asUser)?.email ?? asUser;
-  }, [asUser, usersQ.data]);
 
   return (
     <section className="lumogis-admin-dense-section">
-      <h2>Audit</h2>
+      <h2>Household audit</h2>
       {msg && <p role="status">{msg}</p>}
-      <div className="lumogis-dense-form-grid">
-        <label>
-          Limit (1–200)
-          <input
-            type="number"
-            min={1}
-            max={200}
-            value={limit}
-            onChange={(e) => setLimit(Number(e.target.value) || 50)}
-          />
-        </label>
-        <label>
-          Connector filter
-          <input value={connector} onChange={(e) => setConnector(e.target.value)} />
-        </label>
-        <label>
-          Action type filter
-          <input value={actionType} onChange={(e) => setActionType(e.target.value)} />
-        </label>
-        <RoleGate role="admin">
-          <div>
-            <p style={{ fontSize: "0.9rem" }}>View as user (admin). Current: {asLabel}</p>
-            <UserPicker value={asUser} onChange={setAsUser} isAdmin={isAdmin} />
-          </div>
-        </RoleGate>
-        <button type="button" onClick={() => void listQ.refetch()}>
-          Refresh
-        </button>
-        <AuditLiveToggle enabled={liveEnabled} onChange={setLiveEnabled} />
-        {liveEnabled ? (
-          <p className="lumogis-help-text" role="status">
-            Live tail on — new server activity appears automatically.
-          </p>
-        ) : null}
-      </div>
+      <AuditFilters
+        scope="household"
+        liveEnabled={liveEnabled}
+        onLiveChange={setLiveEnabled}
+        onRefresh={() => void listQ.refetch()}
+        limit={limit}
+        onLimitChange={setLimit}
+        connector={connector}
+        onConnectorChange={setConnector}
+        actionTypeFilter={actionType}
+        onActionTypeFilterChange={setActionType}
+        asUser={asUser}
+        onAsUserChange={isAdmin ? setAsUser : undefined}
+        users={usersQ.data}
+        usersLoading={usersQ.isPending}
+        usersError={usersQ.isError}
+      />
       <AuditTable
         variant="admin"
         rows={displayRows}

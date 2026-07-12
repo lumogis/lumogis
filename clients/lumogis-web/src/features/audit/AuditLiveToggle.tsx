@@ -11,10 +11,12 @@ export function AuditLiveToggle({
   return (
     <button
       type="button"
+      className="lumogis-audit-live-toggle"
       aria-pressed={enabled}
+      title={enabled ? "Live tail on" : "Live tail off"}
       onClick={() => onChange(!enabled)}
     >
-      {enabled ? "Live (on)" : "Live (off)"}
+      Live
     </button>
   );
 }

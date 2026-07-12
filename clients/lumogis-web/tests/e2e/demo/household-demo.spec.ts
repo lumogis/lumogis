@@ -92,6 +92,7 @@ test("household KB demo: admin shares → member finds + asks", async ({ browser
     sharedDocId = await row.getAttribute("data-document-id");
 
     // Scene 2 — share it with the household (the differentiating beat).
+    admin.on("dialog", (dialog) => void dialog.accept());
     await admin.goto(`/documents/${sharedDocId}`);
     await beat(admin);
     await admin.getByTestId("share-toggle").getByRole("switch").click(); // confirm auto-accepts (documents.spec.ts)
@@ -115,11 +116,22 @@ test("household KB demo: admin shares → member finds + asks", async ({ browser
     await beat(member, 1800);
 
     // Scene 4 — ask the document a question → grounded, cited answer.
-    await member.goto(`/documents/${sharedDocId}/chat`);
+    // Members see a household projection copy — resolve *their* library row id
+    // (the admin's data-document-id 404s for non-owners).
+    await member.goto("/documents");
+    await member.getByTestId("documents-page").waitFor({ timeout: 15_000 });
+    const memberRow = member
+      .locator("tr[data-document-id]")
+      .filter({ hasText: SAMPLE_DOC_NAME })
+      .first();
+    await memberRow.waitFor({ timeout: 30_000 });
+    const memberDocId = await memberRow.getAttribute("data-document-id");
+    if (!memberDocId) throw new Error("member library row missing data-document-id");
+    await member.goto(`/documents/${memberDocId}/chat`);
     await beat(member);
     await humanType(member, () => member.getByPlaceholder("Ask about this document…"), CHAT_QUESTION);
     await member.getByRole("button", { name: "Send" }).click();
-    await member.getByTestId("context-used-strip").waitFor({ timeout: 60_000 }); // citation proof
+    await member.getByTestId("context-used-strip").waitFor({ timeout: 120_000 }); // citation proof (Ollama cold start)
     await beat(member, 2500); // hold on the cited answer
   } finally {
     await memberCtx.close(); // → VIDEO_DIR/<hash>.webm (member scenes only)

@@ -11,6 +11,7 @@ import { isShared, type DocumentSummary } from "../../api/documents";
 import { EmptyState } from "../_shared/EmptyState";
 import { ErrorState } from "../_shared/ErrorState";
 import { LoadingPlaceholder, Skeleton } from "../_shared/Skeleton";
+import { humanizeStoredName } from "../../util/humanizeStoredName";
 import { useDocuments, shareStatusLabel, statusLabel } from "./useDocuments";
 import { useDocumentsSseInvalidation } from "./useDocumentsSseInvalidation";
 import { DocumentUploadPanel } from "./DocumentUploadPanel";
@@ -48,7 +49,8 @@ export function DocumentsPage(): JSX.Element {
       <section className="lumogis-documents" data-testid="documents-page">
         <h1>Library</h1>
         <LoadingPlaceholder label="Loading documents…">
-          <table className="lumogis-documents__table">
+          <div className="lumogis-table-scroll">
+          <table className="lumogis-documents__table lumogis-responsive-table">
             <thead>
               <tr>
                 {DOCUMENT_COLUMNS.map((c) => (
@@ -70,6 +72,7 @@ export function DocumentsPage(): JSX.Element {
               ))}
             </tbody>
           </table>
+          </div>
         </LoadingPlaceholder>
       </section>
     );
@@ -106,21 +109,24 @@ export function DocumentsPage(): JSX.Element {
     <section className="lumogis-documents" data-testid="documents-page">
       <h1>Library</h1>
       <DocumentUploadPanel client={client} />
-      <label className="lumogis-documents__filter">
-        <input
-          type="checkbox"
-          checked={sharedOnly}
-          onChange={(e) => setSharedOnly(e.target.checked)}
-          data-testid="documents-shared-filter"
-        />
-        Shared with household
-      </label>
+      <div className="lumogis-documents__filter-row">
+        <label className="lumogis-documents__filter">
+          <input
+            type="checkbox"
+            checked={sharedOnly}
+            onChange={(e) => setSharedOnly(e.target.checked)}
+            data-testid="documents-shared-filter"
+          />
+          <span>Shared with household</span>
+        </label>
+      </div>
       {documents.length === 0 ? (
         <p data-testid="documents-shared-empty">
           No documents shared with your household yet.
         </p>
       ) : (
-      <table className="lumogis-documents__table">
+      <div className="lumogis-table-scroll">
+      <table className="lumogis-documents__table lumogis-responsive-table">
         <thead>
           <tr>
             <th scope="col">Name</th>
@@ -136,29 +142,31 @@ export function DocumentsPage(): JSX.Element {
             const key = doc.document_id ?? `inflight-${doc.in_flight_job_id}`;
             const detailHref =
               doc.document_id !== null ? `/documents/${doc.document_id}` : undefined;
+            const label = humanizeStoredName(doc.display_name, doc.file_path);
             return (
               <tr key={key} data-document-id={doc.document_id ?? undefined}>
-                <td>
+                <td data-label="Name">
                   {detailHref ? (
-                    <Link to={detailHref}>{doc.display_name}</Link>
+                    <Link to={detailHref}>{label}</Link>
                   ) : (
-                    doc.display_name
+                    label
                   )}
                 </td>
-                <td>{doc.file_type || "—"}</td>
-                <td>{doc.entity_count}</td>
-                <td>{shareBadge(doc)}</td>
-                <td>
+                <td data-label="Type">{doc.file_type || "—"}</td>
+                <td data-label="Entities">{doc.entity_count}</td>
+                <td data-label="Scope">{shareBadge(doc)}</td>
+                <td data-label="Status">
                   <span className={`lumogis-documents__status lumogis-documents__status--${doc.status}`}>
                     {statusLabel(doc.status)}
                   </span>
                 </td>
-                <td>{doc.indexed_at ? new Date(doc.indexed_at).toLocaleString() : "—"}</td>
+                <td data-label="Indexed">{doc.indexed_at ? new Date(doc.indexed_at).toLocaleString() : "—"}</td>
               </tr>
             );
           })}
         </tbody>
       </table>
+      </div>
       )}
     </section>
   );

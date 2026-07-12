@@ -115,6 +115,26 @@ describe("QuickCapturePage", () => {
     expect(NAV_ITEMS.some((i) => i.href === "/capture" && i.key === "capture")).toBe(true);
   });
 
+  it("Archive tab renders the read-only archive (LUM-607)", async () => {
+    const tokens = new AccessTokenStore();
+    tokens.set("tok");
+    const fetchImpl = vi.fn(async (input: RequestInfo) => {
+      const url = String(input);
+      if (url.includes("/auth/me")) return meResponse();
+      if (url.includes("/api/v1/captures")) {
+        expect(url).toContain("status=indexed");
+        return jsonResponse(200, { captures: [], total: 0, limit: 20, offset: 0 });
+      }
+      return jsonResponse(404, { detail: "unexpected" });
+    });
+    const client = new ApiClient({ tokens, fetchImpl: fetchImpl as unknown as typeof fetch });
+    const user = userEvent.setup();
+
+    renderPage(client);
+    await user.click(await screen.findByTestId("capture-tab-archive"));
+    expect(await screen.findByText(/Nothing committed yet/i)).toBeInTheDocument();
+  });
+
   it("Add to memory disabled before capture exists", async () => {
     const tokens = new AccessTokenStore();
     tokens.set("tok");
@@ -595,10 +615,12 @@ describe("QuickCapturePage", () => {
 
     renderPage(client);
 
-    await waitFor(() => expect(screen.getByTestId("capture-outbox-stats")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByPlaceholderText(/short note/i)).toBeInTheDocument());
     await user.type(screen.getByPlaceholderText(/short note/i), "local only");
     await user.click(screen.getByTestId("quick-capture-save-local"));
 
+    // Outbox is a separate tab now (LUM-606) — switch to it to see the state.
+    await user.click(screen.getByTestId("capture-tab-outbox"));
     await waitFor(() => {
       expect(screen.getByTestId("capture-outbox-stats").textContent).toMatch(/Pending:\s*1/i);
     });
@@ -629,6 +651,7 @@ describe("QuickCapturePage", () => {
     const f = new File([new Uint8Array([1, 2])], "v.webm", { type: "audio/webm" });
     await user.upload(screen.getByTestId("quick-capture-offline-audio-file"), f);
 
+    await user.click(screen.getByTestId("capture-tab-outbox")); // outbox is a separate tab (LUM-606)
     await waitFor(() => {
       expect(screen.getByTestId("capture-outbox-stats").textContent).toMatch(/Pending:\s*1/i);
       expect(screen.getByTestId("capture-outbox-stats").textContent).toMatch(/Voice clips:\s*1/i);
@@ -698,6 +721,7 @@ describe("QuickCapturePage", () => {
     await user.type(screen.getByPlaceholderText(/short note/i), "queued");
     await user.click(screen.getByTestId("quick-capture-save-local"));
 
+    await user.click(screen.getByTestId("capture-tab-outbox")); // sync lives on the outbox tab (LUM-606)
     await waitFor(() => expect(screen.getByTestId("quick-capture-sync-outbox")).toBeDisabled());
 
     setNavigatorOnline(true);

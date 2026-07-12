@@ -80,6 +80,14 @@ make web-e2e-prove           # fails if creds missing — use in CI or release c
 make web-e2e-ollama-prove    # opt-in Ollama pull/delete e2e (full stack + LUMOGIS_E2E_EXPECT_OLLAMA=1)
 ```
 
+**Admin search & retrieval e2e (LUM-159):** `tests/e2e/admin_search_settings.spec.ts` — read-only smoke for `/admin/search-settings` (panel load, nav link, BGE RAM warning, save disabled when clean). Does **not** save or restart the stack. Requires admin smoke user:
+
+```bash
+export LUMOGIS_E2E_EXPECT_ADMIN=1
+export LUMOGIS_WEB_SMOKE_EMAIL=... LUMOGIS_WEB_SMOKE_PASSWORD='...'
+cd clients/lumogis-web && npx playwright test admin_search_settings --workers=1
+```
+
 Optional: `PLAYWRIGHT_BASE_URL=https://your.host` if not testing on port 80.
 
 **Onboarding e2e (LUM-315):** `tests/e2e/onboarding_dismiss_persists.spec.ts` asserts that

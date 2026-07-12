@@ -33,11 +33,11 @@ test.describe("LUM-593 mobile member audit log", () => {
 
     const main = page.locator("#lumogis-main");
     await expect(main).toBeVisible();
-    await expect(main.getByRole("heading", { name: /^audit log$/i })).toBeVisible();
+    await expect(main.getByRole("heading", { name: /^my activity$/i })).toBeVisible();
 
     const settingsNav = page.getByRole("navigation", { name: /^settings$/i });
     await expect(settingsNav).toBeVisible();
-    await expect(settingsNav.getByRole("link", { name: /^audit log$/i })).toBeVisible();
+    await expect(settingsNav.getByRole("link", { name: /^my activity$/i })).toBeVisible();
 
     const table = page.getByRole("table");
     const empty = page.getByText(/no audit events match your filters/i);

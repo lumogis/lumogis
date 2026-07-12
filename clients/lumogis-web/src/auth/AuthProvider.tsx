@@ -34,6 +34,7 @@ import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client
 import { ApiClient, ApiError } from "../api/client";
 import type { LoginResponse, UserPublic } from "../api/auth";
 import { AccessTokenStore } from "../api/tokens";
+import { Button } from "../components/Button";
 import {
   createQueryPersistenceOptions,
   isQueryPersistenceRuntimeEnabled,
@@ -325,9 +326,9 @@ function LoginForm({ onSubmit }: LoginFormProps): JSX.Element {
           {error}
         </p>
       )}
-      <button type="submit" disabled={busy}>
+      <Button type="submit" variant="primary" disabled={busy}>
         {busy ? "Signing in…" : "Sign in"}
-      </button>
+      </Button>
     </form>
   );
 }

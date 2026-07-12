@@ -2,6 +2,9 @@
 // Copyright (C) 2026 Lumogis
 import { Fragment } from "react";
 import type { AuditEntry } from "../../../api/audit";
+import { auditEntryRawPayload, auditEntrySummary } from "../../../util/auditSummary";
+import { formatAuditTimestamp } from "../../../util/formatTimestamp";
+import { Button } from "../../../components/Button";
 import { LoadingPlaceholder, Skeleton } from "../../_shared/Skeleton";
 import { ErrorState } from "../../_shared/ErrorState";
 
@@ -35,7 +38,7 @@ export function AuditTable({
     return (
       <LoadingPlaceholder label="Loading audit log…">
         <div className="lumogis-table-scroll">
-          <table className="lumogis-dense-table">
+          <table className="lumogis-dense-table lumogis-responsive-table">
             <thead>
               <tr>
                 <th>When</th>
@@ -80,7 +83,7 @@ export function AuditTable({
   if (variant === "admin") {
     return (
       <div className="lumogis-table-scroll">
-        <table className="lumogis-dense-table">
+        <table className="lumogis-dense-table lumogis-responsive-table">
           <thead>
             <tr>
               <th>When</th>
@@ -99,16 +102,18 @@ export function AuditTable({
                 (row.reversed_at == null || row.reversed_at === "");
               return (
                 <tr key={row.id}>
-                  <td style={{ fontSize: "0.8rem" }}>{row.executed_at ?? "—"}</td>
-                  <td>{row.action_name}</td>
-                  <td>{row.connector}</td>
-                  <td>{row.mode}</td>
-                  <td className="lumogis-long-text">{row.result_summary}</td>
-                  <td>
+                  <td data-label="When" className="lumogis-cell-timestamp">
+                    {formatAuditTimestamp(row.executed_at)}
+                  </td>
+                  <td data-label="Action">{row.action_name}</td>
+                  <td data-label="Connector">{row.connector}</td>
+                  <td data-label="Mode">{row.mode}</td>
+                  <td data-label="Result" className="lumogis-long-text">{auditEntrySummary(row)}</td>
+                  <td data-label="">
                     {canReverse && row.reverse_token && onReverse ? (
-                      <button type="button" onClick={() => onReverse(row.reverse_token!)}>
+                      <Button type="button" variant="secondary" size="sm" onClick={() => onReverse(row.reverse_token!)}>
                         Reverse
-                      </button>
+                      </Button>
                     ) : null}
                   </td>
                 </tr>
@@ -122,7 +127,7 @@ export function AuditTable({
 
   return (
     <div className="lumogis-table-scroll">
-      <table className="lumogis-dense-table">
+      <table className="lumogis-dense-table lumogis-responsive-table">
         <thead>
           <tr>
             <th>When</th>
@@ -137,12 +142,16 @@ export function AuditTable({
             const isExpanded = expandedId === row.id;
             const isPrivacy =
               markCloudRows && (row.event_type?.startsWith("privacy.") ?? false);
+            const summary = auditEntrySummary(row);
+            const rawPayload = auditEntryRawPayload(row);
             return (
               <Fragment key={row.id}>
                 <tr>
-                  <td style={{ fontSize: "0.8rem" }}>{row.executed_at ?? "—"}</td>
-                  <td>
-                    {row.description ?? row.action_name}
+                  <td data-label="When" className="lumogis-cell-timestamp">
+                    {formatAuditTimestamp(row.executed_at)}
+                  </td>
+                  <td data-label="Event">
+                    {row.event_type?.replace(/\./g, " · ") ?? row.action_name}
                     {isPrivacy ? (
                       <span className="lumogis-badge" data-testid="privacy-badge">
                         {" "}
@@ -153,13 +162,13 @@ export function AuditTable({
                       <span className="lumogis-badge"> Reversed</span>
                     ) : null}
                   </td>
-                  <td>{row.source ?? row.connector}</td>
-                  <td className="lumogis-long-text">{row.result_summary ?? "—"}</td>
-                  <td>
+                  <td data-label="Source">{row.source ?? row.connector}</td>
+                  <td data-label="Description" className="lumogis-long-text">{summary}</td>
+                  <td data-label="">
                     {onToggleExpand ? (
-                      <button type="button" onClick={() => onToggleExpand(row.id)}>
+                      <Button type="button" variant="ghost" size="sm" onClick={() => onToggleExpand(row.id)}>
                         {isExpanded ? "Hide" : "Details"}
-                      </button>
+                      </Button>
                     ) : null}
                   </td>
                 </tr>
@@ -177,16 +186,24 @@ export function AuditTable({
                         <dd>{row.mode}</dd>
                         <dt>scope</dt>
                         <dd>{row.scope}</dd>
-                        {row.input_summary ? (
+                        {row.executed_at ? (
                           <>
-                            <dt>input_summary</dt>
-                            <dd className="lumogis-long-text">{row.input_summary}</dd>
+                            <dt>executed_at (ISO)</dt>
+                            <dd className="lumogis-cell-identifier">{row.executed_at}</dd>
                           </>
                         ) : null}
-                        {row.result_summary ? (
+                        {row.description ? (
                           <>
-                            <dt>result_summary</dt>
-                            <dd className="lumogis-long-text">{row.result_summary}</dd>
+                            <dt>description</dt>
+                            <dd className="lumogis-long-text">{row.description}</dd>
+                          </>
+                        ) : null}
+                        {rawPayload ? (
+                          <>
+                            <dt>raw payload</dt>
+                            <dd>
+                              <pre className="lumogis-audit-detail__raw">{rawPayload}</pre>
+                            </dd>
                           </>
                         ) : null}
                       </dl>

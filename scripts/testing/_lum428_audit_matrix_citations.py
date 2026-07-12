@@ -27,7 +27,7 @@ MATRIX_PATHS = [
     ROOT / "docs/testing/TEST-COVERAGE-MATRIX-core.md",
     ROOT / "docs/testing/TEST-COVERAGE-MATRIX-web.md",
     ROOT / "docs/private/testing/TEST-COVERAGE-MATRIX-kg.md",
-    ROOT / "docs/private/testing/TEST-COVERAGE-MATRIX-desktop.md",
+    ROOT / "docs/private/testing/TEST-COVERAGE-MATRIX-hub.md",
 ]
 
 ROW_RE = re.compile(

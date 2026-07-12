@@ -261,8 +261,14 @@ def list_captures(
     scope: Optional[Literal["personal", "shared", "system"]],
     limit: int,
     offset: int,
+    status_filter: Optional[list[str]] = None,
 ) -> tuple[list[CaptureListItem], int]:
-    """List captures for user. MVP: no ``scope`` column — only *personal* rows exist."""
+    """List captures for user. MVP: no ``scope`` column — only *personal* rows exist.
+
+    ``status_filter`` (LUM-606) restricts to the given statuses; ``None`` returns all
+    (the inbox passes ``["pending", "failed"]``). Values are parameterised via
+    ``status = ANY(%s)`` — never interpolated.
+    """
     if scope is None:
         scope = "personal"
     if scope == "personal":
@@ -276,6 +282,10 @@ def list_captures(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"error": "invalid_scope"},
         )
+
+    if status_filter:
+        where += " AND status = ANY(%s)"
+        params = (*params, list(status_filter))
 
     total_row = ms.fetch_one(
         f"SELECT COUNT(*) AS c FROM captures WHERE {where}",
@@ -301,6 +311,7 @@ def list_captures(
             title=r.get("title"),
             text=r.get("text"),
             url=r.get("url"),
+            last_error=r.get("last_error"),
             attachment_count=int(r["attachment_count"]),
             transcript_count=int(r["transcript_count"]),
             created_at=r["created_at"],

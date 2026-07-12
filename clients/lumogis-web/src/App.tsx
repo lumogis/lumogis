@@ -26,6 +26,7 @@ import { ChatPage } from "./features/chat/ChatPage";
 import { SearchPage } from "./features/memory/SearchPage";
 import { ApprovalsPage } from "./features/approvals/ApprovalsPage";
 import { MePage } from "./features/me/MePage";
+import { MeAppearanceView } from "./features/me/MeAppearanceView";
 import { MeProfileView } from "./features/me/MeProfileView";
 import { MeConnectorsView } from "./features/me/MeConnectorsView";
 import { MePermissionsView } from "./features/me/MePermissionsView";
@@ -46,6 +47,8 @@ import { AdminSharedItemsView } from "./features/admin/AdminSharedItemsView";
 import { AdminDiagnosticsView } from "./features/admin/AdminDiagnosticsView";
 import { AdminSystemStatusView } from "./features/admin/AdminSystemStatusView";
 import { AdminPrivacyModeView } from "./features/admin/AdminPrivacyModeView";
+import { AdminSearchSettingsView } from "./features/admin/AdminSearchSettingsView";
+import { AdminFeatureFlagsView } from "./features/admin/AdminFeatureFlagsView";
 import { QuickCapturePage } from "./features/capture/QuickCapturePage";
 import { DocumentChatPage } from "./features/document-chat/DocumentChatPage";
 import { DocumentsPage } from "./features/documents/DocumentsPage";
@@ -144,6 +147,7 @@ function ShellRoutes(): JSX.Element {
           <Route path="/me" element={<MePage />}>
             <Route index element={<Navigate to="profile" replace />} />
             <Route path="profile" element={<MeProfileView />} />
+            <Route path="appearance" element={<MeAppearanceView />} />
             <Route path="connectors" element={<MeConnectorsView />} />
             <Route path="permissions" element={<MePermissionsView />} />
             <Route path="tools-capabilities" element={<MeToolsCapabilitiesView />} />
@@ -166,6 +170,8 @@ function ShellRoutes(): JSX.Element {
             <Route path="diagnostics" element={<AdminDiagnosticsView />} />
             <Route path="system-status" element={<AdminSystemStatusView />} />
             <Route path="privacy-mode" element={<AdminPrivacyModeView />} />
+            <Route path="search-settings" element={<AdminSearchSettingsView />} />
+            <Route path="feature-flags" element={<AdminFeatureFlagsView />} />
             <Route path="*" element={<Navigate to="users" replace />} />
           </Route>
           <Route path="*" element={<Navigate to="/chat" replace />} />

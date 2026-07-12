@@ -6,6 +6,7 @@
 import { type ReactNode } from "react";
 import { Link } from "react-router-dom";
 
+import { buttonClassName } from "../../components/Button";
 import styles from "./EmptyState.module.css";
 
 export interface EmptyStateAction {
@@ -48,7 +49,7 @@ export function EmptyState({
         <div className={styles.actions}>
           {actions.map((a, i) => {
             const isPrimary = primaryIdx === i;
-            const btnClass = isPrimary ? `${styles.btn} ${styles.btnPrimary}` : styles.btn;
+            const btnClass = buttonClassName(isPrimary ? "primary" : "secondary", "md");
             if (a.href !== undefined && a.href.length > 0) {
               const external = /^https?:\/\//i.test(a.href);
               if (external) {

@@ -20,6 +20,8 @@ import {
   revokeAdminInvite,
   type InviteAdminRow,
 } from "../../api/invites";
+import { RowActionsMenu } from "../../components/RowActionsMenu";
+import { Button } from "../../components/Button";
 import type { UserRow } from "../_shared/UserPicker";
 import { formatLastActive, roleLabel } from "./adminUsersDisplay";
 
@@ -332,15 +334,15 @@ export function AdminUsersView(): JSX.Element {
       </p>
       {msg && <p role="status">{msg}</p>}
       <div className="lumogis-dense-actions">
-        <button type="button" onClick={() => setCreateOpen(true)}>
+        <Button type="button" variant="primary" onClick={() => setCreateOpen(true)}>
           Create user
-        </button>
-        <button type="button" onClick={openInviteModal}>
+        </Button>
+        <Button type="button" variant="secondary" onClick={openInviteModal}>
           Invite member
-        </button>
-        <button type="button" onClick={openImportModal}>
+        </Button>
+        <Button type="button" variant="secondary" onClick={openImportModal}>
           Import from backup
-        </button>
+        </Button>
       </div>
       <p style={{ margin: "0.25rem 0 0", fontSize: "0.85rem", opacity: 0.8 }}>
         <strong>Create user</strong> sets an initial password you share manually.{" "}
@@ -494,8 +496,9 @@ export function AdminUsersView(): JSX.Element {
               </div>
             )}
             <div className="lumogis-form-actions lumogis-form-actions--stack">
-              <button
+              <Button
                 type="button"
+                variant="primary"
                 disabled={importM.isPending || !archivesQ.data?.length}
                 onClick={() => {
                   setImportDialogMsg(null);
@@ -503,15 +506,10 @@ export function AdminUsersView(): JSX.Element {
                 }}
               >
                 {importDryRun ? "Run preview" : "Run import"}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setImportOpen(false);
-                }}
-              >
+              </Button>
+              <Button type="button" variant="ghost" onClick={() => setImportOpen(false)}>
                 Close
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -563,9 +561,12 @@ export function AdminUsersView(): JSX.Element {
               />
             </label>
             <div className="lumogis-form-actions lumogis-form-actions--stack">
-              <button type="submit">Save</button>
-              <button
+              <Button type="submit" variant="primary">
+                Save
+              </Button>
+              <Button
                 type="button"
+                variant="ghost"
                 onClick={() => {
                   setResetFor(null);
                   setResetPass("");
@@ -573,7 +574,7 @@ export function AdminUsersView(): JSX.Element {
                 }}
               >
                 Cancel
-              </button>
+              </Button>
             </div>
           </form>
         </div>
@@ -618,10 +619,12 @@ export function AdminUsersView(): JSX.Element {
               />
             </label>
             <div className="lumogis-form-actions lumogis-form-actions--stack">
-              <button type="submit">Save</button>
-              <button type="button" onClick={() => setNameFor(null)}>
+              <Button type="submit" variant="primary">
+                Save
+              </Button>
+              <Button type="button" variant="ghost" onClick={() => setNameFor(null)}>
                 Cancel
-              </button>
+              </Button>
             </div>
           </form>
         </div>
@@ -668,10 +671,12 @@ export function AdminUsersView(): JSX.Element {
               </select>
             </label>
             <div className="lumogis-form-actions lumogis-form-actions--stack">
-              <button type="submit">Create</button>
-              <button type="button" onClick={() => setCreateOpen(false)}>
+              <Button type="submit" variant="primary">
+                Create
+              </Button>
+              <Button type="button" variant="ghost" onClick={() => setCreateOpen(false)}>
                 Cancel
-              </button>
+              </Button>
             </div>
           </form>
         </div>
@@ -735,17 +740,22 @@ export function AdminUsersView(): JSX.Element {
               </div>
             )}
             <div className="lumogis-form-actions lumogis-form-actions--stack" style={{ marginTop: "1rem" }}>
-              <button type="button" disabled={inviteMintM.isPending} onClick={() => inviteMintM.mutate()}>
+              <Button
+                type="button"
+                variant="primary"
+                disabled={inviteMintM.isPending}
+                onClick={() => inviteMintM.mutate()}
+              >
                 {lastInviteUrl ? "Generate another link" : "Generate invite link"}
-              </button>
+              </Button>
               {lastInviteUrl ? (
-                <button type="button" onClick={() => void copyInviteLink()}>
+                <Button type="button" variant="secondary" onClick={() => void copyInviteLink()}>
                   Copy link
-                </button>
+                </Button>
               ) : null}
-              <button type="button" onClick={() => setInviteOpen(false)}>
+              <Button type="button" variant="ghost" onClick={() => setInviteOpen(false)}>
                 Close
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -756,7 +766,7 @@ export function AdminUsersView(): JSX.Element {
         {invitesQ.isError && <p>Could not load invites.</p>}
         {invitesQ.isSuccess && invitesQ.data.length === 0 && <p>No invites yet.</p>}
         {invitesQ.isSuccess && invitesQ.data.length > 0 && (
-          <table className="lumogis-dense-table">
+          <table className="lumogis-dense-table lumogis-responsive-table">
             <thead>
               <tr>
                 <th>Role</th>
@@ -773,14 +783,16 @@ export function AdminUsersView(): JSX.Element {
                 const canRevoke = status === "Active";
                 return (
                   <tr key={inv.id}>
-                    <td>{roleLabel(inv.role)}</td>
-                    <td>{inv.role === "admin" || inv.allows_shared ? "Yes" : "No"}</td>
-                    <td>{status}</td>
-                    <td>{new Date(inv.expires_at).toLocaleString()}</td>
-                    <td>{inv.token_prefix ?? "—"}</td>
-                    <td>
-                      <button
+                    <td data-label="Role">{roleLabel(inv.role)}</td>
+                    <td data-label="Shared access">{inv.role === "admin" || inv.allows_shared ? "Yes" : "No"}</td>
+                    <td data-label="Status">{status}</td>
+                    <td data-label="Expires">{new Date(inv.expires_at).toLocaleString()}</td>
+                    <td data-label="Prefix">{inv.token_prefix ?? "—"}</td>
+                    <td data-label="Actions">
+                      <Button
                         type="button"
+                        variant="danger"
+                        size="sm"
                         disabled={!canRevoke || inviteRevokeM.isPending}
                         onClick={() => {
                           if (window.confirm("Revoke this invite before it is used?")) {
@@ -789,7 +801,7 @@ export function AdminUsersView(): JSX.Element {
                         }}
                       >
                         Revoke
-                      </button>
+                      </Button>
                     </td>
                   </tr>
                 );
@@ -798,8 +810,8 @@ export function AdminUsersView(): JSX.Element {
           </table>
         )}
       </div>
-      <div className="lumogis-table-scroll">
-        <table className="lumogis-dense-table">
+      <div className="lumogis-table-scroll lumogis-table-scroll--wide" data-testid="admin-users-table-scroll">
+        <table className="lumogis-dense-table lumogis-responsive-table lumogis-dense-table--sticky-actions">
           <thead>
             <tr>
               <th>Email</th>
@@ -807,7 +819,7 @@ export function AdminUsersView(): JSX.Element {
               <th>Role</th>
               <th>Last active</th>
               <th>Disabled</th>
-              <th>Actions</th>
+              <th className="lumogis-dense-table__actions-head">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -832,85 +844,115 @@ export function AdminUsersView(): JSX.Element {
                   : undefined;
               return (
                 <tr key={u.id}>
-                  <td className="lumogis-long-text">{u.email}</td>
-                  <td data-testid={`display-name-${u.id}`}>{u.display_name ?? "—"}</td>
-                  <td>{roleLabel(u.role)}</td>
-                  <td>{formatLastActive(u.last_seen_at)}</td>
-                  <td>{u.disabled ? "yes" : "no"}</td>
-                  <td>
-                    <div className="lumogis-dense-actions lumogis-dense-actions--stack">
-                      <button
-                        type="button"
-                        title={lastAdmin ? "Cannot remove the last active admin." : undefined}
-                        disabled={lastAdmin}
-                        onClick={() => {
-                          const message = willPromoteToAdmin
-                            ? `Make ${u.email} an Admin? Admins can manage every household member, including other admins.`
-                            : `Change ${u.email} to Member? They will lose admin access to household management.`;
-                          if (!window.confirm(message)) return;
-                          setMsg(null);
-                          patchM.mutate({
-                            id: u.id,
-                            body: { role: willPromoteToAdmin ? "admin" : "user" },
-                          });
-                        }}
-                      >
-                        Make {willPromoteToAdmin ? "Admin" : "Member"}
-                      </button>
-                      <button
-                        type="button"
-                        title={disableTitle}
-                        disabled={lastAdmin || u.disabled || self}
-                        onClick={() => {
-                          setMsg(null);
-                          patchM.mutate({ id: u.id, body: { disabled: !u.disabled } });
-                        }}
-                      >
-                        {u.disabled ? "Enable" : "Disable"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setMsg(null);
-                          setResetPass("");
-                          setResetConfirm("");
-                          setResetFor(u);
-                        }}
-                      >
-                        Reset password
-                      </button>
-                      <button
-                        type="button"
-                        data-testid={`set-name-${u.id}`}
-                        onClick={() => {
-                          setMsg(null);
-                          setNameInput(u.display_name ?? "");
-                          setNameFor(u);
-                        }}
-                      >
-                        Set name
-                      </button>
-                      <button
-                        type="button"
-                        disabled={exportingId === u.id}
-                        onClick={() => void runExportBackup(u)}
-                      >
-                        {exportingId === u.id ? "Exporting…" : "Export backup"}
-                      </button>
-                      <button
-                        type="button"
-                        title={deleteTitle}
-                        disabled={lastAdmin || self}
-                        onClick={() => {
-                          if (window.confirm(`Delete ${u.email}?`)) {
+                  <td data-label="Email" className="lumogis-cell-identifier">{u.email}</td>
+                  <td data-label="Name" data-testid={`display-name-${u.id}`}>{u.display_name ?? "—"}</td>
+                  <td data-label="Role">{roleLabel(u.role)}</td>
+                  <td data-label="Last active">{formatLastActive(u.last_seen_at)}</td>
+                  <td data-label="Disabled">{u.disabled ? "yes" : "no"}</td>
+                  <td data-label="Actions" className="lumogis-dense-table__actions">
+                    <RowActionsMenu
+                      menuLabel={`More actions for ${u.email}`}
+                      testId={`more-actions-${u.id}`}
+                      primary={
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          title={lastAdmin ? "Cannot remove the last active admin." : undefined}
+                          disabled={lastAdmin}
+                          onClick={() => {
+                            const message = willPromoteToAdmin
+                              ? `Make ${u.email} an Admin? Admins can manage every household member, including other admins.`
+                              : `Change ${u.email} to Member? They will lose admin access to household management.`;
+                            if (!window.confirm(message)) return;
                             setMsg(null);
-                            delM.mutate(u.id);
-                          }
-                        }}
-                      >
-                        Delete
-                      </button>
-                    </div>
+                            patchM.mutate({
+                              id: u.id,
+                              body: { role: willPromoteToAdmin ? "admin" : "user" },
+                            });
+                          }}
+                        >
+                          Make {willPromoteToAdmin ? "Admin" : "Member"}
+                        </Button>
+                      }
+                      overflow={
+                        <>
+                          <Button
+                            type="button"
+                            variant="danger"
+                            size="sm"
+                            role="menuitem"
+                            className="lumogis-table-actions__menu-item"
+                            title={disableTitle}
+                            disabled={lastAdmin || u.disabled || self}
+                            onClick={() => {
+                              setMsg(null);
+                              patchM.mutate({ id: u.id, body: { disabled: !u.disabled } });
+                            }}
+                          >
+                            {u.disabled ? "Enable" : "Disable"}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            role="menuitem"
+                            className="lumogis-table-actions__menu-item"
+                            onClick={() => {
+                              setMsg(null);
+                              setResetPass("");
+                              setResetConfirm("");
+                              setResetFor(u);
+                            }}
+                          >
+                            Reset password
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            role="menuitem"
+                            className="lumogis-table-actions__menu-item"
+                            data-testid={`set-name-${u.id}`}
+                            onClick={() => {
+                              setMsg(null);
+                              setNameInput(u.display_name ?? "");
+                              setNameFor(u);
+                            }}
+                          >
+                            Set name
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            role="menuitem"
+                            className="lumogis-table-actions__menu-item"
+                            disabled={exportingId === u.id}
+                            onClick={() => void runExportBackup(u)}
+                          >
+                            {exportingId === u.id ? "Exporting…" : "Export backup"}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="danger"
+                            size="sm"
+                            role="menuitem"
+                            className="lumogis-table-actions__menu-item"
+                            title={deleteTitle}
+                            disabled={lastAdmin || self}
+                            onClick={() => {
+                              if (window.confirm(`Delete ${u.email}?`)) {
+                                setMsg(null);
+                                delM.mutate(u.id);
+                              }
+                            }}
+                          >
+                            Delete
+                          </Button>
+                        </>
+                      }
+                    />
                   </td>
                 </tr>
               );

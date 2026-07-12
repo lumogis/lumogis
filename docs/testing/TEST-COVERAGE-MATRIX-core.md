@@ -1,3 +1,4 @@
+<!-- Last audited: 2026-07-10 on claude/design-context-status-w7xez3 — LUM-428 agent spot-check: all 149 ✅ citations across the 4 matrices resolve to real tests (0 broken); §1.1.4/§1.2.2/§1.2.3/§1.4.2 re-cited from related tests to dedicated behavioural assertions. -->
 <!-- Last audited: 2026-07-08 against dev — LUM-586 verify-plan: graph-aware document entity cascade + refcounted retraction -->
 <!-- Last audited: 2026-07-08 against dev @ 341527c5c — LUM-597 live FalkorDB reconcile proof (LUM-580 child) -->
 <!-- Last audited: 2026-07-07 against agent/lum-395 on agent/lum-395 — LUM-395 verify-plan -->
@@ -31,15 +32,15 @@
 | 1.1.7 | Non-admin service health (`GET /api/v1/health`, LUM-512) | orchestrator/tests/test_api_v1_health.py | unit | ✅ | LUM-512; `test_health_200_for_non_admin_user`, `test_health_whitelists_services_for_non_admin`, `test_health_caches_within_ttl` in `orchestrator/tests/test_api_v1_health.py`; record-retro 2026-06-19 |
 | 1.1.2 | Stack-control supervision | stack-control/test_main.py | unit | 🟡 | LUM-101, LUM-103, LUM-178; `test_health_ok` in `stack-control/test_main.py`; plan partial — weak path/name match (LUM-428) |
 | 1.1.3 | Compose policy guard (LUM-43) | scripts/tests/test_check_compose_policy.py | unit | ✅ | `test_adversarial_overlay_violation_reported` in `scripts/tests/test_check_compose_policy.py`; code audit |
-| 1.1.4 | Inbox folder-watch auto-ingest (LUM-330) | orchestrator/tests/test_inbox_enqueue.py | integration | ✅ | LUM-76, LUM-330; `test_wait_for_stable_file_when_unchanging_then_true` in `orchestrator/tests/test_inbox_enqueue.py`; plan `plan` (plan path) |
+| 1.1.4 | Inbox folder-watch auto-ingest (LUM-330) | orchestrator/tests/test_inbox_enqueue.py | integration | ✅ | LUM-76, LUM-330; `test_inbox_poll_should_ingest_when_no_row_then_true`, `test_ingest_folder_routes_through_safe_ingest_with_containment_root` in `orchestrator/tests/test_inbox_enqueue.py` (LUM-428: re-cited from a file-stability helper to the ingest-decision + safe-ingest routing assertions) |
 | 1.1.5 | Multi-path ingest compose binds (LUM-401) | orchestrator/tests/test_ingest_paths_settings.py | unit | ✅ | LUM-397, LUM-400, LUM-401; `test_migrate_filesystem_root_to_ingest_paths` in `orchestrator/tests/test_ingest_paths_settings.py`; plan `plan` (plan path) |
 | 1.1.6 | Debug test inventory (LUM-377) | — | release-rc | ❌ | code audit: no test match |
 
 ### §1.2
 
 | 1.2.1 | Admin settings ingest_paths GET/PUT | orchestrator/tests/test_ingest_paths_settings.py | unit | 🟡 | LUM-397, LUM-400, LUM-401; `test_migrate_filesystem_root_to_ingest_paths` in `orchestrator/tests/test_ingest_paths_settings.py`; plan partial — weak path/name match (LUM-428) |
-| 1.2.2 | Legacy + v1 data ingest | orchestrator/tests/test_api_v1_ingest_upload.py | unit | ✅ | LUM-397; `test_upload_requires_auth` in `orchestrator/tests/test_api_v1_ingest_upload.py`; plan `plan` (plan path) |
-| 1.2.3 | Ingest upload API | orchestrator/tests/test_api_v1_ingest_upload.py | unit | ✅ | LUM-397; `test_upload_requires_auth` in `orchestrator/tests/test_api_v1_ingest_upload.py`; plan `plan` (plan path) |
+| 1.2.2 | Legacy + v1 data ingest | orchestrator/tests/test_api_v1_ingest_upload.py | unit | ✅ | LUM-397; `test_upload_returns_202_and_stores_file`, `test_ingest_upload_handler_retains_stored_file` in `orchestrator/tests/test_api_v1_ingest_upload.py` (LUM-428: re-cited from the auth-guard test to the upload→enqueue→store assertion) |
+| 1.2.3 | Ingest upload API | orchestrator/tests/test_api_v1_ingest_upload.py | unit | ✅ | LUM-397; `test_upload_returns_202_and_stores_file`, `test_upload_wrong_user_isolation` in `orchestrator/tests/test_api_v1_ingest_upload.py` (LUM-428: re-cited from the auth-guard test to success + per-user isolation assertions) |
 | 1.2.4 | Ingest path watcher | orchestrator/tests/test_ingest_paths_watcher.py | unit | 🟡 | LUM-397; `test_ingest_path_handler_rejects_symlink_escape` in `orchestrator/tests/test_ingest_paths_watcher.py`; plan partial — weak path/name match (LUM-428) |
 | 1.2.7 | Ingest job progress poll + batch summary (LUM-511) | orchestrator/tests/test_ingest_progress.py, orchestrator/tests/test_api_v1_ingest_progress.py, orchestrator/tests/test_ingest_file_progress_stages.py, orchestrator/tests/test_ingest_job_progress_migration.py | unit | ✅ | LUM-511; `test_ingest_file_fires_stages_in_order`, `test_migration_035_adds_progress_columns_and_batch_index`, `test_update_emits_sse_with_returning_row`, `test_get_batch_summary` in cited files |
 | 1.2.5 | Admin browse / review-queue | — | unit | ❌ | code audit: no test match |
@@ -57,7 +58,7 @@
 ### §1.4
 
 | 1.4.1 | Captures ledger CRUD (`/api/v1/captures`) | orchestrator/tests/test_api_v1_captures.py | unit | ✅ | LUM-44; `test_create_capture_201` in `orchestrator/tests/test_api_v1_captures.py`; plan `plan` (plan path) |
-| 1.4.2 | Capture attachments | orchestrator/tests/test_api_v1_captures.py | unit | ✅ | LUM-44; `test_create_capture_201` in `orchestrator/tests/test_api_v1_captures.py`; plan `plan` (plan path) |
+| 1.4.2 | Capture attachments | orchestrator/tests/test_api_v1_captures.py | unit | ✅ | LUM-44; `test_attachment_upload_detail_download_delete`, `test_attachment_upload_mime_rejected_415` in `orchestrator/tests/test_api_v1_captures.py` (LUM-428: re-cited from the text-capture create test to the dedicated attachment upload/detail/download/delete assertions) |
 | 1.4.3 | Voice transcribe STT | orchestrator/tests/test_voice_transcribe_route.py | unit | ✅ | LUM-384; `test_stt_disabled_503` in `orchestrator/tests/test_voice_transcribe_route.py`; plan `plan` (plan path) |
 | 1.4.4 | Quick capture web route (client) | clients/lumogis-web/tests/e2e/first_slice.spec.ts | web | 🟡 | LUM-44, LUM-76, LUM-162; `first_slice.spec` in `clients/lumogis-web/tests/e2e/first_slice.spec.ts`; plan partial — `first_slice.spec` missing feature token (quick, capture) |
 

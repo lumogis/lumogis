@@ -17,6 +17,9 @@ import {
   type CaptureDetail,
 } from "../../api/captures";
 import { useAuth } from "../../auth/AuthProvider";
+import { Button } from "../../components/Button";
+import { CaptureInboxView } from "./CaptureInboxView";
+import { CaptureArchiveView } from "./CaptureArchiveView";
 import {
   addAudioOutboxItem,
   addTextUrlOutboxItem,
@@ -86,6 +89,11 @@ function errorToMessage(err: unknown): string {
 export function QuickCapturePage(): JSX.Element {
   const { client } = useAuth();
   const online = useOnlineStatus();
+  // LUM-606: Compose · Inbox · Outbox tabs. The device-only outbox stays a
+  // separate surface from the server-backed inbox.
+  const [captureTab, setCaptureTab] = useState<"compose" | "inbox" | "archive" | "outbox">(
+    "compose",
+  );
   const [searchParams, setSearchParams] = useSearchParams();
 
   const clientIdRef = useRef<string | null>(null);
@@ -533,40 +541,58 @@ export function QuickCapturePage(): JSX.Element {
   const audioMiB = (outboxStats.audioBytes / (1024 * 1024)).toFixed(2);
 
   return (
-    <div
-      data-testid="quick-capture-page"
-      style={{ maxWidth: "40rem", margin: "0 auto", padding: "1rem", fontSize: "1.05rem" }}
-    >
+    <div className="lumogis-capture-page" data-testid="quick-capture-page">
       <h1 style={{ fontSize: "1.5rem" }}>Quick capture</h1>
-      <p style={{ opacity: 0.85, lineHeight: 1.4 }}>
-        Pending items can live <strong>only on this device</strong> until you tap <strong>Sync now</strong>. Local voice clips
-        use storage ({MAX_PENDING_VOICE_CLIPS} clips max, {MAX_LOCAL_VOICE_BYTES_TOTAL / 1024 / 1024} MiB total).{" "}
-        <strong>Nothing uploads automatically</strong> when you go online — no Background Sync, no service worker caching.{" "}
-        <strong>Add to memory</strong> runs only when you tap it — nothing indexes on save, upload, sync, or transcription. Off-device STT is not used in this flow.
-      </p>
 
+      <nav
+        aria-label="Capture views"
+        data-testid="capture-tabs"
+        style={{ display: "flex", gap: "0.5rem", margin: "0.75rem 0" }}
+      >
+        {(["compose", "inbox", "archive", "outbox"] as const).map((t) => (
+          <button
+            key={t}
+            type="button"
+            aria-pressed={captureTab === t}
+            data-testid={`capture-tab-${t}`}
+            onClick={() => setCaptureTab(t)}
+            style={{ fontWeight: captureTab === t ? 700 : 400, textTransform: "capitalize" }}
+          >
+            {t}
+          </button>
+        ))}
+      </nav>
+
+      {/* Connectivity indicator stays global across tabs (LUM-606). */}
       {!online && (
-        <p role="status" data-testid="quick-capture-offline" style={{ padding: "0.75rem", background: "var(--lumogis-surface-2, #2a2a32)", borderRadius: 8 }}>
-          You seem offline or unreachable. Use the local outbox below; photo upload stays disabled until you are online.
+        <p role="status" data-testid="quick-capture-offline" className="lumogis-capture-page__outbox">
+          You seem offline or unreachable. Server save is disabled; use the Outbox tab to save
+          locally. Photo upload stays disabled until you are online.
         </p>
       )}
 
-      <section data-testid="capture-outbox-panel" style={{ marginTop: "1rem", padding: "0.75rem", border: "1px solid rgba(128,128,128,0.35)", borderRadius: 8 }}>
+      {captureTab === "inbox" && <CaptureInboxView />}
+
+      {captureTab === "archive" && <CaptureArchiveView />}
+
+      {captureTab === "outbox" && (
+        <>
+
+      <section data-testid="capture-outbox-panel" className="lumogis-capture-page__outbox">
         <h2 style={{ fontSize: "1.15rem", marginTop: 0 }}>Local outbox</h2>
         <p data-testid="capture-outbox-stats" style={{ margin: "0.25rem 0" }}>
           Pending: <strong>{outboxStats.pendingCount}</strong> · Voice clips: <strong>{outboxStats.pendingAudioCount}</strong> ·
           Local voice ~ <strong>{audioMiB}</strong> MiB / {MAX_LOCAL_VOICE_BYTES_TOTAL / 1024 / 1024} MiB
         </p>
-        <button
+        <Button
           type="button"
+          variant="secondary"
           data-testid="quick-capture-sync-outbox"
           disabled={busy || !online || outboxStats.pendingCount === 0}
           onClick={() => void handleSyncOutbox()}
-          style={{ padding: "0.65rem 1rem", fontSize: "1rem", marginRight: "0.5rem" }}
         >
           Sync now
-        </button>
-        <span style={{ fontSize: "0.9rem", opacity: 0.85 }}>Manual sync only — safe when you choose.</span>
+        </Button>
         {outboxItems.length > 0 && (
           <ul data-testid="capture-outbox-list" style={{ paddingLeft: "1.2rem", marginTop: "0.75rem" }}>
             {outboxItems.map((item) => (
@@ -574,19 +600,34 @@ export function QuickCapturePage(): JSX.Element {
                 <strong>{item.kind}</strong> · {new Date(item.created_at).toLocaleString()} · {item.status}
                 {item.kind === "audio" ? ` · ${(item.size_bytes / 1024).toFixed(0)} KiB` : ""}
                 {item.last_error ? ` — ${item.last_error}` : ""}
-                <button
+                <Button
                   type="button"
-                  style={{ marginLeft: "0.5rem", fontSize: "0.9rem" }}
+                  variant="ghost"
+                  size="sm"
                   disabled={busy}
                   onClick={() => void handleDiscardOutbox(item.local_capture_id)}
                 >
                   Discard
-                </button>
+                </Button>
               </li>
             ))}
           </ul>
         )}
       </section>
+
+      <p className="lumogis-prose-mono" style={{ marginTop: "1rem" }}>
+        Nothing leaves this device until you tap <strong>Sync now</strong>.
+        <details className="lumogis-capture-page__disclosure">
+          <summary>Why?</summary>
+          <p style={{ margin: "0.5rem 0 0" }}>
+            Pending captures can live only on this device until you choose to sync. Local voice clips use storage
+            ({MAX_PENDING_VOICE_CLIPS} clips max, {MAX_LOCAL_VOICE_BYTES_TOTAL / 1024 / 1024} MiB total).
+            Nothing uploads automatically when you go online — no background sync. Add to memory runs only when you tap it.
+          </p>
+        </details>
+      </p>
+        </>
+      )}
 
       {error && (
         <p role="alert" data-testid="quick-capture-error" style={{ color: "var(--lumogis-danger, #f66)", marginTop: "0.75rem" }}>
@@ -599,7 +640,8 @@ export function QuickCapturePage(): JSX.Element {
         </p>
       )}
 
-      <section style={{ display: "flex", flexDirection: "column", gap: "0.75rem", marginTop: "1rem" }}>
+      {captureTab === "compose" && (
+      <section className="lumogis-capture-page__form">
         <label style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
           Title (optional)
           <input
@@ -643,25 +685,25 @@ export function QuickCapturePage(): JSX.Element {
           />
         </label>
 
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
-          <button
+        <div className="lumogis-form-actions">
+          <Button
             type="button"
+            variant="primary"
             data-testid="quick-capture-save-server"
             onClick={() => void handleCreate()}
             disabled={busy || !online}
-            style={{ padding: "0.85rem", fontSize: "1.05rem", fontWeight: 600 }}
           >
             Save capture (server)
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
+            variant="secondary"
             data-testid="quick-capture-save-local"
             onClick={() => void handleSaveLocalOutbox()}
             disabled={busy || online}
-            style={{ padding: "0.85rem", fontSize: "1.05rem", fontWeight: 600 }}
           >
             Save locally to outbox
-          </button>
+          </Button>
         </div>
 
         <hr style={{ margin: "1rem 0", opacity: 0.3 }} />
@@ -829,8 +871,9 @@ export function QuickCapturePage(): JSX.Element {
           </div>
         )}
 
-        <button
+        <Button
           type="button"
+          variant="primary"
           disabled={busy || !canAddToMemory}
           data-testid="quick-capture-add-memory"
           title={
@@ -845,11 +888,11 @@ export function QuickCapturePage(): JSX.Element {
                   : "Add this capture to searchable memory"
           }
           onClick={() => void handleAddToMemory()}
-          style={{ padding: "0.85rem", fontSize: "1.05rem" }}
         >
           Add to memory
-        </button>
+        </Button>
       </section>
+      )}
     </div>
   );
 }

@@ -11,6 +11,28 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.10.0] — 2026-07-12
+
+### Added
+
+- **Capture inbox and archive** — Quick Capture adds **Inbox** (edit, delete, retry, and commit pending or failed notes to memory) and **Archive** (read-only provenance for indexed captures); the captures list API supports status filtering and surfaces `last_error` on failed rows.
+- **Admin search and retrieval settings** — household admins can enable or disable the BGE cross-encoder reranker from Lumogis Web, with honest pending-restart state and a health indicator on System status.
+- **Admin feature flags panel** — read-only view of experimental orchestrator feature flags and their descriptions (env/compose remains the mutation path).
+- **Web shell refresh** — collapsible primary sidebar, shared button styles, profile menu in the header, and **Settings → Appearance** for light/dark theme (theme toggle removed from the global header).
+- **README screenshots** — curated main-screen captures for onboarding and documentation.
+
+### Changed
+
+- **Lumogis Web UI** — updated layouts and components across chat, documents, capture, approvals, admin users, audit, and upload surfaces for clearer hierarchy and mobile-friendly navigation.
+- **My activity** — the member audit log is labeled **My activity** (formerly “Audit log”) with expanded date and event-type filters.
+- **Document upload** — styled dropzone, selected-file chips, and clearer per-file progress during ingest batches.
+
+### Fixed
+
+- **Export and CI hygiene** — feature-ID catalog row count stays aligned with coverage matrices; OpenAPI snapshot matches the captures list API description.
+
+---
+
 ## [0.9.5] — 2026-07-09
 
 ### Fixed

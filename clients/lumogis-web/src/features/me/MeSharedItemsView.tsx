@@ -98,7 +98,8 @@ export function MeSharedItemsView(): JSX.Element {
       )}
 
       {listQ.isSuccess && items.length > 0 && (
-        <table className="lumogis-admin-table">
+        <div className="lumogis-table-scroll">
+        <table className="lumogis-dense-table lumogis-responsive-table">
           <thead>
             <tr>
               <th>Type</th>
@@ -114,14 +115,14 @@ export function MeSharedItemsView(): JSX.Element {
               const on = sharedOn(item);
               return (
                 <tr key={key}>
-                  <td>{type}</td>
-                  <td>
+                  <td data-label="Type">{type}</td>
+                  <td data-label="Item">
                     <span className="lumogis-long-text">
                       {item.label ?? `Untitled ${type}`}
                     </span>
                   </td>
-                  <td>{on ?? "—"}</td>
-                  <td>
+                  <td data-label="Shared">{on ?? "—"}</td>
+                  <td data-label="">
                     {confirming === key ? (
                       <span data-testid={`confirm-${key}`}>
                         <span style={{ marginRight: "0.5rem" }}>
@@ -164,6 +165,7 @@ export function MeSharedItemsView(): JSX.Element {
             })}
           </tbody>
         </table>
+        </div>
       )}
     </section>
   );

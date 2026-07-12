@@ -52,8 +52,10 @@ describe("AdminUsersView", () => {
     const row = await screen.findByRole("row", { name: /admin@home\.lan/i });
     // LUM-520: role `user` is surfaced as "Member" → the admin's demote button reads "Make Member".
     const makeBtn = within(row).getByRole("button", { name: /^make member$/i });
-    const disBtn = within(row).getByRole("button", { name: /^disable$/i });
-    const delBtn = within(row).getByRole("button", { name: /^delete$/i });
+    const userEv = userEvent.setup();
+    await userEv.click(within(row).getByRole("button", { name: /more actions/i }));
+    const disBtn = within(row).getByRole("menuitem", { name: /^disable$/i });
+    const delBtn = within(row).getByRole("menuitem", { name: /^delete$/i });
     expect(makeBtn).toBeDisabled();
     expect(disBtn).toBeDisabled();
     expect(delBtn).toBeDisabled();
@@ -90,6 +92,7 @@ describe("AdminUsersView", () => {
 
     const table = await screen.findByRole("table");
     expect(table.closest(".lumogis-table-scroll")).toBeTruthy();
+    expect(table.closest(".lumogis-table-scroll--wide")).toBeTruthy();
     expect(table).toHaveClass("lumogis-dense-table");
   });
 
@@ -124,7 +127,8 @@ describe("AdminUsersView", () => {
       </AuthProvider>,
     );
     const row = await screen.findByRole("row", { name: /bob@home\.lan/i });
-    await userEv.click(within(row).getByRole("button", { name: /^reset password$/i }));
+    await userEv.click(within(row).getByRole("button", { name: /more actions/i }));
+    await userEv.click(within(row).getByRole("menuitem", { name: /^reset password$/i }));
     await userEv.type(screen.getByLabelText(/^new password/i), "newpassword1234");
     await userEv.type(screen.getByLabelText(/^confirm password/i), "newpassword1234");
     await userEv.click(screen.getByRole("button", { name: /^save$/i }));
@@ -164,7 +168,9 @@ describe("AdminUsersView", () => {
     );
     await screen.findByRole("button", { name: /^import from backup$/i });
     const row = await screen.findByRole("row", { name: /bob@home\.lan/i });
-    expect(within(row).getByRole("button", { name: /^export backup$/i })).toBeInTheDocument();
+    const userEv = userEvent.setup();
+    await userEv.click(within(row).getByRole("button", { name: /more actions/i }));
+    expect(within(row).getByRole("menuitem", { name: /^export backup$/i })).toBeInTheDocument();
   });
 
   it("export backup posts to /api/v1/me/export with target_user_id", async () => {
@@ -202,7 +208,8 @@ describe("AdminUsersView", () => {
       </AuthProvider>,
     );
     const row = await screen.findByRole("row", { name: /bob@home\.lan/i });
-    await userEv.click(within(row).getByRole("button", { name: /^export backup$/i }));
+    await userEv.click(within(row).getByRole("button", { name: /more actions/i }));
+    await userEv.click(within(row).getByRole("menuitem", { name: /^export backup$/i }));
     await waitFor(() => {
       expect(
         fetchImpl.mock.calls.some(
@@ -491,15 +498,18 @@ describe("AdminUsersView — LUM-520 finish/polish", () => {
       row({ id: "a2", email: "carol@home.lan", role: "admin" }),
     ]);
     const selfRow = await screen.findByRole("row", { name: /admin@home\.lan/i });
-    const disableBtn = within(selfRow).getByRole("button", { name: /^disable$/i });
-    const deleteBtn = within(selfRow).getByRole("button", { name: /^delete$/i });
+    const userEv = userEvent.setup();
+    await userEv.click(within(selfRow).getByRole("button", { name: /more actions/i }));
+    const disableBtn = within(selfRow).getByRole("menuitem", { name: /^disable$/i });
     expect(disableBtn).toBeDisabled();
-    expect(deleteBtn).toBeDisabled();
     expect(disableBtn).toHaveAttribute("title", "You can't disable your own account — ask another admin.");
+    const deleteBtn = within(selfRow).getByRole("menuitem", { name: /^delete$/i });
+    expect(deleteBtn).toBeDisabled();
     expect(deleteBtn).toHaveAttribute("title", "You can't delete your own account — ask another admin.");
     // A different admin row is not self-blocked.
     const otherRow = await screen.findByRole("row", { name: /carol@home\.lan/i });
-    expect(within(otherRow).getByRole("button", { name: /^disable$/i })).not.toBeDisabled();
+    await userEv.click(within(otherRow).getByRole("button", { name: /more actions/i }));
+    expect(within(otherRow).getByRole("menuitem", { name: /^disable$/i })).not.toBeDisabled();
   });
 
   it("renders a member-count summary (singular/plural)", async () => {
@@ -510,6 +520,18 @@ describe("AdminUsersView — LUM-520 finish/polish", () => {
       row({ id: "t2", email: "dee@home.lan", role: "user" }),
     ]);
     expect(await screen.findByText("2 members · 1 admin")).toBeInTheDocument();
+  });
+
+  it("keeps one inline action plus More menu per user row", async () => {
+    const admin = { id: "a1", email: "admin@home.lan", role: "admin" as const };
+    mountWith(admin, [
+      row({ id: "a1", email: "admin@home.lan", role: "admin" }),
+      row({ id: "t1", email: "bob@home.lan", role: "user" }),
+    ]);
+    const bobRow = await screen.findByRole("row", { name: /bob@home\.lan/i });
+    expect(within(bobRow).getByRole("button", { name: /^make admin$/i })).toBeInTheDocument();
+    expect(within(bobRow).getByTestId("more-actions-t1")).toBeInTheDocument();
+    expect(within(bobRow).queryByRole("button", { name: /^disable$/i })).not.toBeInTheDocument();
   });
 });
 
@@ -643,6 +665,8 @@ describe("AdminUsersView display name (LUM-585)", () => {
       </AuthProvider>,
     );
     await screen.findByText("bob@home.lan");
+    const row = screen.getByRole("row", { name: /bob@home\.lan/i });
+    await ev.click(within(row).getByRole("button", { name: /more actions/i }));
     await ev.click(screen.getByTestId("set-name-u2"));
     const input = await screen.findByTestId("display-name-input");
     await ev.type(input, "Alex");
@@ -661,6 +685,8 @@ describe("AdminUsersView display name (LUM-585)", () => {
       </AuthProvider>,
     );
     await screen.findByText("bob@home.lan");
+    const row = screen.getByRole("row", { name: /bob@home\.lan/i });
+    await ev.click(within(row).getByRole("button", { name: /more actions/i }));
     await ev.click(screen.getByTestId("set-name-u2"));
     await screen.findByTestId("display-name-input");
     // Field starts empty (display_name was null) → save clears it.

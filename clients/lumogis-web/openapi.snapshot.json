@@ -1448,6 +1448,17 @@
             "title": "Id",
             "type": "string"
           },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
           "status": {
             "enum": [
               "pending",
@@ -10748,7 +10759,7 @@
     },
     "/api/v1/captures": {
       "get": {
-        "description": "Return summary rows for the authenticated user's captures.\n\nOrdered by ``updated_at DESC``. Use ``limit`` / ``offset`` for\npagination (plan §12.4).",
+        "description": "Return summary rows for the authenticated user's captures.\n\nOrdered by ``updated_at DESC``. Use ``limit`` / ``offset`` for\npagination (plan §12.4). ``status`` (repeatable) restricts the set — the\ncapture Inbox requests ``status=pending&status=failed`` (LUM-606).",
         "operationId": "list_captures_api_v1_captures_get",
         "parameters": [
           {
@@ -10795,6 +10806,32 @@
               ],
               "description": "MVP: only personal captures exist; shared/system return an empty page.",
               "title": "Scope"
+            }
+          },
+          {
+            "description": "Filter to these statuses; omit for all. The inbox passes pending+failed (LUM-606).",
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "enum": [
+                      "pending",
+                      "failed",
+                      "indexed"
+                    ],
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter to these statuses; omit for all. The inbox passes pending+failed (LUM-606).",
+              "title": "Status"
             }
           }
         ],

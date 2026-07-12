@@ -122,4 +122,23 @@ describe("AdminAuditView", () => {
     expect(table.closest(".lumogis-table-scroll")).toBeTruthy();
     expect(table).toHaveClass("lumogis-dense-table");
   });
+
+  it("uses shared household audit filters with styled admin fields", async () => {
+    const { client, tokens } = setup(jsonResponse(400, { detail: { error: "reverse_failed" } }));
+    render(
+      <AuthProvider client={client} tokens={tokens} skipRefreshOnMount>
+        <AdminAuditView />
+      </AuthProvider>,
+    );
+    const filters = await screen.findByTestId("audit-household-filters");
+    expect(filters.querySelector(".lumogis-field__input")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^live$/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^refresh$/i })).toBeInTheDocument();
+    expect(screen.getByLabelText(/limit \(1–200\)/i)).toHaveClass("lumogis-field__input");
+    expect(screen.getByLabelText(/connector filter/i)).toHaveClass("lumogis-field__input");
+    expect(screen.getByLabelText(/action type filter/i)).toHaveClass("lumogis-field__input");
+    await waitFor(() => {
+      expect(filters.querySelector("select.lumogis-field__select")).toBeTruthy();
+    });
+  });
 });

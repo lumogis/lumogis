@@ -238,7 +238,13 @@ def purge_document(*, user_id: str, document_id: int) -> PurgeResult:
 
     Orphaned entities (personal, zero remaining relations) are also removed
     from Postgres and the Qdrant ``entities`` collection (LUM-501).
+
+    Serialised against concurrent share/reproject jobs via
+    ``share_document_lock`` so a purge cannot interleave with a half-finished
+    chunk projection (which would otherwise resurrect ghost shared Qdrant points).
     """
+    from services.share_lock import share_document_lock
+
     ms = config.get_metadata_store()
     result = PurgeResult()
 
@@ -254,6 +260,27 @@ def purge_document(*, user_id: str, document_id: int) -> PurgeResult:
     file_path = row["file_path"]
     chunk_count = int(row.get("chunk_count") or 0)
 
+    with share_document_lock(document_id):
+        return _purge_document_locked(
+            ms=ms,
+            user_id=user_id,
+            document_id=document_id,
+            file_path=file_path,
+            chunk_count=chunk_count,
+            result=result,
+        )
+
+
+def _purge_document_locked(
+    *,
+    ms,
+    user_id: str,
+    document_id: int,
+    file_path: str,
+    chunk_count: int,
+    result: PurgeResult,
+) -> PurgeResult:
+    """Body of :func:`purge_document` while the per-document advisory lock is held."""
     # --- Postgres arm ---
     orphan_entity_ids: list[str] = []
     # LUM-586: shared entity projections this document was the last justification
@@ -292,6 +319,15 @@ def purge_document(*, user_id: str, document_id: int) -> PurgeResult:
                 "  SELECT 1 FROM entity_relations er2 "
                 "  WHERE er2.source_id = e.entity_id AND er2.user_id = %s"
                 "  AND NOT (er2.evidence_id = %s AND er2.evidence_type = 'DOCUMENT')"
+                ") "
+                # LUM-581 / ADR-158: a direct user share (or 'multiple' with a
+                # surviving direct share) must survive document purge — the
+                # personal row is the FK parent of the shared projection
+                # (ON DELETE CASCADE). Orphan GC must not delete it.
+                "AND NOT EXISTS ("
+                "  SELECT 1 FROM entities sh "
+                "  WHERE sh.published_from = e.entity_id AND sh.scope = 'shared' "
+                "  AND sh.share_origin IN ('user', 'multiple')"
                 ")",
                 (user_id, file_path, user_id, user_id, file_path),
             )

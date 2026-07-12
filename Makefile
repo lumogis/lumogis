@@ -33,7 +33,7 @@ SHELL := /bin/bash
         demo-seed demo-test demo-ready \
         web-install web-codegen web-codegen-check openapi-check openapi-breaking-check web-dockerfile-check shellcheck-web-docker-build-paths shellcheck-ci-paths web-docker-build web-test web-lint web-build web-dev web-e2e \
         test-web-e2e \
-        web-e2e-prove web-e2e-ollama-prove web-demo overlay-e2e overlay-e2e-smoke web-caddy-headers web-caddy-headers-prove \
+        web-e2e-prove web-e2e-ollama-prove web-demo web-screenshots overlay-e2e overlay-e2e-smoke web-caddy-headers web-caddy-headers-prove \
         m1-compat-with-retry \
         auth-sessions-grep-guard \
         changelog-check \
@@ -653,6 +653,10 @@ web-e2e-prove:
 web-demo:
 	cd clients/lumogis-web && npx playwright test -c playwright.demo.config.ts
 	cd clients/lumogis-web && ./scripts/demo-to-gif.sh test-results/demo/video docs/assets/demo.gif
+
+# Labelled PNGs of main Lumogis Web screens → branding/screenshots/
+web-screenshots:
+	cd clients/lumogis-web && npx playwright test -c playwright.screenshots.config.ts
 
 # Opt-in Ollama mutation Playwright (LUM-450). Requires full stack (docker compose up -d
 # including ollama), smoke creds, LUMOGIS_E2E_EXPECT_ADMIN=1 and LUMOGIS_E2E_EXPECT_OLLAMA=1.

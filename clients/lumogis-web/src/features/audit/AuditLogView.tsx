@@ -6,20 +6,11 @@ import { useSearchParams } from "react-router-dom";
 import type { AuditListResponse } from "../../api/audit";
 import { buildAuditStreamUrl, mergeAuditRows } from "../../api/audit";
 import { useAuth } from "../../auth/AuthProvider";
+import { Button } from "../../components/Button";
 import { MeSubshell } from "../me/MeSubshell";
-import { AuditLiveToggle } from "./AuditLiveToggle";
+import { AuditFilters, type DatePreset } from "./AuditFilters";
 import { AuditTable } from "./_shared/AuditTable";
 import { useAuditLiveTail } from "./useAuditLiveTail";
-
-type DatePreset = "24h" | "7d" | "30d" | "custom" | "all";
-
-const EVENT_CHIPS: { label: string; value: string }[] = [
-  { label: "All", value: "" },
-  { label: "Actions", value: "action.executed" },
-  { label: "Privacy", value: "privacy.external_call.denied" },
-  { label: "Invites", value: "auth.invite" },
-  { label: "Credentials", value: "auth.credential" },
-];
 
 const PAGE_SIZE = 50;
 
@@ -97,79 +88,22 @@ export function AuditLogView(): JSX.Element {
   return (
     <MeSubshell>
       <section className="lumogis-audit-page">
-        <h1>Audit log</h1>
-        <p>Recent Lumogis activity for your account.</p>
-        <div className="lumogis-dense-form-grid">
-          <AuditLiveToggle enabled={liveEnabled} onChange={setLiveEnabled} />
-          {liveEnabled ? (
-            <p className="lumogis-help-text" role="status">
-              Live tail on — new events appear automatically.
-            </p>
-          ) : null}
-        </div>
+        <h1>My activity</h1>
+        <p className="lumogis-prose-mono">Recent Lumogis activity for your account.</p>
 
-        <div className="lumogis-dense-form-grid" role="group" aria-label="Date range">
-          {(["24h", "7d", "30d", "custom", "all"] as DatePreset[]).map((p) => (
-            <button
-              key={p}
-              type="button"
-              aria-pressed={preset === p}
-              onClick={() => updateParams({ preset: p === "7d" ? null : p, offset: "0" })}
-            >
-              {p === "all" ? "All time" : p}
-            </button>
-          ))}
-        </div>
-
-        {preset === "custom" ? (
-          <div className="lumogis-dense-form-grid">
-            <label>
-              After
-              <input
-                type="datetime-local"
-                value={afterCustom}
-                onChange={(e) => updateParams({ after: e.target.value || null, offset: "0" })}
-              />
-            </label>
-            <label>
-              Before
-              <input
-                type="datetime-local"
-                value={beforeCustom}
-                onChange={(e) => updateParams({ before: e.target.value || null, offset: "0" })}
-              />
-            </label>
-          </div>
-        ) : null}
-
-        <div className="lumogis-chip-row" role="group" aria-label="Event type">
-          {EVENT_CHIPS.map((chip) => (
-            <button
-              key={chip.label}
-              type="button"
-              aria-pressed={eventType === chip.value}
-              onClick={() =>
-                updateParams({ event_type: chip.value || null, offset: "0" })
-              }
-            >
-              {chip.label}
-            </button>
-          ))}
-        </div>
-
-        <fieldset className="lumogis-scope-filters">
-          <legend>Scope</legend>
-          <label>
-            <input type="radio" name="scope" checked readOnly /> Personal
-          </label>
-          <label title="Shared and system audit events are not recorded yet">
-            <input type="radio" name="scope" disabled /> Shared
-          </label>
-          <label title="Shared and system audit events are not recorded yet">
-            <input type="radio" name="scope" disabled /> System
-          </label>
-          <p className="lumogis-help-text">Shared and system audit events are not recorded yet</p>
-        </fieldset>
+        <AuditFilters
+          scope="member"
+          liveEnabled={liveEnabled}
+          onLiveChange={setLiveEnabled}
+          preset={preset}
+          onPresetChange={(p) => updateParams({ preset: p === "7d" ? null : p, offset: "0" })}
+          eventType={eventType}
+          onEventTypeChange={(v) => updateParams({ event_type: v || null, offset: "0" })}
+          afterCustom={afterCustom}
+          beforeCustom={beforeCustom}
+          onAfterCustomChange={(v) => updateParams({ after: v || null, offset: "0" })}
+          onBeforeCustomChange={(v) => updateParams({ before: v || null, offset: "0" })}
+        />
 
         <AuditTable
           variant="member"
@@ -183,23 +117,27 @@ export function AuditLogView(): JSX.Element {
         />
 
         <div className="lumogis-pagination">
-          <button
+          <Button
             type="button"
+            variant="secondary"
+            size="sm"
             disabled={!canPrev}
             onClick={() => updateParams({ offset: String(Math.max(0, offset - PAGE_SIZE)) })}
           >
             Previous
-          </button>
+          </Button>
           <span>
             {total === 0 ? "0" : `${offset + 1}–${Math.min(offset + PAGE_SIZE, total)}`} of {total}
           </span>
-          <button
+          <Button
             type="button"
+            variant="secondary"
+            size="sm"
             disabled={!canNext}
             onClick={() => updateParams({ offset: String(offset + PAGE_SIZE) })}
           >
             Next
-          </button>
+          </Button>
         </div>
       </section>
     </MeSubshell>

@@ -1,7 +1,7 @@
 # Automated testing strategy
 
-Last reviewed: 2026-07-08
-Verified against commit: c9ac7ca
+Last reviewed: 2026-07-10
+Verified against commit: 01a7d31
 
 Lumogis ships a **permanent, layered** automated test setup. **Where** you run the **full** stack matters: see **Dev vs `main` (comprehensive testing)** below.
 

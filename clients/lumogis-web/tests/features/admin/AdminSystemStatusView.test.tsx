@@ -188,6 +188,7 @@ function standardAdminHandler(
     stack?: ReturnType<typeof stackPayload>;
     discovery?: ReturnType<typeof discoveryFixture>;
     updateStatus?: ReturnType<typeof updateStatusPayload>;
+    settings?: Record<string, unknown>;
   } = {},
 ): FetchHandler {
   return async (input) => {
@@ -195,6 +196,16 @@ function standardAdminHandler(
     if (u.includes("/api/v1/auth/me")) return jsonResponse(200, adminUser);
     if (u.includes("/api/v1/admin/diagnostics/stack-status")) {
       return jsonResponse(200, overrides.stack ?? stackPayload());
+    }
+    if (u.endsWith("/settings")) {
+      return jsonResponse(
+        200,
+        overrides.settings ?? {
+          reranker_enabled: false,
+          reranker_backend_live: "none",
+          reranker_pending_restart: false,
+        },
+      );
     }
     if (u.includes("/api/v1/admin/ollama/discovery")) {
       return jsonResponse(200, overrides.discovery ?? discoveryFixture());
@@ -870,5 +881,39 @@ describe("AdminSystemStatusView", () => {
     expect(updateSection?.textContent).toContain(compareError);
     expect(updateSection?.textContent).toContain("vNext");
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("shows reranker active chip when live backend is bge and not pending", async () => {
+    const fetchImpl = makeFetchImpl(
+      standardAdminHandler({
+        settings: {
+          reranker_enabled: true,
+          reranker_backend_live: "bge",
+          reranker_pending_restart: false,
+        },
+      }),
+    );
+    globalThis.fetch = fetchImpl;
+    renderView(fetchImpl);
+
+    expect(await screen.findByTestId("reranker-active-chip")).toBeTruthy();
+    expect(screen.getByTestId("reranker-active-chip").textContent).toMatch(/Reranker active/i);
+  });
+
+  it("hides reranker chip when desired on but live backend is still off", async () => {
+    const fetchImpl = makeFetchImpl(
+      standardAdminHandler({
+        settings: {
+          reranker_enabled: true,
+          reranker_backend_live: "none",
+          reranker_pending_restart: true,
+        },
+      }),
+    );
+    globalThis.fetch = fetchImpl;
+    renderView(fetchImpl);
+
+    await screen.findByText("System status");
+    expect(screen.queryByTestId("reranker-active-chip")).toBeNull();
   });
 });

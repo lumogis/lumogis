@@ -50,6 +50,28 @@ def _set_source(monkeypatch, source):
     monkeypatch.setattr(config, "get_metadata_store", lambda: _HandlerStore(source))
 
 
+def test_share_stale_after_lock_is_terminal_noop(progress_calls, monkeypatch):
+    """Source removed between pre-lock fetch and lock acquisition → no projection."""
+    calls = {"n": 0}
+
+    def _fetch_once_then_gone(query, params=None):
+        calls["n"] += 1
+        return {"id": 9, "user_id": "alice", "scope": "personal"} if calls["n"] == 1 else None
+
+    store = _HandlerStore({"id": 9, "user_id": "alice", "scope": "personal"})
+    store.fetch_one = _fetch_once_then_gone  # type: ignore[method-assign]
+    monkeypatch.setattr(config, "get_metadata_store", lambda: store)
+    project_called = {"v": False}
+    monkeypatch.setattr(
+        "services.projection.project_file_with_status",
+        lambda *a, **k: project_called.update(v=True) or ({"id": 90}, 0, 0),
+    )
+    handle_share(user_id="alice", payload=ShareDocumentPayload(document_id=9), job_id=10)
+    assert project_called["v"] is False
+    assert progress_calls[-1]["stage"] == "done"
+    assert progress_calls[-1]["status_message"] == "No longer shareable"
+
+
 def test_share_stale_job_is_terminal_noop(progress_calls, monkeypatch):
     _set_source(monkeypatch, None)  # source gone / foreign
     handle_share(user_id="alice", payload=ShareDocumentPayload(document_id=9), job_id=1)

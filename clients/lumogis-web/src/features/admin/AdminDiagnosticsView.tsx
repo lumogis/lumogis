@@ -83,11 +83,7 @@ export function AdminDiagnosticsView(): JSX.Element {
       <h2>Diagnostics</h2>
       <p style={{ maxWidth: "42rem", opacity: 0.9 }}>
         Read-only instance overview for admins. Does not run tools, change configuration, or reveal
-        credentials. For raw JSON health counts, open{" "}
-        <a href="/health" target="_blank" rel="noopener noreferrer">
-          stack health (legacy)
-        </a>
-        .
+        credentials.
       </p>
 
       <div style={{ margin: "1rem 0" }}>

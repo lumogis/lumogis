@@ -46,3 +46,4 @@ Rich `ActionProposal` payload shape remains **LUM-100**; full server-side thread
 
 - 2026-07-06: Draft created by /explore --headless (LUM-395).
 - 2026-07-07: Finalised by /verify-plan --headless — implementation confirmed.
+- 2026-07-10: LUM-589 — deferred `openapi-breaking-check` executed (oasdiff, `--fail-on WARN`) against the pre-LUM-395 snapshot (`fdb55a8^`). Result: **6 changes, 0 error / 0 warning / 6 info — no breaking changes**. The new `source_refs` and `action_proposal_id` fields are classified **non-breaking**: `response-optional-property-added` (×4 on `GET`/`POST /api/v1/conversations/{id}` message responses) and `new-optional-request-property` (×2 on the message-append request). Both the project gate (`.github/scripts/openapi-breaking-check.sh`) and the current-branch snapshot diff exit 0. Closes the LUM-395 DoD OpenAPI classification gap.

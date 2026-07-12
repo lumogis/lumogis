@@ -81,6 +81,11 @@ def _current_restart_secret() -> str:
     return os.environ.get("RESTART_SECRET", "")
 
 
+def _reranker_backend_active(backend: str) -> bool:
+    """True when RERANKER_BACKEND env indicates an active reranker process."""
+    return backend.strip().lower() not in ("none", "", "off", "false", "0")
+
+
 def _rewrite_host_env_key(content: str, key: str, value: str) -> str:
     """Strip every `key=...` line (flexible whitespace) and append one canonical line.
 
@@ -994,11 +999,13 @@ def _get_settings_response(
             optional_models[name] = _safe_get_setting(f"optional_{name}", store) == "true"
 
     reranker_backend = os.environ.get("RERANKER_BACKEND", "none")
+    reranker_backend_live = reranker_backend.strip().lower()
     pending_reranker = _safe_get_setting("reranker_enabled", store)
     if pending_reranker is not None:
         reranker_enabled = pending_reranker.strip().lower() in ("true", "1", "yes")
     else:
-        reranker_enabled = reranker_backend.strip().lower() not in ("none", "", "off", "false", "0")
+        reranker_enabled = _reranker_backend_active(reranker_backend_live)
+    reranker_pending_restart = _reranker_backend_active(reranker_backend_live) != reranker_enabled
 
     response: dict = {
         "ingest_paths": effective_ingest_paths,
@@ -1010,6 +1017,8 @@ def _get_settings_response(
         "optional_models": optional_models,
         "pending_prune": _safe_get_setting("pending_prune", store) == "true",
         "reranker_enabled": reranker_enabled,
+        "reranker_backend_live": reranker_backend_live,
+        "reranker_pending_restart": reranker_pending_restart,
     }
     if api_key_status is not None:
         response["api_key_status"] = api_key_status

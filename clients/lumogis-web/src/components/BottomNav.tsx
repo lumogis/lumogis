@@ -1,19 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Lumogis
 //
-// BottomNav (compact mode) — parent plan §"Phase 1 Pass 1.1 item 5".
-// Hidden via container query at ≥ 720px (see tokens.css).
-//
-// We co-locate `NavItem` + `NAV_ITEMS` with the BottomNav component so the
-// nav schema is owned by the component that introduced it. The
-// react-refresh `only-export-components` rule penalises this slightly for
-// HMR; that's a DX-only concern, so we silence it here.
+// BottomNav (compact mode) — hidden via container query at ≥ 720px.
+
 /* eslint-disable react-refresh/only-export-components */
+
+import { NavIcon, navIconKeyForItem } from "./NavIcons";
 
 export interface NavItem {
   key: string;
   label: string;
-  /** Path the future router will navigate to (Pass 1.2+). */
   href: string;
 }
 
@@ -42,6 +38,7 @@ export function BottomNav({
     <nav className={className} aria-label="Primary navigation">
       {items.map((item) => {
         const isActive = item.key === activeKey;
+        const iconKey = navIconKeyForItem(item.key);
         return (
           <a
             key={item.key}
@@ -55,7 +52,12 @@ export function BottomNav({
               }
             }}
           >
-            {item.label}
+            {iconKey ? (
+              <span className="lumogis-bottomnav__icon">
+                <NavIcon name={iconKey} size={20} />
+              </span>
+            ) : null}
+            <span className="lumogis-bottomnav__label">{item.label}</span>
           </a>
         );
       })}

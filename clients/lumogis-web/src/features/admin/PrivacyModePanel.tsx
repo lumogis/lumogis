@@ -35,9 +35,12 @@ export function PrivacyModePanel({ initial }: Props): JSX.Element {
         privacy_mode: mode,
         privacy_mode_locked: locked,
       }),
-    onSuccess: () => {
+    onSuccess: (data) => {
       setError(null);
-      void queryClient.invalidateQueries({ queryKey: ["admin", "settings"] });
+      // PUT /settings returns the full freshly-persisted settings (same builder
+      // as GET) — seed AdminPrivacyModeView's query directly instead of
+      // invalidating, so the effective-policy readout updates without a refetch.
+      queryClient.setQueryData(["admin", "settings", "privacy"], data);
     },
     onError: (e) => setError(errMsg(e)),
   });

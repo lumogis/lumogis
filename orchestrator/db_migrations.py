@@ -81,9 +81,19 @@ for human readers cross-referencing plans/ADRs):
   051 fix-cursor-integration-email  (rewrite legacy ``@test.lumogis.local`` fixture
                      email so ``GET /api/v1/admin/users`` can hydrate rows — LUM-540)
 
-  Lexical ordering applies **all** ``024-*.sql`` files before ``025-*.sql``;
-  two ``024-*`` prefixes already coexist (``024-paperless-external-documents.sql``
-  sorts before ``024-sessions-user-updated-at-index.sql``).
+  Lexical ordering applies **all** files sharing an integer prefix before the
+  next prefix. Three historical prefix collisions coexist (LUM-590):
+
+    024  paperless-external-documents  +  sessions-user-updated-at-index
+    043  biography-conflict-resolutions +  privacy-mode
+    044  entities-write-isolation      +  user-invites
+
+  Each pair creates disjoint objects behind idempotent guards, so lexical
+  application order within the prefix is irrelevant. They are **not** renumbered:
+  the runner tracks applied migrations by *filename*, so renaming an applied file
+  would make it re-run on every existing install. New migrations must take the
+  next free integer (currently 052) — one file per integer. The collision set is
+  frozen and enforced by ``tests/test_migration_filename_hygiene.py``.
 
 The 013 chunk also wires `db_default_user_remap.py` from
 `docker-entrypoint.sh` immediately after this runner — that step is NOT a

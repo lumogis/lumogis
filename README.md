@@ -12,7 +12,13 @@ Lumogis is a **self-hosted, local-first** knowledge base built for a **household
 
 ![Lumogis demo](branding/demo2.gif)
 
-*Ask about a decision captured in notes or an earlier conversation. Retrieval and storage run locally—you are not handing the archive to a SaaS indexer.*
+**What you're seeing** (two people, one household Core — all local):
+
+1. **Admin** shares a document with the household in one click
+2. **Another member** searches and finds that shared document
+3. **Anyone** can ask questions grounded in it — with citations from your own files
+
+*Retrieval and inference run on hardware you control — not a SaaS indexer.*
 
 ---
 
@@ -50,6 +56,8 @@ See the full [capabilities overview](docs/capabilities.md).
 
 ## Security model: Ask and Do
 
+> **Lumogis proposes. You approve. And over time, the things you always approve just happen.**
+
 Every action lands in **Ask** or **Do**:
 
 | Mode | Behaviour |
@@ -68,6 +76,32 @@ Details and examples: **[`docs/LUMOGIS_REFERENCE_MANUAL.md`](docs/LUMOGIS_REFERE
 ![Lumogis system architecture diagram: browser and optional LibreChat through Caddy to Core and Lumogis Web; backing services include Postgres, vectors, optional graph capability, and local LLMs.](branding/lumogis_architecture.svg)
 
 † **Graph capability** is optional. The bundled community stack defaults **`GRAPH_MODE=disabled`**. Falkor-backed in-process projection, HTTP graph capability services, and related Compose overlays ship with the **premium** distribution—not the minimal AGPL export line. Architectural contract: **`ports/graph_store.py`** (Protocol) plus **[`docs/decisions/002-graph-store-falkordb.md`](docs/decisions/002-graph-store-falkordb.md)** and **`docs/extending/extending-the-stack.md`**.
+
+### Data flow
+
+Ingest, indexing, and retrieval run on your machine. Local inference keeps the whole loop on your host; a cloud model is **opt-in** and receives only the query plus Core-selected excerpts — never your corpus or embeddings.
+
+```mermaid
+flowchart LR
+    Docs["Your documents<br/>PDF · DOCX · text · images"]
+    Ask["Household question"]
+    Ans["Grounded answer<br/>with citations"]
+
+    subgraph Host["Your machine — default, nothing leaves"]
+        Index["Qdrant vectors + Postgres<br/>+ optional knowledge graph"]
+        Retrieve["Hybrid retrieval<br/>dense + keyword"]
+        Local["Local LLM · Ollama"]
+        Index --> Retrieve
+    end
+
+    Docs -->|ingest · chunk · embed| Index
+    Ask --> Retrieve
+    Retrieve -->|query + selected excerpts| LLM{"LLM"}
+    LLM -->|default| Local
+    LLM -.->|opt-in: excerpts only| Cloud["Cloud model<br/>you enable"]
+    Local --> Ans
+    Cloud -.-> Ans
+```
 
 | Concept | Path | Purpose |
 |---|---|---|
@@ -99,7 +133,15 @@ First-party SPA: **[`clients/lumogis-web/`](clients/lumogis-web/)**, served behi
 
 **Prerequisites:** Docker with Compose v2, Git, and at least 8 GB RAM.
 
-Clone the repo, copy **`.env.example`** to **`.env`**, run **`docker compose up -d`**, then open **http://localhost/**. The full first-run guide — Ollama model pulls, migration checks, smoke test, and common errors — is in **[`docs/deployment/quickstart.md`](docs/deployment/quickstart.md)**.
+Three commands from clone to a running instance, then open **http://localhost/**:
+
+```bash
+git clone https://github.com/lumogis/lumogis.git && cd lumogis
+cp .env.example .env
+docker compose up -d
+```
+
+The full first-run guide — Ollama model pulls, migration checks, smoke test, and common errors — is in **[`docs/deployment/quickstart.md`](docs/deployment/quickstart.md)**.
 
 **Pre-built images (optional):** set **`COMPOSE_FILE=docker-compose.yml:docker-compose.ghcr.yml`** in `.env` and use **`docker compose up -d --pull always`** to run from **`ghcr.io/lumogis/`** without a local build (see the quickstart doc and **`.env.example`** comments).
 

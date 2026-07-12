@@ -122,6 +122,28 @@ export function ensureOnboardingCompletedAt(
 /**
  * Seed non-staged personal entities for the smoke user (LUM-216).
  */
+/**
+ * Simulate a failed index attempt for LUM-608 retry e2e (live stack).
+ * Sets `status=failed` + `last_error` as the orchestrator would after embed/Qdrant failure.
+ */
+export function markCaptureIndexFailed(
+  captureId: string,
+  smokeEmail: string,
+  lastError = "index_memory_unavailable",
+  deps: { spawnSync?: SpawnSyncFn } = {},
+): void {
+  const escapedEmail = smokeEmail.replace(/'/g, "''");
+  const escapedError = lastError.replace(/'/g, "''");
+  const escapedId = captureId.replace(/'/g, "''");
+  runPsqlSql(
+    `UPDATE captures c SET status = 'failed', last_error = '${escapedError}', updated_at = NOW()
+     FROM users u
+     WHERE c.user_id = u.id AND u.email = '${escapedEmail}' AND c.id = '${escapedId}'::uuid
+       AND c.status IN ('pending', 'failed');`,
+    deps,
+  );
+}
+
 export function seedWowEntitiesForSmokeUser(
   smokeEmail: string,
   count = 3,

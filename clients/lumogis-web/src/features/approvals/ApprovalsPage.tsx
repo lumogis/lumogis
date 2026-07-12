@@ -35,6 +35,7 @@ import {
   type PendingApprovalItem,
 } from "../../api/approvals";
 import { openReconnectingSse } from "../../api/sse";
+import { Button } from "../../components/Button";
 import { RiskBadge } from "./RiskBadge";
 
 // ── Fetch hook ────────────────────────────────────────────────────────────
@@ -203,15 +204,16 @@ export function ApprovalsPage(): JSX.Element {
     <section className="lumogis-approvals" aria-label="Pending approvals">
       <header className="lumogis-approvals__header">
         <h1 className="lumogis-approvals__title">Approvals</h1>
-        <button
+        <Button
           type="button"
-          className="lumogis-approvals__refresh"
+          variant="secondary"
+          size="sm"
           onClick={invalidate}
           aria-label="Refresh approvals list"
           disabled={loading}
         >
           {loading ? "Loading…" : "Refresh"}
-        </button>
+        </Button>
       </header>
 
       {error && (
@@ -298,22 +300,24 @@ function DeniedActionRow({ item, onSetMode, onElevate }: DeniedActionRowProps): 
         ) : (
           <>
             {canSetMode && (
-              <button
+              <Button
                 type="button"
-                className="lumogis-approvals__btn lumogis-approvals__btn--primary"
+                variant="primary"
+                size="sm"
                 onClick={() => onSetMode(item.connector, isHardLimited)}
               >
                 Switch {item.connector} to DO mode
-              </button>
+              </Button>
             )}
             {canElevate && (
-              <button
+              <Button
                 type="button"
-                className="lumogis-approvals__btn lumogis-approvals__btn--secondary"
+                variant="secondary"
+                size="sm"
                 onClick={() => onElevate(item.connector, item.action_type, isHardLimited)}
               >
                 Always allow this action type
-              </button>
+              </Button>
             )}
           </>
         )}
@@ -351,15 +355,16 @@ function ElevationCandidateRow({ item, onElevate }: ElevationCandidateRowProps):
             Hard-limited — cannot elevate
           </span>
         ) : (
-          <button
+          <Button
             type="button"
-            className="lumogis-approvals__btn lumogis-approvals__btn--primary"
+            variant="primary"
+            size="sm"
             onClick={() => onElevate(item.connector, item.action_type, isHardLimited)}
             disabled={!item.elevation_eligible}
             title={!item.elevation_eligible ? "Not eligible for elevation" : undefined}
           >
             Always allow this action type
-          </button>
+          </Button>
         )}
       </div>
     </li>
@@ -457,27 +462,26 @@ function ApprovalsModal({
           )}
         </div>
 
-        <div className="lumogis-approvals__modal-footer">
-          {/* Cancel is the default focus target per plan §"Pass 1.4 item 14" */}
-          <button
+        <div className="lumogis-approvals__modal-footer lumogis-form-actions">
+          <Button
             ref={cancelRef}
             type="button"
-            className="lumogis-approvals__btn lumogis-approvals__btn--cancel"
+            variant="ghost"
             onClick={onClose}
             disabled={actionLoading}
           >
             Cancel
-          </button>
+          </Button>
 
-          <button
+          <Button
             type="button"
-            className="lumogis-approvals__btn lumogis-approvals__btn--confirm"
+            variant="primary"
             onClick={isSetMode ? onSetMode : onElevate}
             disabled={actionLoading || isHardLimited}
             title={isHardLimited ? "Hard-limited — cannot be elevated" : undefined}
           >
             {actionLoading ? "Working…" : confirmLabel}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

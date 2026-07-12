@@ -34,6 +34,38 @@ test.describe("Lumogis Web admin users panel (LUM-520)", () => {
     await expect(page.getByText(/\d+ members? · \d+ admins?/)).toBeVisible();
   });
 
+  test("row action controls are fully visible at desktop width (no clipping)", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await loginWithSmokeCredentials(page);
+    await page.goto("/admin/users");
+    await page.waitForURL(/\/admin\/|\/chat/, { timeout: 60_000 });
+    if (!page.url().includes("/admin")) {
+      test.skip(true, "smoke user is not an admin");
+      return;
+    }
+
+    const scroll = page.getByTestId("admin-users-table-scroll");
+    await expect(scroll).toBeVisible();
+
+    const moreBtn = page.getByRole("button", { name: /more actions/i }).first();
+    await expect(moreBtn).toBeVisible();
+    const box = await moreBtn.boundingBox();
+    expect(box).not.toBeNull();
+    const viewport = page.viewportSize();
+    expect(viewport).not.toBeNull();
+    if (box && viewport) {
+      expect(box.x + box.width).toBeLessThanOrEqual(viewport.width);
+      expect(box.x).toBeGreaterThanOrEqual(0);
+    }
+
+    const roleBtn = page.getByRole("button", { name: /^make (admin|member)$/i }).first();
+    await expect(roleBtn).toBeVisible();
+    const roleBox = await roleBtn.boundingBox();
+    if (roleBox && viewport) {
+      expect(roleBox.x + roleBox.width).toBeLessThanOrEqual(viewport.width);
+    }
+  });
+
   test("promote/demote raises a confirm dialog (dismiss-only — no mutation)", async ({ page }) => {
     await loginWithSmokeCredentials(page);
     await page.goto("/admin/users");

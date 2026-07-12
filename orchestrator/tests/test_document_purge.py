@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
@@ -83,6 +84,15 @@ class _FileIndexStore:
                     for er in self.entity_relations
                 )
                 if not other:
+                    # LUM-581: skip orphan GC when a direct user/multiple share holds.
+                    protected = any(
+                        erow.get("scope") == "shared"
+                        and erow.get("published_from") == eid
+                        and erow.get("share_origin") in ("user", "multiple")
+                        for erow in self.entities.values()
+                    )
+                    if protected:
+                        continue
                     orphans.append({"entity_id": eid})
             return orphans
         return []
@@ -154,6 +164,10 @@ class _FileIndexStore:
 def file_ms(monkeypatch: pytest.MonkeyPatch) -> _FileIndexStore:
     store = _FileIndexStore()
     config._instances["metadata_store"] = store
+    monkeypatch.setattr(
+        "services.share_lock.share_document_lock",
+        lambda _doc_id: contextlib.nullcontext(),
+    )
     return store
 
 
@@ -481,6 +495,43 @@ def test_entity_gc_removes_orphan_entities(file_ms, mock_vector_store, monkeypat
         keys.update(m["key"] for m in must)
     assert "entity_id" in keys
     assert "published_from" in keys
+
+
+def test_entity_gc_skips_user_shared_orphan_entities(file_ms, mock_vector_store, monkeypatch):
+    """A direct user share must survive purge of its sole source document (LUM-581)."""
+    monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), None)
+    fp = "/docs/user-shared.pdf"
+    eid = "ent-user-share-001"
+    shared_id = "ent-shared-proj-001"
+    file_ms.rows[40] = {
+        "id": 40,
+        "file_path": fp,
+        "chunk_count": 0,
+        "user_id": "alice",
+        "scope": "personal",
+    }
+    file_ms.entities[eid] = {"entity_id": eid, "user_id": "alice", "scope": "personal"}
+    file_ms.entities[shared_id] = {
+        "entity_id": shared_id,
+        "user_id": "alice",
+        "scope": "shared",
+        "published_from": eid,
+        "share_origin": "user",
+    }
+    file_ms.entity_relations.append((fp, "alice", eid))
+
+    mock_vector_store.delete_where = MagicMock()
+    result = purge_document(user_id="alice", document_id=40)
+
+    assert result.postgres_deleted is True
+    assert eid in file_ms.entities, "user-shared personal entity wrongly orphan-GC'd on purge"
+    assert shared_id in file_ms.entities, "user-shared projection wrongly removed on purge"
+    entity_calls = [
+        c
+        for c in mock_vector_store.delete_where.call_args_list
+        if c.kwargs["collection"] == "entities"
+    ]
+    assert entity_calls == []
 
 
 def test_entity_gc_skips_non_orphan_entities(file_ms, mock_vector_store, monkeypatch):

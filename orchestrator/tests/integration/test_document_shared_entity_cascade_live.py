@@ -258,6 +258,31 @@ def test_user_shared_entity_survives_document_unshare_via_downgrade(live_stores)
         _cleanup(ms, vs, owner)
 
 
+def test_user_shared_entity_survives_document_purge(live_stores):
+    """Purge must not destroy a direct user share when its sole source doc is removed."""
+    ms, vs = live_stores
+    owner = f"itest-{uuid.uuid4().hex[:8]}"
+    file_path = f"/uploads/{owner}/purge-user-{uuid.uuid4().hex[:6]}.md"
+    actor = UserContext(user_id=owner, is_authenticated=True)
+    try:
+        e = _seed_personal_entity(ms, owner, "UserSharePurge")
+        src = {"entity_id": e, "name": "UserSharePurge", "entity_type": "PERSON"}
+        projection.project_entity(src, target_scope="shared", actor=actor)
+        assert _shared_entity_row(ms, e)["share_origin"] == "user"
+
+        doc_id = _seed_personal_file_index(ms, owner, file_path)
+        _relate_to_document(ms, owner, e, file_path)
+
+        purge_document(user_id=owner, document_id=doc_id)
+
+        row = _shared_entity_row(ms, e)
+        assert row is not None, "user-shared entity wrongly deleted on document purge"
+        assert row["share_origin"] == "user"
+        assert _shared_point_exists(vs, e)
+    finally:
+        _cleanup(ms, vs, owner)
+
+
 def test_purge_last_shared_doc_leaves_no_shared_entity_orphans(live_stores):
     ms, vs = live_stores
     owner = f"itest-{uuid.uuid4().hex[:8]}"

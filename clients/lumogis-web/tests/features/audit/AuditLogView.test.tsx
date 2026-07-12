@@ -85,7 +85,7 @@ describe("AuditLogView", () => {
         </AuthProvider>
       </MemoryRouter>,
     );
-    await screen.findByRole("heading", { name: /audit log/i });
+    await screen.findByRole("heading", { name: /my activity/i });
     expect(screen.queryByRole("button", { name: /^reverse$/i })).toBeNull();
     expect(await screen.findByText(/decline_type=external_call_denied/i)).toBeInTheDocument();
   });
@@ -116,7 +116,7 @@ describe("AuditLogView", () => {
         </AuthProvider>
       </MemoryRouter>,
     );
-    await screen.findByRole("heading", { name: /audit log/i });
+    await screen.findByRole("heading", { name: /my activity/i });
     await user.click(screen.getByRole("button", { name: /^privacy$/i }));
     await waitFor(() => {
       const hit = fetchImpl.mock.calls.some((c) =>
@@ -164,8 +164,8 @@ describe("AuditLogView", () => {
         </AuthProvider>
       </MemoryRouter>,
     );
-    await screen.findByRole("heading", { name: /audit log/i });
-    await user.click(screen.getByRole("button", { name: /live \(off\)/i }));
+    await screen.findByRole("heading", { name: /my activity/i });
+    await user.click(screen.getByRole("button", { name: /^live$/i }));
     await waitFor(() => {
       expect(fetchImpl.mock.calls.some((c) => String(c[0]).includes("/api/v1/audit/stream"))).toBe(true);
     });
