@@ -149,11 +149,11 @@ compose-policy-check-egress:
 	fi
 	@echo "==> Pass C passes on the real RC render — mock must be contained (expect exit 0)"
 	@if [ -f docker-compose.public-rc-stack.yml ]; then \
-	  _EGRESS_COMPOSE="-f docker-compose.test.yml \
+	  _EGRESS_COMPOSE="-f docker-compose.yml \
 	    -f docker-compose.public-rc-stack.yml -f docker-compose.egress.yml"; \
 	else \
 	  echo "compose-policy-check-egress: public-rc-stack absent — mock-capability chain (AGPL export)"; \
-	  _EGRESS_COMPOSE="-f docker-compose.test.yml \
+	  _EGRESS_COMPOSE="-f docker-compose.yml \
 	    -f docker-compose.mock-capability.yml -f docker-compose.egress.yml"; \
 	fi; \
 	COMPOSE_PROFILES=community-egress MOCK_CAPABILITY_SHARED_SECRET=lumogis-ci-mock-capability-placeholder \
