@@ -82,7 +82,7 @@ def _httpx_capturing(
 
     def _handler(request: httpx.Request) -> httpx.Response:
         captured.append(request)
-        body = '{"echo":1}'
+        body = '{"ok": true, "output": {"echo": 1}}'  # VERIFY-PLAN: v1 invoke envelope (LUM-41)
         if want_status == 200:
             return httpx.Response(200, text=body)
         return httpx.Response(want_status, text="down")

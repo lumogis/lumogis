@@ -1,0 +1,24 @@
+# LUM-618 — capabilities asserted network-CONTAINED (isolated Docker network +
+# egress proxy). One capability id per line; `#` comments (full-line OR inline)
+# and blank lines are ignored.
+#
+# A community (untrusted) capability is dispatchable ONLY if its id is listed
+# here (or the deprecated LUMOGIS_ALLOW_UNCONTAINED_COMMUNITY_CAPABILITIES flag
+# is set). Listing an id asserts the operator has wired it onto the isolated
+# `community-egress-internal` network with the egress proxy as its sole egress
+# path. The compose-policy Pass C (scripts/check_compose_policy.py) VERIFIES that
+# wiring in CI — this file is the runtime dispatch signal, Pass C is the check.
+#
+# This image-default is intentionally EMPTY (fail-closed): nothing is contained
+# unless positively asserted. To keep the marker from drifting away from the
+# actual network wiring, the wiring that provides containment should ALSO provide
+# the marker: docker-compose.egress.yml points LUMOGIS_CONTAINED_CAPABILITIES_FILE
+# at an overlay-mounted file (docker/egress-proxy/contained_capabilities.rc.txt).
+# So a deployment WITHOUT the egress overlay has an empty contained set and the
+# community capability is refused — never dispatched-but-uncontained.
+#
+# IMPORTANT: this file is read once at startup (the loader caches for the process
+# lifetime in v1; mtime-reload is a deferred follow-up) — editing it requires an
+# orchestrator RESTART. Hard enforcement is Docker-Compose-only; native
+# deployments cannot contain a separate container's egress, so community
+# capabilities stay refused there regardless of this file.

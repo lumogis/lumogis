@@ -1,0 +1,17 @@
+# Pre-commit hooks — catch ruff lint/format issues locally, before they reach CI.
+#
+#   pip install pre-commit   # or: pipx install pre-commit
+#   pre-commit install       # run once per clone; then hooks run on every `git commit`
+#   pre-commit run --all-files   # optional: lint the whole tree once
+#
+# Mirrors the "Lint" step in .github/workflows/ci.yml (ruff check + ruff format
+# over orchestrator/), pinned to the same ruff version CI uses so local == CI.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.8
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+        files: ^orchestrator/
+      - id: ruff-format
+        files: ^orchestrator/

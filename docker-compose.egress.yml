@@ -1,0 +1,109 @@
+# LUM-618 — container-network egress containment overlay for untrusted community
+# capabilities. Compose this ON TOP of the stack that runs a community capability
+# (e.g. the public RC stack) AND activate the profile:
+#
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.test.yml:\
+#     docker-compose.public-rc-stack.yml:docker-compose.egress.yml \
+#   COMPOSE_PROFILES=community-egress docker compose up
+#
+# What it does:
+#   * `community-egress-internal` is `internal: true` — Docker gives it NO route
+#     to the internet (IPv4) and `enable_ipv6: false` closes the IPv6 path.
+#   * The community capability (the mock) joins ONLY that isolated network, so its
+#     ONLY way out is the `egress-proxy` (Squid), which allowlists its declared
+#     hosts by SNI (peek+splice, no MITM) / dstdomain. Deny-all default.
+#   * The orchestrator is dual-homed (default + isolated) so Core can still
+#     dispatch INBOUND to the capability; Core is trusted and keeps its own
+#     internet path on `default` — it never forwards for the capability.
+#   * `egress-proxy` is the ONLY service bridging internal<->external. The
+#     compose-policy Pass C verifies this membership in CI.
+#
+# Hard enforcement is Docker-Compose-only. Native deployments cannot contain a
+# separate container's egress; community capabilities stay refused there.
+
+volumes:
+  egress_proxy_logs:
+
+networks:
+  # Keep the project default network (internet-capable) for Core + infra.
+  default: {}
+  # Isolated: no route to the internet. Community capabilities live here only.
+  community-egress-internal:
+    internal: true
+    enable_ipv6: false
+    ipam:
+      config:
+        - subnet: 172.31.0.0/24
+  # The proxy's only internet-facing leg.
+  community-egress-external:
+    enable_ipv6: false
+
+services:
+  # The dedicated egress proxy — the sole egress path for the isolated network.
+  egress-proxy:
+    profiles: ["community-egress"]
+    # Must be built --with-openssl (ssl_bump / peek / splice). ubuntu/squid:latest
+    # as of 2026-07 is NOT — default to an OpenSSL Squid; pin by digest in deploy.
+    # Verify: `docker run --rm <img> squid -v | grep -- --with-openssl`.
+    image: ${EGRESS_PROXY_IMAGE:-jacobalberty/squid@sha256:559a8dd2178cf9a40b9a526948467448bb627de98cb22edfddf4699b86a9f370}
+    # Generate the (never-committed, splice-only) bump cert, then run Squid in
+    # the foreground.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - "mkdir -p /var/log/squid /var/spool/squid && /usr/local/bin/gen-bump-cert.sh /etc/squid/bump.pem && chown -R proxy:proxy /var/log/squid /var/spool/squid /etc/squid/bump.pem && exec squid -N -d1 -f /etc/squid/squid.conf"
+    volumes:
+      - ./docker/egress-proxy/squid.conf:/etc/squid/squid.conf:ro
+      - ./docker/egress-proxy/allow:/etc/squid/allow:ro
+      - ./docker/egress-proxy/gen-bump-cert.sh:/usr/local/bin/gen-bump-cert.sh:ro
+      - egress_proxy_logs:/var/log/squid
+    healthcheck:
+      # LIVENESS: TCP connect (needs bash — dash has no /dev/tcp).
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/3128"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      community-egress-internal:
+        ipv4_address: 172.31.0.2
+      community-egress-external: {}
+
+  # Core: keep the internet-capable default network AND join the isolated network
+  # so it can dispatch inbound to the contained capability. It also sources the
+  # containment marker from THIS overlay (see LUMOGIS_CONTAINED_CAPABILITIES_FILE)
+  # so "contained" can never be asserted without the wiring that provides it.
+  # No depends_on egress-proxy here: the containment guarantee is the isolated
+  # network (no route), which holds whether or not the proxy is up, and coupling
+  # an un-profiled service to the profiled proxy would break `up` when the
+  # community-egress profile is inactive.
+  orchestrator:
+    networks:
+      default: {}
+      community-egress-internal: {}
+    environment:
+      LUMOGIS_CONTAINED_CAPABILITIES_FILE: /etc/lumogis/contained_capabilities.txt
+      LUMOGIS_EGRESS_ACCESS_LOG: /var/log/squid/access.log
+      LUMOGIS_EGRESS_SRC_MAP: /etc/lumogis/egress_src_map.txt
+      LUMOGIS_EGRESS_DENY_DEDUP_SECONDS: "60"
+    volumes:
+      - ./docker/egress-proxy/contained_capabilities.rc.txt:/etc/lumogis/contained_capabilities.txt:ro
+      - ./docker/egress-proxy/src_capability_map.txt:/etc/lumogis/egress_src_map.txt:ro
+      - egress_proxy_logs:/var/log/squid:ro
+
+  # The community capability — contained. Isolated network ONLY (no default
+  # bridge = no direct internet), static IP for the per-source proxy ACL, and its
+  # egress forced through the proxy. (No depends_on egress-proxy: the mock makes
+  # no outbound calls at startup, and the no-route isolation is the guarantee —
+  # if the proxy is down the mock simply fails closed. Avoids the un-profiled ->
+  # profiled dependency that would break `up` without the community-egress profile.)
+  lumogis-mock-capability:
+    networks:
+      community-egress-internal:
+        ipv4_address: 172.31.0.10
+    environment:
+      HTTP_PROXY: http://egress-proxy:3128
+      HTTPS_PROXY: http://egress-proxy:3128
+      # Do NOT list the allowed host here — it must go through the proxy.
+      NO_PROXY: localhost,127.0.0.1

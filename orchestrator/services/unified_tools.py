@@ -81,6 +81,9 @@ class ToolCatalogEntry:
     capability_id: str | None = None
     tool_schema: dict[str, Any] | None = None
     is_write: bool = False
+    required_scopes: tuple[str, ...] = ()
+    is_community: bool = False
+    external_endpoints: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -195,8 +198,10 @@ def _entries_for_mcp(mcp_tools: list[CapabilityTool]) -> list[ToolCatalogEntry]:
 
 
 def _permission_connector_for(manifest) -> str:
-    if manifest.permissions_required:
-        return str(manifest.permissions_required[0])
+    # LUM-612: a capability's permission identity is `capability.{id}`. The old
+    # `permissions_required[0]` was a scope string, never a connector name — it
+    # made grants unaddressable and permissions inert. `permissions_required` is
+    # now enforced as *scopes* against this connector, not used as the connector.
     return f"capability.{manifest.id}"
 
 
@@ -259,7 +264,10 @@ def _entries_for_capability_service(svc: RegisteredService) -> list[ToolCatalogE
                 requires_credentials=None,
                 capability_id=mid,
                 tool_schema=t.model_dump(),
-                is_write=False,
+                is_write=t.is_write,
+                required_scopes=tuple(svc.manifest.permissions_required or ()),
+                is_community=svc.is_community,
+                external_endpoints=tuple(svc.external_endpoints),
             )
         )
     return out
@@ -340,10 +348,27 @@ def _permission_mode_for_catalog_entry(
     entry: ToolCatalogEntry,
     *,
     get_connector_mode_fn: Callable[..., str] | None = None,
+    get_granted_scopes_fn: Callable[..., list[str]] | None = None,
 ) -> str:
-    """Map connector + Ask/Do to a façade-safe ``permission_mode`` string."""
+    """Map connector + Ask/Do + granted scopes to a façade-safe ``permission_mode``."""
     if not entry.connector or not str(entry.connector).strip():
         return "unknown"
+    if entry.required_scopes:
+        if get_granted_scopes_fn is not None:
+            scope_getter = get_granted_scopes_fn
+        else:
+            from permissions import get_granted_scopes as scope_getter
+        try:
+            granted = set(scope_getter(user_id=user_id, connector=entry.connector))
+        except Exception:
+            _log.warning(
+                "tool_catalog.permission_mode_scope_lookup_failed",
+                extra={"tool": entry.name, "connector": entry.connector},
+                exc_info=True,
+            )
+            return "unknown"
+        if not set(entry.required_scopes).issubset(granted):
+            return "blocked"
     if get_connector_mode_fn is not None:
         getter = get_connector_mode_fn
     else:
@@ -371,13 +396,15 @@ def build_tool_catalog_for_user(
     user_id: str | None = None,
     *,
     get_connector_mode_fn: Callable[..., str] | None = None,
+    get_granted_scopes_fn: Callable[..., list[str]] | None = None,
     **kwargs: Any,
 ) -> ToolCatalog:
     """Build the catalog; resolve ``permission_mode`` per user when possible.
 
     ``permission_mode`` values: ``unknown`` (no connector or lookup error),
     ``do`` (connector in DO mode), ``ask`` (ASK mode, read-only tool),
-    ``blocked`` (ASK mode but tool is a write).
+    ``blocked`` (ASK mode but tool is a write, **or** a required scope is
+    ungranted — LUM-617).
     """
     cat = build_tool_catalog(**kwargs)
     if not (isinstance(user_id, str) and user_id.strip()):
@@ -387,7 +414,10 @@ def build_tool_catalog_for_user(
         replace(
             e,
             permission_mode=_permission_mode_for_catalog_entry(
-                uid, e, get_connector_mode_fn=get_connector_mode_fn
+                uid,
+                e,
+                get_connector_mode_fn=get_connector_mode_fn,
+                get_granted_scopes_fn=get_granted_scopes_fn,
             ),
         )
         for e in cat.entries
@@ -414,6 +444,13 @@ class OopCapabilityToolRoute:
     is_write: bool
     require_bearer: bool
     get_bearer: Callable[[], str | None]
+    invoke_path: str | None = None
+    invoke_method: str = "POST"
+    timeout_ms: int | None = None
+    output_schema: dict[str, Any] | None = None
+    required_scopes: tuple[str, ...] = ()
+    is_community: bool = False  # LUM-613: fail-closed dispatch gate applies when True
+    external_endpoints: tuple[str, ...] = ()  # LUM-613: declared egress (audit/visibility)
 
 
 # Maps tool name -> route for the current ``loop.ask`` / ``ask_stream`` only.
@@ -438,12 +475,35 @@ def _collect_oop_eligible(
     registry: CapabilityRegistry,
     base_names: set[str],
 ) -> tuple[dict[str, OopCapabilityToolRoute], list[dict[str, Any]]]:
-    """Return routes + tool definitions, deterministic order, fail-closed without bearer."""
+    """Return routes + tool definitions, deterministic order, fail-closed without bearer.
+
+    LUM-613: a **community** (untrusted) capability is fail-closed-gated. Its
+    route is still built and kept in ``routes`` (so a dispatch-by-name is gated
+    with a structured refusal in :func:`try_run_oop_capability_tool`, not a
+    generic "unknown tool"), but its schema is **omitted** from ``extra_defs`` so
+    the LLM never sees a community tool it cannot use. The operator opts in via
+    ``LUMOGIS_ALLOW_UNCONTAINED_COMMUNITY_CAPABILITIES`` (default false); LUM-618
+    replaces that flag with a real "containment present" check.
+    """
+    from services.capability_egress import is_dispatch_allowed
+    from services.capability_egress import load_contained_capabilities
+
     import config
 
+    # LUM-618: a community capability dispatches without the global flag iff it is
+    # positively asserted network-contained (id in contained_capabilities.txt,
+    # verified in CI by compose-policy Pass C). The legacy flag is the deprecated
+    # escape hatch. Both are read once here (cheap: cached id-set + env read).
+    opt_in = config.get_allow_uncontained_community_capabilities()
+    contained = load_contained_capabilities()
     routes: dict[str, OopCapabilityToolRoute] = {}
     extra_defs: list[dict[str, Any]] = []
-    services = sorted(registry.all_services(), key=lambda s: s.manifest.id)
+    # LUM-613: first-party services win tool-name collisions. The name is claimed
+    # by the first service in iteration order (`if ct.name in routes: continue`),
+    # so ordering first-party (is_community=False) before community prevents a
+    # community capability from claiming — and thereby gating/hiding — a tool name
+    # a first-party service also offers. Secondary sort by id keeps it deterministic.
+    services = sorted(registry.all_services(), key=lambda s: (s.is_community, s.manifest.id))
     for svc in services:
         if not svc.healthy:
             continue
@@ -457,6 +517,12 @@ def _collect_oop_eligible(
             continue
         m = svc.manifest
         conn = _permission_connector_for(m)
+        dispatch_allowed = is_dispatch_allowed(
+            is_community=svc.is_community,
+            capability_id=mid,
+            contained_ids=contained,
+            legacy_opt_in=opt_in,
+        )
         for ct in sorted(m.tools, key=lambda t: t.name):
             if ct.name in base_names or ct.name in routes:
                 continue
@@ -470,11 +536,21 @@ def _collect_oop_eligible(
                 tool_name=ct.name,
                 connector=conn,
                 action_type=ct.name,
-                is_write=False,
+                is_write=ct.is_write,
                 require_bearer=True,
                 get_bearer=_bearer_for_tool,
+                invoke_path=ct.invoke_path,
+                invoke_method=ct.invoke.method,
+                timeout_ms=ct.timeout_ms,
+                output_schema=ct.output_schema,
+                required_scopes=tuple(m.permissions_required or ()),
+                is_community=svc.is_community,
+                external_endpoints=tuple(svc.external_endpoints),
             )
-            extra_defs.append(_openai_def_from_capability_tool(ct))
+            # Fail-closed gate: keep the route (so dispatch is gated) but hide a
+            # community tool from the LLM catalog unless the operator opted in.
+            if dispatch_allowed:
+                extra_defs.append(_openai_def_from_capability_tool(ct))
     return routes, extra_defs
 
 
@@ -547,6 +623,39 @@ def try_run_oop_capability_tool(name: str, input_: dict, *, user_id: str) -> str
     route = ctx.get(name)
     if route is None:
         return None
+
+    # LUM-613 fail-closed community-dispatch gate. The route survives in the
+    # contextvar even when hidden from the LLM catalog, so a dispatch-by-name of
+    # a community tool is refused here with a structured, host-not-contacted
+    # result (never silently falling through to a generic "unknown tool").
+    from services.capability_egress import is_dispatch_allowed
+    from services.capability_egress import load_contained_capabilities
+
+    opt_in = config.get_allow_uncontained_community_capabilities()
+    contained = load_contained_capabilities()
+    if not is_dispatch_allowed(
+        is_community=route.is_community,
+        capability_id=route.capability_id,
+        contained_ids=contained,
+        legacy_opt_in=opt_in,
+    ):
+        _log.warning(
+            "oop_tool_refused_community: tool=%r capability_id=%r — community "
+            "capability refused (not network-contained; add its id to "
+            "contained_capabilities.txt once wired onto the isolated egress "
+            "network, or set LUMOGIS_ALLOW_UNCONTAINED_COMMUNITY_CAPABILITIES=true "
+            "as the deprecated escape hatch)",
+            route.tool_name,
+            route.capability_id,
+        )
+        return json.dumps(
+            {
+                "error": "tool-unavailable",
+                "reason": "community_capability_uncontained",
+                "capability_id": route.capability_id,
+            }
+        )
+
     svc = config.get_capability_registry().get_service(route.capability_id)
     if svc is None or not svc.healthy:
         return json.dumps({"error": "capability service unavailable"})
@@ -561,9 +670,18 @@ def try_run_oop_capability_tool(name: str, input_: dict, *, user_id: str) -> str
                 "capability_id": e.capability_id,
                 "request_id": e.request_id,
                 "failure_reason": e.failure_reason,
+                # LUM-613: declared egress + trust class read into the audit here
+                # (not just wiring for LUM-618).
+                "is_community": route.is_community,
+                "external_endpoints": list(route.external_endpoints),
             },
         )
         persist_tool_audit_envelope(e)
+
+    # Author-requested per-tool budget, clamped to the Core ceiling.
+    timeout_s = OOP_HTTP_TIMEOUT_S
+    if route.timeout_ms and route.timeout_ms > 0:
+        timeout_s = min(OOP_HTTP_TIMEOUT_S, route.timeout_ms / 1000.0)
 
     ex = ToolExecutor(permission=PermissionCheck(), emit_audit=_emit)
     res = ex.execute_capability_http(
@@ -579,9 +697,18 @@ def try_run_oop_capability_tool(name: str, input_: dict, *, user_id: str) -> str
         get_service_bearer=route.get_bearer,
         require_service_bearer=route.require_bearer,
         service_healthy=True,
-        timeout_s=OOP_HTTP_TIMEOUT_S,
+        timeout_s=timeout_s,
+        invoke_path=route.invoke_path,
+        invoke_method=route.invoke_method,
+        output_schema=route.output_schema,
+        required_scopes=list(route.required_scopes),
     )
     if res.denied:
+        # LUM-612: a scope denial carries a structured JSON payload naming the
+        # missing scopes — surface it so the LLM/user can request the grant. A
+        # plain binary Ask/Do denial keeps the existing generic envelope.
+        if res.output and res.output.lstrip().startswith("{"):
+            return res.output
         return json.dumps(
             {
                 "error": "Permission denied",

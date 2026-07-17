@@ -88,6 +88,7 @@ The first-party SPA is the primary household UI: chat, search, approvals, and Me
 - **First wow moment:** guided first-query and entity-discovery cards with server-owned readiness and dismissal — see **[ADR 075](decisions/075-lum-216-first-wow-moment.md)**.
 - **Admin**: users (import/export, password reset, member counts, last-active, promote/demote), connector credentials (including household and instance-system tiers where exposed), per-user connector permissions, MCP tokens (list/revoke only), shared-items oversight, audit, diagnostics, **search and retrieval settings** (BGE reranker toggle with pending-restart honesty), and a read-only **feature flags** table.
 - **Admin stack health (LUM-178):** read-only **System status** panel combining curated admin diagnostics with stack-control service rows (no Docker socket in Core) — see **[ADR 074-lum-178](decisions/074-lum-178-stack-health-dashboard.md)**.
+- **Admin safety playground** — run a curated injection test suite and ad-hoc probes against live ingest, retrieval, tool-result, secrets, and action-policy defences; dry-run only (no persistence, hooks, or audit writes); disable with **`SAFETY_PLAYGROUND_ENABLED=false`** — see **[ADR 168](decisions/168-lum-141-safety-playground.md)**.
 - **Admin Ollama:** discovery, async model pull with job polling, and model delete via typed **`/api/v1/admin/ollama/*`** routes in the same panel — see **[ADR 088](decisions/088-lum-451-ollama-api-v1-promotion.md)**.
 - **Admin disaster-recovery backup:** last verified snapshot metadata (age, size, store coverage, stale warning) on **System status** — see **[ADR 098](decisions/098-lum-185-backup-restore.md)** and **`docs/guides/backup-restore.md`**.
 - Password change for self-service and admin-led reset are implemented; email-based forgot-password is not part of the shipped surface.
@@ -119,7 +120,7 @@ Household auth and connector secrets are centered on Core with encrypted storage
 - **Cloud LLM privacy mode** defaults to local-only on fresh installs; operators and members can tighten or relax policy within admin bounds; blocked remote calls are audit-logged and chat falls back to local Ollama when configured.
 - Connector credentials are encrypted (including rotation-friendly key handling); saved secrets are not shown again in the UI after save.
 - Credential resolution walks **per-user**, **household**, then **instance-system** tiers where configured; decrypt failures fail closed without silent fallback across tiers.
-- **Connector permissions** (**Ask** / **Do** / blocked) are **per-user**; APIs exist for users to manage their own modes and for admins to manage others; legacy global permission endpoints are deprecated.
+- **Connector permissions** (**Ask** / **Do** / blocked) are **per-user**; APIs exist for users to manage their own modes and for admins to manage others; optional **scope arrays** grant fine-grained capability permissions declared on manifests; legacy global permission endpoints are deprecated.
 - LLM provider keys, CalDAV, ntfy, and similar integrations use the connector and credential models described in the reference manual.
 
 Treat the deployment as a trusted LAN; wide internet exposure requires extra hardening beyond the default assumptions.
@@ -172,8 +173,11 @@ AGPL-3.0-only Tauri 2 overlay at **`clients/lumogis-search/`** — included in t
 
 Extensions split between **in-process plugins** and **out-of-process capabilities**.
 
-- **Plugins** load inside Core under controlled import rules; optional community or example plugins follow the documented layout.
-- **Capabilities** are separate HTTP services advertising **`GET …/capabilities`**, **`GET …/health`**, and **`POST …/tools/{name}`** with bearer trust from Core; capability containers must not receive Core Postgres/Qdrant credentials.
+- **Plugins** load inside Core under controlled import rules; only first-party modules are permitted — community code must run out-of-process.
+- **Capabilities** are separate HTTP services advertising **`GET …/capabilities`**, **`GET …/health`**, and manifest-declared **`POST …` invoke paths** with bearer trust from Core; capability containers must not receive Core Postgres/Qdrant credentials.
+- **Capability invoke contract v1** — manifests declare per-tool invoke paths, a versioned request/response envelope, structured errors, optional auth modes, and optional **`permissions_required`** scopes; see **`docs/extending/capability-contract-v1.md`** and **[ADR 169](decisions/169-lum-41-capability-invoke-contract-v1.md)**.
+- **First-party allowlist** — operator-maintained **`orchestrator/first_party_capabilities.txt`** pins trusted capability ids to expected discovery origins; anything else is **community (untrusted)** and is refused from the LLM catalog by default.
+- **Community egress containment (optional)** — Docker Compose overlay places community containers on an isolated network and routes outbound traffic through a Squid proxy that allowlists only declared **`external_endpoints`**; Core dispatches community capabilities only when a containment marker lists them — see **`docs/guides/capability-egress-containment.md`** and **[ADR 173](decisions/173-lum-618-container-egress-enforcement.md)**.
 - A **mock capability** service exists for contract and CI smoke tests behind an optional Compose overlay—not part of the default stack.
 
 ---
@@ -182,7 +186,8 @@ Extensions split between **in-process plugins** and **out-of-process capabilitie
 
 “Agentic” behaviour here means the shipped bounded loop of model completions, optional tool calls, permissions, and audit—not an unconstrained autonomous runtime.
 
-- Chat flows run a **bounded** tool-calling loop with **`run_tool`** execution and connector permission checks (**Ask** vs **Do**).
+- Chat flows run a **bounded** tool-calling loop with **`run_tool`** execution and connector permission checks (**Ask** vs **Do**) plus optional **capability scope** grants.
+- **Injection defences** — ingest sanitisation, optional secrets scanning on user-authored config, and optional tool-result scanning before context injection; admins can validate live rules from the safety playground.
 - **Actions** carry structured audit through append-only logs; tool execution records capability calls where applicable.
 - **CapabilityRegistry** discovers optional services and health for bridging tools when catalog integration is enabled.
 - **Hooks** and domain **events** synchronously extend Core and plugins at documented extension points.

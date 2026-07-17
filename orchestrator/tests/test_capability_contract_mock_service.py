@@ -88,7 +88,7 @@ def _mock_transport_handler(manifest: CapabilityManifest):
             auth = request.headers.get("authorization") or ""
             if not auth.startswith("Bearer "):
                 return httpx.Response(401, text="unauthorized")
-            return httpx.Response(200, text='{"pong":true}')
+            return httpx.Response(200, json={"ok": True, "output": {"pong": True}})
         return httpx.Response(404, text="not found")
 
     return handler
@@ -259,7 +259,7 @@ def _patch_httpx_client(monkeypatch: pytest.MonkeyPatch, inner) -> list[httpx.Re
 def test_oop_dispatch_success_headers_and_body(monkeypatch: pytest.MonkeyPatch) -> None:
     def _inner(req: httpx.Request) -> httpx.Response:
         if f"/tools/{MOCK_TOOL}" in str(req.url):
-            return httpx.Response(200, text='{"ok":"pong"}')
+            return httpx.Response(200, json={"ok": True, "output": {"ok": "pong"}})
         return httpx.Response(404)
 
     cap = _patch_httpx_client(monkeypatch, _inner)
@@ -284,9 +284,13 @@ def test_oop_dispatch_success_headers_and_body(monkeypatch: pytest.MonkeyPatch) 
     assert str(r0.url).endswith(f"/tools/{MOCK_TOOL}")
     assert r0.headers.get("x-lumogis-user") == "user-z"
     assert "Bearer secret-token" in (r0.headers.get("authorization") or "")
+    # v1 request envelope: args (with injected user_id) under `arguments`,
+    # attribution under `meta.user`.
     body = json.loads(r0.content)
-    assert body.get("msg") == "hi"
-    assert body.get("user_id") == "user-z"
+    assert body["tool"] == MOCK_TOOL
+    assert body["arguments"]["msg"] == "hi"
+    assert body["arguments"]["user_id"] == "user-z"
+    assert body["meta"]["user"] == "user-z"
 
 
 def test_oop_dispatch_uses_bearer_for_each_capability_service(
@@ -296,7 +300,7 @@ def test_oop_dispatch_uses_bearer_for_each_capability_service(
 
     def _inner(req: httpx.Request) -> httpx.Response:
         captured.append((req.url.path, req.headers.get("authorization") or ""))
-        return httpx.Response(200, text='{"ok":true}')
+        return httpx.Response(200, json={"ok": True, "output": {"ok": True}})
 
     _patch_httpx_client(monkeypatch, _inner)
     monkeypatch.setenv("LUMOGIS_TOOL_CATALOG_ENABLED", "true")
@@ -425,7 +429,7 @@ def test_post_capability_tool_invocation_via_mock_transport(
         base_url=MOCK_BASE,
         tool_name=MOCK_TOOL,
         user_id="alice",
-        json_body={"msg": "ping"},
+        arguments={"msg": "ping"},
         timeout_s=5.0,
         service_bearer="tok",
         require_service_bearer=True,
@@ -433,7 +437,8 @@ def test_post_capability_tool_invocation_via_mock_transport(
     )
     assert res.ok
     assert res.http_status == 200
-    assert "pong" in res.text
+    assert res.output == {"pong": True}
+    assert "pong" in res.output_text
 
 
 def test_attribution_without_bearer_rejected_by_mock_endpoint() -> None:
@@ -484,6 +489,7 @@ def test_execute_capability_http_audit_on_deny_and_allow(monkeypatch: pytest.Mon
         is_write=False,
         base_url=MOCK_BASE,
         input_={"msg": "a"},
+        required_scopes=[],
         get_service_bearer=lambda: "t",
         require_service_bearer=True,
         service_healthy=True,
@@ -491,7 +497,9 @@ def test_execute_capability_http_audit_on_deny_and_allow(monkeypatch: pytest.Mon
     assert res.denied
     assert audit and audit[0].status == "denied"
 
-    cap = _patch_httpx_client(monkeypatch, lambda _r: httpx.Response(200, text="ok-body"))
+    cap = _patch_httpx_client(
+        monkeypatch, lambda _r: httpx.Response(200, json={"ok": True, "output": "ok-body"})
+    )
     monkeypatch.setenv(BEARER_ENV_KEY, "t")
     audit.clear()
     ex2 = ToolExecutor(
@@ -508,6 +516,7 @@ def test_execute_capability_http_audit_on_deny_and_allow(monkeypatch: pytest.Mon
         is_write=False,
         base_url=MOCK_BASE,
         input_={"msg": "b"},
+        required_scopes=[],
         get_service_bearer=lambda: "t",
         require_service_bearer=True,
         service_healthy=True,

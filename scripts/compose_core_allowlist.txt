@@ -1,6 +1,14 @@
 # LUM-43 — Services allowed to declare Core Postgres / Qdrant credentials (or env_file: .env
 # that may contain them). One name per line. Keep in sync with docker-compose.yml + overlays.
 #
+# LUM-613 — SCOPE: this is the CREDENTIALS boundary only. It is NOT the trust/community
+# oracle — that is orchestrator/first_party_capabilities.txt (origin-pinned, id-keyed).
+# The two are intentionally separate; do not conflate membership here with "first-party".
+# OPERATOR WARNING: do not merge an untrusted community capability overlay that defines a
+# service NAMED like a core service below (e.g. `backup`, `playwright`, `redis`) — a
+# same-named service would inherit these creds and could override a core image. An
+# automated core-vs-overlay name-squat check is tracked in LUM-620.
+#
 orchestrator
 postgres
 qdrant

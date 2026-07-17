@@ -217,6 +217,11 @@ Add it to `COMPOSE_FILE` and run `docker compose up -d myservice`. Your containe
 
 ## Out-of-process capability services
 
+> **Start here:** [**Capability Contract v1 — author guide**](capability-contract-v1.md)
+> is the normative reference for building an HTTP capability (manifest fields, the
+> invoke request/response envelope, auth, versioning, and a "fork this" checklist).
+> The section below is a short overview; the guide is the source of truth.
+
 Capability services are separate containers — your own or third-party — that expose tools over HTTP and are discovered by Core at startup. They are the right extension point when:
 
 - Your code cannot live inside the Core process (different runtime, heavy dependencies, GPU isolation, separate licence)
@@ -227,12 +232,17 @@ In-process plugins (`plugins/<name>/`) are still the right choice for lightweigh
 
 ### The contract
 
-Every capability service exposes two endpoints:
+Every capability service exposes three endpoints (full detail in the
+[author guide](capability-contract-v1.md)):
 
 - `GET /capabilities` — returns a `CapabilityManifest` JSON (schema in `orchestrator/models/capability.py`)
 - `GET /health` — returns 200 when ready
+- `POST {invoke.path}` — invoke one tool. Core POSTs the **v1 request envelope**
+  `{"contract_version","tool","arguments","meta"}` and expects the **response
+  envelope** `{"ok":true,"output":…}` (or `{"ok":false,"error":…}` at HTTP 200 on
+  failure). Default path `/tools/{tool_name}`.
 
-The manifest declares the service's identity, version, transport, tools (with JSON schemas), and the minimum Core version it requires. A minimal example:
+The manifest declares the service's identity, version, transport, tools (with JSON schemas), auth, contract version, and the minimum Core version it requires. A minimal example:
 
 ```json
 {
@@ -244,11 +254,15 @@ The manifest declares the service's identity, version, transport, tools (with JS
   "license_mode": "commercial",
   "maturity": "preview",
   "description": "Long-window memory tier with cross-session summarisation.",
+  "contract_version": "1.0",
+  "auth": { "mode": "bearer", "credential_ref": "reserved" },
   "tools": [
     {
       "name": "memory.long_search",
       "description": "Search across all archived sessions.",
       "license_mode": "commercial",
+      "is_write": false,
+      "invoke": { "method": "POST", "path": "/tools/memory.long_search" },
       "input_schema": { "type": "object", "properties": { "query": { "type": "string" } }, "required": ["query"] },
       "output_schema": { "type": "object", "properties": { "results": { "type": "array" } }, "required": ["results"] }
     }
@@ -257,7 +271,7 @@ The manifest declares the service's identity, version, transport, tools (with JS
   "capabilities_endpoint": "/capabilities",
   "permissions_required": [],
   "config_schema": { "type": "object", "properties": {} },
-  "min_core_version": "0.3.0",
+  "min_core_version": "0.3.0rc1",
   "maintainer": "you@example.com"
 }
 ```

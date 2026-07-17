@@ -1,0 +1,46 @@
+# LUM-362 — tool-result-specific injection patterns.
+#
+# These AUGMENT the base LUM-127 injection_patterns.yaml (reused verbatim); the
+# tool-result scanner runs base + these additions over live MCP connector
+# results before they are injected into the LLM context. This is a distinct
+# surface from document ingest (LUM-127) and user config (LUM-361): a malicious
+# email/calendar/vault entry can carry an instruction that looks like a trusted
+# tool result.
+#
+# Scope discipline: only add patterns for injection phrasing the base file does
+# NOT already catch, and only where a regex can be HIGH-PRECISION. The base
+# already covers "ignore previous/prior instructions" (ignore_prev_instruction)
+# and "you are now the user/assistant/system" (role_confusion_directive), so we
+# do not restate those. Broad social-engineering hooks that share keywords with
+# benign text (e.g. a bare "maintenance mode", or bulk-"export" phrasing) are
+# deliberately NOT matched by regex here — a single hit redacts the WHOLE result
+# (fail-safe), so a leaky pattern discards legitimate connector content. Semantic
+# detection of those is deferred to the connector-ship milestone, not faked with
+# a false-positive-prone regex now.
+#
+# Same schema/validation as injection_patterns.yaml (id, name, regex, severity).
+# Unbounded quantifiers are capped ({0,200}) to stay ReDoS-safe on hostile input.
+
+patterns:
+  - id: tr_embedded_system
+    name: Markdown-embedded system instruction
+    regex: '(?i)\[\[[^\]]{0,200}system[^\]]{0,200}\]\]'
+    severity: high
+
+  - id: tr_html_comment_directive
+    name: HTML-comment directive targeting the model
+    regex: '(?i)<!--[^>]{0,200}(claude|assistant|system|you\s+are)[^>]{0,200}-->'
+    severity: high
+
+  - id: tr_jailbreak_mode
+    name: Jailbreak / developer-mode override
+    # Distinct from the base role_confusion_directive (user/assistant/system):
+    # this targets named jailbreak/unrestricted modes and "act as system/admin",
+    # written to avoid benign "you are now a member" style phrasing.
+    regex: '(?i)((you\s+are\s+now\s+in|enter|switch\s+to|enable|activate)\s+(the\s+)?(developer|debug|dan|jailbreak|god|unrestricted|sudo)\s+mode|act\s+as\s+(the\s+)?(system|admin|root)\b)'
+    severity: high
+
+  - id: tr_stealth_instruction
+    name: Stealth (hide-from-user) instruction
+    regex: '(?i)do\s+not\s+(tell|inform|notify)\s+the\s+user'
+    severity: high

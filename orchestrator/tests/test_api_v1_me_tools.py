@@ -80,6 +80,8 @@ def test_me_tools_response_shape_and_no_forbidden_keys(client) -> None:
         "action_type",
         "permission_mode",
         "requires_credentials",
+        "is_community",
+        "external_endpoints",
     }
     required_summary_keys = {"total", "available", "unavailable", "by_source"}
     assert set(body["summary"].keys()) == required_summary_keys
@@ -150,6 +152,8 @@ def test_me_tools_capability_row_safe_metadata(client, monkeypatch) -> None:
                     registered_at=datetime.now(timezone.utc),
                     healthy=False,
                     last_unhealthy_reason="http_403",
+                    is_community=True,
+                    external_endpoints=("api.example.com",),
                 )
             ]
 
@@ -174,6 +178,8 @@ def test_me_tools_capability_row_safe_metadata(client, monkeypatch) -> None:
     assert row["why_not_available"] == (
         "capability service rejected Core's credentials (last probe returned HTTP 403)"
     )
+    assert row["is_community"] is True
+    assert row["external_endpoints"] == ["api.example.com"]
     raw = json.dumps(row)
     assert "properties" not in raw  # no JSON Schema leakage
 

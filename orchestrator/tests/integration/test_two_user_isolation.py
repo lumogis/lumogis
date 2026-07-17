@@ -205,6 +205,23 @@ class _IsolationStore:
             return
 
         # ---- per-user connector permissions (plan per_user_connector_permissions)
+        if q.startswith("insert into connector_permissions (user_id, connector, mode, scopes)"):
+            user_id, connector, mode, scopes = p
+            now = datetime.now(timezone.utc)
+            existing = self.connector_perms.get((user_id, connector))
+            if existing is None:
+                self.connector_perms[(user_id, connector)] = {
+                    "user_id": user_id,
+                    "connector": connector,
+                    "mode": mode,
+                    "scopes": list(scopes or []),
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            else:
+                existing["scopes"] = list(scopes or [])
+                existing["updated_at"] = now
+            return
         if q.startswith("insert into connector_permissions (user_id, connector, mode)"):
             user_id, connector, mode = p
             now = datetime.now(timezone.utc)
@@ -214,6 +231,7 @@ class _IsolationStore:
                     "user_id": user_id,
                     "connector": connector,
                     "mode": mode,
+                    "scopes": [],
                     "created_at": now,
                     "updated_at": now,
                 }
@@ -522,6 +540,14 @@ class _IsolationStore:
 
         # --- per-user connector permissions / routine_do_tracking ---
         if q.startswith(
+            "select mode, scopes from connector_permissions where user_id = %s and connector = %s"
+        ):
+            user_id, connector = p
+            row = self.connector_perms.get((user_id, connector))
+            if row is None:
+                return None
+            return {"mode": row["mode"], "scopes": list(row.get("scopes") or [])}
+        if q.startswith(
             "select mode from connector_permissions where user_id = %s and connector = %s"
         ):
             user_id, connector = p
@@ -594,6 +620,22 @@ class _IsolationStore:
                 reverse=True,
             )
         # --- per-user connector permissions ---
+        if q.startswith(
+            "select connector, mode, scopes from connector_permissions where user_id = %s"
+        ):
+            (user_id,) = p
+            return sorted(
+                (
+                    {
+                        "connector": r["connector"],
+                        "mode": r["mode"],
+                        "scopes": list(r.get("scopes") or []),
+                    }
+                    for (u, _c), r in self.connector_perms.items()
+                    if u == user_id
+                ),
+                key=lambda r: r["connector"],
+            )
         if q.startswith("select connector, mode from connector_permissions where user_id = %s"):
             (user_id,) = p
             return sorted(
@@ -603,6 +645,21 @@ class _IsolationStore:
                     if u == user_id
                 ),
                 key=lambda r: r["connector"],
+            )
+        if q.startswith(
+            "select user_id, connector, mode, scopes from connector_permissions order by user_id, connector"
+        ):
+            return sorted(
+                (
+                    {
+                        "user_id": r["user_id"],
+                        "connector": r["connector"],
+                        "mode": r["mode"],
+                        "scopes": list(r.get("scopes") or []),
+                    }
+                    for r in self.connector_perms.values()
+                ),
+                key=lambda r: (r["user_id"], r["connector"]),
             )
         if q.startswith(
             "select user_id, connector, mode from connector_permissions order by user_id, connector"

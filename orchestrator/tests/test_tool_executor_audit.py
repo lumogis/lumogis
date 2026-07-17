@@ -16,7 +16,9 @@ from services.execution import ToolExecutor
 
 
 def _patch_ok(monkeypatch) -> None:
-    t = httpx.MockTransport(lambda _r: httpx.Response(200, text='{"r":1}'))
+    # v1 response envelope (LUM-41): a raw non-envelope 200 is now a
+    # non-conforming service and would surface as an `internal` error.
+    t = httpx.MockTransport(lambda _r: httpx.Response(200, json={"ok": True, "output": {"r": 1}}))
 
     class _P(httpx.Client):
         def __init__(self, *a, **kw):
@@ -47,6 +49,7 @@ def test_success_emits_envelope_with_ids(monkeypatch) -> None:
         is_write=False,
         base_url="http://h:1",
         input_={"k": 2},
+        required_scopes=[],
         get_service_bearer=lambda: "tok",
     )
     assert r.success
@@ -74,6 +77,7 @@ def test_failure_emits_error_status() -> None:
         is_write=False,
         base_url="http://b",
         input_={},
+        required_scopes=[],
         get_service_bearer=None,
     )
     assert not r.success

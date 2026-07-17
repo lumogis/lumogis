@@ -3,9 +3,10 @@
 """Capability service registry (Area 2 ecosystem plumbing).
 
 Discovers, validates, and holds out-of-process Lumogis capability services.
-Discovery always uses **GET {base_url}/capabilities** (hardcoded path). The
-manifest field ``capabilities_endpoint`` is documentary in v1 — see
-``CapabilityManifest`` docs. Each successful response must validate as
+Discovery always uses **GET {base_url}/capabilities** (fixed path). The manifest
+field ``capabilities_endpoint`` is **validated** (LUM-41): a manifest declaring
+anything other than ``/capabilities`` is rejected — see ``CapabilityManifest``
+docs and ``_fetch_one``. Each successful response must validate as
 :class:`~models.capability.CapabilityManifest`.
 
 Lifecycle:
@@ -42,12 +43,18 @@ from packaging.version import InvalidVersion
 from packaging.version import Version
 from pydantic import BaseModel
 from pydantic import ValidationError
+from services.capability_egress import normalise_base_url as _normalise
 
 _log = logging.getLogger(__name__)
 
 _DEFAULT_TIMEOUT_SECONDS = 5.0
 """Hard cap on every manifest fetch. Prevents a slow or hung capability
 service from blocking startup or the refresh job."""
+
+SUPPORTED_CONTRACT_MAJOR = 1
+"""The capability invoke contract MAJOR version Core speaks (LUM-41). A manifest
+declaring a different major is refused at registration; a differing MINOR is
+accepted (forward-compatible)."""
 
 # JSON Schema meta-validation of CapabilityTool.input_schema /
 # .output_schema and CapabilityManifest.config_schema via the `jsonschema`
@@ -83,6 +90,16 @@ class RegisteredService(BaseModel):
     last_seen_healthy: datetime | None = None
     healthy: bool = False
     last_unhealthy_reason: str | None = None
+    is_community: bool = False
+    """LUM-613 trust classification: True → untrusted community capability, gated
+    fail-closed at dispatch. Set explicitly by the registry from the origin-pinned
+    first-party allowlist (`services.capability_egress`); the ``False`` default
+    serves only direct construction of trusted test doubles — the production
+    ``_upsert`` path always classifies explicitly, so it is never accidentally
+    defaulted."""
+    external_endpoints: tuple[str, ...] = ()
+    """LUM-613 declared egress hosts (from the manifest, normalised). Read by the
+    OOP tool audit + /me/tools visibility; LUM-618 enforces at the network layer."""
 
     async def check_health(self, transport: httpx.AsyncBaseTransport | None = None) -> bool:
         """Probe the capability service's declared health endpoint.
@@ -170,6 +187,13 @@ class CapabilityRegistry:
         if not base_urls:
             return
 
+        # LUM-613: warm the first-party trust map once here so the concurrent
+        # per-URL `_fetch_one` classifications hit an in-memory cache rather than
+        # racing to do the (blocking) file read on the event loop.
+        from services.capability_egress import load_first_party_capabilities
+
+        load_first_party_capabilities()
+
         client_kwargs: dict = {"timeout": _DEFAULT_TIMEOUT_SECONDS}
         if self._transport is not None:
             client_kwargs["transport"] = self._transport
@@ -229,6 +253,10 @@ class CapabilityRegistry:
                 url,
                 exc.errors(include_url=False)[:3],
             )
+            # LUM-613: content-validation failure on an already-registered base_url
+            # must evict the stale registration (fail-closed for the refresh case).
+            # The manifest failed to parse, so key eviction by base_url, not id.
+            self._evict_by_base_url(base_url, reason="invalid_manifest")
             return False
         except ValueError as exc:
             _log.warning(
@@ -236,29 +264,83 @@ class CapabilityRegistry:
                 url,
                 exc,
             )
+            self._evict_by_base_url(base_url, reason="non_json_manifest")
             return False
 
+        # capabilities_endpoint is validated, not documentary (LUM-41): Core
+        # discovered this manifest at the fixed /capabilities bootstrap path, so
+        # the declared value must agree — a self-declared discovery path is a
+        # bootstrap paradox and a divergent value is a manifest authoring error.
         ce = (manifest.capabilities_endpoint or "").strip()
-        if ce and ce != "/capabilities":
+        if ce != "/capabilities":
             _log.warning(
-                "Capability service %s declares capabilities_endpoint=%r; v1 Core "
-                "always discovers at /capabilities only (field is documentary)",
+                "Capability service %s declares capabilities_endpoint=%r but Core "
+                "discovered it at /capabilities; the field must match — skipping",
                 manifest.id,
                 ce,
             )
-
-        if not self._is_compatible(manifest):
+            self._evict_by_base_url(base_url, reason="capabilities_endpoint_mismatch")
             return False
 
-        self._upsert(manifest, base_url)
+        # LUM-612: the manifest id becomes the `capability.{id}` permission
+        # connector; it must be grant-shaped or its scopes could be enforced
+        # (fail-closed) yet never granted (silent lockout). Refuse loudly instead.
+        from services.capability_scopes import is_grantable_capability_id
+        from services.capability_scopes import malformed_required_scopes
+
+        if not is_grantable_capability_id(manifest.id):
+            _log.warning(
+                "Capability service id=%r is not grant-shaped (expected "
+                "[a-z0-9][a-z0-9._-]{0,42}) — skipping so it can't be a "
+                "permanently-ungrantable capability",
+                manifest.id,
+            )
+            self._evict_by_base_url(base_url, reason="ungrantable_id")
+            return False
+
+        # LUM-612: every declared required scope must be grantable (resource:action);
+        # a malformed one would be enforced fail-closed yet never grantable — the
+        # same silent-lockout hazard as a bad id. Refuse the whole manifest loudly.
+        bad_scopes = malformed_required_scopes(manifest)
+        if bad_scopes:
+            _log.warning(
+                "Capability service id=%r declares malformed permissions_required "
+                "%r (expected resource:action) — skipping so it can't enforce an "
+                "ungrantable scope",
+                manifest.id,
+                bad_scopes,
+            )
+            self._evict_by_base_url(base_url, reason="malformed_required_scopes")
+            return False
+
+        if not self._is_compatible(manifest):
+            self._evict_by_base_url(base_url, reason="incompatible_version")
+            return False
+
+        # LUM-613: classify trust from the origin-pinned first-party allowlist
+        # (id + expected base_url), then upsert.
+        from services.capability_egress import is_community_capability
+        from services.capability_egress import load_first_party_capabilities
+
+        is_community = is_community_capability(
+            capability_id=manifest.id,
+            base_url=base_url,
+            first_party=load_first_party_capabilities(),
+        )
+        self._upsert(manifest, base_url, is_community)
         return True
 
     def _is_compatible(self, manifest: CapabilityManifest) -> bool:
-        """Compare manifest.min_core_version against CORE_VERSION.
+        """Compare manifest.min_core_version against CORE_VERSION and negotiate the
+        invoke contract version.
 
         An unparseable version on either side is treated as incompatible
-        (logged) rather than crashing the registry.
+        (logged) rather than crashing the registry. For the invoke contract
+        (LUM-41): an unknown MAJOR contract_version is refused (Core cannot speak
+        it); an unknown MINOR is accepted (forward-compatible).
         """
+        if not self._contract_version_ok(manifest):
+            return False
         try:
             required = Version(manifest.min_core_version)
             current = Version(CORE_VERSION)
@@ -283,8 +365,37 @@ class CapabilityRegistry:
             return False
         return True
 
-    def _upsert(self, manifest: CapabilityManifest, base_url: str) -> None:
+    def _contract_version_ok(self, manifest: CapabilityManifest) -> bool:
+        """Negotiate the invoke contract version (LUM-41).
+
+        Unknown MAJOR → refuse (Core cannot invoke it); unknown MINOR → accept
+        (forward-compatible). An unparseable value is refused.
+        """
+        raw = (manifest.contract_version or "").strip()
+        try:
+            major = int(raw.split(".", 1)[0])
+        except (ValueError, IndexError):
+            _log.warning(
+                "Capability service %s declares unparseable contract_version=%r — skipping",
+                manifest.id,
+                raw,
+            )
+            return False
+        if major != SUPPORTED_CONTRACT_MAJOR:
+            _log.warning(
+                "Capability service %s declares contract_version=%r (major %d) but "
+                "Core speaks major %d — skipping",
+                manifest.id,
+                raw,
+                major,
+                SUPPORTED_CONTRACT_MAJOR,
+            )
+            return False
+        return True
+
+    def _upsert(self, manifest: CapabilityManifest, base_url: str, is_community: bool) -> None:
         now = datetime.now(timezone.utc)
+        endpoints = tuple(manifest.external_endpoints)
         with self._lock:
             existing = self._services.get(manifest.id)
             if existing is None:
@@ -292,27 +403,114 @@ class CapabilityRegistry:
                     manifest=manifest,
                     base_url=base_url,
                     registered_at=now,
+                    is_community=is_community,
+                    external_endpoints=endpoints,
                 )
                 _log.info(
-                    "Registered capability service: %s v%s (%d tools) at %s",
+                    "Registered capability service: %s v%s (%d tools) at %s "
+                    "[trust=%s, egress=%s]",
                     manifest.id,
                     manifest.version,
                     len(manifest.tools),
                     base_url,
+                    "community" if is_community else "first-party",
+                    list(endpoints),  # hostnames are non-secret
                 )
-            else:
-                # Refresh in place — preserve registered_at and health
-                # state, replace mutable manifest + base_url.
-                self._services[manifest.id] = existing.model_copy(
-                    update={"manifest": manifest, "base_url": base_url}
-                )
-                if existing.manifest.version != manifest.version:
-                    _log.info(
-                        "Updated capability service: %s %s -> %s",
+                return
+
+            # LUM-613 (origin-conflict resolution): the manifest fetch is
+            # unauthenticated, so an existing `id` re-appearing from a DIFFERENT
+            # origin needs care. The tie-breaker is trust, and trust is anchored
+            # to the operator's pinned origin (`first_party_capabilities.txt`):
+            #   - Incoming is **first-party** (is_community=False ⇒ it matched the
+            #     operator's pinned origin) → it WINS and replaces the existing
+            #     entry. This lets the genuine service reclaim its id from a shadow
+            #     that registered first (fixes the discovery-race lock-out) and lets
+            #     an operator legitimately move a service's origin (after updating
+            #     the pin). A community/shadow can NOT reach this branch as
+            #     first-party without controlling the pinned origin (network
+            #     compromise — the documented residual closed by LUM-614 signing).
+            #   - Incoming is **community** at a different origin → REFUSE. This is
+            #     the shadow-takeover guard: a community/untrusted response can
+            #     never displace an existing registration of the same id.
+            if _normalise(existing.base_url) != _normalise(base_url):
+                if is_community:
+                    _log.warning(
+                        "capability_identity_conflict: id=%r already registered at "
+                        "origin=%r; refusing a COMMUNITY response from a different "
+                        "origin=%r (possible shadow/takeover) — keeping the existing "
+                        "registration",
                         manifest.id,
-                        existing.manifest.version,
-                        manifest.version,
+                        existing.base_url,
+                        base_url,
                     )
+                    return
+                _log.info(
+                    "capability_identity_reclaim: id=%r first-party service at its "
+                    "pinned origin=%r replaces the prior registration at origin=%r "
+                    "(shadow reclaim or operator-approved origin change)",
+                    manifest.id,
+                    base_url,
+                    existing.base_url,
+                )
+                # fall through to the drift audit + in-place replace below
+
+            # LUM-613 (drift audit): endpoints can change at any 5-min refresh
+            # with no version bump — record the added/removed-hosts diff so a
+            # post-incident review (and a future re-consent flow) has the record.
+            old_endpoints = tuple(existing.manifest.external_endpoints)
+            if set(old_endpoints) != set(endpoints):
+                added = sorted(set(endpoints) - set(old_endpoints))
+                removed = sorted(set(old_endpoints) - set(endpoints))
+                _log.info(
+                    "capability_egress_drift: id=%r external_endpoints changed "
+                    "added=%s removed=%s",
+                    manifest.id,
+                    added,
+                    removed,
+                )
+
+            # Refresh in place — preserve registered_at and health state,
+            # recompute the derived trust + egress fields (never carry stale).
+            self._services[manifest.id] = existing.model_copy(
+                update={
+                    "manifest": manifest,
+                    "base_url": base_url,
+                    "is_community": is_community,
+                    "external_endpoints": endpoints,
+                }
+            )
+            if existing.manifest.version != manifest.version:
+                _log.info(
+                    "Updated capability service: %s %s -> %s",
+                    manifest.id,
+                    existing.manifest.version,
+                    manifest.version,
+                )
+
+    def _evict_by_base_url(self, base_url: str, *, reason: str) -> None:
+        """Remove any registered service discovered at ``base_url`` (LUM-613).
+
+        Called only on **content-validation** failures of an already-registered
+        base_url (bad manifest / id / scopes / incompatible) — NOT on transient
+        network/HTTP failures, which stay soft so a blip never evicts a healthy
+        service. The registry is keyed by manifest id, so this reverse-looks-up
+        by base_url (a failed manifest may not parse to an id).
+        """
+        target = _normalise(base_url)
+        with self._lock:
+            victims = [
+                sid for sid, svc in self._services.items() if _normalise(svc.base_url) == target
+            ]
+            for sid in victims:
+                del self._services[sid]
+                _log.warning(
+                    "capability_evicted: id=%r at %s removed (reason=%s) — "
+                    "stale/invalid registration no longer dispatchable",
+                    sid,
+                    base_url,
+                    reason,
+                )
 
     # ------------------------------------------------------------------
     # Read API (lock-guarded; returns copies so callers cannot mutate

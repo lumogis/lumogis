@@ -37,6 +37,7 @@ from routes.actions import router as actions_router
 from routes.admin import router as admin_router
 from routes.admin_diagnostics import router as admin_diagnostics_router
 from routes.admin_ollama import router as admin_ollama_router
+from routes.admin_safety import router as admin_safety_router
 from routes.admin_sharing import router as admin_sharing_router
 from routes.admin_users import imports_router as admin_user_imports_router
 from routes.admin_users import router as admin_users_router
@@ -462,6 +463,10 @@ async def lifespan(app: FastAPI):
 
     start_signal_monitors()
 
+    from services.egress_deny_tail import start as start_egress_deny_tail
+
+    start_egress_deny_tail()
+
     # Register SSE hook callbacks and notification dispatcher.
     from services.notifications.migrate_webpush_prefs import run_if_needed
 
@@ -850,6 +855,10 @@ async def lifespan(app: FastAPI):
     from signals import stop_all as stop_signal_monitors
 
     stop_signal_monitors()
+
+    from services.egress_deny_tail import stop as stop_egress_deny_tail
+
+    stop_egress_deny_tail()
     scheduler.shutdown(wait=False)
     _log.info("APScheduler shutdown")
 
@@ -950,6 +959,7 @@ app.include_router(connector_credentials_household_admin_router)
 app.include_router(connector_credentials_system_admin_router)
 app.include_router(admin_diagnostics_router)
 app.include_router(admin_ollama_router)
+app.include_router(admin_safety_router)
 app.include_router(chat_router)
 app.include_router(admin_router)
 app.include_router(data_router)

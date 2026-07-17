@@ -153,6 +153,28 @@ jobs:
           make compose-policy-check
           make compose-policy-check-adversarial
           make compose-policy-check-adversarial-envfile
+          make compose-policy-check-community
+          make compose-policy-check-egress
+          make check-egress-acl-divergence
+          make check-no-tethered-lum613
+
+  # LUM-618 — live container-network egress containment proof (Docker + Squid).
+  egress-containment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: egress-containment-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free runner disk before compose build
+        run: |
+          docker system prune -af --volumes || true
+          df -h /
+
+      - name: Egress containment (allowed spliced / denied refused / no-route)
+        run: make egress-containment-test
 
   web-docker-build:
     runs-on: ubuntu-latest
@@ -513,6 +535,7 @@ jobs:
             services="backup postgres qdrant"
           fi
           docker compose --env-file config/test.env.example ps -a
+          # shellcheck disable=SC2086  # $services is an intentional space-separated service list
           docker compose --env-file config/test.env.example logs --tail=200 $services
 
       - name: Skip backup integration (path contract)

@@ -4,17 +4,12 @@
 
 from __future__ import annotations
 
-import os
-
 import pytest
-
-from tests.test_admin_settings_legacy_keys_disabled import (  # noqa: E402
-    _client,
-    _mint_admin_jwt,
-    _seed_admin,
-    auth_on_env,
-    store,
-)
+from tests.test_admin_settings_legacy_keys_disabled import _client  # noqa: E402
+from tests.test_admin_settings_legacy_keys_disabled import _mint_admin_jwt  # noqa: E402
+from tests.test_admin_settings_legacy_keys_disabled import _seed_admin  # noqa: E402
+from tests.test_admin_settings_legacy_keys_disabled import auth_on_env  # noqa: E402, F401
+from tests.test_admin_settings_legacy_keys_disabled import store  # noqa: E402, F401
 
 
 @pytest.mark.parametrize(
@@ -27,8 +22,8 @@ from tests.test_admin_settings_legacy_keys_disabled import (  # noqa: E402
     ],
 )
 def test_get_settings_reranker_live_and_pending(
-    store,
-    auth_on_env,
+    store,  # noqa: F811
+    auth_on_env,  # noqa: F811
     monkeypatch,
     env_backend,
     store_value,

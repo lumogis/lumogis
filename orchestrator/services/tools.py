@@ -23,6 +23,7 @@ from services.injection_sanitiser import redact_for_log
 from services.injection_sanitiser import sanitise_at_ingest
 from services.injection_sanitiser import sanitize_attribute_source_token
 from services.injection_sanitiser import wrap_retrieved_chunk
+from services.tool_result_guard import guard_tool_result
 
 import config
 
@@ -438,7 +439,7 @@ def run_tool(
 
         oop_out = try_run_oop_capability_tool(name, input_, user_id=user_id)
         if oop_out is not None:
-            return oop_out
+            return guard_tool_result(oop_out, user_id=user_id, tool_name=name)
         return json.dumps({"error": f"Unknown tool: {name}"})
 
     if not _check_permission(spec.connector, spec.action_type, spec.is_write, user_id=user_id):
@@ -453,8 +454,9 @@ def run_tool(
 
     try:
         if spec.name == "search_files" and auto_rag_point_ids is not None:
-            return spec.handler(input_, user_id=user_id, auto_rag_point_ids=auto_rag_point_ids)
-        return spec.handler(input_, user_id=user_id)
+            raw = spec.handler(input_, user_id=user_id, auto_rag_point_ids=auto_rag_point_ids)
+        else:
+            raw = spec.handler(input_, user_id=user_id)
     except TypeError as exc:
         if "user_id" in str(exc):
             _log.warning(
@@ -463,8 +465,11 @@ def run_tool(
                 "accept ``user_id`` keyword to participate in user isolation.",
                 spec.name,
             )
-            return spec.handler(input_)
-        raise
+            raw = spec.handler(input_)
+        else:
+            raise
+
+    return guard_tool_result(raw, user_id=user_id, tool_name=name)
 
 
 def _add_plugin_tool(spec: ToolSpec) -> None:

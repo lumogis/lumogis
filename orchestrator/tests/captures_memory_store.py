@@ -229,8 +229,7 @@ class CapturesMemoryMetadataStore:
             n = sum(
                 1
                 for r in self.captures.values()
-                if r["user_id"] == uid
-                and (status_filter is None or r["status"] in status_filter)
+                if r["user_id"] == uid and (status_filter is None or r["status"] in status_filter)
             )
             return {"c": n}
 
@@ -476,8 +475,7 @@ class CapturesMemoryMetadataStore:
             rows = [
                 dict(r)
                 for r in self.captures.values()
-                if r["user_id"] == uid
-                and (status_filter is None or r["status"] in status_filter)
+                if r["user_id"] == uid and (status_filter is None or r["status"] in status_filter)
             ]
             rows.sort(key=lambda r: r["updated_at"], reverse=True)
             sliced = rows[offset : offset + limit]

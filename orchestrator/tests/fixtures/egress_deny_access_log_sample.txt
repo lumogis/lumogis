@@ -1,0 +1,5 @@
+# LUM-621 spike fixture — jacobalberty/squid@sha256:559a8dd2178cf9a40b9a526948467448bb627de98cb22edfddf4699b86a9f370
+# Format: lumogis_egress (fields: ts tr src Ss/Hs rm ru user)
+# Outcome A: HTTPS CONNECT terminate/deny emits TCP_DENIED.
+1784278367.290 000000 172.31.0.10 TCP_DENIED/200 CONNECT example.org:443 -
+1784278367.496 000000 172.31.0.10 TCP_DENIED/403 GET http://example.org/ -

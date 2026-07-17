@@ -99,25 +99,54 @@ def _tombstone_fetch(ms, user_id: str, document_id: int) -> dict | None:
 # ---------------------------------------------------------------------------
 
 
+def _path_reclaimed_by_other_document(
+    ms, user_id: str, document_id: int, file_path: str
+) -> bool:
+    """True when another live personal row owns this path (re-ingest after purge).
+
+    Personal chunk point ids are keyed by ``(user_id, file_path)``; a tombstone
+    retry must not run the path-wide Qdrant/graph sweep when a newer document
+    has reclaimed the same path.
+    """
+    row = ms.fetch_one(
+        # SCOPE-EXEMPT: path collision check for purge retry (owner-keyed personal row).
+        "SELECT id FROM file_index "
+        "WHERE user_id = %s AND file_path = %s AND scope = 'personal'",
+        (user_id, file_path),
+    )
+    return row is not None and int(row["id"]) != int(document_id)
+
+
 def _run_qdrant_arm(
-    user_id: str, file_path: str, chunk_count: int, document_id: int
+    user_id: str,
+    file_path: str,
+    chunk_count: int,
+    document_id: int,
+    *,
+    skip_path_scoped: bool = False,
 ) -> tuple[bool, list[str]]:
     def _arm() -> None:
         vs = config.get_vector_store()
-        # Primary: delete all chunks for this path (handles sparse indices when
-        # block_ingest skips early chunks but writes later ones). Note the
-        # (user_id, file_path) sweep already catches this source's shared
-        # projection chunks (LUM-157 projections keep the owner's user_id +
-        # file_path), so deleting a shared source does not orphan them.
-        vs.delete_where(
-            collection="documents",
-            filter={
-                "must": [
-                    {"key": "user_id", "match": {"value": user_id}},
-                    {"key": "file_path", "match": {"value": file_path}},
-                ]
-            },
-        )
+        if not skip_path_scoped:
+            # Primary: delete all chunks for this path (handles sparse indices when
+            # block_ingest skips early chunks but writes later ones). Note the
+            # (user_id, file_path) sweep already catches this source's shared
+            # projection chunks (LUM-157 projections keep the owner's user_id +
+            # file_path), so deleting a shared source does not orphan them.
+            vs.delete_where(
+                collection="documents",
+                filter={
+                    "must": [
+                        {"key": "user_id", "match": {"value": user_id}},
+                        {"key": "file_path", "match": {"value": file_path}},
+                    ]
+                },
+            )
+            # Legacy fallback: deterministic IDs for points ingested before file_path
+            # was indexed in the payload (pre-LUM-505).
+            for i in range(chunk_count):
+                pid = document_chunk_point_id(user_id, file_path, i)
+                vs.delete(collection="documents", id=pid)
         # LUM-157 belt-and-suspenders: also delete the shared chunk projections
         # keyed by published_from (exact + explicit; covers any future divergence
         # between the source file_path and a projection's file_path).
@@ -131,16 +160,16 @@ def _run_qdrant_arm(
                 ]
             },
         )
-        # Legacy fallback: deterministic IDs for points ingested before file_path
-        # was indexed in the payload (pre-LUM-505).
-        for i in range(chunk_count):
-            pid = document_chunk_point_id(user_id, file_path, i)
-            vs.delete(collection="documents", id=pid)
 
     return _retry_store_arm("qdrant", _arm)
 
 
-def _run_graph_arm(file_path: str, user_id: str) -> tuple[bool, list[str]]:
+def _run_graph_arm(
+    file_path: str, user_id: str, *, skip_path_scoped: bool = False
+) -> tuple[bool, list[str]]:
+    if skip_path_scoped:
+        return True, []
+
     gs = config.get_graph_store()
     if gs is None:
         return True, []
@@ -427,7 +456,10 @@ def _handle_missing_row(ms, user_id: str, document_id: int, result: PurgeResult)
     result.orphan_entity_ids = (
         json.loads(entity_ids_raw) if isinstance(entity_ids_raw, str) else list(entity_ids_raw)
     )
-    return _run_store_arms(ms, user_id, document_id, file_path, chunk_count, result)
+    from services.share_lock import share_document_lock
+
+    with share_document_lock(document_id):
+        return _run_store_arms(ms, user_id, document_id, file_path, chunk_count, result)
 
 
 def _run_store_arms(
@@ -439,13 +471,28 @@ def _run_store_arms(
     result: PurgeResult,
 ) -> PurgeResult:
     """Execute whichever store arms have not yet succeeded, then update the tombstone."""
+    skip_path_scoped = _path_reclaimed_by_other_document(ms, user_id, document_id, file_path)
+    if skip_path_scoped:
+        _log.info(
+            "purge_document: path %r reclaimed by another live document — "
+            "skipping path-scoped Qdrant/graph delete for document_id=%s",
+            file_path,
+            document_id,
+        )
+
     if not result.qdrant_deleted:
-        ok, errs = _run_qdrant_arm(user_id, file_path, chunk_count, document_id)
+        ok, errs = _run_qdrant_arm(
+            user_id,
+            file_path,
+            chunk_count,
+            document_id,
+            skip_path_scoped=skip_path_scoped,
+        )
         result.qdrant_deleted = ok
         result.errors.extend(errs)
 
     if not result.graph_deleted:
-        ok, errs = _run_graph_arm(file_path, user_id)
+        ok, errs = _run_graph_arm(file_path, user_id, skip_path_scoped=skip_path_scoped)
         result.graph_deleted = ok
         result.errors.extend(errs)
 

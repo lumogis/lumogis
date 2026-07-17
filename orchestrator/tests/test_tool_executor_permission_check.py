@@ -43,6 +43,7 @@ def test_capability_call_skipped_when_permission_denies(monkeypatch) -> None:
         is_write=False,
         base_url="http://svc:9",
         input_={},
+        required_scopes=[],
         get_service_bearer=lambda: "sec",
     )
     assert r.denied
@@ -65,6 +66,7 @@ def test_empty_connector_fails_closed() -> None:
         is_write=False,
         base_url="http://x",
         input_={},
+        required_scopes=[],
         get_service_bearer=lambda: "s",
     )
     assert not r.success

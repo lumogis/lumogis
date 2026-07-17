@@ -100,8 +100,9 @@ async def test_discover_populates_registry_from_valid_manifest():
     assert {t.name for t in tools} == {"memory.search", "memory.recent"}
 
 
-async def test_discover_always_uses_capabilities_path_manifest_field_is_documentary(caplog):
-    """Registry GETs /capabilities only; a misleading capabilities_endpoint logs a warning."""
+async def test_discover_rejects_mismatched_capabilities_endpoint(caplog):
+    """Registry GETs /capabilities only; a manifest whose capabilities_endpoint
+    disagrees is rejected (LUM-41 — the field is validated, not documentary)."""
     manifest = _manifest()
     wrong = "/v99/not-used-for-discovery"
 
@@ -117,8 +118,7 @@ async def test_discover_always_uses_capabilities_path_manifest_field_is_document
     with caplog.at_level(logging.WARNING, logger="services.capability_registry"):
         await registry.discover(["http://doc-only:8002"])
 
-    assert len(registry.all_services()) == 1
-    assert registry.all_services()[0].manifest.capabilities_endpoint == wrong
+    assert len(registry.all_services()) == 0
     assert any("capabilities_endpoint" in rec.message for rec in caplog.records)
 
 
@@ -186,6 +186,32 @@ async def test_discover_incompatible_min_core_version_skips(caplog):
 
     assert registry.all_services() == []
     assert any("requires Core" in rec.message for rec in caplog.records)
+
+
+async def test_out_of_shape_manifest_id_refused_at_registration(caplog):
+    """LUM-615 — ungrantable manifest id is skipped at discovery (not registered)."""
+    manifest = _manifest(service_id="MyBadId")
+    transport = httpx.MockTransport(_manifest_handler(manifest))
+    registry = CapabilityRegistry(transport=transport)
+
+    with caplog.at_level(logging.WARNING, logger="services.capability_registry"):
+        await registry.discover(["http://bad-id:8001"])
+
+    assert registry.all_services() == []
+    assert any("not grant-shaped" in rec.message for rec in caplog.records)
+
+
+async def test_malformed_required_scope_refused_at_registration(caplog):
+    """LUM-615 — malformed ``permissions_required`` refuses the whole manifest."""
+    manifest = _manifest().model_copy(update={"permissions_required": ["memoryread"]})
+    transport = httpx.MockTransport(_manifest_handler(manifest))
+    registry = CapabilityRegistry(transport=transport)
+
+    with caplog.at_level(logging.WARNING, logger="services.capability_registry"):
+        await registry.discover(["http://bad-scope:8001"])
+
+    assert registry.all_services() == []
+    assert any("malformed permissions_required" in rec.message for rec in caplog.records)
 
 
 # ---------------------------------------------------------------------------

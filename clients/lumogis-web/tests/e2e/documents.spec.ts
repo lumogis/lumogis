@@ -22,7 +22,7 @@ test.describe("documents library", () => {
 
   test("library route renders empty or list state", async ({ page }) => {
     await page.goto("/documents");
-    await expect(page.getByTestId("documents-page")).toBeVisible({
+    await expect(page.getByTestId("documents-page").or(page.getByText("No documents yet"))).toBeVisible({
       timeout: 15_000,
     });
   });

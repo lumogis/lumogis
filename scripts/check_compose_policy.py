@@ -241,6 +241,117 @@ def pass_b_compose_config(
                 violations.append(f"Pass B: service {svc_name!r}: forbidden key {key!r}")
 
 
+def _render_compose_json(compose_files: list[Path], project_dir: Path) -> dict[str, Any]:
+    """Render the merged compose graph as JSON (shared with Pass B mechanism)."""
+    cmd: list[str] = ["docker", "compose", "--project-directory", str(project_dir)]
+    for f in compose_files:
+        cmd.extend(["-f", str(f.resolve())])
+    cmd.extend(["config", "--format", "json"])
+    try:
+        proc = subprocess.run(
+            cmd, cwd=str(project_dir), capture_output=True, text=True, check=False
+        )
+    except FileNotFoundError:
+        _die_tool("check_compose_policy: 'docker' not found (Pass C)")
+    if proc.returncode != 0:
+        _die_tool(
+            "check_compose_policy: docker compose config failed (Pass C):\n"
+            f"{proc.stderr or proc.stdout or '(no output)'}"
+        )
+    try:
+        return json.loads(proc.stdout)
+    except json.JSONDecodeError as e:
+        _die_tool(f"check_compose_policy: invalid JSON from docker compose config (Pass C): {e}")
+    return {}  # unreachable (_die_tool raises); keeps type-checkers happy
+
+
+def _service_network_names(svc_body: dict[str, Any]) -> list[str]:
+    """Network names a rendered service is attached to (dict or list form)."""
+    nets = svc_body.get("networks")
+    if isinstance(nets, dict):
+        return list(nets.keys())
+    if isinstance(nets, list):
+        return [str(n) for n in nets]
+    return []
+
+
+def pass_c_network_membership(
+    compose_files: list[Path],
+    project_dir: Path,
+    community_services: frozenset[str],
+    egress_proxy_service: str,
+    violations: list[str],
+) -> None:
+    """LUM-618 Pass C — a community capability container must be network-contained.
+
+    For every ``--community-service``:
+      * it MUST be a member of at least one ``internal: true`` network, and
+      * it MUST NOT be a member of any internet-facing (non-``internal``) network.
+
+    "Internet-facing" is keyed on the network's ``internal`` flag (NOT a hardcoded
+    name), so a future multi-isolated-network topology still validates. The
+    selector is the explicit operator-supplied list (NOT "is on the internal net"
+    — that would be circular with the invariant being proven).
+
+    Also asserts the declared egress path exists: ``egress_proxy_service`` must be
+    dual-homed on both an internal and an external network. (Core/orchestrator is
+    legitimately dual-homed too — default + the isolated net — so we do NOT forbid
+    all internal<->external membership; the load-bearing guarantee is that the
+    *community service itself* has no external leg, and Docker does not forward
+    between a container's networks.)
+    """
+    if not community_services:
+        return
+    data = _render_compose_json(compose_files, project_dir)
+    services = data.get("services")
+    networks = data.get("networks") or {}
+    if not isinstance(services, dict):
+        _die_tool("check_compose_policy: rendered 'services' is not an object (Pass C)")
+
+    def is_internal(net_name: str) -> bool:
+        defn = networks.get(net_name) if isinstance(networks, dict) else None
+        return bool(isinstance(defn, dict) and defn.get("internal"))
+
+    for svc_name in sorted(community_services):
+        body = services.get(svc_name)
+        if not isinstance(body, dict):
+            violations.append(
+                f"Pass C: community service {svc_name!r} not found in rendered config "
+                "(is the egress overlay composed?)"
+            )
+            continue
+        net_names = _service_network_names(body)
+        internal_nets = [n for n in net_names if is_internal(n)]
+        external_nets = [n for n in net_names if not is_internal(n)]
+        if not internal_nets:
+            violations.append(
+                f"Pass C: community service {svc_name!r} is on no internal:true "
+                f"network (networks={net_names or 'default'}) — not contained"
+            )
+        if external_nets:
+            violations.append(
+                f"Pass C: community service {svc_name!r} is on internet-facing "
+                f"network(s) {sorted(external_nets)} — must be isolated-network only"
+            )
+
+    proxy = services.get(egress_proxy_service)
+    if not isinstance(proxy, dict):
+        violations.append(
+            f"Pass C: egress proxy service {egress_proxy_service!r} not found "
+            "(no declared egress path for the isolated network — activate the "
+            "'community-egress' profile?)"
+        )
+    else:
+        proxy_nets = _service_network_names(proxy)
+        if not any(is_internal(n) for n in proxy_nets) or not any(
+            not is_internal(n) for n in proxy_nets
+        ):
+            violations.append(
+                f"Pass C: egress proxy {egress_proxy_service!r} must be dual-homed "
+                f"(one internal + one external network); got {sorted(proxy_nets)}"
+            )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="LUM-43 compose policy: Core DB/Qdrant credentials must not reach "
@@ -265,6 +376,21 @@ def main() -> None:
         default=None,
         help="Path to compose_core_allowlist.txt (default: scripts/compose_core_allowlist.txt).",
     )
+    parser.add_argument(
+        "--community-service",
+        dest="community_services",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="LUM-618 Pass C: a community capability service that MUST be network-"
+        "contained (isolated internal net, no internet-facing net). Repeatable.",
+    )
+    parser.add_argument(
+        "--egress-proxy-service",
+        default="egress-proxy",
+        help="LUM-618 Pass C: the dual-homed egress proxy service name "
+        "(default: egress-proxy).",
+    )
     args = parser.parse_args()
 
     repo = _repo_root()
@@ -288,6 +414,18 @@ def main() -> None:
         sys.exit(EXIT_VIOLATION)
 
     pass_b_compose_config(compose_files, project_dir, allowlist, violations)
+    if violations:
+        for line in violations:
+            print(line, file=sys.stderr)
+        sys.exit(EXIT_VIOLATION)
+
+    pass_c_network_membership(
+        compose_files,
+        project_dir,
+        frozenset(args.community_services),
+        args.egress_proxy_service,
+        violations,
+    )
     if violations:
         for line in violations:
             print(line, file=sys.stderr)

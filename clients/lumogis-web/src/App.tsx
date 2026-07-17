@@ -46,6 +46,7 @@ import { AdminAuditView } from "./features/admin/AdminAuditView";
 import { AdminSharedItemsView } from "./features/admin/AdminSharedItemsView";
 import { AdminDiagnosticsView } from "./features/admin/AdminDiagnosticsView";
 import { AdminSystemStatusView } from "./features/admin/AdminSystemStatusView";
+import { AdminSafetyPlaygroundView } from "./features/admin/AdminSafetyPlaygroundView";
 import { AdminPrivacyModeView } from "./features/admin/AdminPrivacyModeView";
 import { AdminSearchSettingsView } from "./features/admin/AdminSearchSettingsView";
 import { AdminFeatureFlagsView } from "./features/admin/AdminFeatureFlagsView";
@@ -172,6 +173,7 @@ function ShellRoutes(): JSX.Element {
             <Route path="privacy-mode" element={<AdminPrivacyModeView />} />
             <Route path="search-settings" element={<AdminSearchSettingsView />} />
             <Route path="feature-flags" element={<AdminFeatureFlagsView />} />
+            <Route path="safety" element={<AdminSafetyPlaygroundView />} />
             <Route path="*" element={<Navigate to="users" replace />} />
           </Route>
           <Route path="*" element={<Navigate to="/chat" replace />} />

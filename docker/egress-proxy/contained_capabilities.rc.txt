@@ -1,0 +1,7 @@
+# LUM-618 — containment marker PROVIDED BY the egress overlay (mounted into the
+# orchestrator via LUMOGIS_CONTAINED_CAPABILITIES_FILE). Because this file rides
+# with docker-compose.egress.yml — the same overlay that supplies the isolated
+# network + egress proxy — the "contained" assertion cannot be present unless the
+# containment wiring is too. Without the overlay, the orchestrator falls back to
+# the empty image-default and refuses the mock (fail-closed).
+lumogis.mock.echo

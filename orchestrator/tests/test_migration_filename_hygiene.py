@@ -118,7 +118,7 @@ def test_next_free_integer_is_unambiguous() -> None:
         f"computed next free migration integer {next_free:03d} is already in use"
     )
     # Guard against silent drift: keep this in step with the highest migration.
-    assert next_free == 52, (
+    assert next_free == 53, (
         f"next free migration integer is {next_free:03d}; update this assertion "
         "when adding migrations so the expected next number stays documented"
     )

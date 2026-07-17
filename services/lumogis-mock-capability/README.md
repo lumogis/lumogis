@@ -1,8 +1,15 @@
 # lumogis-mock-capability (dev / contract smoke)
 
-Tiny **non-product** HTTP capability: manifest + health + one tool. Used to prove
-packaging boundaries for a **second** service (Phase 5 FU-4) without adding a
+Tiny **non-product** HTTP capability: manifest + health + one tool (**capability invoke contract v1**).
+Used to prove packaging boundaries for a **second** service (Phase 5 FU-4) without adding a
 real workload capability.
+
+This is the **reference implementation** for
+[`docs/extending/capability-contract-v1.md`](../../docs/extending/capability-contract-v1.md) —
+fork it to build your own HTTP capability.
+
+Invoke wire shape: Core POSTs `{contract_version, tool, arguments, meta}`; this service
+returns `{ok: true, output: …}` or `{ok: false, error: …}`.
 
 ## Not included in the default stack
 

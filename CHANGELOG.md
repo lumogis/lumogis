@@ -11,6 +11,26 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.11.0] — 2026-07-17
+
+### Added
+
+- **Capability invoke contract v1** — capability manifests declare per-tool invoke paths, a versioned request/response wire envelope, structured errors, and optional auth modes; Core negotiates contract version and validates tool output when schemas are present.
+- **Capability permission scopes** — manifests can declare required permission scopes; Core enforces least-privilege grants at invoke time; members and admins can grant or revoke optional scope arrays on connector permissions.
+- **Community capability sandbox** — out-of-process capabilities outside the operator-maintained first-party allowlist are treated as community (untrusted), hidden from the LLM tool catalog by default, and blocked from in-process plugin loading.
+- **Container egress containment (optional Compose overlay)** — community capability containers can run on an isolated Docker network with outbound traffic routed through a Squid forward proxy that allowlists only declared `external_endpoints`; see **`docs/guides/capability-egress-containment.md`**.
+- **Admin safety playground** — household admins can run a curated injection test suite and ad-hoc probes against live sanitiser and scanner rules without persistence, hooks, or audit side effects.
+- **Secrets scanner for user config** — optional pattern-based scanning blocks loading user-authored configuration that embeds credential-like material before it enters LLM context.
+- **Tool-result injection scanner** — optional scanning redacts tool outputs that match injection patterns before they enter the session context.
+
+### Changed
+
+- **Connector permissions API** — grant and revoke endpoints accept optional scope arrays for fine-grained capability grants alongside Ask/Do modes.
+- **Knowledge graph capability service** — conforms to capability invoke contract v1 with manifest-declared invoke paths and standard envelopes.
+- **Mock capability service** — updated as the contract v1 reference implementation for CI smoke tests and operator overlays.
+
+---
+
 ## [0.10.1] — 2026-07-12
 
 ### Fixed

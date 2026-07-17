@@ -81,7 +81,9 @@ class _Reg:
 
 
 def _httpx_ok(monkeypatch: pytest.MonkeyPatch) -> None:
-    transport = httpx.MockTransport(lambda _r: httpx.Response(200, text='{"ok":true}'))
+    transport = httpx.MockTransport(
+        lambda _r: httpx.Response(200, text='{"ok": true, "output": {"result": "ok"}}')
+    )  # VERIFY-PLAN: v1 invoke envelope (LUM-41)
 
     class _P(httpx.Client):
         def __init__(self, *a, **kwargs):
@@ -276,8 +278,11 @@ def test_try_run_oop_writes_audit_on_http_error(monkeypatch: pytest.MonkeyPatch)
         if oop_tok is not None:
             finish_llm_tools_request(oop_tok)
 
-    assert out == "capability: service unavailable"
+    err = json.loads(out or "")
+    assert err.get("error") == "capability: service unavailable"
+    assert err.get("code") == "unavailable"
+    assert err.get("retryable") is True
     assert len(written) == 1
     inp = json.loads(written[0].input_summary)
     assert inp["status"] == "error"
-    assert inp["failure_reason"] == "http_503"
+    assert inp["failure_reason"] == "unavailable"  # VERIFY-PLAN: LUM-41 error code mapping

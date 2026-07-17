@@ -1,0 +1,3 @@
+# LUM-621 — static source IP → capability id for egress.denied attribution.
+# One: <ipv4> <capability_id>
+172.31.0.10 lumogis.mock.echo

@@ -1,7 +1,7 @@
 # Session handover — 2026-06-19 (branch `claude/youthful-carson-84uh2i`)
 
 > Status: Superseded — merged to `dev`
-> Last reviewed: 2026-06-24
+> Last reviewed: 2026-07-12
 > Verified against commit: 0a13846
 > Superseded by: [`docs/decisions/107-lum-212-211-512-web-ux-loading-errors-health.md`](../decisions/107-lum-212-211-512-web-ux-loading-errors-health.md) (Web cluster) and [`docs/decisions/108-lum-320-doctor-v2-slice-hardening.md`](../decisions/108-lum-320-doctor-v2-slice-hardening.md) (Doctor cluster)
 > Notes: Superset handover artefact; retained for merge archaeology. Do not use as the primary implementation reference.
@@ -196,7 +196,10 @@ ACs are blocked on backend features that don't exist: doc status is only `indexi
 (no batch to count). Recommended build order is on the ticket. No code shipped — deliberately did not
 fabricate UI for absent backend flows.
 
-### LUM-159 — BGE reranker UI toggle — **EXPLORED, ready to plan**
+### LUM-159 — BGE reranker UI toggle — **SHIPPED** ([ADR 159](../decisions/159-lum-159-bge-reranker-web-ui.md), **Done** 2026-07-10)
+
+> **Update (2026-07-12):** Scope below was exploration at handover time; implementation landed on **`dev`** as **LUM-159** / **ADR 159** (`/admin/search-settings`, pending-vs-live reranker state, system-status chip). Do not use this section as the primary reference.
+
 - **Backend already exists on `dev`** (Compose): `GET/PUT /settings` handle `reranker_enabled`
   (writes `RERANKER_BACKEND=bge|none` to `/project/.env` + settings store); `POST /settings/restart`
   → stack-control `compose up --force-recreate orchestrator`. `config.get_reranker()` is a cached

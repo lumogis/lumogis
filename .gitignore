@@ -88,3 +88,6 @@ target/debug-logs/
 
 # LUM-187 — `make update` rollback state (records previous image refs; local only)
 .lumogis-state/
+
+# LUM-618 — Squid SslBump cert is generated per-deploy, never committed.
+docker/egress-proxy/bump.pem

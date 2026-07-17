@@ -111,7 +111,7 @@ def test_capability_row_resolves_permission_connector(monkeypatch) -> None:
         tools=[_ct("vendor.tool.one")],
         health_endpoint="/health",
         capabilities_endpoint="/capabilities",
-        permissions_required=["custom.connector"],
+        permissions_required=[],
         config_schema={"type": "object"},
         min_core_version="0.3.0rc1",
         maintainer="t",
@@ -135,15 +135,154 @@ def test_capability_row_resolves_permission_connector(monkeypatch) -> None:
         return "ASK"
 
     monkeypatch.setattr("permissions.get_connector_mode", _track)
+    monkeypatch.setattr("permissions.get_granted_scopes", lambda **kw: [])
     cat = build_tool_catalog_for_user(
         "grace",
         capability_registry=_Reg(),
         list_actions_fn=lambda: [],
     )
     row = next(e for e in cat.entries if e.name == "vendor.tool.one")
-    assert row.connector == "custom.connector"
-    assert ("grace", "custom.connector") in seen
+    assert row.connector == "capability.com.vendor.svc"
+    assert ("grace", "capability.com.vendor.svc") in seen
     assert row.permission_mode == "ask"
+
+
+def test_permission_mode_blocked_when_required_scope_ungranted(monkeypatch) -> None:
+    from datetime import datetime
+    from datetime import timezone
+
+    from models.capability import CapabilityLicenseMode
+    from models.capability import CapabilityManifest
+    from models.capability import CapabilityMaturity
+    from models.capability import CapabilityTool
+    from models.capability import CapabilityTransport
+    from services.capability_registry import RegisteredService
+
+    def _ct(name: str) -> CapabilityTool:
+        return CapabilityTool(
+            name=name,
+            description="t",
+            license_mode=CapabilityLicenseMode.COMMUNITY,
+            input_schema={"type": "object"},
+            output_schema={"type": "object"},
+        )
+
+    m = CapabilityManifest(
+        name="svc.x",
+        id="com.vendor.scoped",
+        version="1.0.0",
+        type="service",
+        transport=CapabilityTransport.HTTP,
+        license_mode=CapabilityLicenseMode.COMMUNITY,
+        maturity=CapabilityMaturity.PREVIEW,
+        description="d",
+        tools=[_ct("vendor.scoped.tool")],
+        health_endpoint="/health",
+        capabilities_endpoint="/capabilities",
+        permissions_required=["memory:write"],
+        config_schema={"type": "object"},
+        min_core_version="0.3.0rc1",
+        maintainer="t",
+    )
+
+    class _Reg:
+        def all_services(self):
+            return [
+                RegisteredService(
+                    manifest=m,
+                    base_url="http://cap:1",
+                    registered_at=datetime.now(timezone.utc),
+                    healthy=True,
+                    is_community=True,
+                    external_endpoints=("api.vendor.example",),
+                )
+            ]
+
+    monkeypatch.setattr("permissions.get_connector_mode", lambda **kw: "DO")
+    monkeypatch.setattr(
+        "permissions.get_granted_scopes", lambda **kw: ["memory:read"]
+    )
+    cat = build_tool_catalog_for_user(
+        "user-scope",
+        capability_registry=_Reg(),
+        list_actions_fn=lambda: [],
+    )
+    row = next(e for e in cat.entries if e.name == "vendor.scoped.tool")
+    assert row.permission_mode == "blocked"
+    assert row.is_community is True
+    assert row.external_endpoints == ("api.vendor.example",)
+
+
+def test_scopes_not_leaked_across_users_in_catalog(monkeypatch) -> None:
+    """LUM-617 — another user's grants never appear in the catalog read model."""
+    from datetime import datetime
+    from datetime import timezone
+
+    from models.capability import CapabilityLicenseMode
+    from models.capability import CapabilityManifest
+    from models.capability import CapabilityMaturity
+    from models.capability import CapabilityTool
+    from models.capability import CapabilityTransport
+    from services.capability_registry import RegisteredService
+
+    def _ct(name: str) -> CapabilityTool:
+        return CapabilityTool(
+            name=name,
+            description="t",
+            license_mode=CapabilityLicenseMode.COMMUNITY,
+            input_schema={"type": "object"},
+            output_schema={"type": "object"},
+        )
+
+    m = CapabilityManifest(
+        name="leak-test",
+        id="com.example.leak",
+        version="1.0.0",
+        type="service",
+        transport=CapabilityTransport.HTTP,
+        license_mode=CapabilityLicenseMode.COMMUNITY,
+        maturity=CapabilityMaturity.PREVIEW,
+        description="d",
+        tools=[_ct("leak.test.tool")],
+        health_endpoint="/health",
+        capabilities_endpoint="/capabilities",
+        permissions_required=["memory:write"],
+        config_schema={"type": "object"},
+        min_core_version="0.1.0",
+        maintainer="t",
+    )
+
+    class _Reg:
+        def all_services(self):
+            return [
+                RegisteredService(
+                    manifest=m,
+                    base_url="http://leak:1",
+                    registered_at=datetime.now(timezone.utc),
+                    healthy=True,
+                    is_community=False,
+                )
+            ]
+
+    grants: dict[tuple[str, str], list[str]] = {
+        ("alice", "capability.com.example.leak"): ["memory:write"],
+    }
+
+    def _scopes(*, user_id: str, connector: str) -> list[str]:
+        return list(grants.get((user_id, connector), []))
+
+    monkeypatch.setattr("permissions.get_granted_scopes", _scopes)
+    monkeypatch.setattr("permissions.get_connector_mode", lambda **kw: "DO")
+    cat_alice = build_tool_catalog_for_user(
+        "alice", capability_registry=_Reg(), list_actions_fn=lambda: []
+    )
+    cat_bob = build_tool_catalog_for_user(
+        "bob", capability_registry=_Reg(), list_actions_fn=lambda: []
+    )
+    row_alice = next(e for e in cat_alice.entries if e.name == "leak.test.tool")
+    row_bob = next(e for e in cat_bob.entries if e.name == "leak.test.tool")
+    assert row_alice.permission_mode == "do"
+    assert row_bob.permission_mode == "blocked"
 
 
 def test_permission_mode_unknown_when_lookup_raises(monkeypatch) -> None:

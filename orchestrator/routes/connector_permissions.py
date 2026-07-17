@@ -41,6 +41,7 @@ only after the ``require_admin`` gate.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 import permissions
@@ -54,9 +55,11 @@ from fastapi import HTTPException
 from fastapi import Path
 from fastapi import Request
 from fastapi import Response
+from models.connector_permission import CapabilityGrantView
 from models.connector_permission import ConnectorPermissionAdminView
 from models.connector_permission import ConnectorPermissionPublic
 from models.connector_permission import ConnectorPermissionUpdate
+from services.capability_scopes import CAPABILITY_ID_PATTERN as _CAP_ID_PATTERN
 
 from services import users as users_service
 
@@ -88,11 +91,23 @@ admin_list_router = APIRouter(
 # shipped connector name plus headroom; the regex matches
 # kebab/snake-case identifiers and rejects path-traversal characters
 # at the route layer before the value reaches SQL or the registry.
+# LUM-612: accept first-party connectors AND `capability.{id}` grant connectors.
+# The dotted `capability.` branch is bounded by max_length=64 and — critically —
+# by the registry existence check in `_validate_connector_or_warn`, so junk like
+# `capability.a..b` cannot resolve to a real grant. Plain connectors are unchanged.
+# The capability-id charset is derived from the single source of truth in
+# `capability_scopes.CAPABILITY_ID_PATTERN` (drop its ^…$ anchors) so the route
+# regex and the registration guard can never drift apart on the id shape.
+_CAP_ID_BODY = _CAP_ID_PATTERN.pattern.removeprefix("^").removesuffix("$")
+_CONNECTOR_PATTERN = rf"^(capability\.{_CAP_ID_BODY}|[a-z][a-z0-9_-]*)$"
 _CONNECTOR_PATH = Path(
     ...,
     min_length=1,
     max_length=64,
-    pattern=r"^[a-z][a-z0-9_-]*$",
+    description=(
+        "Connector slug (e.g. filesystem-mcp) or capability id "
+        "(capability.{id}; validated at runtime)."
+    ),
 )
 
 _ACTION_REGISTRY_UNAVAILABLE_HEADER = '199 - "action registry unavailable; connector unvalidated"'
@@ -106,8 +121,8 @@ _ACTION_REGISTRY_UNAVAILABLE_HEADER = '199 - "action registry unavailable; conne
 def _known_connectors() -> set[str] | None:
     """Distinct connector names from the live **action** registry (``list_actions``).
 
-    Returns ``None`` on registry failure so the caller can degrade-allow
-    with a ``Warning: 199`` advisory header (OQ #4 resolution).
+    Returns ``None`` on action-registry failure so the caller can degrade-allow
+    first-party connectors with a ``Warning: 199`` advisory header (OQ #4).
     """
     try:
         from actions.registry import list_actions
@@ -118,18 +133,65 @@ def _known_connectors() -> set[str] | None:
         return None
 
 
+def _known_capability_connectors() -> set[str] | None:
+    """`capability.{id}` names for every registered capability service (LUM-612).
+
+    Sourced in a **separate** try from the action registry so a capability
+    -registry error never weakens plain-connector validation. Returns ``None`` on
+    failure — callers **fail closed** for `capability.*` writes (never degrade
+    -allow an unverified capability grant). The set is legitimately empty until
+    first discovery completes at startup, so real capabilities 404 briefly then.
+    """
+    try:
+        from services.capability_scopes import capability_connector
+
+        import config
+
+        reg = config.get_capability_registry()
+        return {capability_connector(svc.manifest.id) for svc in reg.all_services()}
+    except Exception:  # noqa: BLE001
+        _log.warning("capability_registry_unavailable_at_permission_validation")
+        return None
+
+
 def _validate_connector_or_warn(
     connector: str,
     response: Response,
     *,
     write_path: bool,
+    allow_missing: bool = False,
 ) -> None:
     """Validate ``connector`` against the live registry.
 
-    On unknown connector + reachable registry: raise 404. On registry
-    failure: attach the advisory ``Warning: 199`` header, log WARN, and
-    return so the caller proceeds (degrade-allow per OQ #4).
+    First-party connectors: unknown + reachable action registry → 404; action
+    -registry failure → degrade-allow with a ``Warning: 199`` header (OQ #4).
+
+    `capability.{id}` connectors (LUM-612): validated against the **capability**
+    registry and **fail closed** — an unknown or unverifiable capability is 404,
+    never degrade-allowed (no writing an unverified/grant-before-ask scope grant
+    during an outage). ``allow_missing=True`` bypasses the existence check so an
+    orphaned capability grant stays revocable via DELETE.
     """
+    if not re.fullmatch(_CONNECTOR_PATTERN, connector):
+        raise HTTPException(
+            status_code=422,
+            detail={"error": "invalid_connector", "connector": connector},
+        )
+
+    from services.capability_scopes import is_capability_connector
+
+    if is_capability_connector(connector):
+        if allow_missing:
+            return
+        known_caps = _known_capability_connectors()
+        if known_caps is None or connector not in known_caps:
+            _log.warning("unknown_or_unverifiable_capability_connector connector=%s", connector)
+            raise HTTPException(
+                status_code=404,
+                detail={"error": "unknown_connector", "connector": connector},
+            )
+        return
+
     known = _known_connectors()
     if known is None:
         log_event = (
@@ -152,6 +214,7 @@ def _public_from_effective(row: dict[str, Any]) -> ConnectorPermissionPublic:
     return ConnectorPermissionPublic(
         connector=row["connector"],
         mode=row["mode"],
+        scopes=list(row.get("scopes") or []),
         is_default=row["is_default"],
         updated_at=row.get("updated_at"),
     )
@@ -168,6 +231,7 @@ def _admin_view_from_effective(
         email=email,
         connector=row["connector"],
         mode=row["mode"],
+        scopes=list(row.get("scopes") or []),
         is_default=row["is_default"],
         updated_at=row.get("updated_at"),
     )
@@ -232,6 +296,7 @@ def list_my_permissions(request: Request) -> list[ConnectorPermissionPublic]:
             {
                 "connector": r["connector"],
                 "mode": r["mode"],
+                "scopes": list(r.get("scopes") or []),
                 "is_default": False,
                 "updated_at": r.get("updated_at"),
             }
@@ -253,6 +318,51 @@ def list_my_permissions(request: Request) -> list[ConnectorPermissionPublic]:
         known_connectors=sorted(known),
     )
     return [_public_from_effective(r) for r in effective]
+
+
+@router.get(
+    "/capabilities",
+    response_model=list[CapabilityGrantView],
+)
+def list_my_capability_grants(request: Request) -> list[CapabilityGrantView]:
+    """Consent surface (LUM-612): per registered capability, what it **requires**
+    vs what the caller has **granted**, and what's still **missing**.
+
+    This is the data an install/consent UI renders. Required scopes come from the
+    instance-global capability registry (same visibility as ``/me/tools``); granted
+    scopes are resolved strictly for the caller. Defined before ``/{connector}`` so
+    the literal path is not swallowed by the path param.
+    """
+    from services.capability_scopes import capability_connector
+    from services.capability_scopes import required_scopes_for
+
+    import config
+
+    caller = get_user(request)
+    try:
+        reg = config.get_capability_registry()
+        services = list(reg.all_services())
+    except Exception:  # noqa: BLE001
+        _log.warning("capability_registry_unavailable_at_consent_surface")
+        services = []
+
+    out: list[CapabilityGrantView] = []
+    for svc in services:
+        cap_id = svc.manifest.id
+        connector = capability_connector(cap_id)
+        required = required_scopes_for(svc.manifest)
+        granted = permissions.get_granted_scopes(user_id=caller.user_id, connector=connector)
+        missing = sorted(set(required) - set(granted))
+        out.append(
+            CapabilityGrantView(
+                capability_id=cap_id,
+                connector=connector,
+                required=required,
+                granted=granted,
+                missing=missing,
+            )
+        )
+    return out
 
 
 @router.get(
@@ -296,11 +406,26 @@ def put_my_permission(
     """
     caller = get_user(request)
     _validate_connector_or_warn(connector, response, write_path=True)
-    permissions.set_connector_mode(
-        user_id=caller.user_id,
-        connector=connector,
-        mode=body.mode,
-    )
+    # LUM-612: mode and scopes are both optional; a field left None is untouched
+    # (a mode-only PUT doesn't wipe scopes and vice-versa); {} is a no-op.
+    if body.mode is not None:
+        permissions.set_connector_mode(
+            user_id=caller.user_id,
+            connector=connector,
+            mode=body.mode,
+        )
+    if body.scopes is not None:
+        try:
+            permissions.grant_scopes(
+                user_id=caller.user_id,
+                connector=connector,
+                scopes=body.scopes,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={"error": "invalid_scope", "message": str(exc)},
+            ) from exc
     row = _effective_row_for(user_id=caller.user_id, connector=connector)
     return _public_from_effective(row)
 
@@ -320,9 +445,13 @@ def delete_my_permission(
     Returns the now-default row (``is_default=True``). Idempotent — a
     DELETE against a connector with no per-user row is a no-op that
     still returns ``200`` with the lazy default.
+
+    LUM-612: for a ``capability.{id}`` connector the existence check is
+    bypassed (``allow_missing=True``) so a grant to a now-unregistered
+    capability stays revocable — you must always be able to revoke.
     """
     caller = get_user(request)
-    _validate_connector_or_warn(connector, response, write_path=True)
+    _validate_connector_or_warn(connector, response, write_path=True, allow_missing=True)
     permissions.delete_user_permission(
         user_id=caller.user_id,
         connector=connector,
@@ -394,11 +523,20 @@ def admin_put_user_permission(
         )
         raise HTTPException(status_code=404, detail="user not found")
     _validate_connector_or_warn(connector, response, write_path=True)
-    permissions.set_connector_mode(
-        user_id=user_id,
-        connector=connector,
-        mode=body.mode,
-    )
+    # LUM-612: mode + scopes both optional (a field left None is untouched).
+    if body.mode is not None:
+        permissions.set_connector_mode(
+            user_id=user_id,
+            connector=connector,
+            mode=body.mode,
+        )
+    if body.scopes is not None:
+        try:
+            permissions.grant_scopes(user_id=user_id, connector=connector, scopes=body.scopes)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422, detail={"error": "invalid_scope", "message": str(exc)}
+            ) from exc
     # Race: user could be hard-deleted between the existence check and
     # the read-back. Return the email lookup result; if the user is gone,
     # email comes back as None (forensic-retained permission row).
@@ -426,9 +564,15 @@ def admin_delete_user_permission(
     response: Response,
     connector: str = _CONNECTOR_PATH,
 ) -> ConnectorPermissionAdminView:
-    """Admin drops the target user's explicit row for ``{connector}``."""
+    """Admin drops the target user's explicit row for ``{connector}``.
+
+    LUM-612: mirrors the self-service DELETE — the existence check is
+    bypassed (``allow_missing=True``) for a ``capability.{id}`` connector so
+    an admin can always force-revoke a grant to a now-deregistered or
+    unreachable capability (the incident-response case).
+    """
     _require_user_exists(user_id)
-    _validate_connector_or_warn(connector, response, write_path=True)
+    _validate_connector_or_warn(connector, response, write_path=True, allow_missing=True)
     permissions.delete_user_permission(
         user_id=user_id,
         connector=connector,
@@ -482,6 +626,7 @@ def admin_list_all_permissions() -> list[ConnectorPermissionAdminView]:
             email=emails.get(r["user_id"]),
             connector=r["connector"],
             mode=r["mode"],
+            scopes=list(r.get("scopes") or []),
             is_default=False,
             updated_at=r.get("updated_at"),
         )

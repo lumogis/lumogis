@@ -1,0 +1,24 @@
+# LUM-618 adversarial fixture (Pass C). A community capability WRONGLY given an
+# internet-facing network leg. `check_compose_policy.py --community-service
+# bad-community-cap` MUST exit 1 on this file — proving Pass C actually fires
+# (guards against a silent no-op if the rendered `networks` shape ever differs).
+networks:
+  community-egress-internal:
+    internal: true
+    enable_ipv6: false
+  wrong-external: {}
+services:
+  bad-community-cap:
+    image: alpine:3
+    command: ["sleep", "1"]
+    networks:
+      # The violation: a community service must be isolated-net ONLY, but this
+      # one also has an internet-facing leg.
+      - community-egress-internal
+      - wrong-external
+  egress-proxy:
+    image: alpine:3
+    command: ["sleep", "1"]
+    networks:
+      - community-egress-internal
+      - wrong-external

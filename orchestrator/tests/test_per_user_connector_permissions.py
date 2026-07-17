@@ -18,7 +18,7 @@ needed by the route layer (admin existence checks, email lookup).
 
 Cache hygiene
 -------------
-``permissions._mode_cache`` is a module-level dict; the ``perm_store``
+``permissions._perm_cache`` is a module-level dict; the ``perm_store``
 fixture clears it before every test so cache state never leaks across
 the suite.
 
@@ -118,15 +118,33 @@ class _FakeConnectorPermStore:
         p = params or ()
 
         if q.startswith("insert into connector_permissions"):
-            uid, connector, mode = p
             now = datetime.now(timezone.utc)
-            existing = self.cp.get((uid, connector))
+            existing = self.cp.get((p[0], p[1]))
+            if "scopes" in q and len(p) >= 4:
+                uid, connector, mode, scopes = p[0], p[1], p[2], list(p[3] or [])
+                if existing is None:
+                    self.cp[(uid, connector)] = {
+                        "id": self._next_cp_id,
+                        "user_id": uid,
+                        "connector": connector,
+                        "mode": mode,
+                        "scopes": scopes,
+                        "created_at": now,
+                        "updated_at": now,
+                    }
+                    self._next_cp_id += 1
+                else:
+                    existing["scopes"] = scopes
+                    existing["updated_at"] = now
+                return
+            uid, connector, mode = p[0], p[1], p[2]
             if existing is None:
                 self.cp[(uid, connector)] = {
                     "id": self._next_cp_id,
                     "user_id": uid,
                     "connector": connector,
                     "mode": mode,
+                    "scopes": [],
                     "created_at": now,
                     "updated_at": now,
                 }
@@ -235,6 +253,13 @@ class _FakeConnectorPermStore:
         q = self._norm(query)
         p = params or ()
 
+        if q.startswith("select mode, scopes from connector_permissions"):
+            uid, connector = p
+            row = self.cp.get((uid, connector))
+            if row is None:
+                return None
+            return {"mode": row["mode"], "scopes": list(row.get("scopes") or [])}
+
         if q.startswith("select mode from connector_permissions"):
             uid, connector = p
             row = self.cp.get((uid, connector))
@@ -299,6 +324,20 @@ class _FakeConnectorPermStore:
         q = self._norm(query)
         p = params or ()
 
+        if q.startswith("select connector, mode, scopes from connector_permissions where user_id"):
+            (uid,) = p
+            rows = [
+                {
+                    "connector": r["connector"],
+                    "mode": r["mode"],
+                    "scopes": list(r.get("scopes") or []),
+                    "updated_at": r["updated_at"],
+                }
+                for (u, _c), r in self.cp.items()
+                if u == uid
+            ]
+            return sorted(rows, key=lambda r: r["connector"])
+
         if q.startswith("select connector, mode from connector_permissions where user_id"):
             (uid,) = p
             rows = [
@@ -311,6 +350,19 @@ class _FakeConnectorPermStore:
                 if u == uid
             ]
             return sorted(rows, key=lambda r: r["connector"])
+
+        if q.startswith("select user_id, connector, mode, scopes from connector_permissions"):
+            rows = [
+                {
+                    "user_id": r["user_id"],
+                    "connector": r["connector"],
+                    "mode": r["mode"],
+                    "scopes": list(r.get("scopes") or []),
+                    "updated_at": r["updated_at"],
+                }
+                for r in self.cp.values()
+            ]
+            return sorted(rows, key=lambda r: (r["user_id"], r["connector"]))
 
         if q.startswith("select user_id, connector, mode from connector_permissions"):
             rows = [
@@ -356,7 +408,7 @@ def perm_store(monkeypatch):
 
     store = _FakeConnectorPermStore()
     _config._instances["metadata_store"] = store
-    monkeypatch.setattr(_permissions, "_mode_cache", {})
+    monkeypatch.setattr(_permissions, "_perm_cache", {})
     yield store
     _config._instances.pop("metadata_store", None)
 
@@ -413,17 +465,84 @@ def _create_user(
     return user_id
 
 
-def _seed_perm(perm_store, *, user_id: str, connector: str, mode: str) -> None:
+def _seed_perm(
+    perm_store,
+    *,
+    user_id: str,
+    connector: str,
+    mode: str,
+    scopes: list[str] | None = None,
+) -> None:
     now = datetime.now(timezone.utc)
     perm_store.cp[(user_id, connector)] = {
         "id": perm_store._next_cp_id,
         "user_id": user_id,
         "connector": connector,
         "mode": mode,
+        "scopes": list(scopes or []),
         "created_at": now,
         "updated_at": now,
     }
     perm_store._next_cp_id += 1
+
+
+def _stub_capability_registry(monkeypatch, capability_ids: list[str]) -> None:
+    """Force ``_known_capability_connectors()`` to return ``capability.{id}`` rows."""
+    from datetime import datetime
+    from datetime import timezone
+
+    from models.capability import CapabilityLicenseMode
+    from models.capability import CapabilityManifest
+    from models.capability import CapabilityMaturity
+    from models.capability import CapabilityTool
+    from models.capability import CapabilityTransport
+    from services.capability_registry import RegisteredService
+
+    def _tool() -> CapabilityTool:
+        return CapabilityTool(
+            name="cap.tool",
+            description="t",
+            license_mode=CapabilityLicenseMode.COMMUNITY,
+            input_schema={"type": "object"},
+            output_schema={"type": "object"},
+        )
+
+    services: list[RegisteredService] = []
+    for cap_id in capability_ids:
+        manifest = CapabilityManifest(
+            name=cap_id,
+            id=cap_id,
+            version="1.0.0",
+            type="service",
+            transport=CapabilityTransport.HTTP,
+            license_mode=CapabilityLicenseMode.COMMUNITY,
+            maturity=CapabilityMaturity.PREVIEW,
+            description="route-test fixture",
+            tools=[_tool()],
+            health_endpoint="/health",
+            capabilities_endpoint="/capabilities",
+            permissions_required=[],
+            config_schema={"type": "object"},
+            min_core_version="0.1.0",
+            maintainer="t",
+        )
+        services.append(
+            RegisteredService(
+                manifest=manifest,
+                base_url="http://cap-route-test:1",
+                registered_at=datetime.now(timezone.utc),
+                healthy=True,
+                is_community=False,
+            )
+        )
+
+    class _FakeCapReg:
+        def all_services(self):
+            return services
+
+    import config as _config
+
+    monkeypatch.setattr(_config, "get_capability_registry", lambda: _FakeCapReg())
 
 
 def _stub_registry(monkeypatch, connectors: list[str]) -> None:
@@ -507,7 +626,7 @@ def test_get_connector_mode_cache_does_not_leak_between_users(perm_store):
 
 def test_set_connector_mode_upserts_and_invalidates_one_cache_slot(perm_store):
     """Plan test 5."""
-    from permissions import _mode_cache
+    from permissions import _perm_cache
     from permissions import get_connector_mode
     from permissions import set_connector_mode
 
@@ -515,11 +634,11 @@ def test_set_connector_mode_upserts_and_invalidates_one_cache_slot(perm_store):
     _seed_perm(perm_store, user_id="bob", connector="filesystem-mcp", mode="DO")
     get_connector_mode(user_id="alice", connector="filesystem-mcp")
     get_connector_mode(user_id="bob", connector="filesystem-mcp")
-    assert ("alice", "filesystem-mcp") in _mode_cache
-    assert ("bob", "filesystem-mcp") in _mode_cache
+    assert ("alice", "filesystem-mcp") in _perm_cache
+    assert ("bob", "filesystem-mcp") in _perm_cache
     set_connector_mode(user_id="alice", connector="filesystem-mcp", mode="DO")
-    assert ("alice", "filesystem-mcp") not in _mode_cache
-    assert ("bob", "filesystem-mcp") in _mode_cache
+    assert ("alice", "filesystem-mcp") not in _perm_cache
+    assert ("bob", "filesystem-mcp") in _perm_cache
 
 
 def test_set_connector_mode_rejects_invalid_mode(perm_store):
@@ -540,7 +659,7 @@ def test_set_connector_mode_rejects_empty_user_id(perm_store):
 
 def test_clear_cache_for_user_evicts_all_users_keys_only(perm_store):
     """Plan test 8."""
-    from permissions import _mode_cache
+    from permissions import _perm_cache
     from permissions import clear_cache_for_user
     from permissions import get_connector_mode
 
@@ -551,12 +670,12 @@ def test_clear_cache_for_user_evicts_all_users_keys_only(perm_store):
     get_connector_mode(user_id="alice", connector="email-mcp")
     get_connector_mode(user_id="bob", connector="filesystem-mcp")
     assert {("alice", "filesystem-mcp"), ("alice", "email-mcp"), ("bob", "filesystem-mcp")} <= set(
-        _mode_cache.keys()
+        _perm_cache.keys()
     )
     clear_cache_for_user("alice")
-    assert ("alice", "filesystem-mcp") not in _mode_cache
-    assert ("alice", "email-mcp") not in _mode_cache
-    assert ("bob", "filesystem-mcp") in _mode_cache
+    assert ("alice", "filesystem-mcp") not in _perm_cache
+    assert ("alice", "email-mcp") not in _perm_cache
+    assert ("bob", "filesystem-mcp") in _perm_cache
 
 
 def test_get_all_permissions_returns_user_id_field(perm_store):
@@ -660,6 +779,7 @@ def test_me_get_permission_for_unwritten_connector_returns_default(
     assert r.json() == {
         "connector": "filesystem-mcp",
         "mode": "ASK",
+        "scopes": [],
         "is_default": True,
         "updated_at": None,
     }
@@ -1049,7 +1169,7 @@ def test_actions_elevate_route_still_rejects_hard_limited_action_types(
 
 def test_disable_user_clears_cache_but_retains_rows(perm_store):
     """Plan test 30."""
-    from permissions import _mode_cache
+    from permissions import _perm_cache
     from permissions import get_connector_mode
 
     from services import users as users_svc
@@ -1057,15 +1177,15 @@ def test_disable_user_clears_cache_but_retains_rows(perm_store):
     _create_user(perm_store, user_id="alice", email="a@home.lan", role="user")
     _seed_perm(perm_store, user_id="alice", connector="filesystem-mcp", mode="DO")
     get_connector_mode(user_id="alice", connector="filesystem-mcp")
-    assert ("alice", "filesystem-mcp") in _mode_cache
+    assert ("alice", "filesystem-mcp") in _perm_cache
     users_svc.set_disabled("alice", disabled=True)
-    assert ("alice", "filesystem-mcp") not in _mode_cache
+    assert ("alice", "filesystem-mcp") not in _perm_cache
     assert ("alice", "filesystem-mcp") in perm_store.cp
 
 
 def test_delete_user_clears_cache_but_retains_rows(perm_store):
     """Plan test 31."""
-    from permissions import _mode_cache
+    from permissions import _perm_cache
     from permissions import get_connector_mode
 
     from services import users as users_svc
@@ -1073,9 +1193,9 @@ def test_delete_user_clears_cache_but_retains_rows(perm_store):
     _create_user(perm_store, user_id="alice", email="a@home.lan", role="user")
     _seed_perm(perm_store, user_id="alice", connector="filesystem-mcp", mode="DO")
     get_connector_mode(user_id="alice", connector="filesystem-mcp")
-    assert ("alice", "filesystem-mcp") in _mode_cache
+    assert ("alice", "filesystem-mcp") in _perm_cache
     users_svc.delete_user("alice")
-    assert all(key[0] != "alice" for key in _mode_cache.keys())
+    assert all(key[0] != "alice" for key in _perm_cache.keys())
     # Forensic retention: connector_permissions row stays in DB even
     # after the owning user is hard-deleted (mirrors mcp_token_user_map D7).
     assert ("alice", "filesystem-mcp") in perm_store.cp
@@ -1126,3 +1246,184 @@ def test_db_default_user_remap_includes_user_batch_jobs():
 def test_db_default_user_remap_includes_routine_do_tracking():
     """Plan test 34."""
     assert "routine_do_tracking" in _scoped_tables_from_source()
+
+
+# ---------------------------------------------------------------------------
+# LUM-612 / LUM-615 — capability grant route-contract tests (HTTP layer).
+# ---------------------------------------------------------------------------
+
+
+def test_put_capability_connector_grant_via_http(
+    perm_store,
+    auth_env,
+    monkeypatch,
+):
+    """LUM-615 — dotted ``capability.{id}`` PUT/GET round-trip via real routes."""
+    _stub_registry(monkeypatch, [])
+    _stub_capability_registry(monkeypatch, ["mock-echo"])
+    alice_id = _create_user(perm_store, user_id="alice", email="a@home.lan", role="user")
+    connector = "capability.mock-echo"
+    with _booted_client() as client:
+        put = client.put(
+            f"/api/v1/me/permissions/{connector}",
+            headers=_hdr(alice_id),
+            json={"scopes": ["echo:run"]},
+        )
+        assert put.status_code == 200, put.text
+        assert put.json()["scopes"] == ["echo:run"]
+        get = client.get(
+            f"/api/v1/me/permissions/{connector}",
+            headers=_hdr(alice_id),
+        )
+    assert get.status_code == 200, get.text
+    assert get.json()["scopes"] == ["echo:run"]
+    assert get.json()["is_default"] is False
+
+
+def test_put_unknown_capability_connector_404(
+    perm_store,
+    auth_env,
+    monkeypatch,
+):
+    """LUM-615 — unknown ``capability.*`` is 404 (registry existence enforced)."""
+    _stub_registry(monkeypatch, [])
+    _stub_capability_registry(monkeypatch, ["mock-echo"])
+    alice_id = _create_user(perm_store, user_id="alice", email="a@home.lan", role="user")
+    with _booted_client() as client:
+        r = client.put(
+            "/api/v1/me/permissions/capability.does-not-exist",
+            headers=_hdr(alice_id),
+            json={"scopes": ["echo:run"]},
+        )
+    assert r.status_code == 404, r.text
+    assert r.json()["detail"]["error"] == "unknown_connector"
+
+
+def test_put_plain_connector_still_works(
+    perm_store,
+    auth_env,
+    monkeypatch,
+):
+    """LUM-615 — plain first-party connector PUT/GET/DELETE under widened regex."""
+    _stub_registry(monkeypatch, ["filesystem-mcp"])
+    _stub_capability_registry(monkeypatch, [])
+    alice_id = _create_user(perm_store, user_id="alice", email="a@home.lan", role="user")
+    with _booted_client() as client:
+        put = client.put(
+            "/api/v1/me/permissions/filesystem-mcp",
+            headers=_hdr(alice_id),
+            json={"mode": "DO"},
+        )
+        assert put.status_code == 200, put.text
+        get = client.get(
+            "/api/v1/me/permissions/filesystem-mcp",
+            headers=_hdr(alice_id),
+        )
+        assert get.status_code == 200
+        assert get.json()["mode"] == "DO"
+        delete = client.delete(
+            "/api/v1/me/permissions/filesystem-mcp",
+            headers=_hdr(alice_id),
+        )
+    assert delete.status_code == 200
+    assert delete.json()["is_default"] is True
+
+
+def test_scopes_only_put_succeeds_and_mode_only_put_preserves_scopes(
+    perm_store,
+    auth_env,
+    monkeypatch,
+):
+    """LUM-615 — scopes-only PUT, mode-only PUT preserves scopes, ``{}`` is no-op."""
+    _stub_registry(monkeypatch, [])
+    _stub_capability_registry(monkeypatch, ["mock-echo"])
+    alice_id = _create_user(perm_store, user_id="alice", email="a@home.lan", role="user")
+    connector = "capability.mock-echo"
+    with _booted_client() as client:
+        r1 = client.put(
+            f"/api/v1/me/permissions/{connector}",
+            headers=_hdr(alice_id),
+            json={"scopes": ["echo:run", "memory:read"]},
+        )
+        assert r1.status_code == 200, r1.text
+        assert r1.json()["scopes"] == ["echo:run", "memory:read"]
+        assert r1.json()["mode"] == "ASK"
+        r2 = client.put(
+            f"/api/v1/me/permissions/{connector}",
+            headers=_hdr(alice_id),
+            json={"mode": "DO"},
+        )
+        assert r2.status_code == 200, r2.text
+        assert r2.json()["mode"] == "DO"
+        assert r2.json()["scopes"] == ["echo:run", "memory:read"]
+        r3 = client.put(
+            f"/api/v1/me/permissions/{connector}",
+            headers=_hdr(alice_id),
+            json={},
+        )
+        assert r3.status_code == 200, r3.text
+        assert r3.json()["mode"] == "DO"
+        assert r3.json()["scopes"] == ["echo:run", "memory:read"]
+
+
+def test_capability_put_fails_closed_when_registry_unavailable(
+    perm_store,
+    auth_env,
+    monkeypatch,
+):
+    """LUM-615 — ``capability.*`` PUT is fail-closed when the registry is down."""
+    _stub_registry(monkeypatch, [])
+    import routes.connector_permissions as cp_routes
+
+    monkeypatch.setattr(cp_routes, "_known_capability_connectors", lambda: None)
+    alice_id = _create_user(perm_store, user_id="alice", email="a@home.lan", role="user")
+    with _booted_client() as client:
+        r = client.put(
+            "/api/v1/me/permissions/capability.mock-echo",
+            headers=_hdr(alice_id),
+            json={"scopes": ["echo:run"]},
+        )
+    assert r.status_code == 404, r.text
+    assert r.json()["detail"]["error"] == "unknown_connector"
+    assert "Warning" not in r.headers
+
+
+def test_delete_capability_grant_bypasses_existence_check(
+    perm_store,
+    auth_env,
+    monkeypatch,
+):
+    """LUM-615 — orphaned ``capability.{id}`` grant revocable via DELETE (me + admin)."""
+    _stub_registry(monkeypatch, [])
+    _stub_capability_registry(monkeypatch, [])
+    alice_id = _create_user(perm_store, user_id="alice", email="a@home.lan", role="user")
+    admin_id = _create_user(perm_store, user_id="admin1", email="ad@home.lan", role="admin")
+    orphan = "capability.orphaned-cap"
+    _seed_perm(
+        perm_store,
+        user_id=alice_id,
+        connector=orphan,
+        mode="DO",
+        scopes=["memory:read"],
+    )
+    with _booted_client() as client:
+        me_del = client.delete(
+            f"/api/v1/me/permissions/{orphan}",
+            headers=_hdr(alice_id),
+        )
+        assert me_del.status_code == 200, me_del.text
+        assert me_del.json()["is_default"] is True
+        assert (alice_id, orphan) not in perm_store.cp
+        _seed_perm(
+            perm_store,
+            user_id=alice_id,
+            connector=orphan,
+            mode="ASK",
+            scopes=["kg:write"],
+        )
+        admin_del = client.delete(
+            f"/api/v1/admin/users/{alice_id}/permissions/{orphan}",
+            headers=_hdr(admin_id, role="admin"),
+        )
+    assert admin_del.status_code == 200, admin_del.text
+    assert (alice_id, orphan) not in perm_store.cp

@@ -595,7 +595,8 @@ class CaptureListItem(BaseModel):
     title: Optional[str] = None
     text: Optional[str] = None
     url: Optional[str] = None
-    last_error: Optional[str] = None  # LUM-606: surfaced so the inbox can show why a failed capture failed
+    # LUM-606: surfaced so the inbox can show why a failed capture failed
+    last_error: Optional[str] = None
     attachment_count: int = 0
     transcript_count: int = 0
     created_at: datetime
@@ -661,6 +662,14 @@ class MeToolsItem(BaseModel):
     action_type: Optional[str] = None
     permission_mode: str
     requires_credentials: bool = False
+    is_community: bool = Field(
+        default=False,
+        description="LUM-613 trust class for capability-backed rows (observational).",
+    )
+    external_endpoints: List[str] = Field(
+        default_factory=list,
+        description="Declared egress hosts for capability-backed rows (LUM-613).",
+    )
 
 
 class MeToolsResponse(BaseModel):
@@ -926,6 +935,14 @@ class AdminDiagnosticsCapabilityService(BaseModel):
         description="UTC timestamp of last successful health probe.",
     )
     tools: int = Field(ge=0, description="Tool count from manifest.")
+    is_community: bool = Field(
+        default=False,
+        description="LUM-613 trust class — True when the service is community/untrusted.",
+    )
+    external_endpoints: List[str] = Field(
+        default_factory=list,
+        description="Declared egress hosts from the manifest (LUM-613).",
+    )
 
 
 class AdminDiagnosticsCapabilities(BaseModel):

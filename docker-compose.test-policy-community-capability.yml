@@ -1,0 +1,19 @@
+# LUM-613 adversarial fixture — intentional policy violation.
+# Not for `docker compose up` or production use.
+# Do not copy snippets into a runtime compose file.
+#
+# Models a COMMUNITY capability overlay (service name NOT in
+# scripts/compose_core_allowlist.txt) that tries to pull Core credentials via
+# `env_file: .env`. LUM-43's compose policy bans `env_file` on any
+# non-allowlisted service, so the checker MUST reject this — that is the
+# regression guard proving a community overlay cannot obtain Core DB/Qdrant
+# creds. `make compose-policy-check-community` expects checker exit 1.
+#
+# These overlays ship in the public AGPL tree; some secret scanners may flag the
+# key name below even though there is no secret value here.
+
+services:
+  community-widget:
+    image: example/community-widget:latest
+    env_file:
+      - .env

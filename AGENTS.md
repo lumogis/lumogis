@@ -19,9 +19,9 @@ Do not duplicate long prose from those files into issues or comments; link paths
 
 ## What this repository is
 
-- **Self-hosted, local-first, privacy-first** household AI under **AGPL-3.0-only** ([`LICENSE`](LICENSE)).
+- **Self-hosted, local-first, privacy-first** household knowledge base under **AGPL-3.0-only** ([`LICENSE`](LICENSE)).
 - **Core** = FastAPI orchestrator ([`orchestrator/`](orchestrator/)).
-- **Lumogis Web** = first-party SPA ([`clients/lumogis-web/`](clients/lumogis-web/)), same-origin behind Caddy.
+- **Lumogis Web** = first-party SPA ([`clients/lumogis-web/`](clients/lumogis-web/)), same-origin behind Caddy — search, document-chat, capture inbox/archive, household sharing, and admin.
 - **Lumogis Search** = Tauri 2 desktop memory-search overlay ([`clients/lumogis-search/`](clients/lumogis-search/)), connecting to your household server over HTTP.
 - **Default stack** = Docker Compose ([`docker-compose.yml`](docker-compose.yml)); optional profiles and overlays documented in [`README.md`](README.md).
 
@@ -44,7 +44,8 @@ This repository is the **public AGPL export** of Lumogis Core, Lumogis Web, Lumo
 | Unit tests (host venv) | `make test` |
 | Lint orchestrator | `make lint` |
 | Full stack integration | `make compose-test` / `make compose-test-integration` (Docker required) |
-| Web client tests | `make web-test` |
+| Web client tests | `make web-test`, `make web-lint`, `make web-build` |
+| Web E2E (slim stack) | `make web-e2e-prove` (Docker; see [`CONTRIBUTING.md`](CONTRIBUTING.md) Public CI) |
 | OpenAPI contract (CI parity) | `make openapi-check` |
 | Coverage matrix format (PRs touching matrices) | `make coverage-matrix-check` |
 | Fast local debug chain | `make debug`, `make test-list` |

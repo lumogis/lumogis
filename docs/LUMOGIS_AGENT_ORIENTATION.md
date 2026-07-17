@@ -10,17 +10,18 @@ Concise onboarding for AI assistants and contributors working in the **`lumogis/
 
 | Field | Value |
 | --- | --- |
-| **Date** | **2026-06-06** |
-| **Branch / commit** | **`main`** @ **`c3c396685`** (maintainer product repo at refresh) |
-| **Evidence consulted** | `README.md`, `ARCHITECTURE.md`, `CONTRIBUTING.md`, `CONTRIBUTING-BEGINNERS.md` (export template), `Makefile`, `docs/capabilities.md`, `docs/testing/automated-test-strategy.md`, `docs/testing/README.md`, `CHANGELOG.md` **[0.7.1]**, `scripts/debug/README.md` |
+| **Date** | **2026-07-12** |
+| **Branch / commit** | **`main`** @ **`797c81470`** (maintainer product repo at refresh) |
+| **Evidence consulted** | `README.md`, `ARCHITECTURE.md`, `CONTRIBUTING.md`, `CONTRIBUTING-BEGINNERS.md` (export template), `Makefile`, `docs/capabilities.md`, `docs/testing/automated-test-strategy.md`, `docs/testing/README.md`, `CHANGELOG.md` **[0.10.0]**, `scripts/debug/README.md` |
 
 ---
 
 ## What Lumogis is
 
-- **Self-hosted household / personal AI** — data and indexes stay on hardware you control (Docker Compose, **AGPL-3.0-only**).
-- **Core** = FastAPI orchestrator; **Lumogis Web** = first-party SPA behind **Caddy** (same-origin).
-- **Lumogis Search** = Tauri 2 desktop overlay for memory search against your household server.
+- **Self-hosted household knowledge base** — data and indexes stay on hardware you control (Docker Compose, **AGPL-3.0-only**).
+- **Core** = FastAPI orchestrator; **Lumogis Web** = first-party SPA behind **Caddy** (same-origin) — search, document-chat, capture, sharing, and admin.
+- **Lumogis Search** = Tauri 2 desktop overlay for memory search against your household server (`clients/lumogis-search/`).
+- **Household sharing** — per-user personal/shared scopes; documents and entities can be published to the household with scoped visibility.
 - **Optional LibreChat** profile exists for OpenAI-compatible chat; Lumogis Web is the primary surface.
 - **Not** a Lumogis-operated SaaS — operators run their own stack.
 
@@ -53,10 +54,13 @@ Published container images (`ghcr.io/lumogis/lumogis-orchestrator`, `ghcr.io/lum
 
 - **Five concepts:** Services, Adapters, Plugins, Signals, Actions — see [`ARCHITECTURE.md`](../ARCHITECTURE.md).
 - **Ask / Do** for tool and action safety — **ADR 006**.
-- **Tool catalog** read-only observation vs execution — `orchestrator/services/unified_tools.py`, **ADR 034** (agent harness terminology).
-- **MCP** = external interoperability layer — `orchestrator/mcp_server.py`, not the internal backbone.
-- **Context building** — hybrid entity selection and budgets — **ADR 051**, env vars in `config/test.env.example`.
-- **Conversation history** — browse/continue/delete in Lumogis Web; server transcript sync upserts `web_conversations` on **`PUT`** — **ADR 074**, amendment **ADR 085**.
+- **Household scopes** — personal/shared/system memory and document visibility — **ADR 015**, **ADR 155**.
+- **Capture** — Quick Capture inbox (edit, commit to memory) and read-only archive for indexed captures — **ADR 161**.
+- **Tool catalog** read-only observation vs execution — `orchestrator/services/unified_tools.py`, **ADR 034**.
+- **MCP** = external interoperability layer — `orchestrator/mcp_server.py`, memory read/write tools — **ADR 017**, **ADR 128–135**.
+- **Context building** — hybrid entity selection and budgets — **ADR 051**; optional chat auto-RAG — **ADR 059**, **ADR 106**.
+- **Conversation history** — browse/continue/delete in Lumogis Web; server-side transcript persistence — **ADR 074**, **ADR 085**, **ADR 156**.
+- **Admin** — system status, search/retrieval settings (BGE reranker toggle), read-only feature-flags panel — **ADR 074**, **ADR 159**, **ADR 160**.
 - **Lumogis Search export** — public AGPL overlay at `clients/lumogis-search/`; installer CI ships in this tree — **ADR 080**, **ADR 082**; open-core boundary — **ADR 081**, **ADR 042**.
 
 For operator deployment: [`docs/deployment/quickstart.md`](deployment/quickstart.md), [`README.md`](../README.md).
@@ -70,8 +74,8 @@ For operator deployment: [`docs/deployment/quickstart.md`](deployment/quickstart
 | Orchestrator unit | `make test` |
 | Lint | `make lint` |
 | Compose integration | `make compose-test`, `make compose-test-integration` |
-| Web | `make web-test`, `make web-lint`, `make web-build` |
-| Search overlay (Vitest + Rust) | `cd clients/lumogis-search && npm test`; `make search-build` |
+| Web | `make web-test`, `make web-lint`, `make web-build`, `make web-e2e-prove` |
+| Search overlay (Vitest + Rust) | `cd clients/lumogis-search && npm test`; `make search-dev`, `make search-build` |
 | OpenAPI CI contract | `make openapi-check` |
 | Coverage matrix format | `make coverage-matrix-check` (core/web matrices) |
 | Fast local debug chain | `make debug`, `make test-list` — see `scripts/debug/README.md` |
@@ -97,5 +101,5 @@ Full strategy: [`docs/testing/automated-test-strategy.md`](testing/automated-tes
 
 - [`docs/README.md`](README.md) — documentation index
 - [`docs/extending/extending-the-stack.md`](extending/extending-the-stack.md) — plugins and extension
-- [`CHANGELOG.md`](../CHANGELOG.md) — shipped product changes (latest: **0.7.1**)
+- [`CHANGELOG.md`](../CHANGELOG.md) — shipped product changes (latest: **0.10.0**)
 - [`TELEMETRY.md`](../TELEMETRY.md) — telemetry posture

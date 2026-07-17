@@ -1,0 +1,24 @@
+# first_party_capabilities.txt — LUM-613 trust oracle (origin-pinned)
+#
+# The operator-maintained allowlist of FIRST-PARTY (trusted) out-of-process
+# capabilities. A discovered capability is treated as first-party ONLY when its
+# manifest `id` appears here AND it was discovered at the pinned base_url below.
+# Everything else classifies COMMUNITY (untrusted) and is fail-closed-gated at
+# dispatch (LUM-613) until container-network containment lands (LUM-618) — unless
+# the operator sets LUMOGIS_ALLOW_UNCONTAINED_COMMUNITY_CAPABILITIES=true.
+#
+# This is the TRUST boundary. It is intentionally SEPARATE from the credentials
+# boundary (scripts/compose_core_allowlist.txt / LUM-43). LUM-614 (signing) will
+# replace this operator list with cryptographic identity.
+#
+# Format: one entry per line —  <capability_id>  <expected_base_url>
+# `#` comments and blank lines are ignored.
+#
+# IMPORTANT (deployment): the pinned base_url must match the entry you put in
+# CAPABILITY_SERVICE_URLS. The seed below matches the Docker/RC default
+# (http://lumogis-graph:8001). On a NATIVE or custom deployment where the graph
+# capability is reached at a different origin (e.g. http://localhost:8001), update
+# this line to match — otherwise the graph capability classifies community and is
+# gated off.
+
+lumogis-graph  http://lumogis-graph:8001

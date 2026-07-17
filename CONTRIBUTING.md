@@ -151,6 +151,15 @@ make debug      # fast local chain with summary stdout + tee logs (see scripts/d
 make lint       # ruff check + format check
 ```
 
+Optional: install local pre-commit hooks so ruff runs before each commit (mirrors CI):
+
+```bash
+pip install pre-commit   # or: pipx install pre-commit
+pre-commit install
+```
+
+See `.pre-commit-config.yaml` for the pinned ruff version.
+
 Unit tests use mock adapters (`orchestrator/tests/conftest.py`) — no running services required.
 
 ```bash

@@ -53,6 +53,14 @@
       "AdminDiagnosticsCapabilityService": {
         "description": "One registered out-of-process capability service (manifest metadata only).",
         "properties": {
+          "external_endpoints": {
+            "description": "Declared egress hosts from the manifest (LUM-613).",
+            "items": {
+              "type": "string"
+            },
+            "title": "External Endpoints",
+            "type": "array"
+          },
           "healthy": {
             "title": "Healthy",
             "type": "boolean"
@@ -61,6 +69,12 @@
             "description": "Manifest ``id``.",
             "title": "Id",
             "type": "string"
+          },
+          "is_community": {
+            "default": false,
+            "description": "LUM-613 trust class — True when the service is community/untrusted.",
+            "title": "Is Community",
+            "type": "boolean"
           },
           "last_seen": {
             "anyOf": [
@@ -1104,6 +1118,60 @@
           "file"
         ],
         "title": "Body_upload_ingest_file_api_v1_ingest_upload_post",
+        "type": "object"
+      },
+      "CapabilityGrantView": {
+        "description": "Consent surface: what a capability requires vs what the user granted.",
+        "properties": {
+          "capability_id": {
+            "title": "Capability Id",
+            "type": "string"
+          },
+          "connector": {
+            "title": "Connector",
+            "type": "string"
+          },
+          "granted": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Granted",
+            "type": "array"
+          },
+          "missing": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Missing",
+            "type": "array"
+          },
+          "required": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Required",
+            "type": "array"
+          },
+          "risk_tier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Risk Tier"
+          }
+        },
+        "required": [
+          "capability_id",
+          "connector",
+          "required",
+          "granted",
+          "missing"
+        ],
+        "title": "CapabilityGrantView",
         "type": "object"
       },
       "CaptureAttachmentSummary": {
@@ -2213,6 +2281,14 @@
             "title": "Mode",
             "type": "string"
           },
+          "scopes": {
+            "description": "Granted permission scopes for this connector (LUM-612).",
+            "items": {
+              "type": "string"
+            },
+            "title": "Scopes",
+            "type": "array"
+          },
           "updated_at": {
             "anyOf": [
               {
@@ -2261,6 +2337,14 @@
             "title": "Mode",
             "type": "string"
           },
+          "scopes": {
+            "description": "Granted permission scopes for this connector (LUM-612).",
+            "items": {
+              "type": "string"
+            },
+            "title": "Scopes",
+            "type": "array"
+          },
           "updated_at": {
             "anyOf": [
               {
@@ -2286,7 +2370,7 @@
       },
       "ConnectorPermissionUpdate": {
         "additionalProperties": false,
-        "description": "Request body for PUT routes.\n\n``extra='forbid'`` mirrors ``mcp_token_user_map`` D4/D16: a typo\nlike ``{\"Mode\": \"DO\"}`` (capital M) is rejected with 422 instead of\nsilently no-opping.",
+        "description": "Request body for PUT routes.\n\n``extra='forbid'`` mirrors ``mcp_token_user_map`` D4/D16: a typo\nlike ``{\"Mode\": \"DO\"}`` (capital M) is rejected with 422 instead of\nsilently no-opping.\n\nLUM-612: both fields are optional. ``mode`` present replaces the Ask/Do\nmode; ``scopes`` present replaces the granted set. A field left ``None`` is\nuntouched (a mode-only PUT does not wipe scopes and vice-versa); an empty\nbody ``{}`` is a no-op.",
         "properties": {
           "mode": {
             "enum": [
@@ -2295,11 +2379,15 @@
             ],
             "title": "Mode",
             "type": "string"
+          },
+          "scopes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Scopes",
+            "type": "array"
           }
         },
-        "required": [
-          "mode"
-        ],
         "title": "ConnectorPermissionUpdate",
         "type": "object"
       },
@@ -3464,6 +3552,18 @@
         "title": "EntitySearchResponse",
         "type": "object"
       },
+      "ExpectedOutcome": {
+        "description": "What a defence is expected to do with a payload.",
+        "enum": [
+          "sanitised",
+          "flagged",
+          "origin_tagged",
+          "blocked",
+          "passed"
+        ],
+        "title": "ExpectedOutcome",
+        "type": "string"
+      },
       "ExportRequest": {
         "description": "Body for ``POST /api/v1/me/export``. Optional — omit for self-export.",
         "properties": {
@@ -4103,6 +4203,18 @@
         ],
         "title": "IngestUploadQueuedResponse",
         "type": "object"
+      },
+      "InjectionVector": {
+        "description": "The defensive surface a case exercises (maps to a pure primitive).",
+        "enum": [
+          "document_ingest",
+          "session_context",
+          "tool_result",
+          "user_config",
+          "action_execution"
+        ],
+        "title": "InjectionVector",
+        "type": "string"
       },
       "InstancePrivacyMode": {
         "enum": [
@@ -5206,6 +5318,20 @@
             "description": "Plain-text summary only; never a JSON Schema blob.",
             "title": "Description",
             "type": "string"
+          },
+          "external_endpoints": {
+            "description": "Declared egress hosts for capability-backed rows (LUM-613).",
+            "items": {
+              "type": "string"
+            },
+            "title": "External Endpoints",
+            "type": "array"
+          },
+          "is_community": {
+            "default": false,
+            "description": "LUM-613 trust class for capability-backed rows (observational).",
+            "title": "Is Community",
+            "type": "boolean"
           },
           "label": {
             "description": "Short UI label derived from description or tool name.",
@@ -6523,6 +6649,211 @@
         ],
         "title": "RiskTier",
         "type": "string"
+      },
+      "SafetyCaseInfo": {
+        "properties": {
+          "expected": {
+            "title": "Expected",
+            "type": "string"
+          },
+          "known_gap": {
+            "title": "Known Gap",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "vector": {
+            "title": "Vector",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "vector",
+          "expected",
+          "known_gap"
+        ],
+        "title": "SafetyCaseInfo",
+        "type": "object"
+      },
+      "SafetyCaseList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SafetyCaseInfo"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "title": "SafetyCaseList",
+        "type": "object"
+      },
+      "SafetyCaseResult": {
+        "properties": {
+          "actual": {
+            "title": "Actual",
+            "type": "string"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "expected": {
+            "title": "Expected",
+            "type": "string"
+          },
+          "known_gap": {
+            "title": "Known Gap",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "passed": {
+            "title": "Passed",
+            "type": "boolean"
+          },
+          "vector": {
+            "title": "Vector",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "vector",
+          "expected",
+          "actual",
+          "passed",
+          "known_gap",
+          "detail"
+        ],
+        "title": "SafetyCaseResult",
+        "type": "object"
+      },
+      "SafetyProbeRequest": {
+        "properties": {
+          "action_type": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Action Type",
+            "type": "string"
+          },
+          "expected": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExpectedOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "payload": {
+            "default": "",
+            "maxLength": 20000,
+            "title": "Payload",
+            "type": "string"
+          },
+          "vector": {
+            "$ref": "#/components/schemas/InjectionVector"
+          }
+        },
+        "required": [
+          "vector"
+        ],
+        "title": "SafetyProbeRequest",
+        "type": "object"
+      },
+      "SafetyProbeResult": {
+        "properties": {
+          "actual": {
+            "title": "Actual",
+            "type": "string"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "expected": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected"
+          },
+          "passed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passed"
+          },
+          "vector": {
+            "title": "Vector",
+            "type": "string"
+          }
+        },
+        "required": [
+          "vector",
+          "expected",
+          "actual",
+          "passed",
+          "detail"
+        ],
+        "title": "SafetyProbeResult",
+        "type": "object"
+      },
+      "SafetySuiteResult": {
+        "properties": {
+          "failed": {
+            "title": "Failed",
+            "type": "integer"
+          },
+          "passed": {
+            "title": "Passed",
+            "type": "integer"
+          },
+          "ran_at": {
+            "title": "Ran At",
+            "type": "string"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/SafetyCaseResult"
+            },
+            "title": "Results",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "warnings": {
+            "title": "Warnings",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "passed",
+          "failed",
+          "warnings",
+          "ran_at"
+        ],
+        "title": "SafetySuiteResult",
+        "type": "object"
       },
       "SectionSummary": {
         "properties": {
@@ -8708,6 +9039,92 @@
         ]
       }
     },
+    "/api/v1/admin/safety/cases": {
+      "get": {
+        "description": "List the static suite (name/vector/expected/known_gap) for the UI.",
+        "operationId": "list_safety_cases_api_v1_admin_safety_cases_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SafetyCaseList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Safety Cases",
+        "tags": [
+          "admin-safety"
+        ]
+      }
+    },
+    "/api/v1/admin/safety/probe": {
+      "post": {
+        "description": "Run one ad-hoc payload against a chosen vector.",
+        "operationId": "probe_safety_api_v1_admin_safety_probe_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SafetyProbeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SafetyProbeResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Probe Safety",
+        "tags": [
+          "admin-safety"
+        ]
+      }
+    },
+    "/api/v1/admin/safety/run": {
+      "post": {
+        "description": "Run the full injection suite against the live defences (dry-run).",
+        "operationId": "run_safety_suite_api_v1_admin_safety_run_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SafetySuiteResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Run Safety Suite",
+        "tags": [
+          "admin-safety"
+        ]
+      }
+    },
     "/api/v1/admin/shared-items": {
       "get": {
         "description": "List every household shared item with source pk + owner (admin-only).\n\nAdmin gating is enforced by the router-level ``require_admin`` dependency;\nthis handler needs no acting-user context (unlike the delete handler,\nwhich records the admin as the audit actor).",
@@ -9533,7 +9950,7 @@
     },
     "/api/v1/admin/users/{user_id}/permissions/{connector}": {
       "delete": {
-        "description": "Admin drops the target user's explicit row for ``{connector}``.",
+        "description": "Admin drops the target user's explicit row for ``{connector}``.\n\nLUM-612: mirrors the self-service DELETE — the existence check is\nbypassed (``allow_missing=True``) for a ``capability.{id}`` connector so\nan admin can always force-revoke a grant to a now-deregistered or\nunreachable capability (the incident-response case).",
         "operationId": "admin_delete_user_permission_api_v1_admin_users__user_id__permissions__connector__delete",
         "parameters": [
           {
@@ -9546,13 +9963,14 @@
             }
           },
           {
+            "description": "Connector slug (e.g. filesystem-mcp) or capability id (capability.{id}; validated at runtime).",
             "in": "path",
             "name": "connector",
             "required": true,
             "schema": {
+              "description": "Connector slug (e.g. filesystem-mcp) or capability id (capability.{id}; validated at runtime).",
               "maxLength": 64,
               "minLength": 1,
-              "pattern": "^[a-z][a-z0-9_-]*$",
               "title": "Connector",
               "type": "string"
             }
@@ -9599,13 +10017,14 @@
             }
           },
           {
+            "description": "Connector slug (e.g. filesystem-mcp) or capability id (capability.{id}; validated at runtime).",
             "in": "path",
             "name": "connector",
             "required": true,
             "schema": {
+              "description": "Connector slug (e.g. filesystem-mcp) or capability id (capability.{id}; validated at runtime).",
               "maxLength": 64,
               "minLength": 1,
-              "pattern": "^[a-z][a-z0-9_-]*$",
               "title": "Connector",
               "type": "string"
             }
@@ -9652,13 +10071,14 @@
             }
           },
           {
+            "description": "Connector slug (e.g. filesystem-mcp) or capability id (capability.{id}; validated at runtime).",
             "in": "path",
             "name": "connector",
             "required": true,
             "schema": {
+              "description": "Connector slug (e.g. filesystem-mcp) or capability id (capability.{id}; validated at runtime).",
               "maxLength": 64,
               "minLength": 1,
-              "pattern": "^[a-z][a-z0-9_-]*$",
               "title": "Connector",
               "type": "string"
             }
@@ -13323,19 +13743,46 @@
         ]
       }
     },
+    "/api/v1/me/permissions/capabilities": {
+      "get": {
+        "description": "Consent surface (LUM-612): per registered capability, what it **requires**\nvs what the caller has **granted**, and what's still **missing**.\n\nThis is the data an install/consent UI renders. Required scopes come from the\ninstance-global capability registry (same visibility as ``/me/tools``); granted\nscopes are resolved strictly for the caller. Defined before ``/{connector}`` so\nthe literal path is not swallowed by the path param.",
+        "operationId": "list_my_capability_grants_api_v1_me_permissions_capabilities_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CapabilityGrantView"
+                  },
+                  "title": "Response List My Capability Grants Api V1 Me Permissions Capabilities Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List My Capability Grants",
+        "tags": [
+          "me-permissions"
+        ]
+      }
+    },
     "/api/v1/me/permissions/{connector}": {
       "delete": {
-        "description": "Drop the caller's explicit row for ``{connector}``.\n\nReturns the now-default row (``is_default=True``). Idempotent — a\nDELETE against a connector with no per-user row is a no-op that\nstill returns ``200`` with the lazy default.",
+        "description": "Drop the caller's explicit row for ``{connector}``.\n\nReturns the now-default row (``is_default=True``). Idempotent — a\nDELETE against a connector with no per-user row is a no-op that\nstill returns ``200`` with the lazy default.\n\nLUM-612: for a ``capability.{id}`` connector the existence check is\nbypassed (``allow_missing=True``) so a grant to a now-unregistered\ncapability stays revocable — you must always be able to revoke.",
         "operationId": "delete_my_permission_api_v1_me_permissions__connector__delete",
         "parameters": [
           {
+            "description": "Connector slug (e.g. filesystem-mcp) or capability id (capability.{id}; validated at runtime).",
             "in": "path",
             "name": "connector",
             "required": true,
             "schema": {
+              "description": "Connector slug (e.g. filesystem-mcp) or capability id (capability.{id}; validated at runtime).",
               "maxLength": 64,
               "minLength": 1,
-              "pattern": "^[a-z][a-z0-9_-]*$",
               "title": "Connector",
               "type": "string"
             }
@@ -13373,13 +13820,14 @@
         "operationId": "get_my_permission_api_v1_me_permissions__connector__get",
         "parameters": [
           {
+            "description": "Connector slug (e.g. filesystem-mcp) or capability id (capability.{id}; validated at runtime).",
             "in": "path",
             "name": "connector",
             "required": true,
             "schema": {
+              "description": "Connector slug (e.g. filesystem-mcp) or capability id (capability.{id}; validated at runtime).",
               "maxLength": 64,
               "minLength": 1,
-              "pattern": "^[a-z][a-z0-9_-]*$",
               "title": "Connector",
               "type": "string"
             }
@@ -13417,13 +13865,14 @@
         "operationId": "put_my_permission_api_v1_me_permissions__connector__put",
         "parameters": [
           {
+            "description": "Connector slug (e.g. filesystem-mcp) or capability id (capability.{id}; validated at runtime).",
             "in": "path",
             "name": "connector",
             "required": true,
             "schema": {
+              "description": "Connector slug (e.g. filesystem-mcp) or capability id (capability.{id}; validated at runtime).",
               "maxLength": 64,
               "minLength": 1,
-              "pattern": "^[a-z][a-z0-9_-]*$",
               "title": "Connector",
               "type": "string"
             }

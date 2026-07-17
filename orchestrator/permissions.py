@@ -47,7 +47,12 @@ import config
 
 _log = logging.getLogger(__name__)
 
-_mode_cache: dict[tuple[str, str], str] = {}
+# LUM-612: one cache slot per (user_id, connector) holds BOTH the Ask/Do mode
+# and the granted scopes as a single (mode, scopes) value. Unifying them means
+# every existing invalidation path (invalidate_cache, clear_cache_for_user,
+# delete_user_permission) covers scopes automatically — a separate scope cache
+# would keep authorizing after DELETE / account-disable (revoke-fails-open).
+_perm_cache: dict[tuple[str, str], tuple[str, list[str]]] = {}
 
 _DEFAULT_MODE = "ASK"
 _VALID_MODES = {"ASK", "DO"}
@@ -63,35 +68,56 @@ def get_connector_mode(*, user_id: str, connector: str) -> str:
     """
     if not isinstance(user_id, str) or not user_id:
         raise TypeError("get_connector_mode: user_id (keyword-only) is required")
+    return _load_perm(user_id, connector)[0]
+
+
+def _load_perm(user_id: str, connector: str) -> tuple[str, list[str]]:
+    """Resolve ``(mode, scopes)`` for ``(user_id, connector)`` through the cache.
+
+    On no row: ``(_DEFAULT_MODE, [])``. One SELECT fetches both fields so the
+    mode and scope getters share a single cache slot (LUM-612).
+    """
     key = (user_id, connector)
-    if key in _mode_cache:
-        return _mode_cache[key]
+    cached = _perm_cache.get(key)
+    if cached is not None:
+        return cached
     store = config.get_metadata_store()
     row = store.fetch_one(
-        "SELECT mode FROM connector_permissions "
+        "SELECT mode, scopes FROM connector_permissions "
         "WHERE user_id = %s AND connector = %s "
-        "-- SCOPE-EXEMPT: connector_permissions has no scope column",
+        "-- SCOPE-EXEMPT: connector_permissions is not memory-visibility-scoped; "
+        "scopes[] here are permission grants, not the visibility scope",
         (user_id, connector),
     )
     mode = row["mode"] if row else _DEFAULT_MODE
-    _mode_cache[key] = mode
-    return mode
+    scopes = list(row["scopes"] or []) if row else []
+    value = (mode, scopes)
+    _perm_cache[key] = value
+    return value
+
+
+def get_granted_scopes(*, user_id: str, connector: str) -> list[str]:
+    """Scopes the user has granted to ``connector`` (LUM-612). ``[]`` when none."""
+    if not isinstance(user_id, str) or not user_id:
+        raise TypeError("get_granted_scopes: user_id (keyword-only) is required")
+    return list(_load_perm(user_id, connector)[1])
 
 
 def invalidate_cache(user_id: str, connector: str) -> None:
-    """Drop a single ``(user_id, connector)`` slot."""
-    _mode_cache.pop((user_id, connector), None)
+    """Drop a single ``(user_id, connector)`` slot (mode AND scopes)."""
+    _perm_cache.pop((user_id, connector), None)
 
 
 def clear_cache_for_user(user_id: str) -> None:
-    """Drop every cache slot owned by ``user_id``.
+    """Drop every cache slot owned by ``user_id`` (mode AND scopes).
 
     Iterates over a snapshot of keys to avoid ``RuntimeError: dictionary
-    changed size during iteration``.
+    changed size during iteration``. Wired to user disable/delete, so a
+    disabled user's granted scopes stop authorizing immediately (LUM-612).
     """
-    for key in list(_mode_cache.keys()):
+    for key in list(_perm_cache.keys()):
         if key[0] == user_id:
-            _mode_cache.pop(key, None)
+            _perm_cache.pop(key, None)
 
 
 def check_permission(
@@ -205,6 +231,52 @@ def delete_user_permission(*, user_id: str, connector: str) -> None:
     )
 
 
+def grant_scopes(*, user_id: str, connector: str, scopes: list[str]) -> None:
+    """Replace the granted scope set for ``(user_id, connector)`` (LUM-612).
+
+    UPSERTs the row (creating it with the default mode when none exists) and
+    invalidates the cache slot so a grant takes effect immediately.
+    """
+    if not isinstance(user_id, str) or not user_id:
+        raise TypeError("grant_scopes: user_id (keyword-only) is required")
+    clean = _normalise_scopes(scopes)
+    store = config.get_metadata_store()
+    store.execute(
+        "INSERT INTO connector_permissions (user_id, connector, mode, scopes) "
+        "VALUES (%s, %s, %s, %s) "
+        "ON CONFLICT (user_id, connector) DO UPDATE "
+        "SET scopes = EXCLUDED.scopes, updated_at = NOW()",
+        (user_id, connector, _DEFAULT_MODE, clean),
+    )
+    invalidate_cache(user_id, connector)
+    _log.info(
+        "scopes_granted user_id=%s connector=%s n=%d", user_id, connector, len(clean)
+    )
+
+
+# Revocation is expressed via the grant API (PUT replaces the granted set) and
+# DELETE (clears the row) — both invalidate the unified cache. The least-privilege
+# AND-composition lives inline at the capability chokepoint (services/execution.py)
+# where the injected PermissionCheck runs the binary gate; a standalone
+# check_capability_permission here would double-run that gate, so it is omitted.
+
+
+def _normalise_scopes(scopes: list[str]) -> list[str]:
+    """Validate + dedupe scope strings (``area:verb``). Raises on a malformed one."""
+    import re
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in scopes or []:
+        s = str(raw).strip()
+        if not re.fullmatch(r"[a-z0-9_]+:[a-z0-9_]+", s):
+            raise ValueError(f"invalid scope: {raw!r} (expected 'area:verb')")
+        if s not in seen:
+            seen.add(s)
+            out.append(s)
+    return out
+
+
 def seed_defaults() -> None:
     """No-op shim retained for backward compatibility.
 
@@ -221,15 +293,16 @@ def seed_defaults() -> None:
 def get_all_permissions() -> list[dict]:
     """Cross-user enumeration of every explicit per-user row.
 
-    Returns ``[{"user_id": str, "connector": str, "mode": str}, ...]``
-    sorted by ``(user_id, connector)``. Used by the admin enumeration
-    endpoint and the legacy ``GET /permissions`` alias.
+    Returns ``[{"user_id": str, "connector": str, "mode": str,
+    "scopes": list[str]}, ...]`` sorted by ``(user_id, connector)``. Used by
+    the admin enumeration endpoint and the legacy ``GET /permissions`` alias.
     """
     store = config.get_metadata_store()
     return store.fetch_all(
-        "SELECT user_id, connector, mode FROM connector_permissions "
+        "SELECT user_id, connector, mode, scopes FROM connector_permissions "
         "ORDER BY user_id, connector "
-        "-- SCOPE-EXEMPT: connector_permissions has no scope column"
+        "-- SCOPE-EXEMPT: connector_permissions is not memory-visibility-scoped; "
+        "scopes[] here are permission grants, not the visibility scope"
     )
 
 
@@ -245,9 +318,10 @@ def get_user_permissions(*, user_id: str) -> list[dict]:
         raise TypeError("get_user_permissions: user_id (keyword-only) is required")
     store = config.get_metadata_store()
     return store.fetch_all(
-        "SELECT connector, mode FROM connector_permissions "
+        "SELECT connector, mode, scopes FROM connector_permissions "
         "WHERE user_id = %s ORDER BY connector "
-        "-- SCOPE-EXEMPT: connector_permissions has no scope column",
+        "-- SCOPE-EXEMPT: connector_permissions is not memory-visibility-scoped; "
+        "scopes[] here are permission grants, not the visibility scope",
         (user_id,),
     )
 
@@ -275,6 +349,7 @@ def get_user_effective_permissions(
                 {
                     "connector": connector,
                     "mode": row["mode"],
+                    "scopes": list(row.get("scopes") or []),
                     "is_default": False,
                     "updated_at": row.get("updated_at"),
                 }
@@ -284,6 +359,7 @@ def get_user_effective_permissions(
                 {
                     "connector": connector,
                     "mode": _DEFAULT_MODE,
+                    "scopes": [],
                     "is_default": True,
                     "updated_at": None,
                 }

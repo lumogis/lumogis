@@ -26,7 +26,10 @@ SHELL := /bin/bash
         migrate-dry-run update rollback \
         test-backup-retention \
         compose-policy-check compose-policy-check-baseline compose-policy-check-adversarial \
-        compose-policy-check-adversarial-envfile \
+        compose-policy-check-adversarial-envfile compose-policy-check-community \
+        compose-policy-check-egress egress-containment-test \
+        check-egress-acl-divergence \
+        check-no-tethered-lum613 \
         mock-capability-test \
         sync-vendored test-kg test-kg-image compose-test-kg compose-test-kg-integration \
         test-graph-parity \
@@ -116,6 +119,59 @@ compose-policy-check-adversarial-envfile:
 	if [ $$ec -eq 1 ]; then exit 0; fi; \
 	echo "compose-policy-check-adversarial-envfile: expected policy violation (exit 1), got $$ec" >&2; \
 	exit 1
+
+# LUM-613 — a COMMUNITY capability overlay must not obtain Core creds via env_file.
+# Expect checker exit 1 (policy violation); make exit 0 means the guard caught it.
+compose-policy-check-community:
+	@$(PYTHON) scripts/check_compose_policy.py -f docker-compose.yml -f docker-compose.test-policy-community-capability.yml; \
+	ec=$$?; \
+	if [ $$ec -eq 1 ]; then exit 0; fi; \
+	echo "compose-policy-check-community: expected policy violation (exit 1), got $$ec" >&2; \
+	exit 1
+
+# LUM-618 — Pass C (network membership). Two proofs:
+#  (1) the adversarial violation fixture MUST exit 1 (proves Pass C actually
+#      fires — guards against a silent no-op if the rendered networks shape ever
+#      differs); make exit 0 means the guard caught it.
+#  (2) the REAL RC render (base+test+public-rc-stack+egress overlay) MUST exit 0
+#      with the mock on the isolated network — proving the reference deployment
+#      is contained, not just a bespoke fixture (the R2 P0 guard).
+compose-policy-check-egress:
+	@python3 -c "import yaml" 2>/dev/null || \
+	  python3 -m pip install -q -r scripts/requirements-compose-policy.txt
+	@echo "==> Pass C fires on the violation fixture (expect exit 1)"
+	@$(PYTHON) scripts/check_compose_policy.py \
+	  -f docker-compose.test-policy-community-egress-violation.yml \
+	  --community-service bad-community-cap; \
+	ec=$$?; \
+	if [ $$ec -ne 1 ]; then \
+	  echo "compose-policy-check-egress: violation fixture expected exit 1, got $$ec" >&2; exit 1; \
+	fi
+	@echo "==> Pass C passes on the real RC render — mock must be contained (expect exit 0)"
+	@COMPOSE_PROFILES=community-egress MOCK_CAPABILITY_SHARED_SECRET=lumogis-ci-mock-capability-placeholder \
+	  $(PYTHON) scripts/check_compose_policy.py \
+	  --project-directory "$(CURDIR)" \
+	  -f docker-compose.yml -f docker-compose.test.yml \
+	  -f docker-compose.public-rc-stack.yml -f docker-compose.egress.yml \
+	  --community-service lumogis-mock-capability
+	@echo "compose-policy-check-egress: PASSED"
+
+# LUM-618 — live container-network containment proof (Docker). Brings up the
+# isolated network + Squid egress proxy + a community-probe, asserts the allowed
+# host is reachable (spliced), a non-declared host is refused via a Squid deny,
+# and a proxy-bypass has no route (incl. IPv6). Runs the PoC-validated Squid
+# config (plan step 1). Requires Docker; ~1–2 min.
+egress-containment-test:
+	$(PYTHON) -m pytest tests/integration/test_egress_containment.py -v --tb=short -m integration
+
+# LUM-621 — allow file must match declared external_endpoints (mock RC fixture).
+check-egress-acl-divergence:
+	$(PYTHON) -m scripts.gen_capability_egress_acl --check \
+		--id lumogis.mock.echo --endpoints example.com
+
+# LUM-613 — LUM-613 files must stay tethered-free (tethered DiD deferred to LUM-619).
+check-no-tethered-lum613:
+	$(PYTHON) scripts/check_no_tethered_lum613.py
 
 # ─── Docker-based CI (no running stack or local Python required) ──────────────
 

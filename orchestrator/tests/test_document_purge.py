@@ -46,6 +46,21 @@ class _FileIndexStore:
     def fetch_one(self, query: str, params: tuple | None = None):
         q = " ".join(query.split()).lower()
         p = params or ()
+        if (
+            "from file_index" in q
+            and "file_path = %s" in q
+            and "where id = %s" not in q
+            and "scope = 'personal'" in q
+        ):
+            uid, fp = p[0], p[1]
+            for row in self.rows.values():
+                if (
+                    row.get("user_id") == uid
+                    and row.get("file_path") == fp
+                    and row.get("scope") == "personal"
+                ):
+                    return {"id": row["id"]}
+            return None
         if "from file_index" in q and "scope = 'personal'" in q and "id = %s" in q:
             doc_id, uid = p[0], p[1]
             row = self.rows.get(int(doc_id))
@@ -423,6 +438,69 @@ def test_purge_retry_via_tombstone(file_ms, mock_vector_store, monkeypatch):
     tombstone2 = file_ms.purged_documents.get(("alice", 14))
     assert tombstone2["qdrant_deleted"] is True
     assert tombstone2["resolved_at"] is not None
+
+
+def test_purge_tombstone_retry_skips_path_when_reingested(
+    file_ms, mock_vector_store, monkeypatch
+):
+    """Tombstone Qdrant retry must not delete vectors for a newer doc at the same path."""
+    monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), None)
+    fp = "/docs/retry-reingest.pdf"
+    uid = "alice"
+    # Partial purge of doc 14 leaves a tombstone with Qdrant pending.
+    file_ms.rows[14] = {
+        "id": 14,
+        "file_path": fp,
+        "chunk_count": 1,
+        "user_id": uid,
+        "scope": "personal",
+    }
+    mock_vector_store.delete = MagicMock(side_effect=RuntimeError("qdrant down"))
+    result1 = purge_document(user_id=uid, document_id=14)
+    assert result1.partial is True
+    assert 14 not in file_ms.rows
+
+    # User re-ingests the same on-disk path → new personal row id=15.
+    file_ms.rows[15] = {
+        "id": 15,
+        "file_path": fp,
+        "chunk_count": 2,
+        "user_id": uid,
+        "scope": "personal",
+    }
+    live_pid = document_chunk_point_id(uid, fp, 0)
+    mock_vector_store.upsert(
+        collection="documents",
+        id=live_pid,
+        vector=[0.1],
+        payload={"user_id": uid, "file_path": fp, "scope": "personal"},
+    )
+    assert mock_vector_store.count("documents") == 1
+
+    original_delete_where = mock_vector_store.delete_where
+    spy_delete_where = MagicMock(side_effect=original_delete_where)
+    mock_vector_store.delete_where = spy_delete_where
+    mock_vector_store.delete = MagicMock(return_value=None)
+    result2 = purge_document(user_id=uid, document_id=14)
+    assert result2.qdrant_deleted is True
+    assert result2.partial is False
+    # Live document vectors at the reclaimed path must survive.
+    assert mock_vector_store.count("documents") == 1
+    delete_where_calls = [
+        c
+        for c in spy_delete_where.call_args_list
+        if c.kwargs.get("collection") == "documents"
+    ]
+    path_sweeps = [
+        c
+        for c in delete_where_calls
+        if any(
+            m.get("key") == "file_path" and m.get("match", {}).get("value") == fp
+            for m in c.kwargs["filter"]["must"]
+        )
+    ]
+    assert path_sweeps == []
+    assert mock_vector_store.delete.call_count == 0
 
 
 def test_purge_idempotent_on_resolved_tombstone(file_ms, mock_vector_store, monkeypatch):

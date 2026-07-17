@@ -9,6 +9,7 @@ const mainLinks: { to: string; label: string }[] = [
   { to: "/admin/mcp-tokens", label: "MCP tokens" },
   { to: "/admin/shared-items", label: "Household shared items" },
   { to: "/admin/audit", label: "Household audit" },
+  { to: "/admin/safety", label: "Safety playground" },
   { to: "/admin/diagnostics", label: "Diagnostics" },
   { to: "/admin/system-status", label: "System status" },
   { to: "/admin/privacy-mode", label: "Privacy mode" },

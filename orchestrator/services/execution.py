@@ -246,6 +246,10 @@ class ToolExecutor:
         require_service_bearer: bool = REQUIRE_BEARER_DEFAULT,
         service_healthy: bool = True,
         timeout_s: float = 2.5,
+        required_scopes: list[str],
+        invoke_path: str | None = None,
+        invoke_method: str = "POST",
+        output_schema: dict[str, Any] | None = None,
         unavailable_message: str = "capability: service unavailable",
     ) -> ToolExecutionResult:
         """POST to a capability tool endpoint; requires explicit connector/permission.
@@ -297,6 +301,41 @@ class ToolExecutor:
                 output="Permission denied",
                 denied=True,
             )
+        # LUM-612: least-privilege scope gate, ANDed AFTER the binary Ask/Do gate
+        # (never relaxes it). A required scope the user has not granted → deny,
+        # naming the missing scopes so the LLM/user can request the grant.
+        if required_scopes:
+            import permissions
+
+            granted = set(permissions.get_granted_scopes(user_id=user_id, connector=connector))
+            missing = sorted(set(required_scopes) - granted)
+            if missing:
+                self.emit_audit(
+                    ToolAuditEnvelope(
+                        user_id=user_id,
+                        tool_name=tool_name,
+                        request_id=request_id,
+                        capability_id=capability_id,
+                        status="denied",
+                        failure_reason="missing_scope",
+                        connector=connector,
+                        action_type=action_type,
+                        is_write=is_write,
+                    )
+                )
+                return ToolExecutionResult(
+                    success=False,
+                    output=json.dumps(
+                        {
+                            "error": "permission scope not granted",
+                            "connector": connector,
+                            "missing_scopes": missing,
+                            "hint": "grant via PUT /api/v1/me/permissions/"
+                            + connector,
+                        }
+                    ),
+                    denied=True,
+                )
         if not service_healthy:
             self.emit_audit(
                 ToolAuditEnvelope(
@@ -358,20 +397,28 @@ class ToolExecutor:
                 output=unavailable_message,
                 blocked_auth=True,
             )
-        body = dict(input_)
-        body["user_id"] = user_id
+        # Core injects user_id into the tool arguments (functional per-user
+        # scoping for tools that read it, e.g. the KG graph query) AND sets
+        # meta.user (attribution) inside the dispatch. The two are not
+        # redundant: meta.user must never be used for scoping.
+        arguments = dict(input_)
+        arguments["user_id"] = user_id
         res: HttpInvokeResult = post_capability_tool_invocation(
             base_url=base_url,
             tool_name=tool_name,
             user_id=user_id,
-            json_body=body,
+            arguments=arguments,
             timeout_s=timeout_s,
             service_bearer=bearer,
+            invoke_path=invoke_path,
+            invoke_method=invoke_method,
+            request_id=request_id,
+            output_schema=output_schema,
             require_service_bearer=require_service_bearer,
             unavailable_message=unavailable_message,
         )
         if not res.ok:
-            st = "forbidden_auth" if res.error_reason == "missing_service_auth" else "error"
+            st = "forbidden_auth" if res.error_code == "missing_service_auth" else "error"
             self.emit_audit(
                 ToolAuditEnvelope(
                     user_id=user_id,
@@ -379,19 +426,27 @@ class ToolExecutor:
                     request_id=request_id,
                     capability_id=capability_id,
                     status=st,
-                    failure_reason=res.error_reason,
+                    failure_reason=res.error_code,
                     connector=connector,
                     action_type=action_type,
                     is_write=is_write,
                 )
             )
-            if res.error_reason == "missing_service_auth":
+            if res.error_code == "missing_service_auth":
                 return ToolExecutionResult(
                     success=False,
                     output=unavailable_message,
                     blocked_auth=True,
                 )
-            return ToolExecutionResult(success=False, output=res.text)
+            error_output = json.dumps(
+                {
+                    "error": res.error_message or unavailable_message,
+                    "code": res.error_code,
+                    "retryable": res.retryable,
+                }
+            )
+            return ToolExecutionResult(success=False, output=error_output)
+        output_text = res.output_text
         self.emit_audit(
             ToolAuditEnvelope(
                 user_id=user_id,
@@ -400,10 +455,10 @@ class ToolExecutor:
                 capability_id=capability_id,
                 status="ok",
                 failure_reason=None,
-                result_summary=res.text[:500] if res.text else None,
+                result_summary=output_text[:500] if output_text else None,
                 connector=connector,
                 action_type=action_type,
                 is_write=is_write,
             )
         )
-        return ToolExecutionResult(success=True, output=res.text)
+        return ToolExecutionResult(success=True, output=output_text)

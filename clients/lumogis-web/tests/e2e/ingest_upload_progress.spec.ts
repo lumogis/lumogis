@@ -108,9 +108,8 @@ test.describe("LUM-511 ingest upload progress (/documents)", () => {
       buffer: Buffer.from("LUM-511 ingest upload progress e2e.\n"),
     });
 
-    await expect(page.getByLabel("Selected files").getByText(FILE_NAME)).toBeVisible({
-      timeout: 10_000,
-    });
+    const panel = page.getByTestId("document-upload-panel");
+    await expect(panel.getByText(FILE_NAME).first()).toBeVisible({ timeout: 10_000 });
     const progressBar = page.getByTestId("ingest-progress-bar");
     await expect(progressBar).toBeVisible({ timeout: 10_000 });
 

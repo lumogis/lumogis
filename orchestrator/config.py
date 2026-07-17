@@ -802,6 +802,73 @@ def get_injection_scanner():
     return _instances["injection_scanner"]
 
 
+def is_secrets_scanner_enabled() -> bool:
+    """LUM-361 — gate the user-config secrets scan (secure-by-default: on)."""
+
+    return os.environ.get("SECRETS_SCANNER_ENABLED", "true").strip().lower() in (
+        "true",
+        "1",
+        "yes",
+        "on",
+    )
+
+
+def get_secrets_scanner():
+    """Return the cached secrets scanner singleton (LUM-361).
+
+    Real :class:`services.secrets_scanner.PatternSecretsScanner` when enabled;
+    :class:`adapters.null_secrets_scanner.NullSecretsScanner` (passthrough) when
+    ``SECRETS_SCANNER_ENABLED=false``. Mirrors :func:`get_injection_scanner`.
+    """
+    if "secrets_scanner" not in _instances:
+        if is_secrets_scanner_enabled():
+            from services.secrets_scanner import PatternSecretsScanner
+
+            _instances["secrets_scanner"] = PatternSecretsScanner()
+            _log.info("Secrets scanner adapter: PatternSecretsScanner")
+        else:
+            from adapters.null_secrets_scanner import NullSecretsScanner
+
+            _instances["secrets_scanner"] = NullSecretsScanner()
+            _log.info("Secrets scanner disabled via SECRETS_SCANNER_ENABLED — NullSecretsScanner")
+    return _instances["secrets_scanner"]
+
+
+def is_tool_result_scanner_enabled() -> bool:
+    """LUM-362 — gate the live tool-result injection scan (secure-by-default: on)."""
+
+    return os.environ.get("TOOL_RESULT_SCANNER_ENABLED", "true").strip().lower() in (
+        "true",
+        "1",
+        "yes",
+        "on",
+    )
+
+
+def get_tool_result_scanner():
+    """Return the cached tool-result injection scanner singleton (LUM-362).
+
+    Real :class:`services.tool_result_scanner.PatternToolResultScanner` when
+    enabled; :class:`adapters.null_tool_result_scanner.NullToolResultScanner`
+    (passthrough) when ``TOOL_RESULT_SCANNER_ENABLED=false``.
+    """
+    if "tool_result_scanner" not in _instances:
+        if is_tool_result_scanner_enabled():
+            from services.tool_result_scanner import PatternToolResultScanner
+
+            _instances["tool_result_scanner"] = PatternToolResultScanner()
+            _log.info("Tool-result scanner adapter: PatternToolResultScanner")
+        else:
+            from adapters.null_tool_result_scanner import NullToolResultScanner
+
+            _instances["tool_result_scanner"] = NullToolResultScanner()
+            _log.info(
+                "Tool-result scanner disabled via TOOL_RESULT_SCANNER_ENABLED — "
+                "NullToolResultScanner"
+            )
+    return _instances["tool_result_scanner"]
+
+
 def warmup_injection_sanitiser() -> None:
     """Eager-load YAML regex table + scanner before ``Startup complete``.
 
@@ -1671,6 +1738,37 @@ def get_tool_catalog_enabled() -> bool:
     if raw == "":
         return True
     return raw in ("1", "true", "yes")
+
+
+_uncontained_flag_warned_once: bool = False
+
+
+def get_allow_uncontained_community_capabilities() -> bool:
+    """Deprecated pre-LUM-618 escape hatch for uncontained community dispatch.
+
+    Default **false**: a community (untrusted) OOP capability is refused dispatch
+    unless it is positively network-contained (LUM-618: id in
+    ``contained_capabilities.txt``, verified by compose-policy Pass C). This flag
+    is the **deprecated** blunt override that predates per-capability containment;
+    when truthy it allows *any* community capability to dispatch uncontained. It
+    is retained for back-compat and for native (non-Docker) deployments that
+    cannot get container-network containment. Prefer per-capability containment.
+    Emits a one-time warning when set. Not cached so tests can toggle env
+    in-process.
+    """
+    global _uncontained_flag_warned_once
+    raw = os.environ.get("LUMOGIS_ALLOW_UNCONTAINED_COMMUNITY_CAPABILITIES", "").strip().lower()
+    enabled = raw in ("1", "true", "yes")
+    if enabled and not _uncontained_flag_warned_once:
+        _uncontained_flag_warned_once = True
+        _log.warning(
+            "LUMOGIS_ALLOW_UNCONTAINED_COMMUNITY_CAPABILITIES is a deprecated "
+            "pre-LUM-618 escape hatch that allows ANY community capability to "
+            "dispatch uncontained; prefer per-capability containment "
+            "(contained_capabilities.txt + the egress overlay). This override "
+            "will be removed once containment is the only supported path."
+        )
+    return enabled
 
 
 # ---------------------------------------------------------------------------

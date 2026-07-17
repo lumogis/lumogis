@@ -15,6 +15,10 @@ python-dotenv>=1.0.0
 # comparison via packaging.version.Version. Universally shipped via pip,
 # declared explicitly so we don't rely on transitive installation.
 packaging>=21.0
+# jsonschema validates capability tool output against a declared output_schema
+# on the invoke hot path (LUM-41 capability invoke contract v1); mandatory when
+# a non-trivial schema is declared, so it is a runtime (not test-only) dependency.
+jsonschema>=4.22.0
 qdrant-client>=1.12.0
 psycopg2-binary>=2.9.0
 pdfminer.six>=20231228

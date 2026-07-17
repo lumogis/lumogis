@@ -11,8 +11,13 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-export COMPOSE_PROFILES=
-export COMPOSE_FILE=docker-compose.yml:docker-compose.test.yml:docker-compose.public-rc-stack.yml
+# LUM-618: the RC stack is the CONTAINED reference deployment. The egress overlay
+# (isolated network + Squid egress proxy) is composed here and the community-egress
+# profile is activated so the proxy actually starts — otherwise the mock (a
+# community capability) would run uncontained while contained_capabilities.txt
+# marks it contained. Pass C (compose-policy-check-egress) verifies the wiring.
+export COMPOSE_PROFILES=community-egress
+export COMPOSE_FILE=docker-compose.yml:docker-compose.test.yml:docker-compose.public-rc-stack.yml:docker-compose.egress.yml
 # Absolute host path to the repo. Carried into stack-control (see docker-compose.public-rc-stack.yml)
 # so its in-container `docker compose --force-recreate` resolves relative bind-mount sources to real
 # host paths instead of non-existent /project/* dirs.

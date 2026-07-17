@@ -83,6 +83,8 @@ def _capabilities_block(
                 version=svc.manifest.version,
                 last_seen=svc.last_seen_healthy,
                 tools=len(svc.manifest.tools),
+                is_community=svc.is_community,
+                external_endpoints=list(svc.external_endpoints),
             )
         )
     healthy_n = sum(1 for s in services if s.healthy)

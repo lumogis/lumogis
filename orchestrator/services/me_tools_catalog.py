@@ -64,6 +64,8 @@ def _entry_to_item(entry: ToolCatalogEntry) -> MeToolsItem:
         action_type=entry.action_type,
         permission_mode=entry.permission_mode,
         requires_credentials=_requires_credentials_flag(entry),
+        is_community=entry.is_community,
+        external_endpoints=list(entry.external_endpoints),
     )
 
 

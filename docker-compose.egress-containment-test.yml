@@ -1,0 +1,59 @@
+# LUM-618 — standalone live containment fixture (used by
+# tests/integration/test_egress_containment.py, `make egress-containment-test`).
+#
+# Reuses the REAL docker/egress-proxy/squid.conf + allow file (so the test
+# validates the production config, not a bespoke one). A community-probe sits on
+# the isolated network at the static IP the squid.conf per-source ACL expects
+# (172.31.0.10) and routes egress through the proxy. The allow file permits
+# `example.com` only.
+networks:
+  community-egress-internal:
+    internal: true
+    enable_ipv6: false
+    ipam:
+      config:
+        - subnet: 172.31.0.0/24
+  community-egress-external:
+    enable_ipv6: false
+
+services:
+  egress-proxy:
+    # Must be built --with-openssl (ssl_bump / peek / splice). ubuntu/squid:latest
+    # as of 2026-07 is NOT — use an OpenSSL Squid or pin a verified digest.
+    # DEPLOY: set EGRESS_PROXY_IMAGE=…@sha256:… after verifying
+    # `docker run --rm <img> squid -v | grep -- --with-openssl`.
+    image: ${EGRESS_PROXY_IMAGE:-jacobalberty/squid@sha256:559a8dd2178cf9a40b9a526948467448bb627de98cb22edfddf4699b86a9f370}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - "mkdir -p /var/log/squid /var/spool/squid && /usr/local/bin/gen-bump-cert.sh /etc/squid/bump.pem && chown -R proxy:proxy /var/log/squid /var/spool/squid /etc/squid/bump.pem && exec squid -N -d1 -f /etc/squid/squid.conf"
+    volumes:
+      - ./docker/egress-proxy/squid.conf:/etc/squid/squid.conf:ro
+      - ./docker/egress-proxy/allow:/etc/squid/allow:ro
+      - ./docker/egress-proxy/gen-bump-cert.sh:/usr/local/bin/gen-bump-cert.sh:ro
+    healthcheck:
+      # Liveness: TCP connect (needs bash — dash has no /dev/tcp).
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/3128"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 8s
+    networks:
+      community-egress-internal:
+        ipv4_address: 172.31.0.2
+      community-egress-external: {}
+
+  community-probe:
+    image: python:3.11-slim
+    depends_on:
+      egress-proxy:
+        condition: service_healthy
+    environment:
+      HTTP_PROXY: http://egress-proxy:3128
+      HTTPS_PROXY: http://egress-proxy:3128
+      NO_PROXY: localhost,127.0.0.1
+    # Stay up so the test can `docker compose exec` probes into it.
+    command: ["sleep", "600"]
+    networks:
+      community-egress-internal:
+        ipv4_address: 172.31.0.10
