@@ -148,11 +148,18 @@ compose-policy-check-egress:
 	  echo "compose-policy-check-egress: violation fixture expected exit 1, got $$ec" >&2; exit 1; \
 	fi
 	@echo "==> Pass C passes on the real RC render — mock must be contained (expect exit 0)"
-	@COMPOSE_PROFILES=community-egress MOCK_CAPABILITY_SHARED_SECRET=lumogis-ci-mock-capability-placeholder \
+	@if [ -f docker-compose.public-rc-stack.yml ]; then \
+	  _EGRESS_COMPOSE="-f docker-compose.yml -f docker-compose.test.yml \
+	    -f docker-compose.public-rc-stack.yml -f docker-compose.egress.yml"; \
+	else \
+	  echo "compose-policy-check-egress: public-rc-stack absent — mock-capability chain (AGPL export)"; \
+	  _EGRESS_COMPOSE="-f docker-compose.yml -f docker-compose.test.yml \
+	    -f docker-compose.mock-capability.yml -f docker-compose.egress.yml"; \
+	fi; \
+	COMPOSE_PROFILES=community-egress MOCK_CAPABILITY_SHARED_SECRET=lumogis-ci-mock-capability-placeholder \
 	  $(PYTHON) scripts/check_compose_policy.py \
 	  --project-directory "$(CURDIR)" \
-	  -f docker-compose.yml -f docker-compose.test.yml \
-	  -f docker-compose.public-rc-stack.yml -f docker-compose.egress.yml \
+	  $$_EGRESS_COMPOSE \
 	  --community-service lumogis-mock-capability
 	@echo "compose-policy-check-egress: PASSED"
 
@@ -248,7 +255,15 @@ m1-compat-with-retry: ## Live FalkorDB compat gate — e.g. FALKORDB_URL=redis:/
 verify-public-rc: ## RC gate (smoke) — run before /publish-private-main-to-public
 	@echo "==> verify-public-rc (smoke)"
 	scripts/check-main-hygiene.sh
+	$(MAKE) compose-lint
+	$(MAKE) compose-policy-check-baseline
 	$(MAKE) compose-policy-check
+	$(MAKE) compose-policy-check-adversarial
+	$(MAKE) compose-policy-check-adversarial-envfile
+	$(MAKE) compose-policy-check-community
+	$(MAKE) compose-policy-check-egress
+	$(MAKE) check-egress-acl-divergence
+	$(MAKE) check-no-tethered-lum613
 	$(MAKE) graph-relates-to-merge-policy-check
 	$(MAKE) compose-test
 	@if [ -z "$${VERIFY_PUBLIC_RC_SKIP_WEB_CODEGEN_CHECK:-}" ]; then \
@@ -306,6 +321,7 @@ verify-public-rc-full: ## Full RC gate — includes e2e and optional graph parit
 	@if [ "$${LUMOGIS_RC_GRAPH_PARITY:-0}" = "1" ]; then \
 	  $(MAKE) test-graph-parity; \
 	fi
+	$(MAKE) egress-containment-test
 	@echo "==> verify-public-rc-full PASSED"
 
 # Run unit tests inside the orchestrator container (does not require a running stack).

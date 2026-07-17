@@ -647,7 +647,8 @@ class _IsolationStore:
                 key=lambda r: r["connector"],
             )
         if q.startswith(
-            "select user_id, connector, mode, scopes from connector_permissions order by user_id, connector"
+            "select user_id, connector, mode, scopes from connector_permissions "
+            "order by user_id, connector"
         ):
             return sorted(
                 (

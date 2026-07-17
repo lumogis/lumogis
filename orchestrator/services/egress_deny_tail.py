@@ -5,6 +5,7 @@
 Enabled only when ``LUMOGIS_EGRESS_ACCESS_LOG`` is set (community-egress overlay).
 Not a security control — operator signal only (ADR-173 containment is the gate).
 """
+
 from __future__ import annotations
 
 import logging
@@ -15,7 +16,6 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import structlog
-
 from services.capability_scopes import is_grantable_capability_id
 
 _log = logging.getLogger(__name__)
@@ -211,9 +211,7 @@ def start() -> None:
         return
     _stop.clear()
     path = Path(path_str)
-    _thread = threading.Thread(
-        target=_run, args=(path,), name="egress-deny-tail", daemon=True
-    )
+    _thread = threading.Thread(target=_run, args=(path,), name="egress-deny-tail", daemon=True)
     _thread.start()
     _log.info("egress deny tail: started on %s", path)
 

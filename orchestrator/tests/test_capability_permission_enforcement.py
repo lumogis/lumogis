@@ -56,6 +56,7 @@ def test_denied_when_required_scope_ungranted_names_missing(monkeypatch):
         "permissions.get_granted_scopes", lambda *, user_id, connector: ["memory:read"]
     )
     hits: list[str] = []
+
     def _h(_r):
         hits.append("http")
         return httpx.Response(200, json={"ok": True, "output": 1})

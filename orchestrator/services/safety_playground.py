@@ -28,15 +28,15 @@ from dataclasses import dataclass
 
 from models.safety_playground import ExpectedOutcome
 from models.safety_playground import InjectionVector
-
-# Synthetic scanner fixtures (split literals — public-export secret grep must not false-positive).
-_SYNTH_AWS_KEY = "AKIA" + "IOSFODNN7EXAMPLE"
-_SYNTH_PRIVKEY_HDR = "-----BEGIN " + "RSA PRIVATE KEY-----"
 from models.safety_playground import SafetyCaseInfo
 from models.safety_playground import SafetyCaseList
 from models.safety_playground import SafetyCaseResult
 from models.safety_playground import SafetyProbeResult
 from models.safety_playground import SafetySuiteResult
+
+# Synthetic scanner fixtures (split literals — public-export secret grep must not false-positive).
+_SYNTH_AWS_KEY = "AKIA" + "IOSFODNN7EXAMPLE"
+_SYNTH_PRIVKEY_HDR = "-----BEGIN " + "RSA PRIVATE KEY-----"
 
 _log = logging.getLogger(__name__)
 

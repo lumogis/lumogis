@@ -4,11 +4,7 @@
 
 from __future__ import annotations
 
-import json
-from unittest.mock import MagicMock
-
 import pytest
-
 from services.tool_result_guard import guard_tool_result
 
 

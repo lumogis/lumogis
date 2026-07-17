@@ -99,9 +99,7 @@ def _tombstone_fetch(ms, user_id: str, document_id: int) -> dict | None:
 # ---------------------------------------------------------------------------
 
 
-def _path_reclaimed_by_other_document(
-    ms, user_id: str, document_id: int, file_path: str
-) -> bool:
+def _path_reclaimed_by_other_document(ms, user_id: str, document_id: int, file_path: str) -> bool:
     """True when another live personal row owns this path (re-ingest after purge).
 
     Personal chunk point ids are keyed by ``(user_id, file_path)``; a tombstone
@@ -110,8 +108,7 @@ def _path_reclaimed_by_other_document(
     """
     row = ms.fetch_one(
         # SCOPE-EXEMPT: path collision check for purge retry (owner-keyed personal row).
-        "SELECT id FROM file_index "
-        "WHERE user_id = %s AND file_path = %s AND scope = 'personal'",
+        "SELECT id FROM file_index WHERE user_id = %s AND file_path = %s AND scope = 'personal'",
         (user_id, file_path),
     )
     return row is not None and int(row["id"]) != int(document_id)

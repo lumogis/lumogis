@@ -168,6 +168,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: pip install -r orchestrator/requirements.txt -r orchestrator/requirements-dev.txt
+
       - name: Free runner disk before compose build
         run: |
           docker system prune -af --volumes || true

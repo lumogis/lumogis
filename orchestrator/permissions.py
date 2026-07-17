@@ -249,9 +249,7 @@ def grant_scopes(*, user_id: str, connector: str, scopes: list[str]) -> None:
         (user_id, connector, _DEFAULT_MODE, clean),
     )
     invalidate_cache(user_id, connector)
-    _log.info(
-        "scopes_granted user_id=%s connector=%s n=%d", user_id, connector, len(clean)
-    )
+    _log.info("scopes_granted user_id=%s connector=%s n=%d", user_id, connector, len(clean))
 
 
 # Revocation is expressed via the grant API (PUT replaces the granted set) and

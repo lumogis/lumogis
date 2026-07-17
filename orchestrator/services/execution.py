@@ -330,8 +330,7 @@ class ToolExecutor:
                             "error": "permission scope not granted",
                             "connector": connector,
                             "missing_scopes": missing,
-                            "hint": "grant via PUT /api/v1/me/permissions/"
-                            + connector,
+                            "hint": "grant via PUT /api/v1/me/permissions/" + connector,
                         }
                     ),
                     denied=True,

@@ -199,9 +199,7 @@ def test_permission_mode_blocked_when_required_scope_ungranted(monkeypatch) -> N
             ]
 
     monkeypatch.setattr("permissions.get_connector_mode", lambda **kw: "DO")
-    monkeypatch.setattr(
-        "permissions.get_granted_scopes", lambda **kw: ["memory:read"]
-    )
+    monkeypatch.setattr("permissions.get_granted_scopes", lambda **kw: ["memory:read"])
     cat = build_tool_catalog_for_user(
         "user-scope",
         capability_registry=_Reg(),

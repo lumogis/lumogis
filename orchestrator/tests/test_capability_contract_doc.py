@@ -33,8 +33,25 @@ STRIP_LIST = REPO / "scripts" / "public-export-strip-list.txt"
 # Generic field names that are substring noise (appear everywhere) — excluded
 # from the drift guard so it only protects distinctive contract fields.
 _GENERIC = frozenset(
-    {"name", "description", "version", "type", "transport", "user", "tool", "tools",
-     "maintainer", "output", "error", "ok", "message", "code", "mode", "method", "path"}
+    {
+        "name",
+        "description",
+        "version",
+        "type",
+        "transport",
+        "user",
+        "tool",
+        "tools",
+        "maintainer",
+        "output",
+        "error",
+        "ok",
+        "message",
+        "code",
+        "mode",
+        "method",
+        "path",
+    }
 )
 
 

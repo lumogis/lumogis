@@ -230,9 +230,7 @@ def test_load_contained_capabilities_mtime_reload(tmp_path, monkeypatch) -> None
     assert load_contained_capabilities() == frozenset({"acme.one", "acme.two"})
 
 
-def test_load_contained_capabilities_keep_last_good_on_disappear(
-    tmp_path, monkeypatch
-) -> None:
+def test_load_contained_capabilities_keep_last_good_on_disappear(tmp_path, monkeypatch) -> None:
     from services.capability_egress import load_contained_capabilities
 
     f = tmp_path / "contained.txt"

@@ -3,15 +3,14 @@
 """LUM-621 — egress deny tailer unit tests."""
 
 from __future__ import annotations
+
 from pathlib import Path
 
 import pytest
 
 from services import egress_deny_tail as edt
 
-_FIXTURE = (
-    Path(__file__).resolve().parent / "fixtures" / "egress_deny_access_log_sample.txt"
-)
+_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "egress_deny_access_log_sample.txt"
 
 
 def test_parse_captured_https_and_http_deny_lines() -> None:

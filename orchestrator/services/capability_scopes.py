@@ -46,7 +46,7 @@ def is_capability_connector(connector: str) -> bool:
 def capability_id_from_connector(connector: str) -> str:
     """Strip the ``capability.`` prefix (returns the input if absent)."""
     if connector.startswith(_CONNECTOR_PREFIX):
-        return connector[len(_CONNECTOR_PREFIX):]
+        return connector[len(_CONNECTOR_PREFIX) :]
     return connector
 
 

@@ -407,8 +407,7 @@ class CapabilityRegistry:
                     external_endpoints=endpoints,
                 )
                 _log.info(
-                    "Registered capability service: %s v%s (%d tools) at %s "
-                    "[trust=%s, egress=%s]",
+                    "Registered capability service: %s v%s (%d tools) at %s [trust=%s, egress=%s]",
                     manifest.id,
                     manifest.version,
                     len(manifest.tools),
@@ -463,8 +462,7 @@ class CapabilityRegistry:
                 added = sorted(set(endpoints) - set(old_endpoints))
                 removed = sorted(set(old_endpoints) - set(endpoints))
                 _log.info(
-                    "capability_egress_drift: id=%r external_endpoints changed "
-                    "added=%s removed=%s",
+                    "capability_egress_drift: id=%r external_endpoints changed added=%s removed=%s",
                     manifest.id,
                     added,
                     removed,

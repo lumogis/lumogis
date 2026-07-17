@@ -440,9 +440,7 @@ def test_purge_retry_via_tombstone(file_ms, mock_vector_store, monkeypatch):
     assert tombstone2["resolved_at"] is not None
 
 
-def test_purge_tombstone_retry_skips_path_when_reingested(
-    file_ms, mock_vector_store, monkeypatch
-):
+def test_purge_tombstone_retry_skips_path_when_reingested(file_ms, mock_vector_store, monkeypatch):
     """Tombstone Qdrant retry must not delete vectors for a newer doc at the same path."""
     monkeypatch.setitem(config._instances, config._graph_store_cache_key("personal"), None)
     fp = "/docs/retry-reingest.pdf"
@@ -487,9 +485,7 @@ def test_purge_tombstone_retry_skips_path_when_reingested(
     # Live document vectors at the reclaimed path must survive.
     assert mock_vector_store.count("documents") == 1
     delete_where_calls = [
-        c
-        for c in spy_delete_where.call_args_list
-        if c.kwargs.get("collection") == "documents"
+        c for c in spy_delete_where.call_args_list if c.kwargs.get("collection") == "documents"
     ]
     path_sweeps = [
         c
