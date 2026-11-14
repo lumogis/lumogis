@@ -1,0 +1,157 @@
+# LUM-309 — standalone live paperless-ngx fixture for the connector lane.
+#
+# Used by `make compose-test-paperless` and the two modules
+# orchestrator/tests/integration/test_paperless_live_{adapter,pipeline}.py.
+#
+# THIS FILE IS NEVER PART OF THE HOUSEHOLD STACK. It is not included by
+# docker-compose.yml, carries its own volumes, and is always run under
+# COMPOSE_PROJECT_NAME=lumogis-paperless-test so that the target's `down -v`
+# teardown cannot reach a developer's real dev-stack volumes. Running it under
+# the default project name would delete real household data.
+#
+# Why SQLite and not Postgres for paperless itself: paperless's own database is
+# incidental to what this fixture proves (the REST contract our adapter speaks).
+# A third container would cost boot time for no coverage. The `postgres` service
+# below is Lumogis's store, not paperless's — they are unrelated.
+#
+# Why PAPERLESS_OCR_MODE=skip_noarchive: the connector reads the `content`
+# field and does not care how it was produced. Step 0 confirmed a plain `.txt`
+# upload populates `content` without any OCR pass, so paying for OCR would buy
+# nothing and cost most of the boot budget.
+#
+# Image pinned by digest from the Step 0 spike (2026-07-30), paperless-ngx
+# version 3.0.4. Operator version floor is >=2.16.2 — see
+# docs/testing/paperless-live-fixture.md for why 2.16.1 (the version LUM-309
+# originally named) is not the right floor.
+
+networks:
+  paperless-test-net:
+    enable_ipv6: false
+
+volumes:
+  paperless-data:
+  paperless-media:
+  paperless-broker-data:
+  lumogis-postgres-data:
+  lumogis-qdrant-data:
+
+services:
+  paperless-broker:
+    image: redis@sha256:595cc6f2bb3af6e03347b90deb6123c6aa2c81dea05ce08128de8a174b6ac67b
+    volumes:
+      - paperless-broker-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    networks:
+      - paperless-test-net
+
+  # ── Lumogis's own stores (Pass 2) ────────────────────────────────────────
+  # These are NOT paperless's database — paperless uses SQLite internally, and
+  # the two are unrelated. These are where the poll -> ingest path writes, and
+  # they are brought up from *this* file rather than the production
+  # docker-compose.yml precisely so the teardown cannot reach the developer's
+  # real volumes. Same images as the dev stack, so the lane exercises the
+  # backends the product actually runs against.
+  postgres:
+    image: postgres:16.8
+    environment:
+      POSTGRES_USER: lumogis
+      POSTGRES_PASSWORD: lumogis-dev
+      POSTGRES_DB: lumogis
+    ports:
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - lumogis-postgres-data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lumogis"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+    networks:
+      - paperless-test-net
+
+  qdrant:
+    build:
+      context: ./docker/qdrant
+    image: lumogis-qdrant:v1.14.1
+    # Built here, never in a registry: without this, `docker compose up` first asks a
+    # registry for it and prints "pull access denied" on every new install (LUM-310).
+    pull_policy: never
+    ports:
+      - "127.0.0.1:6337:6333"
+    volumes:
+      - lumogis-qdrant-data:/qdrant/storage
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "-o", "/dev/null", "http://127.0.0.1:6333/readyz"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - paperless-test-net
+
+  paperless:
+    image: ghcr.io/paperless-ngx/paperless-ngx@sha256:3838b9a4260d23acc5bb63aed407138435e70b56e5806f4baa350ca184e57582
+    depends_on:
+      paperless-broker:
+        condition: service_healthy
+    environment:
+      PAPERLESS_REDIS: redis://paperless-broker:6379
+      # Mandatory on current images — the container exits with
+      # ImproperlyConfigured if this is unset or left at the default
+      # "change-me" (Step 0, extra finding). Generated per run by the Makefile
+      # target; never committed.
+      PAPERLESS_SECRET_KEY: ${PAPERLESS_SECRET_KEY:?generated per run by make compose-test-paperless}
+      PAPERLESS_ADMIN_USER: ${PAPERLESS_ADMIN_USER:-admin}
+      PAPERLESS_ADMIN_PASSWORD: ${PAPERLESS_ADMIN_PASSWORD:?generated per run by make compose-test-paperless}
+      # ALLOWED_HOSTS is derived from this. Step 0 Obs 3 confirmed that with
+      # PAPERLESS_URL set to the *published* host port, probing localhost:8000
+      # from inside the container raises no DisallowedHost.
+      PAPERLESS_URL: http://localhost:8010
+      PAPERLESS_OCR_MODE: skip_noarchive
+      PAPERLESS_TIME_ZONE: UTC
+    ports:
+      # 127.0.0.1 only, and offset from the dev stack the same way
+      # QDRANT_HOST_PORT 6335/6336 already is.
+      - "127.0.0.1:8010:8000"
+    volumes:
+      - paperless-data:/usr/src/paperless/data
+      - paperless-media:/usr/src/paperless/media
+    healthcheck:
+      # Paperless ships no health endpoint (still an open request upstream:
+      # paperless-ngx/paperless-ngx discussions/10773), and an unauthenticated
+      # root returns 302.
+      #
+      # DO NOT "fix" this to expect 302 only. Step 0 Obs 2/3 measured the
+      # subtlety: `curl` without -L sees 302, but urllib.request.urlopen
+      # FOLLOWS the redirect and reports 200. This probe passes on the 200.
+      # Tightening it to == 302 on the reasonable-looking grounds that "the
+      # root redirects" makes the container never report healthy, and the
+      # failure reads as a slow boot rather than a config error.
+      #
+      # python3 (not curl) because paperless is a Django application, so the
+      # interpreter is guaranteed present. Step 0 confirmed both are on PATH,
+      # but only one of them is guaranteed to stay there.
+      test: ["CMD", "python3", "-c",
+             "import urllib.request,sys; r=urllib.request.urlopen('http://localhost:8000', timeout=5); sys.exit(0 if r.status in (200,302) else 1)"]
+      # Worst case ~= 180 + 12*10 = 300s, which is what the Makefile's
+      # --wait-timeout 420 is sized against. Step 0 measured a 62.9s warm boot;
+      # these stay generous on purpose, because a GitHub runner is materially
+      # slower than the laptop that was measured and a healthcheck tuned to a
+      # warm local boot is exactly how a gate becomes flaky in CI only.
+      start_period: 180s
+      interval: 10s
+      timeout: 10s
+      retries: 12
+    networks:
+      - paperless-test-net

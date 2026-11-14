@@ -33,7 +33,7 @@ const outFile = resolve(outDir, "openapi.d.ts");
 const args = new Set(process.argv.slice(2));
 const useLive = args.has("--live");
 const checkMode = args.has("--check");
-const liveUrl = process.env.LUMOGIS_OPENAPI_URL || "http://localhost:8000/openapi.json";
+const liveUrl = process.env.LUMOGIS_OPENAPI_URL || "http://127.0.0.1:8000/openapi.json";
 
 if (!existsSync(snapshotPath)) {
   console.error(`codegen: snapshot missing at ${snapshotPath}`);

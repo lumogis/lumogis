@@ -76,11 +76,19 @@ class StdioTokenStore:
         p = params or ()
         if "count" in q:
             return {"n": 1}
-        if q.startswith("select * from mcp_tokens where token_prefix = %s and revoked_at is null"):
+        if q.startswith(
+            "select t.*, u.id as owner_id, u.disabled as owner_disabled "
+            "from mcp_tokens t left join users u on u.id = t.user_id "
+            "where t.token_prefix = %s and t.revoked_at is null"
+        ):
+            # ``mcp_tokens.verify`` (LUM-885) joins the owner's ``users`` row and
+            # rejects a token whose owner is missing or disabled. These tests
+            # exercise the transport, not the owner check: every owner is active.
             (prefix,) = p
             for row in self.tokens.values():
                 if row["token_prefix"] == prefix and row["revoked_at"] is None:
-                    return dict(row)
+                    return {**row, "owner_id": row["user_id"], "owner_disabled": False}
+            return None
         if q.startswith("select * from mcp_tokens where id = %s"):
             (tid,) = p
             row = self.tokens.get(tid)
@@ -152,6 +160,9 @@ def stub_orchestrator_lifespan_for_stdio(monkeypatch) -> None:
             pass
 
         def add_job(self, *args, **kwargs) -> None:
+            pass
+
+        def shutdown(self, wait: bool = True) -> None:
             pass
 
     monkeypatch.setattr("config.get_scheduler", lambda: _SchedulerStub())

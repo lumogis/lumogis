@@ -50,6 +50,14 @@ ai-workspace/review/*
 ai-workspace/backups/*.zip
 ai-workspace/backups-test/
 ai-workspace/mcp/*.env
+# LUM-892 — household files and DR snapshots must never reach `git add -A`
+ai-workspace/uploads/
+ai-workspace/captures/
+ai-workspace/quarantine/
+ai-workspace/restore-displaced/
+ai-workspace/backups/snapshots/
+ai-workspace/backups/users/
+ai-workspace/workspace-test/
 
 # LibreChat — regenerated at runtime from models.yaml + Ollama; do not commit.
 # Tracked template: config/librechat.coldstart.yaml
@@ -86,8 +94,15 @@ lumogis-data/
 # LUM-377 — debug runner tee logs (local only)
 target/debug-logs/
 
+# LUM-542 - make bench-recall JSON results (local only)
+target/bench-recall/
+
 # LUM-187 — `make update` rollback state (records previous image refs; local only)
 .lumogis-state/
 
 # LUM-618 — Squid SslBump cert is generated per-deploy, never committed.
 docker/egress-proxy/bump.pem
+/private/
+
+# LUM-929 — live-lane evidence (junit, run records, snapshots, container logs).
+.cache/lum929/

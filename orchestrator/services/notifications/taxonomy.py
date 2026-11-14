@@ -14,6 +14,17 @@ TYPE_TO_TIER: dict[NotificationType, NotificationTier] = {
     NotificationType.ACTION_EXECUTED: NotificationTier.ACTION_REQUIRED,
     NotificationType.SECURITY_ALERT: NotificationTier.URGENT,
     NotificationType.CONSOLIDATION_DONE: NotificationTier.BACKGROUND,
+    # LUM-648: a needs-you email is ACTION_REQUIRED (push-worthy); the daily
+    # brief is INFORMATIONAL. preferences.get_effective_preferences reads
+    # TYPE_TO_TIER[ntype] directly for every NotificationType, so both entries
+    # are mandatory the moment the enum members exist (else KeyError on
+    # GET /api/v1/me/notification-preferences).
+    NotificationType.SIGNAL_NEEDS_YOU: NotificationTier.ACTION_REQUIRED,
+    NotificationType.SIGNAL_MORNING_BRIEF: NotificationTier.INFORMATIONAL,
+    # LUM-758: INFORMATIONAL, not ACTION_REQUIRED — the decision is already made
+    # and applied by the time this fires. Marking it action-required would imply an
+    # approval that does not exist, and is how a notice earns being muted.
+    NotificationType.EGRESS_ALLOWLIST_WIDENED: NotificationTier.INFORMATIONAL,
 }
 
 NTFY_PRIORITY_BY_TIER: dict[NotificationTier, float] = {

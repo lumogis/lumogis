@@ -23,26 +23,20 @@ import types
 
 import pytest
 from cryptography.fernet import Fernet
+from tests.test_connector_credentials_service import _FakeStore
 
-# Stub the OpenAI / Anthropic SDK modules BEFORE importing config so the
-# adapter modules (which top-level-import them) load without the real
-# packages installed in the test venv. The cache-key tests below never
-# exercise the SDKs themselves — they only need the adapter classes to
-# be constructible.
-for _mod, _attrs in (
-    ("openai", ("OpenAI",)),
-    ("anthropic", ("Anthropic", "APIError", "APIStatusError", "APITimeoutError", "RateLimitError")),
-):
-    if _mod not in sys.modules:
-        m = types.ModuleType(_mod)
-        for _a in _attrs:
-            setattr(m, _a, type(_a, (), {"__init__": lambda self, *a, **kw: None}))
-        sys.modules[_mod] = m
+import config
+from services import connector_credentials as svc
 
-from tests.test_connector_credentials_service import _FakeStore  # noqa: E402
-
-import config  # noqa: E402
-from services import connector_credentials as svc  # noqa: E402
+# No SDK stub is needed here. `config` imports the adapter modules lazily,
+# inside `get_llm_provider`, and the `store` fixture swaps in fake
+# `adapters.openai_llm` / `adapters.anthropic_llm` modules, so the real
+# `openai` / `anthropic` packages are never imported by these tests. This
+# file used to plant stub `openai` / `anthropic` modules in `sys.modules`
+# at import time; the stubs outlived the file and broke later tests that
+# need the real SDK (LUM-944). The guards in conftest.py
+# (`pytest_make_collect_report`, `_assert_real_sdk_modules`) now fail any
+# module that leaves such a stub behind.
 
 
 class _StubAdapter:

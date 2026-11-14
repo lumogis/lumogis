@@ -59,6 +59,12 @@ run_pr_case true orchestrator/requirements.txt
 echo "test-security-audit-paths: services/lumogis-graph/foo.py -> true"
 run_pr_case true services/lumogis-graph/foo.py
 
+echo "test-security-audit-paths: scripts/npm_audit_allowlist.py -> true"
+run_pr_case true scripts/npm_audit_allowlist.py
+
+echo "test-security-audit-paths: scripts/requirements-security-audit.in -> true"
+run_pr_case true scripts/requirements-security-audit.in
+
 echo "test-security-audit-paths: unsupported event -> non-zero"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' RETURN

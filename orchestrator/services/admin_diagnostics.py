@@ -9,6 +9,7 @@ values. Reuses the same store ping pattern as :func:`routes.admin.status_page`.
 
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Callable
 from datetime import datetime
@@ -26,12 +27,17 @@ from models.api_v1 import AdminDiagnosticsFoundationToolCatalog
 from models.api_v1 import AdminDiagnosticsResponse
 from models.api_v1 import AdminDiagnosticsSpeechToText
 from models.api_v1 import AdminDiagnosticsStoreItem
+from models.api_v1 import AdminDiagnosticsTask
+from models.api_v1 import AdminDiagnosticsTaskEntry
 from models.api_v1 import AdminDiagnosticsTools
 from models.api_v1 import AdminDiagnosticsWarning
 from services.capability_registry import CapabilityRegistry
 
 import config
 from services import me_tools_catalog as me_tools_catalog_svc
+from services import task_models
+
+_log = logging.getLogger(__name__)
 
 
 def _store_row(name: str, check_fn: Callable[[], bool]) -> AdminDiagnosticsStoreItem:
@@ -251,6 +257,55 @@ def _speech_to_text_block() -> AdminDiagnosticsSpeechToText:
     )
 
 
+def _tasks_block(
+    admin_user_id: str,
+) -> tuple[list[AdminDiagnosticsTask], list[AdminDiagnosticsWarning]]:
+    """Background model tasks for the calling admin (LUM-877); never raises.
+
+    One model map (one Ollama listing) serves all tasks. For ``email_boundary``
+    tasks ``resolved_model`` is ``None`` when the resolved name is not on-box, which
+    is exactly what ``resolve_on_box_model`` (so ``require_local_model``) returns.
+    """
+    try:
+        models = config.get_all_models_config()
+        rows: list[AdminDiagnosticsTask] = []
+        for name in task_models.TASKS:
+            exp = task_models.explain_task(name, user_id=admin_user_id, _models=models)
+            spec = exp.spec
+            resolved: str | None = exp.resolved_model
+            if spec.email_boundary and not task_models.is_on_box_local(
+                resolved, cfg=models.get(resolved)
+            ):
+                resolved = None
+            rows.append(
+                AdminDiagnosticsTask(
+                    task=spec.name,
+                    description=spec.description,
+                    local_only=spec.local_only,
+                    needs_tools=spec.needs_tools,
+                    threads_user_id=spec.threads_user_id,
+                    destructive=spec.destructive,
+                    configured=[
+                        AdminDiagnosticsTaskEntry(model=e.model, skip_reason=e.skip_reason)
+                        for e in exp.entries
+                    ],
+                    default_model=spec.default,
+                    resolved_model=resolved,
+                    resolved_from=exp.resolved_from,
+                    default_skip_reason=exp.default_skip_reason,
+                )
+            )
+        return rows, []
+    except Exception:
+        _log.exception("admin diagnostics: background model tasks could not be evaluated")
+        return [], [
+            AdminDiagnosticsWarning(
+                code="task_models_unavailable",
+                message="Background model tasks could not be evaluated; see Core logs.",
+            )
+        ]
+
+
 def build_admin_diagnostics_response(
     admin_user_id: str,
     *,
@@ -315,6 +370,8 @@ def build_admin_diagnostics_response(
         ),
     ]
     warnings.extend(_foundation_extra_warnings(foundation_signals))
+    tasks, task_warnings = _tasks_block(admin_user_id)
+    warnings.extend(task_warnings)
 
     critical_ok = stores[0].status == "ok"  # postgres
     others_ok = all(s.status in ("ok", "not_configured") for s in stores[1:])
@@ -342,4 +399,5 @@ def build_admin_diagnostics_response(
         warnings=warnings,
         speech_to_text=_speech_to_text_block(),
         inbox=inbox,
+        tasks=tasks,
     )

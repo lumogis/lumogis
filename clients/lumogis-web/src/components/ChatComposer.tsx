@@ -4,12 +4,14 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   type FormEvent,
   type Ref,
 } from "react";
 
 import { Button } from "./Button";
+import { VoiceDictationButton } from "./VoiceDictationButton";
 
 export interface ChatComposerProps {
   id?: string;
@@ -28,6 +30,10 @@ export interface ChatComposerProps {
   textareaRef?: Ref<HTMLTextAreaElement>;
   describedBy?: string;
   className?: string;
+  /** When provided, a dictation button appears in the actions row and inserts
+   * the transcript at the caret. The host supplies the transcribe fn (bound to
+   * its ApiClient) so this shared component stays context-free (LUM-653). */
+  voiceTranscribe?: (blob: Blob) => Promise<string>;
 }
 
 export function ChatComposer({
@@ -47,9 +53,57 @@ export function ChatComposer({
   textareaRef,
   describedBy,
   className,
+  voiceTranscribe,
 }: ChatComposerProps): JSX.Element {
   const localRef = useRef<HTMLTextAreaElement | null>(null);
   const ref = textareaRef ?? localRef;
+  // Caret to restore AFTER the controlled value commits — a synchronous
+  // selectionStart set right after onChange is overwritten on re-render.
+  const pendingCaretRef = useRef<number | null>(null);
+
+  const elFromRef = useCallback(
+    (): HTMLTextAreaElement | null =>
+      ref && typeof ref === "object" && "current" in ref ? ref.current : null,
+    [ref],
+  );
+
+  const insertTranscript = useCallback(
+    (text: string) => {
+      if (text.length === 0) return;
+      const el = elFromRef();
+      // Splice into the LIVE textarea value (not the closure's `value`) so a
+      // transcript that resolves after the user kept typing during the async
+      // transcription doesn't clobber those edits.
+      const current = el?.value ?? value;
+      if (el && el.selectionStart != null) {
+        const start = el.selectionStart;
+        const end = el.selectionEnd ?? start;
+        const next = current.slice(0, start) + text + current.slice(end);
+        pendingCaretRef.current = start + text.length;
+        onChange(next);
+      } else {
+        onChange(current + text);
+      }
+    },
+    [value, onChange, elFromRef],
+  );
+
+  useLayoutEffect(() => {
+    const caret = pendingCaretRef.current;
+    if (caret == null) return;
+    pendingCaretRef.current = null;
+    const el = elFromRef();
+    if (el) {
+      el.focus();
+      try {
+        el.setSelectionRange(caret, caret);
+      } catch {
+        /* selection unsupported (jsdom edge) */
+      }
+    }
+    // Runs after the controlled value has committed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
 
   const resize = useCallback(() => {
     const el =
@@ -103,6 +157,13 @@ export function ChatComposer({
         }}
       />
       <div className="lumogis-chat__compose-actions">
+        {voiceTranscribe && !streaming ? (
+          <VoiceDictationButton
+            transcribe={voiceTranscribe}
+            onTranscript={insertTranscript}
+            disabled={disabled}
+          />
+        ) : null}
         {streaming ? (
           <Button type="button" variant="danger-solid" size="md" onClick={onStop}>
             Stop

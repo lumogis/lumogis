@@ -7,19 +7,39 @@ set -euo pipefail
 DONOR_ROOT="${1:?donor root required}"
 BIN="/usr/local/bin/redis-check-rdb-v13"
 LIBDIR="/opt/falkordb-redis-check/lib"
-LOADER="/opt/falkordb-redis-check/ld-linux-x86-64.so.2"
+# One fixed path whatever the architecture; scripts/backup/lib/common.sh and the
+# Dockerfile's check use it.
+LOADER="/opt/falkordb-redis-check/ld.so"
+
+# The build runs on the target platform, so the donor image has the same
+# architecture. Before LUM-310 this was x86-64 only, and the backup image (so
+# `docker compose up -d`) failed to build on Apple Silicon and other arm64 hosts.
+case "$(uname -m)" in
+  x86_64)
+    TRIPLET="x86_64-linux-gnu"
+    DONOR_LOADER="/lib64/ld-linux-x86-64.so.2"
+    ;;
+  aarch64 | arm64)
+    TRIPLET="aarch64-linux-gnu"
+    DONOR_LOADER="/lib/ld-linux-aarch64.so.1"
+    ;;
+  *)
+    echo "install-redis-check-rdb-v13: unsupported architecture $(uname -m)" >&2
+    exit 1
+    ;;
+esac
 
 mkdir -p "$LIBDIR" "$(dirname "$LOADER")"
 cp "${DONOR_ROOT}/usr/local/bin/redis-server" "$BIN"
 chmod 755 "$BIN"
 
-cp "${DONOR_ROOT}/lib64/ld-linux-x86-64.so.2" "$LOADER"
+cp "${DONOR_ROOT}${DONOR_LOADER}" "$LOADER"
 chmod 755 "$LOADER"
 
 resolve_donor_path() {
   local abs="$1"
   case "$abs" in
-    /lib/x86_64-linux-gnu/* | /lib64/* | /usr/lib/x86_64-linux-gnu/*)
+    /lib/"${TRIPLET}"/* | /lib64/* | /usr/lib/"${TRIPLET}"/*)
       echo "${DONOR_ROOT}${abs}"
       ;;
     *)
@@ -60,7 +80,7 @@ collect_deps | while IFS= read -r line; do
   dep="${line#*=> }"
   dep="${dep%% *}"
   case "$dep" in
-    linux-vdso.so.1 | /lib64/ld-linux-x86-64.so.2*) continue ;;
+    linux-vdso.so.1 | */ld-linux-*) continue ;;
   esac
   copy_dep "$dep"
 done
@@ -75,7 +95,7 @@ for _ in $(seq 1 12); do
     dep="${line#*=> }"
     dep="${dep%% *}"
     case "$dep" in
-      linux-vdso.so.1 | /lib64/ld-linux-x86-64.so.2*) continue ;;
+      linux-vdso.so.1 | */ld-linux-*) continue ;;
       "${LIBDIR}/"*) continue ;;
     esac
     if [[ ! -f "${LIBDIR}/$(basename "$dep")" ]]; then

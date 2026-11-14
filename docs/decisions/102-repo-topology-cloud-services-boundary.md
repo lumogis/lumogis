@@ -15,7 +15,7 @@ ADR-101 moved Lumogis from a single-moat model (KG) to a trust + ecosystem model
 
 | Repo / line | Role |
 |---|---|
-| **`lumogis-app`** | The product. **One** repo holding **both** AGPL Core and the proprietary surfaces; separated only at **export time**. Proprietary today = KG (`services/lumogis-graph/` + graph plugin/adapters/premium composes) and Lumogis Server (`apps/lumogis-server/`). Clients in `clients/` (`lumogis-web`, `lumogis-search`). |
+| **`lumogis-app`** | The product. **One** repo holding **both** AGPL Core and the proprietary surfaces; separated only at **export time**. Proprietary today = KG (`services/lumogis-graph/` + graph plugin/adapters/premium composes) and the official Lumogis Server build. Clients in `clients/` (`lumogis-web`, `lumogis-search`). |
 | **`lumogis-devtools`** | Product OS, skills, Linear, `.cursor/` (symlinked into the app). |
 | **`lumogis-public` / `upstream/main`** | AGPL **export snapshot** — *different lineage* from private `main`. |
 | **`lumogis-site`** | lumogis.ai marketing — **Cloudflare Workers static assets** (`wrangler`, serves `./public`; no server-side code). Newsletter via Brevo + Turnstile; pricing page (v1.3) = Stripe Payment Links. |
@@ -31,7 +31,7 @@ ADR-101 moved Lumogis from a single-moat model (KG) to a trust + ecosystem model
 **Add exactly one repo; keep everything else as-is. The product→export pipeline does not change.**
 
 1. **Create `lumogis-cloud`** — all Lumogis-**operated** services and their secrets: the **relay** (primary), the **entitlement issuance / Stripe webhook / JWKS / revocation** service, and the **plugin registry backend**. Private, never exported.
-2. **Keep the product strip-model** for shipped proprietary code (KG, official connectors, official Server/mobile builds). **Do not split** them into their own repo — ADR-042 already weighed strip-vs-split and the reasoning holds.
+2. **Keep the product strip-model** for shipped proprietary code (KG, official connectors, official app builds). **Do not split** them into their own repo — ADR-042 already weighed strip-vs-split and the reasoning holds.
 3. **Mobile clients live in `lumogis-app/clients/`** (e.g. `clients/lumogis-mobile`), AGPL like `lumogis-search`; the official **signed** build is the convenience, not a separate repo.
 4. **Plugin SDK / Extension Contract (LUM-241) stays in the AGPL export** for now; graduate to a standalone public `lumogis-sdk` repo only if external-developer traction demands independent versioning.
 5. **No change** to `dev`→`main`→public, to `lumogis-devtools`, or to `lumogis-site`.
@@ -44,7 +44,7 @@ Net: ~4 repos → ~5; only **one** is new; the export pipeline and its gates are
 
 | Repo | Contains | Ships to user? | Exported? |
 |---|---|---|---|
-| **`lumogis-app`** | AGPL Core, clients (web/search/**mobile**), community connectors, plugin SDK/contract source; **+ stripped:** KG, official connectors, official Server build | Yes (AGPL) + Yes (proprietary builds) | AGPL parts only |
+| **`lumogis-app`** | AGPL Core, clients (web/search/**mobile**), community connectors, plugin SDK/contract source; **+ stripped:** KG, official connectors, other commercial builds | Yes (AGPL) + Yes (proprietary builds) | AGPL parts only |
 | **`lumogis-public`** | AGPL export snapshot | — | is the export |
 | **`lumogis-cloud`** *(new)* | **relay**, entitlement issuer/Stripe/JWKS/revocation, registry backend, **signing keys** (in secret manager) | **No — operated only** | **Never** |
 | **`lumogis-devtools`** | Product OS / skills | No | No |
@@ -160,3 +160,4 @@ Because it is **never exported**, it has **no dev→main→public dance, no stri
 
 - 2026-06-15: Proposed via structural audit (operator-guided). Recommends one new repo (`lumogis-cloud`, relay-centric, operated services + secrets), keeping the product strip-model and the dev→main→public pipeline unchanged, mobile in `clients/`, and the plugin contract in the export for now. No repo created; ratify before acting.
 - 2026-06-17: Amended for platform consistency — **Cloudflare confirmed as the web + serverless platform** (`wrangler` / Workers). The entitlement issuer / Stripe webhook / JWKS is a **Cloudflare Worker in `lumogis-cloud`** (the Vercel sketch in LUM-263 is dropped); `lumogis-site` is **Cloudflare Workers static assets** (serves `./public`, no server-side code; newsletter via Brevo + Turnstile). Relay build-vs-buy and deploy host remain open (LUM-509). No structural recommendation changed.
+- 2026-11-10: public-boundary wording (LUM-898).

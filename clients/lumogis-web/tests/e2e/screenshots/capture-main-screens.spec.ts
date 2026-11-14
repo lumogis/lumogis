@@ -89,10 +89,40 @@ test("capture main screens", async ({ browser }) => {
   await loginWithSmokeCredentials(page);
   await dismissOnboardingIfPresent(page);
 
+  // LUM-853: with an empty library chat shows the empty-library state; the branding capture
+  // is of chat with a library, so route the list to one indexed row.
+  const isDocumentsList = (url: URL): boolean => url.pathname === "/api/v1/documents";
+  await page.route(
+    isDocumentsList,
+    (route) =>
+      route.request().method() === "GET"
+        ? route.fulfill({
+            json: {
+              documents: [
+                {
+                  document_id: 1,
+                  in_flight_job_id: null,
+                  display_name: "notes.md",
+                  file_path: "/library/notes.md",
+                  file_type: ".md",
+                  chunk_count: 3,
+                  entity_count: 0,
+                  scope: "personal",
+                  status: "indexed",
+                  indexed_at: "2026-11-01T00:00:00Z",
+                  error_message: null,
+                },
+              ],
+            },
+          })
+        : route.continue(),
+  );
   await page.goto("/chat");
   await waitForShell(page);
   await page.getByTestId("chat-page").waitFor({ timeout: 15_000 });
   await capture(page, "02-chat.png");
+  // Later captures (the documents page) must see the real list.
+  await page.unroute(isDocumentsList);
 
   await page.goto("/search");
   await waitForShell(page);

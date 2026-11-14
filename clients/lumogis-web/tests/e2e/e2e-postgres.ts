@@ -3,6 +3,15 @@
 //
 // Host-side Postgres helpers for e2e specs (onboarding reset). CI publishes
 // postgres via docker-compose.web-e2e-ci.yml; local runs may use compose exec.
+//
+// Three attempts, in order: host psql, the configured compose project, then the
+// dev stack. The last one matters because the first two are both CI-shaped —
+// host psql needs a published port and a psql binary, and the configured
+// compose defaults carry config/test.env.example, whose COMPOSE_PROJECT_NAME is
+// `lumogis-test`. A developer running `docker compose up` gets project
+// `lumogis` from .env, so compose looks for postgres in a project that does not
+// exist and reports "service postgres is not running". That made every
+// DB-seeded spec fail in beforeEach on a perfectly healthy local stack.
 
 import { spawnSync as nodeSpawnSync } from "node:child_process";
 import path from "node:path";
@@ -66,32 +75,63 @@ function runPsqlSql(sql: string, deps: { spawnSync?: SpawnSyncFn } = {}): void {
 
   const envFile = process.env.LUMOGIS_E2E_ENV_FILE ?? "config/test.env.example";
   const files = composeFileList();
+
+  if (composeExecOk(spawnSync, { files, envFile, pgUser, pgDb, sql })) {
+    return;
+  }
+
+  // The dev stack, as a last resort. Skipped when either knob was set
+  // explicitly — an operator who named compose files or an env file meant them,
+  // and silently querying a different project would be worse than failing.
+  const configured =
+    process.env.LUMOGIS_E2E_COMPOSE_FILES !== undefined ||
+    process.env.LUMOGIS_E2E_ENV_FILE !== undefined;
+  if (
+    !configured &&
+    composeExecOk(spawnSync, {
+      files: ["docker-compose.yml"],
+      envFile: ".env",
+      pgUser,
+      pgDb,
+      sql,
+    })
+  ) {
+    return;
+  }
+
+  throw new Error(
+    "Could not run psql for e2e helper. Tried host psql " +
+      `(${pgHost}:${pgPort}), compose project from ${envFile}` +
+      (configured ? "" : ", and the dev stack from .env") +
+      ". Ensure the stack is up and POSTGRES_* reaches Postgres.",
+  );
+}
+
+/** One `docker compose ... exec -T postgres psql -c <sql>` attempt. */
+function composeExecOk(
+  spawnSync: SpawnSyncFn,
+  opts: { files: string[]; envFile: string; pgUser: string; pgDb: string; sql: string },
+): boolean {
   const composeArgs: string[] = ["compose"];
-  for (const f of files) {
+  for (const f of opts.files) {
     composeArgs.push("-f", f);
   }
   composeArgs.push(
     "--env-file",
-    envFile,
+    opts.envFile,
     "exec",
     "-T",
     "postgres",
     "psql",
     "-U",
-    pgUser,
+    opts.pgUser,
     "-d",
-    pgDb,
+    opts.pgDb,
     "-c",
-    sql,
+    opts.sql,
   );
 
-  if (spawnOk(spawnSync, "docker", composeArgs, { cwd: REPO_ROOT })) {
-    return;
-  }
-
-  throw new Error(
-    "Could not run psql for e2e helper. Ensure the stack is up and POSTGRES_* reaches Postgres.",
-  );
+  return spawnOk(spawnSync, "docker", composeArgs, { cwd: REPO_ROOT });
 }
 
 /**

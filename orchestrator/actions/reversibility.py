@@ -76,8 +76,12 @@ def attempt_reverse(reverse_token: str, *, user_id: str) -> ActionResult:
             error="Reverse action has no action_name",
         )
 
+    # A token-authenticated reverse of the caller's own audit row is itself an
+    # explicit per-message approval, so the reverse write executes under ASK
+    # (LUM-623). Without approved=True, reversal is denied whenever the
+    # connector sits in its default ASK mode — making "reversible" a lie.
     _log.info("Reversing action %r via %r", row["action_name"], reverse_name)
-    result = execute(reverse_name, reverse_input, user_id=user_id)
+    result = execute(reverse_name, reverse_input, user_id=user_id, approved=True)
 
     if result.success:
         mark_reversed(reverse_token)

@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from dataclasses import field
 
 CONNECTOR_FORMAT = re.compile(r"^[a-z0-9_]+$")
 CONNECTOR_MAX_LEN = 64
@@ -169,6 +170,35 @@ LLM_MISTRAL = "llm_mistral"
 
 
 @dataclass(frozen=True)
+class ConnectorField:
+    """One declared field of a connector's credential payload (LUM-834 chunk B).
+
+    This is **display metadata**, not a form DSL and not a validator. It exists
+    so the connectors card can say *which fields are set* without decrypting
+    anything, and so it can describe an **unconfigured** connector at all — a
+    payload that does not exist has no keys to derive from.
+
+    ``name`` MUST match the key the loader reads, and both halves of that are
+    now pinned by tests rather than by this sentence: caldav and paperless
+    against their ``_PAYLOAD_KEYS``, ntfy and the six ``llm_*`` against the
+    payload literal their typed web form submits. (The web half was missing
+    when this class was written — the docstring claimed it and review found it
+    absent, which is why it is named per connector here rather than in general.)
+
+    Deliberately narrow. Making this carry ``type``/``pattern``/``min``/``max``
+    /``const`` so the web could render every form from it was considered and
+    rejected during plan review: the shipped forms need injected constants
+    (``ImapForm``), a topic regex (``NtfyForm``), a minLength (``LlmApiKeyForm``)
+    and trim-on-submit rules (``PaperlessForm``). That is a form DSL, which is
+    a larger project than this chunk. Rendering stays hand-written.
+    """
+
+    name: str
+    label: str
+    is_secret: bool = False
+
+
+@dataclass(frozen=True)
 class ConnectorSpec:
     """Canonical metadata for one registered connector.
 
@@ -194,6 +224,90 @@ class ConnectorSpec:
 
     id: str
     description: str
+    # LUM-170: when True, the credential store may hold multiple rows per
+    # (user_id, connector) distinguished by a non-empty ``instance`` key
+    # (e.g. ``imap`` keys per-mailbox by ``source_id``). Single-instance
+    # connectors (the default) reject a non-empty instance.
+    multi_instance: bool = field(default=False)
+    # LUM-834 chunk B. Empty means "this connector's payload shape is not
+    # described" — a REAL state, not a placeholder: it is exactly the connector
+    # that falls through to the web's JSON fallback form. The card must say
+    # "shape not described" for it rather than "no fields are set", because
+    # those are opposite claims and only one is true.
+    fields: tuple[ConnectorField, ...] = field(default=())
+
+
+IMAP = "imap"
+"""Email (IMAP) source connector (LUM-170) — read-only, MULTI-INSTANCE.
+
+Unlike every other connector, a user may configure **several** IMAP
+mailboxes (personal / work / shared). Each mailbox is one credential row
+keyed by ``instance = sources.id``. Per-mailbox payload shape (sealed
+JSON; app-password auth in v1):
+
+    {
+        "host": "imap.gmail.com",
+        "port": 993,
+        "username": "alice@gmail.com",
+        "password": "<app-password>",
+        "use_ssl": true,
+        "auth_type": "app_password"
+    }
+
+Resolution lives in :mod:`services.email_credentials`
+(``load_connection(user_id, instance=source_id)``). Cloud LLM is NEVER
+used on email content — the local-model guard lives in
+:mod:`services.signal_processor` / :mod:`services.email_classifier`.
+"""
+
+
+SMTP = "smtp"
+"""Email (SMTP) SEND connector (LUM-650) — write, MULTI-INSTANCE.
+
+The outbound sibling of :data:`IMAP`. One credential row per mailbox that has
+opted into "let Lumogis send as me", keyed by ``instance = sources.id`` (the same
+key as the mailbox's IMAP row). Per-mailbox payload shape (sealed JSON):
+
+    {
+        "reuse_imap": true,          # reuse the mailbox's IMAP app-password
+        "app_password": "<pw>",      # present ONLY when reuse_imap is false
+        "smtp_host": "smtp.x.com",   # stored ONLY for an "Other" mailbox
+        "smtp_port": 587             # (known providers resolve from the registry)
+    }
+
+Resolution lives in :mod:`services.email_credentials`
+(``load_smtp_connection(user_id, instance=source_id)``); From is always the
+mailbox's authenticated account (anti-spoofing), never client-set.
+"""
+
+
+SYSTEM_SMTP = "system_smtp"
+"""Transactional system mailer (LUM-65) — INSTANCE/SYSTEM tier, operator-managed.
+
+The household's *outbound identity for Lumogis itself*, distinct from
+:data:`SMTP`, which sends **as a member** from their own mailbox. Using a
+member's mailbox as the system mailer would be circular: the account most
+likely to need a password-reset email is the one whose credentials Lumogis
+would need in order to send it.
+
+Payload shape (sealed JSON, one row at the instance/system tier):
+
+    {
+        "host": "smtp.provider.tld",
+        "port": 587,                    # port drives TLS: 465 implicit, else STARTTLS
+        "username": "lumogis@example.com",
+        "password": "<secret>",
+        "from_addr": "lumogis@example.com",
+        "last_test_ok_at": "2026-08-08T12:00:00Z"   # server-set on a passing Send test
+    }
+
+**Single writer:** only ``routes.admin_system_mail`` may write this row. It is
+listed in :data:`OPERATOR_MANAGED_CONNECTORS`, so all four generic credential
+routers reject it with ``422 use_system_mail_admin`` and it is hidden from
+``GET /registry``. Reads go through ``credential_tiers.system_get_payload``
+directly — never ``resolve_runtime_credential``, whose user→household→system
+walk would let a member's row shadow the admin-proven relay.
+"""
 
 
 CONNECTORS: dict[str, ConnectorSpec] = {
@@ -204,38 +318,81 @@ CONNECTORS: dict[str, ConnectorSpec] = {
     NTFY: ConnectorSpec(
         id=NTFY,
         description="ntfy push-notification connector — per-user url/topic/token.",
+        fields=(
+            ConnectorField(name="url", label="Server URL"),
+            ConnectorField(name="topic", label="Topic"),
+            # Genuinely optional, and the runtime reads `(payload.get("token")
+            # or "").strip()` — absent and empty are identical to it. Still
+            # secret: it is a bearer credential when present.
+            ConnectorField(name="token", label="Access token", is_secret=True),
+        ),
     ),
     CALDAV: ConnectorSpec(
         id=CALDAV,
         description="CalDAV calendar source — per-user base URL / username / password.",
+        fields=(
+            ConnectorField(name="base_url", label="Server address"),
+            ConnectorField(name="username", label="Username"),
+            ConnectorField(name="password", label="Password", is_secret=True),
+        ),
     ),
     PAPERLESS: ConnectorSpec(
         id=PAPERLESS,
         description="paperless-ngx archive — per-user API base URL and token (read-only ingest).",
+        fields=(
+            ConnectorField(name="base_url", label="Server address"),
+            ConnectorField(name="token", label="API token", is_secret=True),
+        ),
+    ),
+    IMAP: ConnectorSpec(
+        id=IMAP,
+        description=(
+            "Email (IMAP) source — per-user, multi-mailbox; "
+            "host/port/username/app-password (read-only)."
+        ),
+        multi_instance=True,
+    ),
+    SMTP: ConnectorSpec(
+        id=SMTP,
+        description="Email (SMTP) send — per-user, multi-mailbox; send-as-the-user (LUM-650).",
+        multi_instance=True,
     ),
     LLM_ANTHROPIC: ConnectorSpec(
         id=LLM_ANTHROPIC,
         description="Anthropic API key (Claude family). Per-user; payload {api_key}.",
+        fields=(ConnectorField(name="api_key", label="API key", is_secret=True),),
     ),
     LLM_OPENAI: ConnectorSpec(
         id=LLM_OPENAI,
         description="OpenAI API key (ChatGPT / GPT-4o family). Per-user; payload {api_key}.",
+        fields=(ConnectorField(name="api_key", label="API key", is_secret=True),),
     ),
     LLM_XAI: ConnectorSpec(
         id=LLM_XAI,
         description="xAI API key (Grok family). Per-user; payload {api_key}.",
+        fields=(ConnectorField(name="api_key", label="API key", is_secret=True),),
     ),
     LLM_PERPLEXITY: ConnectorSpec(
         id=LLM_PERPLEXITY,
         description="Perplexity API key. Per-user; payload {api_key}.",
+        fields=(ConnectorField(name="api_key", label="API key", is_secret=True),),
     ),
     LLM_GEMINI: ConnectorSpec(
         id=LLM_GEMINI,
         description="Google Gemini API key. Per-user; payload {api_key}.",
+        fields=(ConnectorField(name="api_key", label="API key", is_secret=True),),
     ),
     LLM_MISTRAL: ConnectorSpec(
         id=LLM_MISTRAL,
         description="Mistral API key. Per-user; payload {api_key}.",
+        fields=(ConnectorField(name="api_key", label="API key", is_secret=True),),
+    ),
+    SYSTEM_SMTP: ConnectorSpec(
+        id=SYSTEM_SMTP,
+        description=(
+            "Transactional system mailer (operator-managed). Configure via "
+            "Admin → System mail, not the credential surfaces."
+        ),
     ),
 }
 """Canonical id → :class:`ConnectorSpec` mapping.
@@ -246,6 +403,24 @@ historical parallel structures (``REGISTERED_CONNECTORS`` set +
 to remove the "registered without description" drift class.
 :data:`REGISTERED_CONNECTORS` survives below as a derived frozenset
 view for backward compat.
+"""
+
+
+OPERATOR_MANAGED_CONNECTORS: frozenset[str] = frozenset({SYSTEM_SMTP})
+"""Connectors the generic credential surfaces must refuse to write (LUM-65).
+
+These ids exist in :data:`CONNECTORS` only so the tier services'
+``require_registered`` gate admits their **dedicated** admin route. Registration
+is what makes them writable, and it makes them writable at **every** tier — so
+without this denylist, registering ``system_smtp`` to enable
+``PUT /api/v1/admin/system-mail`` would simultaneously open
+``PUT /api/v1/me/connector-credentials/system_smtp`` to every household member.
+That matters more than "an extra row": ``credential_tiers.resolve_runtime_credential``
+walks **user → household → system**, so a member-supplied relay would outrank
+the admin-proven one.
+
+Enforced at the route layer by ``routes.connector_credentials._reject_operator_managed``
+on all four routers, and excluded from ``GET /registry`` so no picker offers it.
 """
 
 
@@ -304,8 +479,20 @@ def require_registered(name: str) -> None:
         raise UnknownConnector(f"unknown connector: {name!r}")
 
 
-def iter_registered_with_descriptions() -> list[dict[str, str]]:
-    """Sorted (id ASC) list of ``{"id", "description"}`` dicts.
+def is_multi_instance(name: str) -> bool:
+    """Return True iff ``name`` is a registered multi-instance connector.
+
+    LUM-170: multi-instance connectors (currently only ``imap``) may hold
+    more than one credential row per ``(user_id, connector)``, keyed by a
+    non-empty ``instance``. Unregistered ids return False (they cannot be
+    multi-instance).
+    """
+    spec = CONNECTORS.get(name)
+    return bool(spec and spec.multi_instance)
+
+
+def iter_registered_with_descriptions() -> list[dict[str, object]]:
+    """Sorted (id ASC) list of ``{"id", "description", "fields"}`` dicts.
 
     The wire shape returned by
     ``GET /api/v1/me/connector-credentials/registry`` (plan
@@ -321,19 +508,70 @@ def iter_registered_with_descriptions() -> list[dict[str, str]]:
     deterministic — useful for snapshot-style test diffs and for the UI
     dropdown's reading order.
 
-    The wire projection is intentionally narrow: only ``id`` +
-    ``description`` reach the client even if :class:`ConnectorSpec`
-    grows future fields. Surfacing a new field is an explicit,
-    reviewable edit here, not an automatic side effect of extending the
-    dataclass.
+    The wire projection is intentionally narrow: adding a field to
+    :class:`ConnectorSpec` does NOT reach the client. Surfacing one is an
+    explicit, reviewable edit here, not an automatic side effect of extending
+    the dataclass — and an equality assertion in
+    ``tests/test_connectors_registry.py`` fails when this list changes, so the
+    edit cannot be silent.
+
+    Three keys reach the client today. ``fields`` was added deliberately by
+    LUM-834 chunk B (display metadata: ``name`` / ``label`` / ``is_secret``, no
+    values and no validation rules) so the connectors card can say WHICH fields
+    a credential has — including for a connector that is not configured yet,
+    which a payload-derived answer cannot describe at all.
+
+    Operator-managed ids (:data:`OPERATOR_MANAGED_CONNECTORS`) are omitted:
+    every write surface this list feeds rejects them, so offering them in a
+    picker would only produce a 422 the user cannot act on (LUM-65).
     """
     return [
-        {"id": spec.id, "description": spec.description}
+        {
+            "id": spec.id,
+            "description": spec.description,
+            # LUM-834 chunk B — projected DELIBERATELY, per the paragraph
+            # above. `fields` is display metadata (name / label / is_secret);
+            # it carries no value and no validation rule. A connector with no
+            # declared schema projects `[]`, which the card must render as
+            # "shape not described" rather than "no fields set".
+            "fields": [
+                {"name": f.name, "label": f.label, "is_secret": f.is_secret} for f in spec.fields
+            ],
+        }
         for spec in sorted(CONNECTORS.values(), key=lambda s: s.id)
+        if spec.id not in OPERATOR_MANAGED_CONNECTORS
     ]
 
 
-def register(name: str, *, description: str) -> None:
+def field_names(name: str) -> list[str]:
+    """Declared payload key names for ``name``, in declaration order.
+
+    Empty for an unregistered connector and for one with no declared schema —
+    the two are indistinguishable here on purpose, because both mean "this
+    module cannot describe the payload".
+    """
+    spec = CONNECTORS.get(name)
+    return [f.name for f in spec.fields] if spec else []
+
+
+def secret_field_names(name: str) -> list[str]:
+    """Declared field names that hold secrets, in declaration order.
+
+    Read by the credential wire projection. Secrecy is a property of the
+    CONNECTOR, not of one user's stored payload, which is why this comes from
+    the registry rather than from the row.
+    """
+    spec = CONNECTORS.get(name)
+    return [f.name for f in spec.fields if f.is_secret] if spec else []
+
+
+def register(
+    name: str,
+    *,
+    description: str,
+    multi_instance: bool = False,
+    fields: tuple[ConnectorField, ...] = (),
+) -> None:
     """Add a connector id + description at import time (e.g. from a plugin).
 
     ``description`` is keyword-only and required — there is no overload
@@ -346,6 +584,15 @@ def register(name: str, *, description: str) -> None:
     needing a separate update verb). Test fixtures that register a
     throwaway id should pop it from :data:`CONNECTORS` in their
     teardown to keep the global registry clean across tests.
+
+    ``multi_instance`` and ``fields`` are accepted because this function
+    **rebuilds** the spec rather than updating it. Before LUM-834 chunk B it
+    took only ``name`` and ``description``, so it silently dropped
+    ``multi_instance`` — a latent bug for plugin-registered connectors, and
+    the docstring-blessed "re-register to fix a typo" path would have wiped
+    it. Adding ``fields`` without widening the signature would have made the
+    same trap worse: a plugin connector could never declare a schema, so its
+    card would permanently read "shape not described".
 
     .. note::
 
@@ -362,6 +609,11 @@ def register(name: str, *, description: str) -> None:
             "every registered connector needs human-readable copy for "
             "the GET /api/v1/me/connector-credentials/registry endpoint"
         )
-    CONNECTORS[name] = ConnectorSpec(id=name, description=description)
+    CONNECTORS[name] = ConnectorSpec(
+        id=name,
+        description=description,
+        multi_instance=multi_instance,
+        fields=fields,
+    )
     global REGISTERED_CONNECTORS
     REGISTERED_CONNECTORS = frozenset(CONNECTORS.keys())

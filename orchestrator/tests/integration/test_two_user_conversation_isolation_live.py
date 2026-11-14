@@ -22,10 +22,9 @@ from contextlib import contextmanager
 
 import pytest
 from fastapi.testclient import TestClient
+from tests.integration._pgguard import require_postgres
 
 import config
-
-pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
@@ -61,7 +60,7 @@ def live_postgres(monkeypatch, auth_env):
         if not ms.ping():
             raise RuntimeError("postgres ping failed")
     except Exception as exc:  # pragma: no cover - env-dependent
-        pytest.skip(f"postgres unreachable — run under make compose-test for live proof: {exc}")
+        require_postgres(exc, what="Postgres")
 
     monkeypatch.setitem(config._instances, "metadata_store", ms)
     yield ms

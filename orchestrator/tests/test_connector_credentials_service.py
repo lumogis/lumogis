@@ -58,10 +58,14 @@ class _FakeStore:
     """
 
     def __init__(self) -> None:
-        # rows keyed by (user_id, connector)
-        self.rows: dict[tuple[str, str], dict[str, Any]] = {}
+        # rows keyed by (user_id, connector, instance) — LUM-170 multi-instance.
+        self.rows: dict[tuple[str, str, str], dict[str, Any]] = {}
         self.audit: list[dict[str, Any]] = []
         self.exec_log: list[tuple[str, tuple]] = []
+        # LUM-834 chunk B — every normalised statement this store is asked
+        # for, so a test can assert what the SQL did NOT contain. Used by
+        # the decrypt-free enumeration pin.
+        self.seen_sql: list[str] = []
 
     def ping(self) -> bool:
         return True
@@ -88,12 +92,14 @@ class _FakeStore:
         key_version: int,
         created_by: str = "self",
         updated_by: str = "self",
+        instance: str = "",
     ) -> None:
         """Test helper: insert a row directly, bypassing the service."""
         now = datetime.now(timezone.utc)
-        self.rows[(user_id, connector)] = {
+        self.rows[(user_id, connector, instance)] = {
             "user_id": user_id,
             "connector": connector,
+            "instance": instance,
             "ciphertext": ciphertext,
             "key_version": key_version,
             "created_at": now,
@@ -114,8 +120,8 @@ class _FakeStore:
         p = params or ()
 
         if q.startswith("update user_connector_credentials set delivery_paused = true,"):
-            reason, detail, actor, user_id, connector = p
-            row = self.rows.get((user_id, connector))
+            reason, detail, actor, user_id, connector, instance = p
+            row = self.rows.get((user_id, connector, instance))
             if row is not None:
                 row["delivery_paused"] = True
                 row["delivery_paused_reason"] = reason
@@ -126,8 +132,8 @@ class _FakeStore:
             return
 
         if q.startswith("update user_connector_credentials set delivery_paused = false,"):
-            actor, user_id, connector = p
-            row = self.rows.get((user_id, connector))
+            actor, user_id, connector, instance = p
+            row = self.rows.get((user_id, connector, instance))
             if row is not None:
                 row["delivery_paused"] = False
                 row["delivery_paused_reason"] = None
@@ -138,8 +144,8 @@ class _FakeStore:
             return
 
         if q.startswith("update user_connector_credentials set ciphertext"):
-            ciphertext, key_version, updated_by, user_id, connector = p
-            row = self.rows.get((user_id, connector))
+            ciphertext, key_version, updated_by, user_id, connector, instance = p
+            row = self.rows.get((user_id, connector, instance))
             if row is not None:
                 row["ciphertext"] = ciphertext
                 row["key_version"] = key_version
@@ -152,6 +158,7 @@ class _FakeStore:
 
     def fetch_one(self, query: str, params: tuple | None = None) -> dict | None:
         q = self._norm(query)
+        self.seen_sql.append(q)
         p = params or ()
 
         if "allows_shared" in q:
@@ -161,23 +168,71 @@ class _FakeStore:
         if "privacy_user_settings" in q:
             return None
 
+        # LUM-834 chunk B — is_disabled(). Absent row => False (not
+        # disabled): a connector nobody configured is not one somebody
+        # switched off, and answering otherwise would stop the tier walk
+        # for every user without a row.
+        # LUM-834 chunk B — set_enabled(). Never touches ciphertext, and
+        # deliberately does not reset delivery_paused: the two flags are
+        # independent (user-set vs system-set).
+        if q.startswith("update user_connector_credentials set enabled = %s"):
+            enabled, actor, user_id, connector, instance = p
+            row = self.rows.get((user_id, connector, instance))
+            if row is None:
+                return None
+            row["enabled"] = bool(enabled)
+            row["updated_by"] = actor
+            row["updated_at"] = datetime.now(timezone.utc)
+            return self._project_record(row)
+
+        if q.startswith("select enabled from user_connector_credentials"):
+            user_id, connector, instance = p
+            row = self.rows.get((user_id, connector, instance))
+            if row is None:
+                return None
+            return {"enabled": bool(row.get("enabled", True))}
+
         if q.startswith("select ciphertext from user_connector_credentials"):
-            user_id, connector = p
-            row = self.rows.get((user_id, connector))
-            return {"ciphertext": row["ciphertext"]} if row else None
+            # LUM-834 chunk B: the real query carries `AND enabled`, so a
+            # disabled row yields no ciphertext and is indistinguishable from an
+            # absent one.
+            #
+            # The filter is applied ONLY when the statement actually contains
+            # `and enabled`. Applying it unconditionally would move the gate
+            # INTO THE FAKE: delete `AND enabled` from `get_payload` or
+            # `resolve` and every gate test would still pass, because the fake
+            # would keep enforcing what production had stopped enforcing. §5a —
+            # the fake must fail the way the real collaborator fails, and real
+            # Postgres has no opinion about a predicate that is not there.
+            user_id, connector, instance = p
+            row = self.rows.get((user_id, connector, instance))
+            if row is None:
+                return None
+            if "and enabled" in q and not row.get("enabled", True):
+                return None
+            return {"ciphertext": row["ciphertext"]}
 
         if (
-            q.startswith("select user_id, connector, created_at, updated_at,")
-            and "where user_id = %s and connector = %s" in q
+            q.startswith("select user_id, connector, instance, created_at, updated_at,")
+            and "where user_id = %s and connector = %s and instance = %s" in q
         ):
-            user_id, connector = p
-            row = self.rows.get((user_id, connector))
+            user_id, connector, instance = p
+            row = self.rows.get((user_id, connector, instance))
             return self._project_record(row) if row else None
 
         if q.startswith("insert into user_connector_credentials"):
-            user_id, connector, ciphertext, key_version, created_by, updated_by = p
+            (
+                user_id,
+                connector,
+                instance,
+                ciphertext,
+                key_version,
+                created_by,
+                updated_by,
+                configured_keys,
+            ) = p
             now = datetime.now(timezone.utc)
-            existing = self.rows.get((user_id, connector))
+            existing = self.rows.get((user_id, connector, instance))
             if existing is not None:
                 existing["ciphertext"] = ciphertext
                 existing["key_version"] = key_version
@@ -187,11 +242,17 @@ class _FakeStore:
                 existing["delivery_paused_reason"] = None
                 existing["delivery_paused_detail"] = None
                 existing["delivery_paused_at"] = None
+                # Replaced, not merged. `enabled` is deliberately
+                # NOT reset here, mirroring the real DO UPDATE SET:
+                # saving a credential must not silently switch a
+                # connector the user turned off back on.
+                existing["configured_keys"] = configured_keys
                 row = existing
             else:
                 row = {
                     "user_id": user_id,
                     "connector": connector,
+                    "instance": instance,
                     "ciphertext": ciphertext,
                     "key_version": key_version,
                     "created_at": now,
@@ -202,13 +263,15 @@ class _FakeStore:
                     "delivery_paused_reason": None,
                     "delivery_paused_detail": None,
                     "delivery_paused_at": None,
+                    "enabled": True,
+                    "configured_keys": configured_keys,
                 }
-                self.rows[(user_id, connector)] = row
+                self.rows[(user_id, connector, instance)] = row
             return self._project_record(row)
 
         if q.startswith("delete from user_connector_credentials"):
-            user_id, connector = p
-            row = self.rows.pop((user_id, connector), None)
+            user_id, connector, instance = p
+            row = self.rows.pop((user_id, connector, instance), None)
             return {"key_version": row["key_version"]} if row else None
 
         if q.startswith("insert into audit_log"):
@@ -230,32 +293,35 @@ class _FakeStore:
 
     def fetch_all(self, query: str, params: tuple | None = None) -> list[dict]:
         q = self._norm(query)
+        self.seen_sql.append(q)
         p = params or ()
 
         if (
-            q.startswith("select user_id, connector, created_at, updated_at,")
-            and "where user_id = %s order by connector asc" in q
+            q.startswith("select user_id, connector, instance, created_at, updated_at,")
+            and "where user_id = %s order by connector asc, instance asc" in q
         ):
             (user_id,) = p
             rows = [
-                self._project_record(r) for (uid, _conn), r in self.rows.items() if uid == user_id
+                self._project_record(r) for (uid, _c, _i), r in self.rows.items() if uid == user_id
             ]
-            rows.sort(key=lambda r: r["connector"])
+            rows.sort(key=lambda r: (r["connector"], r["instance"]))
             return rows
 
         if q.startswith(
-            "select user_id, connector, ciphertext, key_version from user_connector_credentials"
+            "select user_id, connector, instance, ciphertext, key_version "
+            "from user_connector_credentials"
         ):
             rows = [
                 {
                     "user_id": r["user_id"],
                     "connector": r["connector"],
+                    "instance": r.get("instance", ""),
                     "ciphertext": r["ciphertext"],
                     "key_version": r["key_version"],
                 }
                 for r in self.rows.values()
             ]
-            rows.sort(key=lambda r: (r["user_id"], r["connector"]))
+            rows.sort(key=lambda r: (r["user_id"], r["connector"], r["instance"]))
             return rows
 
         return []
@@ -265,6 +331,7 @@ class _FakeStore:
         return {
             "user_id": row["user_id"],
             "connector": row["connector"],
+            "instance": row.get("instance", ""),
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
             "created_by": row["created_by"],
@@ -274,6 +341,10 @@ class _FakeStore:
             "delivery_paused_reason": row.get("delivery_paused_reason"),
             "delivery_paused_detail": row.get("delivery_paused_detail"),
             "delivery_paused_at": row.get("delivery_paused_at"),
+            "enabled": row.get("enabled", True),
+            # `.get(..., None)` on purpose: NULL is a real state
+            # (pre-migration row) and must not become [].
+            "configured_keys": row.get("configured_keys"),
         }
 
 
@@ -463,7 +534,7 @@ def test_put_persists_metadata(store):
     from services.connector_credentials import put_payload
 
     put_payload("u1", "testconnector", {"k": "v"}, actor="self")
-    row = store.rows[("u1", "testconnector")]
+    row = store.rows[("u1", "testconnector", "")]
     assert row["created_by"] == "self"
     assert row["updated_by"] == "self"
     assert row["key_version"] == _key_fingerprint(_load_keys()[0])
@@ -693,7 +764,7 @@ def test_actor_admin_format_recorded(store):
     from services.connector_credentials import put_payload
 
     put_payload("u1", "testconnector", {"k": "v"}, actor="admin:abc123")
-    assert store.rows[("u1", "testconnector")]["created_by"] == "admin:abc123"
+    assert store.rows[("u1", "testconnector", "")]["created_by"] == "admin:abc123"
 
 
 def test_actor_invalid_format_raises(store):
@@ -770,7 +841,7 @@ def test_key_version_is_stable_across_list_reorder(store, monkeypatch):
     monkeypatch.setenv("LUMOGIS_CREDENTIAL_KEYS", f"{k2},{k1}")
     svc.reset_for_tests()
 
-    persisted = store.rows[("u1", "testconnector")]
+    persisted = store.rows[("u1", "testconnector", "")]
     assert persisted["key_version"] == fp_k1
 
 
@@ -791,7 +862,7 @@ def test_rotation_reencrypts_old_rows(store, monkeypatch):
     monkeypatch.delenv("LUMOGIS_CREDENTIAL_KEY", raising=False)
     svc.reset_for_tests()
     put_payload("u1", "testconnector", {"k": "v"}, actor="self")
-    old_ct = bytes(store.rows[("u1", "testconnector")]["ciphertext"])
+    old_ct = bytes(store.rows[("u1", "testconnector", "")]["ciphertext"])
 
     k2 = Fernet.generate_key().decode()
     monkeypatch.setenv("LUMOGIS_CREDENTIAL_KEYS", f"{k2},{k1}")
@@ -808,9 +879,9 @@ def test_rotation_reencrypts_old_rows(store, monkeypatch):
     assert summary["failed"] == 0
     assert summary["by_tier"]["user"] == {"rotated": 1, "skipped": 0, "failed": 0}
 
-    new_ct = bytes(store.rows[("u1", "testconnector")]["ciphertext"])
+    new_ct = bytes(store.rows[("u1", "testconnector", "")]["ciphertext"])
     assert new_ct != old_ct
-    assert store.rows[("u1", "testconnector")]["key_version"] == _key_fingerprint(
+    assert store.rows[("u1", "testconnector", "")]["key_version"] == _key_fingerprint(
         k2.encode("ascii")
     )
 
@@ -821,7 +892,7 @@ def test_rotation_skips_already_current(store):
     from services.connector_credentials import reencrypt_all_to_current_version
 
     put_payload("u1", "testconnector", {"k": "v"}, actor="self")
-    ct_before = bytes(store.rows[("u1", "testconnector")]["ciphertext"])
+    ct_before = bytes(store.rows[("u1", "testconnector", "")]["ciphertext"])
     audit_before = len(store.audit)
 
     summary = reencrypt_all_to_current_version(actor="system")
@@ -829,7 +900,7 @@ def test_rotation_skips_already_current(store):
     assert summary["skipped"] == 1
     assert summary["failed"] == 0
     assert summary["by_tier"]["user"] == {"rotated": 0, "skipped": 1, "failed": 0}
-    assert bytes(store.rows[("u1", "testconnector")]["ciphertext"]) == ct_before
+    assert bytes(store.rows[("u1", "testconnector", "")]["ciphertext"]) == ct_before
     assert all(a["action_name"] != ACTION_CRED_ROTATED for a in store.audit[audit_before:])
 
 
@@ -881,7 +952,7 @@ def test_rotation_after_prepend_rotates_only_old_rows(store, monkeypatch):
             "conn_g",
             "conn_h",
         ]:
-            assert store.rows[("u1", c)]["key_version"] == fp_k2
+            assert store.rows[("u1", c, "")]["key_version"] == fp_k2
     finally:
         from connectors import registry as reg
 
@@ -927,7 +998,7 @@ def test_rotation_failed_row_left_untouched(store, monkeypatch, caplog):
     assert summary["failed"] == 1
     assert summary["rotated"] == 1
 
-    bad_row = store.rows[("u1", "historic_connector")]
+    bad_row = store.rows[("u1", "historic_connector", "")]
     assert bytes(bad_row["ciphertext"]) == b"junk-bytes"
     assert b"junk-bytes" not in caplog.text.encode("utf-8", errors="replace")
 
@@ -1042,7 +1113,7 @@ def test_listener_fires_on_put_with_action_put(store):
     events: list[dict] = []
     svc.reset_listeners_for_tests()
     svc.register_change_listener(
-        lambda *, user_id, connector, action: events.append(
+        lambda *, user_id, connector, action, instance="": events.append(
             {"user_id": user_id, "connector": connector, "action": action}
         )
     )
@@ -1061,7 +1132,7 @@ def test_listener_fires_on_delete_with_action_delete(store):
     events: list[dict] = []
     svc.reset_listeners_for_tests()
     svc.register_change_listener(
-        lambda *, user_id, connector, action: events.append(
+        lambda *, user_id, connector, action, instance="": events.append(
             {"user_id": user_id, "connector": connector, "action": action}
         )
     )
@@ -1077,7 +1148,9 @@ def test_listener_does_not_fire_on_delete_miss(store):
 
     events: list[dict] = []
     svc.reset_listeners_for_tests()
-    svc.register_change_listener(lambda *, user_id, connector, action: events.append(action))
+    svc.register_change_listener(
+        lambda *, user_id, connector, action, instance="": events.append(action)
+    )
     try:
         assert svc.delete_payload("alice", "testconnector", actor="self") is False
         assert events == []
@@ -1127,3 +1200,66 @@ def test_reset_listeners_for_tests_clears_all(store):
     svc.reset_listeners_for_tests()
     svc.put_payload("alice", "testconnector", {"k": "v"}, actor="self")
     assert seen == []
+
+
+# ---------------------------------------------------------------------------
+# LUM-777 — the IMAP writers and the auth-method classifier agree
+# ---------------------------------------------------------------------------
+
+
+def test_imap_writer_payloads_classify_through_configured_keys(store):
+    """`GET /sources` derives `auth_method` from the key NAMES `put_payload`
+    stores (ADR-NNN), so the classifier and the storage layer must agree.
+
+    WHAT THIS PINS: `put_payload` really records `sorted(payload.keys())`, a
+    token refresh's re-PUT over the row keeps classifying, and
+    `mailbox_auth_method` reads those names. It would fail if `put_payload` stopped
+    recording key names or the classifier's key names changed.
+
+    WHAT IT DOES NOT PIN: the payloads below are hand-copied from the writers
+    (the OAuth device flow in `routes/signals.py`, the token refresh in
+    `services/email_oauth.py`, the setup form `EmailMailboxSetupForm.tsx`); it
+    never calls them. A writer that renamed `refresh_token` or `password` would
+    leave this green while every new mailbox reported `auth_method: null` (safe,
+    but silently unknown). Update these literals together with the writers.
+    """
+    from services.connector_credentials import list_records
+    from services.connector_credentials import put_payload
+    from services.email_credentials import mailbox_auth_method
+
+    oauth = {
+        "host": "outlook.office365.com",
+        "port": 993,
+        "username": "me@example.com",
+        "use_ssl": True,
+        "auth_type": "xoauth2",
+        "provider": "microsoft",
+        "refresh_token": "rt-1",
+        "access_token": "at-1",
+        "expiry": 1_800_000_000.0,
+    }
+    app_password = {
+        "host": "imap.example.com",
+        "port": 993,
+        "username": "me@example.com",
+        "password": "hunter2",
+        "use_ssl": True,
+        "auth_type": "app_password",
+    }
+    put_payload("u1", "imap", oauth, actor="self", instance="oauth-box")
+    put_payload("u1", "imap", app_password, actor="self", instance="pw-box")
+
+    def methods():
+        return {
+            r.instance: mailbox_auth_method(r.configured_keys)
+            for r in list_records("u1")
+            if r.connector == "imap"
+        }
+
+    assert methods() == {"oauth-box": "oauth", "pw-box": "app_password"}
+
+    # A token refresh re-PUTs a copy with a rotated refresh_token over the row.
+    refreshed = dict(oauth, access_token="at-2", expiry=1_800_003_600.0, refresh_token="rt-2")
+    put_payload("u1", "imap", refreshed, actor="system", instance="oauth-box")
+
+    assert methods() == {"oauth-box": "oauth", "pw-box": "app_password"}

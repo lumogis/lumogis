@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Lumogis
+# NOTE: reads retired GET /export and Core /graph/stats; see LUM-929 findings 1 and 7.
 """Integration tests for notes-related graph behaviour (Phase 3 M9).
 
 M5 (quick capture service with /notes endpoints) is not yet implemented.

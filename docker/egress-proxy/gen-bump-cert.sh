@@ -8,9 +8,19 @@
 # IMPORTANT (custody rule):
 #   * Generated PER-DEPLOY (at image build / install time), NEVER committed.
 #     The output path is .gitignore'd.
-#   * Because the proxy SPLICES (never bumps/decrypts), this key NEVER signs
-#     anything and NEVER sees plaintext. It is not a MITM CA and not a shared
-#     secret — it only exists so Squid will start the ssl-bump port.
+#   * This key NEVER signs anything: `generate-host-certificates=off` means
+#     Squid cannot mint per-host certs, so it can never impersonate an upstream.
+#     That is the no-MITM property, and it holds for ALLOWED traffic.
+#
+#   * It is NOT true that this cert is never presented, or that it never sees
+#     plaintext (LUM-764 corrected both claims). On a DENIED CONNECT, Squid
+#     terminates rather than splicing: it presents THIS cert to the client and
+#     decrypts the in-tunnel bytes to answer with an error — a probe's plaintext
+#     was read and answered `X-Squid-Error: ERR_PROTOCOL_UNKNOWN`. That is the
+#     intended deny behaviour, and it is why a denied host fails loudly instead
+#     of hanging. It is not MITM of allowed traffic; it is refusal of disallowed
+#     traffic, and the distinction is worth stating precisely because the old
+#     wording overclaimed and would have reassured the wrong reader.
 #
 # Usage: gen-bump-cert.sh [output.pem]   (default: /etc/squid/bump.pem)
 set -eu
@@ -26,8 +36,14 @@ TMPKEY="$(mktemp)"
 TMPCRT="$(mktemp)"
 trap 'rm -f "$TMPKEY" "$TMPCRT"' EXIT
 
-# 2048-bit self-signed, 10-year, CN is irrelevant (never presented to clients —
-# we splice). No SANs needed.
+# 2048-bit self-signed, 10-year. No SANs needed.
+#
+# THE CN IS LOAD-BEARING — do not change it casually (LUM-764). It was once
+# documented as "irrelevant (never presented to clients)"; both halves were
+# wrong. It IS presented on every denied CONNECT, and since LUM-763 the
+# containment tests use `CN=lumogis-egress-proxy-bump` as the observable that
+# distinguishes a spliced connection (genuine upstream leaf) from a terminated
+# one (this cert). Renaming it silently breaks those assertions.
 openssl req -x509 -newkey rsa:2048 -nodes \
   -keyout "$TMPKEY" -out "$TMPCRT" \
   -days 3650 -subj "/CN=lumogis-egress-proxy-bump" >/dev/null 2>&1
@@ -35,4 +51,4 @@ openssl req -x509 -newkey rsa:2048 -nodes \
 # Squid tls-cert= expects the cert and key concatenated in one PEM.
 cat "$TMPCRT" "$TMPKEY" > "$OUT"
 chmod 600 "$OUT"
-echo "gen-bump-cert: wrote $OUT (splice-only; never used to sign)." >&2
+echo "gen-bump-cert: wrote $OUT (never used to sign; presented only on deny)." >&2

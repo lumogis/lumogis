@@ -5,6 +5,15 @@
 #
 # Then set proxy_url on desired models in config/models.yaml:
 #   proxy_url: http://litellm:4000
+#
+# Security (LUM-880): this proxy has NO master key and holds ANTHROPIC_API_KEY,
+# so anyone who can reach port 4000 can spend that key without logging in.
+# Port 4000 is therefore published on 127.0.0.1 only. Core does not need the
+# published port at all: it reaches the proxy as http://litellm:4000 on the
+# compose network. Do not change the binding to 0.0.0.0 or a LAN address; use
+# an SSH tunnel to see the dashboard from another machine. A master key is not
+# set because Core sends the provider key from models.yaml as the request key,
+# which LiteLLM would then reject. See docs/extending/extending-the-stack.md.
 
 services:
   litellm:
@@ -13,7 +22,7 @@ services:
     # Update this pin once LiteLLM resumes releases after their security review.
     image: ghcr.io/berriai/litellm:main-v1.82.3-stable.patch.2
     ports:
-      - "4000:4000"
+      - "127.0.0.1:4000:4000"
     volumes:
       - ./config/litellm.yaml:/app/config.yaml
     command: ["--config", "/app/config.yaml", "--port", "4000"]

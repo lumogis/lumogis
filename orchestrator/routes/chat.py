@@ -246,7 +246,12 @@ def _sse_chunk(
     return f"data: {json.dumps(payload)}\n\n"
 
 
-LOCAL_MODEL_LOADING_NOTE = "*Loading model on your machine — first time may take 1–2 minutes…*\n\n"
+# Transient status, not answer text (LUM-876): sent as `lumogis.status` on an
+# empty-delta chunk so clients can show it while waiting and drop it when the
+# first token arrives. Plain text, because some surfaces do not render markdown.
+# OpenAI-compatible clients that ignore `lumogis` simply see a slower first token.
+LOCAL_MODEL_LOADING_STATUS = "local_model_loading"
+LOCAL_MODEL_LOADING_NOTE = "Loading model on your machine — first time may take 1–2 minutes…"
 
 # Shown at most once per orchestrator process per local model (not every chat turn).
 _local_model_loading_note_shown: set[str] = set()
@@ -298,7 +303,19 @@ def stream_completion(
         lumogis=lumogis_payload,
     )
     if prepend_loading_note:
-        yield _sse_chunk(cid, created, model, {"content": LOCAL_MODEL_LOADING_NOTE}, None)
+        yield _sse_chunk(
+            cid,
+            created,
+            model,
+            {},
+            None,
+            lumogis={
+                "status": {
+                    "code": LOCAL_MODEL_LOADING_STATUS,
+                    "message": LOCAL_MODEL_LOADING_NOTE,
+                }
+            },
+        )
     for event in events:
         if event.type in ("text", "error"):
             yield _sse_chunk(cid, created, model, {"content": event.content}, None)

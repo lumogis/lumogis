@@ -22,7 +22,8 @@ system tiers). This module:
   every existing import (``from services.connector_credentials import
   CredentialUnavailable``, etc.) keeps working byte-for-byte;
 * owns the action-name vocabulary (:data:`ACTION_CRED_PUT`,
-  :data:`ACTION_CRED_DELETED`, :data:`ACTION_CRED_ROTATED`) — the
+  :data:`ACTION_CRED_DELETED`, :data:`ACTION_CRED_ROTATED`,
+  :data:`ACTION_CRED_TESTED`, :data:`ACTION_CRED_ENABLED`) — the
   tier sibling imports them from here; the import direction is
   one-way (this file never imports ``credential_tiers`` at module
   top, only inside :func:`reencrypt_all_to_current_version` to walk
@@ -30,7 +31,7 @@ system tiers). This module:
 * keeps every public verb (``get_record``, ``list_records``,
   ``get_payload``, ``put_payload``, ``delete_payload``, ``resolve``,
   ``reencrypt_all_to_current_version``, ``count_rows_by_key_version``,
-  ``set_delivery_paused``,
+  ``set_delivery_paused``, ``set_enabled``, ``is_disabled``,
   ``register_change_listener``, ``reset_listeners_for_tests``)
   exactly as before. Callers do not see the internal split.
 
@@ -77,6 +78,7 @@ Each verb uses ``validate_format`` and/or ``require_registered`` as follows:
 from __future__ import annotations
 
 import logging
+import re
 import threading
 from dataclasses import dataclass
 from datetime import datetime
@@ -146,6 +148,17 @@ _log = logging.getLogger(__name__)
 ACTION_CRED_PUT = "__connector_credential__.put"
 ACTION_CRED_DELETED = "__connector_credential__.deleted"
 ACTION_CRED_ROTATED = "__connector_credential__.rotated"
+#: LUM-834 — a test-connection ran against a stored credential. Records THAT a
+#: test happened and whether it passed; never what it was given. Emitted by
+#: :mod:`services.connector_probes`, and only for outcomes that actually
+#: attempted a connection (see its ``_audit``).
+ACTION_CRED_TESTED = "__connector_credential__.tested"
+#: LUM-834 chunk B — a user switched a stored credential on or off. The NEW
+#: STATE lives in ``input_summary["enabled"]``, never in ``result_summary.ok``,
+#: which keeps meaning "the write succeeded" here as it does for every other
+#: action in this vocabulary. Emitted by :func:`set_enabled`, in the service,
+#: per the route file's stated convention.
+ACTION_CRED_ENABLED = "__connector_credential__.enabled"
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +190,26 @@ class CredentialRecord:
     delivery_paused_reason: str | None = None
     delivery_paused_detail: str | None = None
     delivery_paused_at: datetime | None = None
+    # LUM-170: instance discriminator for multi-instance connectors (imap keys
+    # per-mailbox by source_id). Empty for single-instance connectors. Placed
+    # last so existing positional/keyword construction is unaffected.
+    instance: str = ""
+    # LUM-834 chunk B. User-set on/off, distinct from ``delivery_paused``
+    # (system-set on delivery failure). Effective state is
+    # ``enabled and not delivery_paused``.
+    enabled: bool = True
+    #: Payload key NAMES from the last PUT — never a value.
+    #:
+    #: ``None`` means UNKNOWN, not "no keys": the row predates migration 079
+    #: and cannot be populated without decrypting it. Callers must NOT coerce
+    #: it to ``[]``; a working connector would then render as unconfigured,
+    #: which is ADR-199's failure mode by another route. Populated by the next
+    #: :func:`put_payload`. For an OAuth IMAP row that is the next **successful**
+    #: token refresh, so a pre-079 OAuth row that keeps failing stays unknown;
+    #: any other row heals only when it is saved again.
+    #:
+    #: ``GET /sources`` derives ``auth_method`` from this field (LUM-777, ADR-225).
+    configured_keys: list[str] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -194,6 +227,7 @@ def _emit_audit(
     actor: str,
     key_version: int,
     ok: bool = True,
+    input_extra: dict[str, Any] | None = None,
 ) -> None:
     """Per-user audit wrapper — calls the shared internal with ``tier="user"``.
 
@@ -212,6 +246,7 @@ def _emit_audit(
         key_version=key_version,
         tier="user",
         ok=ok,
+        input_extra=input_extra,
     )
 
 
@@ -248,7 +283,7 @@ def register_change_listener(listener: Any) -> None:
 
         listener(*, user_id: str, connector: str, action: str) -> None
 
-    where ``action`` is ``"put"`` or ``"delete"``. Listeners run inline
+    where ``action`` is ``"put"``, ``"delete"`` or ``"enabled"``. Listeners run inline
     on the writing thread immediately after :func:`put_payload` /
     :func:`delete_payload` complete; they MUST be cheap and MUST NOT
     raise (exceptions are caught and logged at exception level so a
@@ -265,13 +300,18 @@ def reset_listeners_for_tests() -> None:
         _LISTENERS.clear()
 
 
-def _fire_change(user_id: str, connector: str, *, action: str) -> None:
-    """Invoke every registered listener; never raises."""
+def _fire_change(user_id: str, connector: str, *, action: str, instance: str = "") -> None:
+    """Invoke every registered listener with the ``instance`` (LUM-170); never raises.
+
+    Listeners accept ``(*, user_id, connector, action, instance="")`` — the
+    ``instance`` default keeps any listener that does not care about it working
+    without a per-call exception dance on the write path.
+    """
     with _LISTENERS_LOCK:
         listeners = list(_LISTENERS)
     for listener in listeners:
         try:
-            listener(user_id=user_id, connector=connector, action=action)
+            listener(user_id=user_id, connector=connector, action=action, instance=instance)
         except Exception:
             _log.exception(
                 "connector_credentials change listener %r raised "
@@ -332,7 +372,45 @@ def _record_from_row(row: dict) -> CredentialRecord:
         delivery_paused_reason=row.get("delivery_paused_reason"),
         delivery_paused_detail=row.get("delivery_paused_detail"),
         delivery_paused_at=row.get("delivery_paused_at"),
+        instance=row.get("instance", "") or "",
+        enabled=bool(row.get("enabled", True)),
+        # Deliberately NOT `or []`, and deliberately not defaulted through
+        # `row.get(..., [])`: NULL is a real state (unknown) and the line
+        # directly above — `or ""` on instance — is exactly the coercion this
+        # field must not receive. A pre-migration row must reach the wire as
+        # None so the card can say "configured, details after the next save"
+        # rather than "nothing set".
+        configured_keys=(
+            list(row["configured_keys"]) if row.get("configured_keys") is not None else None
+        ),
     )
+
+
+# LUM-170: instance validation. A non-empty instance is allowed iff the
+# connector is declared multi-instance in the registry; a multi-instance
+# connector requires a non-empty instance on writes. Reads/deletes tolerate
+# either (operator cleanup of historical rows). Format matches the DB CHECK
+# ``^[a-z0-9_\-]{0,64}$``.
+_INSTANCE_FORMAT = re.compile(r"^[a-z0-9_\-]{0,64}$")
+
+
+class InstanceNotAllowed(ValueError):
+    """A non-empty instance was supplied for a single-instance connector,
+    or an empty instance for a multi-instance connector on a write."""
+
+
+def _validate_instance(connector: str, instance: str, *, write: bool) -> None:
+    if not _INSTANCE_FORMAT.match(instance or ""):
+        raise InstanceNotAllowed(f"instance must match {_INSTANCE_FORMAT.pattern!r}")
+    is_multi = connectors_registry.is_multi_instance(connector)
+    if instance and not is_multi:
+        raise InstanceNotAllowed(
+            f"connector {connector!r} is single-instance; instance must be empty"
+        )
+    if write and is_multi and not instance:
+        raise InstanceNotAllowed(
+            f"connector {connector!r} is multi-instance; a non-empty instance is required"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -341,14 +419,15 @@ def _record_from_row(row: dict) -> CredentialRecord:
 
 
 _SELECT_RECORD_COLS = (
-    "user_id, connector, created_at, updated_at, "
+    "user_id, connector, instance, created_at, updated_at, "
     "created_by, updated_by, key_version, "
     "delivery_paused, delivery_paused_reason, "
-    "delivery_paused_detail, delivery_paused_at"
+    "delivery_paused_detail, delivery_paused_at, "
+    "enabled, configured_keys"
 )
 
 
-def get_record(user_id: str, connector: str) -> CredentialRecord | None:
+def get_record(user_id: str, connector: str, *, instance: str = "") -> CredentialRecord | None:
     """Return row metadata, ``None`` on miss.
 
     Format-strict, NOT registry-strict: admins / operators can read
@@ -363,12 +442,12 @@ def get_record(user_id: str, connector: str) -> CredentialRecord | None:
     ms = config.get_metadata_store()
     # SCOPE-EXEMPT: user_connector_credentials has no `scope` column
     # — these are encrypted per-user external-service secrets, not
-    # authored memory; the (user_id, connector) primary key already
+    # authored memory; the (user_id, connector, instance) primary key already
     # makes the row uniquely owned by exactly one user.
     row = ms.fetch_one(
         f"SELECT {_SELECT_RECORD_COLS} FROM user_connector_credentials "
-        "WHERE user_id = %s AND connector = %s",
-        (user_id, connector),
+        "WHERE user_id = %s AND connector = %s AND instance = %s",
+        (user_id, connector, instance),
     )
     return _record_from_row(row) if row else None
 
@@ -388,7 +467,7 @@ def list_records(user_id: str) -> list[CredentialRecord]:
     # user via the (user_id, connector) primary key.
     rows = ms.fetch_all(
         f"SELECT {_SELECT_RECORD_COLS} FROM user_connector_credentials "
-        "WHERE user_id = %s ORDER BY connector ASC",
+        "WHERE user_id = %s ORDER BY connector ASC, instance ASC",
         (user_id,),
     )
     return [_record_from_row(r) for r in rows]
@@ -399,25 +478,98 @@ def list_records(user_id: str) -> list[CredentialRecord]:
 # ---------------------------------------------------------------------------
 
 
-def get_payload(user_id: str, connector: str) -> dict[str, Any] | None:
+def get_payload(user_id: str, connector: str, *, instance: str = "") -> dict[str, Any] | None:
     """Decrypt + return the JSON payload, ``None`` on miss.
 
     Plaintext-bearing path; **registry-strict** by design (calls
     :func:`connectors.registry.require_registered`). Operators reading
     metadata for a stale row use :func:`get_record` instead, which
     does NOT require registration.
+
+    ``instance`` selects a specific row of a multi-instance connector
+    (LUM-170; imap keys per-mailbox by ``source_id``). Defaults to ``""``
+    (the single-instance row), preserving every existing caller.
+
+    **A disabled row yields no plaintext** (LUM-834 chunk B): the SELECT
+    carries ``AND enabled``, so a user who turns a connector off gets the
+    same ``None`` as a user who never configured one. That is the security
+    half of the gate and it is unconditional. Callers that distinguish
+    *disabled* from *absent* — the tier walk, the loaders' env fallbacks —
+    ask :func:`is_disabled` afterwards; ``None`` alone cannot tell them apart.
     """
     connectors_registry.require_registered(connector)
+    _validate_instance(connector, instance, write=False)
     ms = config.get_metadata_store()
     # SCOPE-EXEMPT: user_connector_credentials has no `scope` column
     # — encrypted per-user external-service secrets, not authored memory.
     row = ms.fetch_one(
-        "SELECT ciphertext FROM user_connector_credentials WHERE user_id = %s AND connector = %s",
-        (user_id, connector),
+        "SELECT ciphertext FROM user_connector_credentials "
+        "WHERE user_id = %s AND connector = %s AND instance = %s AND enabled",
+        (user_id, connector, instance),
     )
     if row is None:
         return None
     return _decrypt_payload(row["ciphertext"])
+
+
+def is_disabled(user_id: str, connector: str, *, instance: str = "") -> bool:
+    """Is there a row for this credential, and is it switched off? (LUM-834 B)
+
+    Exists because ``get_payload`` returning ``None`` is **one bit for two
+    questions**. Once the gate lands, *disabled* and *absent* are identical to
+    every caller of ``get_payload`` — and they must produce opposite behaviour:
+    an absent user row falls through to the household tier and lets a loader
+    use its env fallback; a disabled one must do neither.
+
+    Contract, stated rather than left to be inferred from a test:
+
+    * **An absent row is** ``False``, **not** ``True``. A connector that was
+      never configured is not "disabled"; saying so would stop the tier walk
+      for every user who has no row, which is most of them.
+    * **Registry-strict**, like every other verb that names a live connector.
+    * **Instance-aware** — the multi-instance loaders guard their
+      ``instance == ""`` branch and need to ask about that row specifically.
+
+    One indexed lookup on the primary key. Called on the resolve path only
+    when the payload read has already missed, and inside each loader's
+    env-fallback branch before it falls back.
+    """
+    connectors_registry.require_registered(connector)
+    _validate_instance(connector, instance, write=False)
+    ms = config.get_metadata_store()
+    # SCOPE-EXEMPT: user_connector_credentials has no `scope` column
+    # — encrypted per-user external-service secrets, not authored memory.
+    row = ms.fetch_one(
+        "SELECT enabled FROM user_connector_credentials "
+        "WHERE user_id = %s AND connector = %s AND instance = %s",
+        (user_id, connector, instance),
+    )
+    if row is None:
+        return False
+    return not bool(row["enabled"])
+
+
+def disabled_error(connector: str, *, instance: str = "") -> ConnectorNotConfigured:
+    """The exception a disabled connector raises, with a disabled-specific message.
+
+    **Deliberately** :class:`ConnectorNotConfigured` and **not** a new class.
+    A sibling exception under ``LookupError`` would not be caught by any
+    existing ``except ConnectorNotConfigured``, so it would have escaped from
+    the lowest credential primitive into route bodies that do bare truthiness
+    checks — a user switching a connector off would have produced a 500 on an
+    admin screen. Reusing the exception the codebase already routes correctly
+    means chat keeps its 424, ingest keeps skipping, and no consumer changes.
+
+    The message differs so logs can tell the two apart even though the type
+    cannot. Note it is only *visible* where the raise reaches the operator:
+    ``caldav_credentials`` and ``ntfy_runtime`` catch ``ConnectorNotConfigured``
+    from the resolver and raise their own text.
+    """
+    where = f" instance={instance!r}" if instance else ""
+    return ConnectorNotConfigured(
+        f"connector {connector!r} is disabled for this user{where} — "
+        "the credential is stored but switched off"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -431,6 +583,7 @@ def put_payload(
     payload: dict[str, Any],
     *,
     actor: str,
+    instance: str = "",
 ) -> CredentialRecord:
     """UPSERT a credential row; emit audit; return the fresh record.
 
@@ -441,6 +594,7 @@ def put_payload(
     ``updated_by`` / ``updated_at`` advance on every call.
     """
     connectors_registry.require_registered(connector)
+    _validate_instance(connector, instance, write=True)
     actor_clean = _actor_str(actor)
     ciphertext = _encrypt_payload(payload)
     key_version = _current_key_version()
@@ -448,11 +602,13 @@ def put_payload(
     ms = config.get_metadata_store()
     row = ms.fetch_one(
         "INSERT INTO user_connector_credentials "
-        "(user_id, connector, ciphertext, key_version, created_by, updated_by) "
-        "VALUES (%s, %s, %s, %s, %s, %s) "
-        "ON CONFLICT (user_id, connector) DO UPDATE SET "
+        "(user_id, connector, instance, ciphertext, key_version, created_by, updated_by, "
+        " configured_keys) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) "
+        "ON CONFLICT (user_id, connector, instance) DO UPDATE SET "
         "  ciphertext = EXCLUDED.ciphertext, "
         "  key_version = EXCLUDED.key_version, "
+        "  configured_keys = EXCLUDED.configured_keys, "
         "  delivery_paused = false, "
         "  delivery_paused_reason = NULL, "
         "  delivery_paused_detail = NULL, "
@@ -463,16 +619,22 @@ def put_payload(
         (
             user_id,
             connector,
+            instance,
             ciphertext,
             key_version,
             actor_clean,
             actor_clean,
+            # Written from the payload being encrypted, in the SAME statement,
+            # which is what makes "these two cannot disagree" a property rather
+            # than an assertion. On UPDATE it is REPLACED, not merged: a re-PUT
+            # with different keys must not leave the old list behind.
+            sorted(payload.keys()),
         ),
     )
     if row is None:
         raise RuntimeError(
             f"connector_credentials put: row not visible after upsert "
-            f"user_id={user_id!r} connector={connector!r}"
+            f"user_id={user_id!r} connector={connector!r} instance={instance!r}"
         )
     record = _record_from_row(row)
     _emit_audit(
@@ -483,12 +645,13 @@ def put_payload(
         key_version=key_version,
     )
     _log.info(
-        "connector_credentials: put user_id=%s connector=%s actor=%s",
+        "connector_credentials: put user_id=%s connector=%s instance=%s actor=%s",
         user_id,
         connector,
+        instance,
         actor_clean,
     )
-    _fire_change(user_id, connector, action="put")
+    _fire_change(user_id, connector, action="put", instance=instance)
     return record
 
 
@@ -500,6 +663,7 @@ def set_delivery_paused(
     reason: str | None,
     detail: str | None,
     actor: str,
+    instance: str = "",
 ) -> None:
     """Persist delivery-pause metadata for a user-owned credential row only.
 
@@ -523,13 +687,14 @@ def set_delivery_paused(
             "delivery_paused_at = NOW(), "
             "updated_at = NOW(), updated_by = %s "
             # SCOPE-EXEMPT: PK filter on per-user credential row (see block comment above).
-            "WHERE user_id = %s AND connector = %s",
+            "WHERE user_id = %s AND connector = %s AND instance = %s",
             (
                 reason,
                 detail,
                 actor_clean,
                 user_id,
                 connector,
+                instance,
             ),
         )
     else:
@@ -542,9 +707,76 @@ def set_delivery_paused(
             "delivery_paused_at = NULL, "
             "updated_at = NOW(), updated_by = %s "
             # SCOPE-EXEMPT: PK filter on per-user credential row (see block comment above).
-            "WHERE user_id = %s AND connector = %s",
-            (actor_clean, user_id, connector),
+            "WHERE user_id = %s AND connector = %s AND instance = %s",
+            (actor_clean, user_id, connector, instance),
         )
+
+
+def set_enabled(
+    user_id: str,
+    connector: str,
+    *,
+    enabled: bool,
+    actor: str,
+    instance: str = "",
+) -> CredentialRecord | None:
+    """Switch a stored credential on or off. Returns the fresh record, or ``None``.
+
+    Shaped after :func:`set_delivery_paused` — same never-touches-``ciphertext``
+    guarantee, one fewer argument — because inventing a different shape beside
+    it would be a second convention for the same job. **Disabling does not
+    delete anything**: re-enabling resumes without re-entering the secret,
+    which is the whole user-facing point of the flag.
+
+    ``None`` means there was no row to switch; the route maps that to 404.
+
+    **Fires the change listeners, and that is not optional.**
+    ``set_delivery_paused`` fires none — it predates the listener bus — so
+    copying it verbatim would leave ``config``'s per-user LLM adapter cache
+    holding a live key after the user switched the connector off, and chat
+    would keep working until the next restart. That would falsify the promise
+    that disabling stops actions as well as ingest.
+    """
+    connectors_registry.require_registered(connector)
+    _validate_instance(connector, instance, write=False)
+    actor_clean = _actor_str(actor)
+
+    ms = config.get_metadata_store()
+    # SCOPE-EXEMPT: credentials table; no scope column; flag set by row PK.
+    row = ms.fetch_one(
+        "UPDATE user_connector_credentials SET "
+        "enabled = %s, updated_at = NOW(), updated_by = %s "
+        # SCOPE-EXEMPT: PK filter on per-user credential row (see comment above).
+        "WHERE user_id = %s AND connector = %s AND instance = %s "
+        f"RETURNING {_SELECT_RECORD_COLS}",
+        (enabled, actor_clean, user_id, connector, instance),
+    )
+    if row is None:
+        return None
+
+    _emit_audit(
+        user_id,
+        connector,
+        ACTION_CRED_ENABLED,
+        actor=actor_clean,
+        key_version=_record_from_row(row).key_version,
+        # The new state goes in `input_summary`, NOT through the `ok` flag.
+        # `ok=false` already means "the write failed" everywhere else in this
+        # vocabulary. Overloading it would hand every operator filtering for
+        # failed writes a stream of successful disables.
+        input_extra={"enabled": bool(enabled)},
+    )
+    _log.info(
+        "connector_credentials: set_enabled user_id=%s connector=%s instance=%s "
+        "enabled=%s actor=%s",
+        user_id,
+        connector,
+        instance,
+        enabled,
+        actor_clean,
+    )
+    _fire_change(user_id, connector, action="enabled", instance=instance)
+    return _record_from_row(row)
 
 
 # ---------------------------------------------------------------------------
@@ -557,6 +789,7 @@ def delete_payload(
     connector: str,
     *,
     actor: str,
+    instance: str = "",
 ) -> bool:
     """Delete a row; emit audit on hit; return True iff a row was deleted.
 
@@ -567,15 +800,16 @@ def delete_payload(
     and was cleaned up.
     """
     connectors_registry.validate_format(connector)
+    _validate_instance(connector, instance, write=False)
     actor_clean = _actor_str(actor)
     ms = config.get_metadata_store()
     # SCOPE-EXEMPT: user_connector_credentials has no `scope` column
     # — encrypted per-user external-service secrets, not authored memory.
     row = ms.fetch_one(
         "DELETE FROM user_connector_credentials "
-        "WHERE user_id = %s AND connector = %s "
+        "WHERE user_id = %s AND connector = %s AND instance = %s "
         "RETURNING key_version",
-        (user_id, connector),
+        (user_id, connector, instance),
     )
     if row is None:
         return False
@@ -587,12 +821,13 @@ def delete_payload(
         key_version=row["key_version"],
     )
     _log.info(
-        "connector_credentials: deleted user_id=%s connector=%s actor=%s",
+        "connector_credentials: deleted user_id=%s connector=%s instance=%s actor=%s",
         user_id,
         connector,
+        instance,
         actor_clean,
     )
-    _fire_change(user_id, connector, action="delete")
+    _fire_change(user_id, connector, action="delete", instance=instance)
     return True
 
 
@@ -606,6 +841,7 @@ def resolve(
     connector: str,
     *,
     fallback_env: str | None = None,
+    instance: str = "",
 ) -> dict[str, Any]:
     """Runtime entrypoint for downstream consumers (D3).
 
@@ -613,26 +849,49 @@ def resolve(
     :func:`services._credential_internals._resolve_env_fallback` so the
     runtime tier resolver and this per-user resolver share a single
     canonical implementation (no byte-for-byte mirror to drift).
+
+    ``instance`` (LUM-170) selects a specific mailbox row of a
+    multi-instance connector. The env-fallback is only consulted for the
+    single-instance (``instance == ""``) path — a numbered mailbox has no
+    env analogue.
     """
     connectors_registry.require_registered(connector)
+    _validate_instance(connector, instance, write=False)
 
     ms = config.get_metadata_store()
     # SCOPE-EXEMPT: user_connector_credentials has no `scope` column
     # — encrypted per-user external-service secrets, not authored memory.
     row = ms.fetch_one(
-        "SELECT ciphertext FROM user_connector_credentials WHERE user_id = %s AND connector = %s",
-        (user_id, connector),
+        "SELECT ciphertext FROM user_connector_credentials "
+        "WHERE user_id = %s AND connector = %s AND instance = %s AND enabled",
+        (user_id, connector, instance),
     )
     if row is not None:
         return _decrypt_payload(row["ciphertext"])
 
-    env_payload = _resolve_env_fallback(connector, fallback_env)
-    if env_payload is not None:
-        return env_payload
+    # LUM-834 chunk B — gating the SELECT above is NOT gating this function.
+    #
+    # With `AND enabled`, a disabled row and an absent one both miss, and the
+    # env fallback below returns the deployment's env credential whenever
+    # AUTH_ENABLED is false — which is the default. So without this check,
+    # switching a connector off would silently swap the stored credential for
+    # the env one and the toggle would appear broken.
+    #
+    # Latent today: the only production caller passes user_id="" and can own
+    # no row. Guarded anyway, because "latent" is a property of today's
+    # callers and this function's own docstring calls it the runtime
+    # entrypoint for downstream consumers.
+    if is_disabled(user_id, connector, instance=instance):
+        raise disabled_error(connector, instance=instance)
+
+    if instance == "":
+        env_payload = _resolve_env_fallback(connector, fallback_env)
+        if env_payload is not None:
+            return env_payload
 
     raise ConnectorNotConfigured(
         f"no credential row and no usable env fallback for "
-        f"user_id={user_id!r} connector={connector!r}"
+        f"user_id={user_id!r} connector={connector!r} instance={instance!r}"
     )
 
 
@@ -654,10 +913,14 @@ def _reencrypt_user_table(*, actor_clean: str) -> dict[str, int]:
     current_fp = _current_key_version()
 
     ms = config.get_metadata_store()
+    # LUM-170: SELECT + UPDATE MUST carry ``instance`` — the PK is now
+    # (user_id, connector, instance). Without it, a user with two imap
+    # mailboxes would have both rows match the UPDATE WHERE and one
+    # mailbox's ciphertext would silently overwrite the other's.
     rows = ms.fetch_all(
-        "SELECT user_id, connector, ciphertext, key_version "
+        "SELECT user_id, connector, instance, ciphertext, key_version "
         "FROM user_connector_credentials "
-        "ORDER BY user_id ASC, connector ASC"
+        "ORDER BY user_id ASC, connector ASC, instance ASC"
     )
 
     rotated = 0
@@ -667,6 +930,7 @@ def _reencrypt_user_table(*, actor_clean: str) -> dict[str, int]:
     for row in rows:
         user_id = row["user_id"]
         connector = row["connector"]
+        instance = row.get("instance", "") or ""
         old_ciphertext = bytes(row["ciphertext"])
 
         if row["key_version"] == current_fp:
@@ -705,8 +969,8 @@ def _reencrypt_user_table(*, actor_clean: str) -> dict[str, int]:
                 "UPDATE user_connector_credentials "
                 "SET ciphertext = %s, key_version = %s, "
                 "    updated_at = NOW(), updated_by = %s "
-                "WHERE user_id = %s AND connector = %s",
-                (new_token, current_fp, actor_clean, user_id, connector),
+                "WHERE user_id = %s AND connector = %s AND instance = %s",
+                (new_token, current_fp, actor_clean, user_id, connector, instance),
             )
         except Exception as exc:
             _log.error(
@@ -841,6 +1105,8 @@ __all__ = [
     "ACTION_CRED_PUT",
     "ACTION_CRED_DELETED",
     "ACTION_CRED_ROTATED",
+    "ACTION_CRED_TESTED",
+    "ACTION_CRED_ENABLED",
     "CredentialRecord",
     "ConnectorNotConfigured",
     "CredentialUnavailable",
@@ -852,6 +1118,9 @@ __all__ = [
     "delete_payload",
     "resolve",
     "set_delivery_paused",
+    "set_enabled",
+    "is_disabled",
+    "disabled_error",
     "count_rows_by_key_version",
     "reencrypt_all_to_current_version",
     "get_current_key_version",

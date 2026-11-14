@@ -34,6 +34,7 @@ from visibility import visible_filter
 import config
 from services import entity_constraints
 from services import entity_quality
+from services import task_models
 
 _log = logging.getLogger(__name__)
 
@@ -82,8 +83,12 @@ def extract_entities(session_text: str, *, user_id: str | None = None) -> list[E
 
     Plan llm_provider_keys_per_user_migration Pass 2.10: ``user_id`` is
     threaded into ``get_llm_provider`` so a future switch to a cloud model
-    resolves the key per-user. ``llama`` has no ``api_key_env`` so user_id
-    is a no-op semantically today.
+    resolves the key per-user.
+
+    The model comes from the ``entity_extraction`` task (``services/task_models.py``;
+    the code default is ``llama``). Listed models must be on-box: email attachment
+    text reaches this task (``ingest.ingest_email_attachment``), so the resolver
+    skips any off-box entry.
     """
     if not session_text or not session_text.strip():
         return []
@@ -93,7 +98,9 @@ def extract_entities(session_text: str, *, user_id: str | None = None) -> list[E
     from services.privacy_mode import resolve_job_model
 
     try:
-        job_model = resolve_job_model("llama", user_id)
+        job_model = resolve_job_model(
+            task_models.resolve_task_model("entity_extraction", user_id=user_id), user_id
+        )
         if not job_model:
             return []
         provider = config.get_llm_provider(job_model, user_id=user_id)
@@ -356,6 +363,11 @@ def _upsert_entity(
                 "WHERE entity_id = %s",
                 (merged_aliases, merged_tags, entity_id),
             )
+            # LUM-599: edges to a staged entity missed on every reconcile pass
+            # (no node yet); the promotion gives them a fresh retry budget.
+            from services.entity_edges import reset_edge_reconcile_attempts_for_entity
+
+            reset_edge_reconcile_attempts_for_entity(entity_id, user_id=user_id, ms=ms)
             _log.debug(
                 "Merged entity %r into existing %r (id=%s, +1 mention) — promoted from staged",
                 entity.name,

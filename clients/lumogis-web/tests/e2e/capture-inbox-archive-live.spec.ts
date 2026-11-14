@@ -17,6 +17,18 @@ import { hasSmokeCreds, loginWithSmokeCredentials, smokeCredsSkipMessage, smokeE
 
 const FAILED_INDEX_ERROR = "index_memory_unavailable";
 
+// LUM-787 — committing a capture calls the index route, which needs embeddings. The
+// default slim CI stack has no Ollama by design (ADR-064, docker-compose.web-e2e-ci.yml:
+// "slim GitHub Actions stack: no Ollama"), so that call returns 503 and these tests
+// CANNOT pass there. They gated only on smoke credentials, so in CI — where credentials
+// are present — they ran and failed every time, unnoticed for as long as the lane itself
+// was down (LUM-786). Same env contract as admin_ollama_mutations.spec.ts: the Ollama
+// lane sets this, the slim lane does not.
+const expectOllama =
+  process.env.LUMOGIS_E2E_EXPECT_OLLAMA === "1"
+    ? ""
+    : "Set LUMOGIS_E2E_EXPECT_OLLAMA=1 (capture commit needs embeddings; the slim stack has no Ollama).";
+
 async function assertArchiveReadOnlyDetail(
   page: Page,
   unique: string,
@@ -145,6 +157,7 @@ async function runFailedRetryToArchiveFlow(page: Page, label: string): Promise<v
 
 test.describe("LUM-608 capture inbox + archive live (desktop)", () => {
   test.skip(!hasSmokeCreds, smokeCredsSkipMessage);
+  test.skip(!!expectOllama, expectOllama);
 
   test("create → inbox → commit → archive read-only provenance", async ({ page }) => {
     test.setTimeout(300_000);
@@ -162,6 +175,7 @@ test.describe("LUM-608 capture inbox + archive live (desktop)", () => {
 test.describe("LUM-608 capture inbox + archive live (mobile)", () => {
   test.use({ viewport: { width: 390, height: 844 } });
   test.skip(!hasSmokeCreds, smokeCredsSkipMessage);
+  test.skip(!!expectOllama, expectOllama);
 
   test("create → inbox → commit → archive on mobile viewport", async ({ page }) => {
     test.setTimeout(300_000);

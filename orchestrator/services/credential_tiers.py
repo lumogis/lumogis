@@ -772,6 +772,27 @@ def resolve_runtime_credential(
     if user_payload is not None:
         return ResolvedCredential(payload=user_payload, tier="user")
 
+    # LUM-834 chunk B — the second read, and it is what makes the tier walk
+    # implementable at all.
+    #
+    # `get_payload` now carries `AND enabled`, so a DISABLED user row and an
+    # ABSENT one both arrive here as None: one bit for two outcomes that must
+    # differ. Absent falls through to household, as it always has. Disabled
+    # must STOP — a user who switched their own credential off has not asked
+    # to start using the household one instead.
+    #
+    # This mirrors `ntfy_runtime`'s shipped `delivery_paused` handling, which
+    # works precisely BECAUSE it re-reads the record after resolving rather
+    # than inferring from the miss.
+    #
+    # Cost: one indexed primary-key lookup, on the resolve path only, and only
+    # when tier 1 has already missed.
+    #
+    # LUM-850: the read models walk this same order on metadata through
+    # `runtime_tier_from_records` (below). A change here must be made there too.
+    if ccs.is_disabled(caller_clean, connector):
+        raise ccs.disabled_error(connector)
+
     # Tier 2 — household.
     try:
         household_payload = household_get_payload(connector)
@@ -818,6 +839,55 @@ def resolve_runtime_credential(
     )
 
 
+#: What :func:`runtime_tier_from_records` returns. The four serving tiers are
+#: :attr:`ResolvedCredential.tier`; ``"disabled"`` and ``"none"`` are the two
+#: ways :func:`resolve_runtime_credential` raises ``ConnectorNotConfigured``.
+RuntimeTier = Literal["user", "household", "system", "env", "disabled", "none"]
+
+#: The :data:`RuntimeTier` values for which a credential would be served.
+SERVING_TIERS: frozenset[str] = frozenset({"user", "household", "system", "env"})
+
+
+def runtime_tier_from_records(
+    user_record: Any,
+    *,
+    household_present: bool,
+    system_present: bool,
+    env_fallback: bool = False,
+) -> RuntimeTier:
+    """The tier :func:`resolve_runtime_credential` would stop at, from metadata only.
+
+    For read models (``/v1/models``, ``me_llm_providers``, ``me_notifications``)
+    that must say what the runtime will do without decrypting anything.
+    ``user_record`` is the caller's :class:`~services.connector_credentials.CredentialRecord`
+    or ``None``; the other three say whether that tier has something to offer.
+    ``env_fallback`` must already respect ``AUTH_ENABLED`` (callers compute it).
+
+    LUM-850: **a disabled user row returns** ``"disabled"`` **, not the next
+    tier.** The resolver's second read raises before household/system/env are
+    consulted, so a household key must not make a switched-off connector look
+    available. A bare ``WHERE enabled`` on the user query gets this wrong: the
+    disabled row turns into an absent one, and the walk carries on.
+
+    Not modelled, deliberately: decrypt failure (a metadata read cannot see
+    it; the resolver raises ``CredentialUnavailable``) and ntfy's
+    ``delivery_paused`` (a loader-level check, not part of the walk).
+
+    Kept equal to the resolver by
+    ``tests/test_credential_tier_runtime_wiring.py::test_runtime_tier_from_records_agrees_with_the_resolver``,
+    which runs every combination through both. Change one walk, change both.
+    """
+    if user_record is not None:
+        return "user" if user_record.enabled else "disabled"
+    if household_present:
+        return "household"
+    if system_present:
+        return "system"
+    if env_fallback:
+        return "env"
+    return "none"
+
+
 __all__ = [
     "ResolvedCredential",
     "HouseholdCredentialRecord",
@@ -837,4 +907,7 @@ __all__ = [
     "reencrypt_household_to_current_version",
     "reencrypt_system_to_current_version",
     "resolve_runtime_credential",
+    "RuntimeTier",
+    "SERVING_TIERS",
+    "runtime_tier_from_records",
 ]

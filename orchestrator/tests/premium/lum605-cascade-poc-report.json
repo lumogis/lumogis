@@ -1,0 +1,102 @@
+{
+  "issue": "LUM-605",
+  "sizes": [
+    10,
+    50,
+    100,
+    200,
+    300
+  ],
+  "environment": {
+    "postgres_host": "postgres",
+    "qdrant_url": "http://qdrant:6333",
+    "falkordb_url": "redis://falkordb:6379",
+    "embedder": "OllamaEmbedder",
+    "embed_model": "nomic-embed-text"
+  },
+  "runs": [
+    {
+      "entity_count": 10,
+      "embed_sequential_s": 0.62,
+      "embed_batch_s": 0.104,
+      "project_entity_total_s": 0.354,
+      "graph_projection_total_s": 0.032,
+      "cascade_total_s": 0.386,
+      "per_entity_ms": {
+        "embed_sequential_ms": 61.97,
+        "embed_batch_ms": 10.36,
+        "project_entity_ms": 35.37,
+        "graph_merge_sweep_ms": 3.2
+      },
+      "embed_batch_speedup_vs_sequential": 5.98
+    },
+    {
+      "entity_count": 50,
+      "embed_sequential_s": 1.399,
+      "embed_batch_s": 0.451,
+      "project_entity_total_s": 1.743,
+      "graph_projection_total_s": 0.119,
+      "cascade_total_s": 1.862,
+      "per_entity_ms": {
+        "embed_sequential_ms": 27.98,
+        "embed_batch_ms": 9.03,
+        "project_entity_ms": 34.86,
+        "graph_merge_sweep_ms": 2.39
+      },
+      "embed_batch_speedup_vs_sequential": 3.1
+    },
+    {
+      "entity_count": 100,
+      "embed_sequential_s": 2.8,
+      "embed_batch_s": 0.876,
+      "project_entity_total_s": 3.343,
+      "graph_projection_total_s": 0.249,
+      "cascade_total_s": 3.592,
+      "per_entity_ms": {
+        "embed_sequential_ms": 28.0,
+        "embed_batch_ms": 8.76,
+        "project_entity_ms": 33.43,
+        "graph_merge_sweep_ms": 2.49
+      },
+      "embed_batch_speedup_vs_sequential": 3.2
+    },
+    {
+      "entity_count": 200,
+      "embed_sequential_s": 5.759,
+      "embed_batch_s": 1.766,
+      "project_entity_total_s": 6.934,
+      "graph_projection_total_s": 0.47,
+      "cascade_total_s": 7.403,
+      "per_entity_ms": {
+        "embed_sequential_ms": 28.79,
+        "embed_batch_ms": 8.83,
+        "project_entity_ms": 34.67,
+        "graph_merge_sweep_ms": 2.35
+      },
+      "embed_batch_speedup_vs_sequential": 3.26
+    },
+    {
+      "entity_count": 300,
+      "embed_sequential_s": 8.574,
+      "embed_batch_s": 2.6,
+      "project_entity_total_s": 10.549,
+      "graph_projection_total_s": 0.73,
+      "cascade_total_s": 11.279,
+      "per_entity_ms": {
+        "embed_sequential_ms": 28.58,
+        "embed_batch_ms": 8.67,
+        "project_entity_ms": 35.16,
+        "graph_merge_sweep_ms": 2.43
+      },
+      "embed_batch_speedup_vs_sequential": 3.3
+    }
+  ],
+  "decision": {
+    "slo_background_share_200_entities_s": 60,
+    "cascade_200_entities_s": 7.403,
+    "dominant_cost": "embed+pg+qdrant (project_entity)",
+    "recommendation": "defer_batching",
+    "batch_threshold_entities": null,
+    "follow_up": "No implementation child: 200-entity share completes within 60s background SLO. Revisit if extraction caps rise or SLO tightens."
+  }
+}

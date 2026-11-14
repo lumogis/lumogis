@@ -12,8 +12,8 @@ Covers:
   ``config/models.yaml``.
 * :func:`vendor_label_for_connector` — known + fallback.
 * :func:`has_credential` — registry-strict existence (no decrypt).
-* :func:`get_user_credentials_snapshot` — single SELECT, ``llm_*``
-  filter, escapes ``_`` literal.
+* :func:`get_user_credentials_snapshot` — one query per tier, exact
+  ``llm_`` prefix match.
 * :func:`effective_api_key` — every branch in the exception contract:
   ``ConnectorNotConfigured`` for missing rows / blank values,
   ``CredentialUnavailable`` for malformed payloads / wrong shapes,
@@ -51,9 +51,10 @@ class _FakeStore:
     * ``SELECT user_id, connector, … FROM user_connector_credentials
       WHERE user_id = %s AND connector = %s`` (used by
       ``connector_credentials.get_record`` via ``has_credential``).
-    * ``SELECT connector FROM user_connector_credentials WHERE user_id
-      = %s AND connector LIKE 'llm\\_%%' ESCAPE '\\'`` (used by
-      ``get_user_credentials_snapshot``).
+    * ``SELECT user_id, connector, … FROM user_connector_credentials
+      WHERE user_id = %s ORDER BY connector ASC, instance ASC`` (used by
+      ``connector_credentials.list_records`` via
+      ``get_user_credentials_snapshot`` since LUM-850).
     """
 
     def __init__(self) -> None:
@@ -74,44 +75,43 @@ class _FakeStore:
         q = self._norm(query)
         p = params or ()
         if q.startswith("select ciphertext from user_connector_credentials"):
-            user_id, connector = p
-            row = self.rows.get((user_id, connector))
+            user_id, connector, instance = p
+            row = self.rows.get((user_id, connector, instance))
             return {"ciphertext": row["ciphertext"]} if row else None
         if (
             q.startswith("select user_id, connector,")
-            and "where user_id = %s and connector = %s" in q
+            and "where user_id = %s and connector = %s and instance = %s" in q
         ):
-            user_id, connector = p
-            row = self.rows.get((user_id, connector))
-            if row is None:
-                return None
-            return {
-                "user_id": user_id,
-                "connector": connector,
-                "ciphertext": row["ciphertext"],
-                "key_version": row["key_version"],
-                "created_at": row.get("created_at"),
-                "updated_at": row.get("updated_at"),
-                "created_by": row.get("created_by", "self"),
-                "updated_by": row.get("updated_by", "self"),
-            }
+            return self._project(*p)
         return None
+
+    def _project(self, user_id: str, connector: str, instance: str) -> dict | None:
+        row = self.rows.get((user_id, connector, instance))
+        if row is None:
+            return None
+        return {
+            "user_id": user_id,
+            "connector": connector,
+            "instance": instance,
+            "ciphertext": row["ciphertext"],
+            "key_version": row["key_version"],
+            "created_at": row.get("created_at"),
+            "updated_at": row.get("updated_at"),
+            "created_by": row.get("created_by", "self"),
+            "updated_by": row.get("updated_by", "self"),
+        }
 
     def fetch_all(self, query: str, params: tuple | None = None) -> list[dict]:
         self.fetch_all_calls.append((query, params or ()))
         q = self._norm(query)
         p = params or ()
-        # Match the snapshot SQL by its distinguishing prefix + LIKE pattern.
-        # The literal SQL uses ``LIKE 'llm\\_%%' ESCAPE '\\'`` so psycopg's
-        # ``%`` substitution emits ``LIKE 'llm\_%' ESCAPE '\'`` — the
-        # ``llm\_`` token is the stable thing to look for.
-        if q.startswith("select connector from user_connector_credentials") and "like 'llm\\_" in q:
+        # `list_records` — the snapshot's per-user read since LUM-850.
+        if (
+            q.startswith("select user_id, connector,")
+            and "where user_id = %s order by connector asc, instance asc" in q
+        ):
             (user_id,) = p
-            return [
-                {"connector": conn}
-                for (uid, conn) in self.rows.keys()
-                if uid == user_id and conn.startswith("llm_")
-            ]
+            return [self._project(*key) for key in sorted(self.rows) if key[0] == user_id]
         return []
 
 
@@ -138,7 +138,7 @@ def _seed_payload(store: _FakeStore, *, user_id: str, connector: str, payload: d
     from services.connector_credentials import _current_key_version
     from services.connector_credentials import _encrypt_payload
 
-    store.rows[(user_id, connector)] = {
+    store.rows[(user_id, connector, "")] = {
         "ciphertext": _encrypt_payload(payload),
         "key_version": _current_key_version(),
     }
@@ -272,6 +272,10 @@ def test_snapshot_returns_set_of_llm_connectors(store):
     _seed_payload(
         store, user_id="alice", connector="ntfy", payload={"url": "https://n", "topic": "t"}
     )
+    # Nor one that shares the letters but not the ``llm_`` namespace. The
+    # LIKE scan needed an escaped ``_`` for this; the Python prefix match
+    # that replaced it (LUM-850) is exact, and this row keeps it so.
+    _seed_payload(store, user_id="alice", connector="llmbroker", payload={"api_key": "z"})
 
     snap = get_user_credentials_snapshot("alice")
     assert snap == {"llm_anthropic", "llm_openai"}
@@ -290,16 +294,30 @@ def test_snapshot_empty_for_none_user(store):
 
 
 def test_snapshot_uses_single_query(store):
+    """One constant-cost query per tier, and never one per model.
+
+    LUM-24 raised this from 1 to 3 by adding the household and system
+    tiers -- without them a household LLM key resolves at chat time but
+    its model is filtered out of ``/v1/models`` and never offered.
+
+    The invariant being defended is **not** the literal number: it is
+    that the count is independent of how many models or connectors exist.
+    If a future change makes this a point query per model, this assertion
+    is what should catch it -- so raise the bound deliberately, and only
+    for another O(1) tier read.
+    """
     from services.llm_connector_map import get_user_credentials_snapshot
 
-    get_user_credentials_snapshot("alice")
-    assert len(store.fetch_all_calls) == 1
+    # Several rows, so a per-connector point query would show in the count.
+    for connector in ("llm_anthropic", "llm_openai", "llm_mistral"):
+        _seed_payload(store, user_id="alice", connector=connector, payload={"api_key": "x"})
+
+    assert len(get_user_credentials_snapshot("alice")) == 3
+    assert len(store.fetch_all_calls) == 3
     sql, params = store.fetch_all_calls[0]
-    assert "user_connector_credentials" in sql
-    # Literal psycopg-aware SQL: percent is doubled to survive parameter
-    # substitution; backslash escapes the underscore literal so a future
-    # connector id like ``llmbroker`` cannot leak in.
-    assert "LIKE 'llm\\_%%' ESCAPE '\\'" in sql
+    # LUM-850: the per-user tier is `ccs.list_records` (whole records, so
+    # `enabled` is visible to the tier walk), not a hand-written scan.
+    assert "FROM user_connector_credentials WHERE user_id = %s ORDER BY" in sql
     assert params == ("alice",)
 
 

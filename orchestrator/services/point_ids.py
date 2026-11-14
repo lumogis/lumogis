@@ -51,6 +51,27 @@ def external_document_chunk_point_id(
     )
 
 
+def email_attachment_chunk_point_id(
+    user_id: str,
+    signal_id: str,
+    part_index: int,
+    chunk_index: int,
+) -> str:
+    """Deterministic point id for an auto-filed email attachment chunk (LUM-702).
+
+    Keyed on ``(signal, part)`` rather than on the filename: two different
+    attachments can share a name, and the same attachment keeps its identity when
+    a re-ingest rewrites its chunks. Determinism is what makes a re-ingest
+    overwrite in place instead of accumulating a second copy.
+    """
+    return str(
+        uuid.uuid5(
+            _NS,
+            f"{user_id}::email-attachment::{signal_id}::{part_index}::chunk-{chunk_index}",
+        )
+    )
+
+
 def caldav_signal_id(user_id: str, caldav_uid: str) -> str:
     """Deterministic ``signal_id`` for a CalDAV event.
 

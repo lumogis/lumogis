@@ -112,12 +112,18 @@ class _ResolutionStore:
     def fetch_one(self, query: str, params: tuple | None = None) -> dict | None:
         q = self._norm(query)
         p = params or ()
-        if q.startswith("select * from mcp_tokens where token_prefix = %s and revoked_at is null"):
+        if q.startswith(
+            "select t.*, u.id as owner_id, u.disabled as owner_disabled "
+            "from mcp_tokens t left join users u on u.id = t.user_id "
+            "where t.token_prefix = %s and t.revoked_at is null"
+        ):
             self.verify_calls += 1
             (prefix,) = p
             for row in self.tokens.values():
                 if row["token_prefix"] == prefix and row["revoked_at"] is None:
-                    return dict(row)
+                    # LUM-885: this store tests identity resolution, not the owner
+                    # check, so every token's owner is an active user.
+                    return {**row, "owner_id": row["user_id"], "owner_disabled": False}
             return None
         if q.startswith("select * from mcp_tokens where id = %s"):
             (tid,) = p

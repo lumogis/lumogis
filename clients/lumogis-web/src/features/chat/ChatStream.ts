@@ -8,6 +8,7 @@
 // callback-driven events the React UI can render incrementally:
 //
 //  * `onDelta(text)`           — every non-empty `delta.content` substring
+//  * `onStatus(status)`        — transient `lumogis.status` (not answer text)
 //  * `onFinish(reason)`        — when `choices[0].finish_reason` is non-null
 //  * `onError(message)`        — JSON parse failures, abort, transport errors
 //  * `onDone()`                — terminal `[DONE]` sentinel
@@ -26,7 +27,7 @@
 // be cancelled with the user's "Stop" button without the parser holding state.
 
 import { consumeEvents } from "../../api/sse";
-import type { ChatCompletionChunk, DocumentCitationDTO } from "../../api/chat";
+import type { ChatCompletionChunk, DocumentCitationDTO, LumogisStreamStatus } from "../../api/chat";
 
 export type ChatFinishReason = "stop" | "length";
 
@@ -36,6 +37,7 @@ export interface ChatStreamHandlers {
   onError?(message: string): void;
   onDone?(): void;
   onContextCitations?(citations: DocumentCitationDTO[]): void;
+  onStatus?(status: LumogisStreamStatus): void;
 }
 
 /**
@@ -85,6 +87,9 @@ export async function consumeChatStream(
     if (choice === undefined) return;
     if (chunk.lumogis?.context_citations !== undefined) {
       handlers.onContextCitations?.(chunk.lumogis.context_citations);
+    }
+    if (chunk.lumogis?.status !== undefined) {
+      handlers.onStatus?.(chunk.lumogis.status);
     }
     const text = choice.delta?.content;
     if (typeof text === "string" && text.length > 0) {

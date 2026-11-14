@@ -1,7 +1,20 @@
+# Dev overlay: bind-mount the source tree and run uvicorn with --reload.
+#
+# LUM-803 — deliberately NO `build:` key here. Do not re-add one.
+# docker-compose.yml already builds this service correctly with
+# `context: .` + `dockerfile: orchestrator/Dockerfile`. Compose merges `build`
+# field by field, so the short form `build: ./orchestrator` (which means
+# `context: ./orchestrator`) replaced the context while leaving the base's
+# `dockerfile:` in place — it was then re-resolved against the new context as
+# `orchestrator/orchestrator/Dockerfile`, and `make dev` failed for months with
+#     resolve : lstat .../orchestrator/orchestrator: no such file or directory
+# If you ever need to override the build here, spell it in full
+# (`context:` AND `dockerfile:`), never the string short form.
 services:
   orchestrator:
-    build: ./orchestrator
     volumes:
       - ./orchestrator:/app
       - ${FILESYSTEM_ROOT:-./lumogis-data}:/data:ro
-    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    # --timeout-keep-alive (LUM-875) and --loop asyncio (LUM-903) must match
+    # orchestrator/Dockerfile's CMD.
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-keep-alive", "75", "--loop", "asyncio", "--reload"]

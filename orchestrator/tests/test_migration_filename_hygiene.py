@@ -118,7 +118,17 @@ def test_next_free_integer_is_unambiguous() -> None:
         f"computed next free migration integer {next_free:03d} is already in use"
     )
     # Guard against silent drift: keep this in step with the highest migration.
-    assert next_free == 53, (
+    # Bumped to 82 after migration 081-entity-relations-evidence-idx (LUM-952 —
+    # the (evidence_id, user_id) index for the co-occurrence aggregate).
+    # 81 came after migration 080-entity-edges-reconcile-backoff (LUM-599
+    # retry budget + LUM-600 partial index for the typed-edge reconcile scan).
+    # 80 came after migration 079-connector-enabled-and-configured-keys
+    # (LUM-834 chunk B — a per-user on/off flag that does NOT delete the
+    # credential, plus a nullable key-name column so the connectors card can
+    # say which fields are set without decrypting anything); 078-email-body
+    # -digits landed the 79 step, 077-email-bounce the 78, 076-email-signature
+    # the 77 and 075-email-body-text-stripped the 76.
+    assert next_free == 82, (
         f"next free migration integer is {next_free:03d}; update this assertion "
         "when adding migrations so the expected next number stays documented"
     )

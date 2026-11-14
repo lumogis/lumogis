@@ -13,6 +13,10 @@ test.describe("Lumogis Web member audit log", () => {
   test("audit: /audit page renders heading and table or empty state", async ({ page }) => {
     await loginWithSmokeCredentials(page);
     await page.goto("/audit");
+    // "My activity", not "Audit log": c06d376a3 renamed the member-facing page
+    // to match MeNav and docs/capabilities.md. "Audit log" is now dead copy —
+    // the admin surface at /admin/audit reads "Household audit" — so the old
+    // assertion could never pass against any shipped page.
     await expect(page.getByRole("heading", { name: /my activity/i })).toBeVisible();
     const table = page.getByRole("table");
     const empty = page.getByText(/no audit events match your filters/i);

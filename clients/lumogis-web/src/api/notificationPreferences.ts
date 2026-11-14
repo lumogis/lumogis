@@ -13,7 +13,11 @@ export type NotificationType =
   | "signal_digest"
   | "action_executed"
   | "security_alert"
-  | "consolidation_done";
+  | "consolidation_done"
+  // LUM-648: appear in GET /api/v1/me/notification-preferences immediately
+  // (the backend iterates every NotificationType).
+  | "signal_needs_you"
+  | "signal_morning_brief";
 
 export interface NotificationPreferenceCell {
   channel: ChannelId;
@@ -43,7 +47,13 @@ export interface NotificationPreferencePatchItem {
 }
 
 export interface NotificationPreferencesPatch {
-  preferences: NotificationPreferencePatchItem[];
+  // Optional: settings-only patches (quiet hours / timezone, no channel
+  // toggles) are valid — omit `preferences` or pass `[]`.
+  preferences?: NotificationPreferencePatchItem[];
+  // Omit a field to leave it unchanged; pass `null` to clear it.
+  timezone?: string | null;
+  quiet_hours_start?: string | null;
+  quiet_hours_end?: string | null;
 }
 
 export function fetchNotificationPreferences(

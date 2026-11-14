@@ -26,6 +26,7 @@ from typing import Optional
 from models.actions import RoutineSpec
 
 import config
+from services import task_models
 
 _log = logging.getLogger(__name__)
 
@@ -249,10 +250,6 @@ def _run_weekly_review(*, user_id: str) -> str:
     }
     review_json = json.dumps(review, default=str, indent=2)
 
-    # Apply context budget before LLM call.
-    budget = get_budget("llama") - 600
-    review_json_trimmed = truncate_text(review_json, budget)
-
     # Optional LLM prose summary. Plan llm_provider_keys_per_user_migration
     # Pass 2.10: thread user_id so future operators who switch this routine
     # to a cloud model resolve the key per-user. ``llama`` (the current
@@ -263,8 +260,16 @@ def _run_weekly_review(*, user_id: str) -> str:
         from services.connector_credentials import CredentialUnavailable
         from services.privacy_mode import resolve_job_model
 
-        job_model = resolve_job_model("llama", user_id)
+        # Listed entries are filtered on-box by the resolver (imap signals are in the
+        # review); the code default is unconditional, as before. Resolution stays
+        # inside this try: a settings hiccup must not fail the whole review.
+        job_model = resolve_job_model(
+            task_models.resolve_task_model("routine_weekly_review", user_id=user_id), user_id
+        )
         if job_model:
+            # Apply context budget for the model that runs.
+            budget = get_budget(job_model) - 600
+            review_json_trimmed = truncate_text(review_json, budget)
             llm = config.get_llm_provider(job_model, user_id=user_id)
             resp = llm.chat(
                 messages=[

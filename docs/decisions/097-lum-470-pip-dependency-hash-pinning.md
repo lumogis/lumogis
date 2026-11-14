@@ -22,7 +22,7 @@ These two facts are why the implementation diverged from the originally-planned 
 
 ## Decision
 
-Adopt **`uv pip compile --generate-hashes --emit-find-links --python-version 3.12`** as the **build-time-only** lock generator, storing **per-target-triple hashed lock files** under **`orchestrator/locks-bundled/`** (Core-owned; **stripped from public AGPL export**), compiled from **`orchestrator/requirements-bundled.in`** (`-r requirements.txt` + `torch` with `--find-links` to the CPU index). On a mixed PyPI + pytorch index resolution failure the compile retries with **`--index-strategy unsafe-best-match`**.
+Adopt **`uv pip compile --generate-hashes --emit-find-links --python-version 3.12`** as the **build-time-only** lock generator, storing **per-target-triple hashed lock files** as appliance build inputs, compiled from an appliance input list (`-r requirements.txt` + `torch` with `--find-links` to the CPU index). On a mixed PyPI + pytorch index resolution failure the compile retries with **`--index-strategy unsafe-best-match`**.
 
 **Compile-time torch narrowing (load-bearing):** after `uv pip compile`, `compile-bundled-core-lock.sh` downloads the CPU `torch` wheel from `--index-url https://download.pytorch.org/whl/cpu` (`--only-binary=:all: --no-deps`), computes its hash with `pip hash`, and **rewrites the torch stanza to a single `torch==<version>` requirement pinned to that one CPU-wheel hash**. The committed lock therefore records `torch==2.12.0` (no `+cpu` local segment on the requirement line) bound to exactly the CPU wheel's hash, so a hashed install cannot resolve to a CUDA wheel.
 
@@ -35,19 +35,19 @@ A post-install guard asserts `torch.__version__` contains `+cpu` and aborts othe
 
 **`--emit-find-links` and the `--find-links` grep guards remain load-bearing** even though the torch-first `--index-url` step (not `--find-links`) is what now forces the CPU build at install time. They enforce the lock **format contract** asserted by both the compile post-guard and `check-bundled-core-lock.sh` (lock must contain `^--find-links https://download.pytorch.org/whl/cpu$`), document CPU-index provenance, and keep the lock valid for the LUM-468 per-OS extension. Removing them would require relaxing two fail-closed guards; they are kept deliberately.
 
-**Binding fail-closed gate:** `server-stage-core-venv` depends on **`server-check-core-lock`** in `Makefile.server.mk` (local verify; bash-only, no uv). `hub-build.yml (retired; see deprecated/lumogis-hub-fused/)` includes the same check as a **dormant** step (path triggers wired) until Actions quota is restored.
+**Binding fail-closed gate:** `server-stage-core-venv` depends on **`server-check-core-lock`** in the appliance build targets (local verify; bash-only, no uv). `hub-build.yml` (since retired) included the same check as a **dormant** step (path triggers wired) until Actions quota is restored.
 
-Build uv pin: **`apps/lumogis-server/scripts/requirements-appliance-build.txt`** (`uv==0.11.21`, ≥ the CVE-2025-13327 fix in `uv 0.9.6`).
+Build uv pin: the appliance build pins `uv` in its own build requirements file, at a version ≥ the CVE-2025-13327 fix in `uv 0.9.6`.
 
 **Fallback:** pip-tools `pip-compile --generate-hashes` with identical on-disk contract if uv is blocked.
 
 ### CPython tarball pin (LUM-480)
 
-The **python-build-standalone** CPython tarball is a separate supply-chain surface from pip wheels. **LUM-480** commits a per-target-triple sha256 pin beside the pip lock under **`orchestrator/locks-bundled/<triple>.pbs-sha256`** (single lowercase hex line). **`apps/lumogis-server/scripts/pbs-asset.sh`** is the sole source for the PBS asset name and download URL (shared by **`stage-core-venv.sh`** and **`refresh-pbs-sha256.sh`**).
+The **python-build-standalone** CPython tarball is a separate supply-chain surface from pip wheels. **LUM-480** commits a per-target-triple sha256 pin beside the pip lock as **`<triple>.pbs-sha256`** (single lowercase hex line). The appliance's **`pbs-asset.sh`** is the sole source for the PBS asset name and download URL (shared by **`stage-core-venv.sh`** and **`refresh-pbs-sha256.sh`**).
 
 **Mandatory fail-closed verify:** `stage-core-venv.sh` **errors** if the pin file is missing or invalid (64-char hex); after `curl` download it **always** runs `sha256sum -c` against the committed pin. The optional `PBS_SHA256` env bypass is **removed** — the committed file is the only source.
 
-**Binding gate:** `server-check-core-lock` / `check-bundled-core-lock.sh` require a valid `.pbs-sha256` before staging. **`server-refresh-pbs-pin`** (`Makefile.server.mk`) regenerates the pin via curl + sha256sum when `PYTHON_VERSION` or `PYTHON_BUILD_STANDALONE_VERSION` changes.
+**Binding gate:** `server-check-core-lock` / `check-bundled-core-lock.sh` require a valid `.pbs-sha256` before staging. **`server-refresh-pbs-pin`** (appliance build target) regenerates the pin via curl + sha256sum when `PYTHON_VERSION` or `PYTHON_BUILD_STANDALONE_VERSION` changes.
 
 **Rebuild-skip contract:** `manifest.json` records `pbs_sha256` and `python_build_standalone`; staging skips rebuild only when lock, pip inputs, python version, PBS pin, and PBS release tag all match.
 
@@ -77,7 +77,7 @@ Intent is fully preserved: every package, including torch, installs only with `-
 
 ## Public/private boundary
 
-Hashed locks and `requirements-bundled.in` are **private build artefacts** stripped from the AGPL export. Public corresponding source remains `orchestrator/` + unpinned `requirements.txt` / `requirements-core.txt` via Docker Compose. Supply-chain guarantees apply to the **signed distributed appliance binary**, not to public AGPL rebuilds.
+Hashed locks and their input list are **appliance build inputs**, outside the AGPL corresponding source. Public corresponding source remains `orchestrator/` + unpinned `requirements.txt` / `requirements-core.txt` via Docker Compose. Supply-chain guarantees apply to the **signed distributed appliance binary**, not to public AGPL rebuilds.
 
 ## Known gap: Docker image build-time dependency pinning (accepted)
 
@@ -97,5 +97,6 @@ Closing it would mean `--require-hashes` in the Dockerfile against a Docker-spec
 - 2026-06-13: Revised at `/review-plan --arbitrate` R1 (`--emit-find-links`, public strip)
 - 2026-06-13: Implemented at `/implement LUM-470`
 - 2026-06-13: Reconciled at `/verify-plan` — recorded the as-built **two-step** install (torch-first from the CPU index, then remainder; both `--require-hashes`) and the compile-time CPU-hash narrowing. The single self-contained `--require-hashes` install in the original decision was abandoned because pip prefers the PyPI CUDA `torch` wheel ahead of `--find-links`.
-- 2026-06-13: Amended at `/verify-plan` **LUM-480** — committed per-triple **CPython tarball sha256 pin** (`orchestrator/locks-bundled/<triple>.pbs-sha256`), mandatory `sha256sum -c` in `stage-core-venv.sh`, shared `pbs-asset.sh`, `server-refresh-pbs-pin`, extended `server-check-core-lock` / `hub-test-locks`. **Status** finalised.
+- 2026-06-13: Amended at `/verify-plan` **LUM-480** — committed per-triple **CPython tarball sha256 pin** (`<triple>.pbs-sha256`), mandatory `sha256sum -c` in `stage-core-venv.sh`, shared `pbs-asset.sh`, `server-refresh-pbs-pin`, extended `server-check-core-lock` / `hub-test-locks`. **Status** finalised.
 - 2026-06-14: Documented accepted gap — Docker image build-time pip installs remain unpinned (`orchestrator/Dockerfile`); mitigated by controlled CI (LUM-225) and SLSA attestation (LUM-228); Docker-specific lock deferred.
+- 2026-11-10: public-boundary wording (LUM-898, LUM-872).

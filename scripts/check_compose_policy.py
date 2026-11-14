@@ -4,6 +4,11 @@ LUM-43: enforce that capability-tier compose services do not receive Core DB / Q
 
 Pass A — raw YAML on each -f file (+ included paths): ban env_file on non-allowlisted services;
   detect forbidden env keys in environment: blocks.
+  LUM-620 name-squat: a service whose name is in the allowlist may only be defined by a
+  --core-file (or a file a core file includes). A non-core overlay that defines e.g.
+  `backup` would otherwise inherit the allowlist's Core-credential exemption and, via
+  compose merge, could override the core service's image. With no --core-file at all,
+  every file is a non-core overlay (fail-closed default).
 Pass B — docker compose … config --format json: forbidden keys in rendered environment.
 
 Exit codes: 0 = clean, 1 = policy violation, 2 = tool error.
@@ -13,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -131,8 +137,14 @@ def _iter_compose_file_docs(
         raw = path.read_text(encoding="utf-8")
     except OSError as e:
         _die_tool(f"check_compose_policy: cannot read {path}: {e}")
+    # Parse the whole file up front: a YAML error must be a tool error (exit 2), never a
+    # traceback (exit 1), which the adversarial Make targets would read as "violation caught".
+    try:
+        docs = list(yaml.safe_load_all(raw))
+    except yaml.YAMLError as e:
+        _die_tool(f"check_compose_policy: cannot parse YAML in {path}: {e}")
 
-    for doc in yaml.safe_load_all(raw):
+    for doc in docs:
         if doc is None:
             continue
         if not isinstance(doc, dict):
@@ -142,23 +154,52 @@ def _iter_compose_file_docs(
             yield from _iter_compose_file_docs(inc, seen_files)
 
 
+def core_closure(core_files: Iterable[Path]) -> frozenset[Path]:
+    """LUM-620: resolved paths of the core compose set — each --core-file plus every file
+    it includes (transitively). Provenance is by path: a file is core iff it is in here."""
+    seen_files: set[Path] = set()
+    for root in core_files:
+        for _ in _iter_compose_file_docs(root, seen_files):
+            pass
+    return frozenset(seen_files)
+
+
+def _display_path(path: Path) -> str:
+    try:
+        return os.path.relpath(path)
+    except ValueError:
+        return str(path)
+
+
 def pass_a_scan(
     compose_files: list[Path],
     allowlist: frozenset[str],
     violations: list[str],
+    core_paths: frozenset[Path] = frozenset(),
 ) -> None:
+    """Pass A. ``core_paths`` (see core_closure) is the core set; it defaults to empty,
+    so with no core set every file is a non-core overlay (fail-closed)."""
     seen_files: set[Path] = set()
     for root in compose_files:
-        for _src_path, doc in _iter_compose_file_docs(root, seen_files):
+        for src_path, doc in _iter_compose_file_docs(root, seen_files):
             services = doc.get("services")
             if services is None:
                 continue
             if not isinstance(services, dict):
                 _die_tool("check_compose_policy: 'services' must be a mapping when present")
             for svc_name, svc_body in services.items():
-                if not isinstance(svc_body, dict):
-                    continue
+                svc_name = str(svc_name)
                 if svc_name in allowlist:
+                    # LUM-620 name-squat: checked before the body-shape check, so an empty
+                    # (`backup:`) override in an overlay still counts as a definition.
+                    if src_path not in core_paths:
+                        violations.append(
+                            f"Pass A: name-squat: service {svc_name!r} is allowlisted "
+                            f"(Core-credential exemption) but is defined in non-core file "
+                            f"{_display_path(src_path)!r}; only a --core-file may define it"
+                        )
+                    continue
+                if not isinstance(svc_body, dict):
                     continue
                 # env_file ban on non-allowlisted services
                 if "env_file" in svc_body:
@@ -352,19 +393,43 @@ def pass_c_network_membership(
             )
 
 
+class _ComposeFileAction(argparse.Action):
+    """-f and --core-file share one ordered list of (path, is_core), so the compose merge
+    order is exactly the order on the command line."""
+
+    def __call__(self, parser, namespace, values, option_string=None):  # type: ignore[override]
+        entries = getattr(namespace, self.dest, None) or []
+        entries.append((values, bool(self.const)))
+        setattr(namespace, self.dest, entries)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="LUM-43 compose policy: Core DB/Qdrant credentials must not reach "
-        "non-allowlisted services."
+        "non-allowlisted services. LUM-620: allowlisted service names may only be "
+        "defined by --core-file files."
     )
     parser.add_argument(
         "-f",
         "--file",
-        dest="compose_files",
-        action="append",
-        required=True,
+        dest="compose_entries",
+        action=_ComposeFileAction,
+        const=False,
+        nargs=None,
         metavar="PATH",
-        help="Compose file (repeat; same order as docker compose -f).",
+        help="Compose overlay file (repeat; same order as docker compose -f). Treated as "
+        "NON-core: it may not define a service named in the allowlist.",
+    )
+    parser.add_argument(
+        "--core-file",
+        dest="compose_entries",
+        action=_ComposeFileAction,
+        const=True,
+        nargs=None,
+        metavar="PATH",
+        help="LUM-620: a first-party core compose file (repeat). Composed in command-line "
+        "order like -f, and allowed to define allowlisted service names (so are the files "
+        "it includes). With no --core-file, every file is a non-core overlay.",
     )
     parser.add_argument(
         "--project-directory",
@@ -401,16 +466,32 @@ def main() -> None:
         else repo / "scripts" / "compose_core_allowlist.txt"
     )
     allowlist = load_allowlist(allowlist_path)
+    entries = args.compose_entries or []
+    if not entries:
+        parser.error("at least one -f/--file or --core-file is required")
     compose_files: list[Path] = []
-    for f in args.compose_files:
+    core_files: list[Path] = []
+    for f, is_core in entries:
         p = Path(f).expanduser()
-        compose_files.append(p.resolve() if p.is_absolute() else (project_dir / p).resolve())
+        resolved = p.resolve() if p.is_absolute() else (project_dir / p).resolve()
+        # Same file named twice (e.g. `--core-file X -f X`): compose it once, at its first
+        # position; it is core if any mention marks it core.
+        if resolved not in compose_files:
+            compose_files.append(resolved)
+        if is_core and resolved not in core_files:
+            core_files.append(resolved)
 
     violations: list[str] = []
-    pass_a_scan(compose_files, allowlist, violations)
+    pass_a_scan(compose_files, allowlist, violations, core_closure(core_files))
     if violations:
         for line in violations:
             print(line, file=sys.stderr)
+        if not core_files and any(v.startswith("Pass A: name-squat:") for v in violations):
+            print(
+                "check_compose_policy: no --core-file given, so every file is a non-core "
+                "overlay; pass first-party compose files with --core-file (LUM-620)",
+                file=sys.stderr,
+            )
         sys.exit(EXIT_VIOLATION)
 
     pass_b_compose_config(compose_files, project_dir, allowlist, violations)

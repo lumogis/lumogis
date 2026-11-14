@@ -5,7 +5,7 @@
 **Last updated:** 2026-06-11
 **Decided by:** `/explore LUM-469` (composer); finalised by `/verify-plan LUM-469` (Linux P0 shipped)
 
-> Scope is the **Lumogis Hub / Lumogis Server** (private/commercial appliance) delivery seam; stripped from the public AGPL export, like ADR-093. Draft mirror retained at `.cursor/adrs/LUM-469-seam-hiding-managed-service.md`.
+> Scope is the **Lumogis Hub / Lumogis Server** (commercial appliance) delivery seam. Draft mirror retained at `.cursor/adrs/LUM-469-seam-hiding-managed-service.md`.
 
 ## Context
 
@@ -26,7 +26,7 @@ The exploration (`.cursor/explorations/LUM-469-seam-hiding-managed-service.md`) 
 
 | Area | Choice |
 | --- | --- |
-| Tray seam | Extend AGPL `clients/lumogis-search/src-tauri/src/system_tray.rs` with `TrayMenuSpec::Custom`, `TrayClickBehavior`, and `TrayHostHooks` (`on_open_admin`, `on_open_web`); private strings in `apps/lumogis-server/src-tauri/src/server_tray.rs` only |
+| Tray seam | Extend AGPL `clients/lumogis-search/src-tauri/src/system_tray.rs` with `TrayMenuSpec::Custom`, `TrayClickBehavior`, and `TrayHostHooks` (`on_open_admin`, `on_open_web`); Server-specific strings in the appliance's `server_tray.rs` only |
 | Build | Second binary `lumogis-server`; `HUB_BUILD_PROFILE=server` merges `tauri.bundled.conf.json` + `tauri.server.conf.json` in `build.rs`; release chains `tauri.server.deb-sidecars.json` for separate `Lumogis-Server_*.deb` |
 | Loopback | Tray URL builder rejects non-loopback hosts and `::1`; opens `http://127.0.0.1:<port>/dashboard` and `/web/` |
 | Login-start | `install/linux/lumogis-server.service` with `@EXECSTART@` templating; `scripts/install-systemd-user-service.sh`; `WantedBy=graphical-session.target` (tray requires graphical session) |
@@ -53,7 +53,7 @@ Full matrix: `.cursor/explorations/LUM-469-seam-hiding-managed-service.md`.
 - Persona C remains **two products** (server + browser client); no zero-config fused appliance.
 - LUM-468 must land before macOS/Windows login-start chunks.
 - Windows tray server cannot run as a naive Session 0 service; GUI path uses logon tasks.
-- Full `make server-build` deb artefact and graphical-login manual prove recorded as P1 gaps at verify time.
+- Full appliance deb artefact and graphical-login manual prove recorded as P1 gaps at verify time.
 
 **Future chunks must know:**
 
@@ -70,3 +70,4 @@ Full matrix: `.cursor/explorations/LUM-469-seam-hiding-managed-service.md`.
 
 - 2026-06-11: Draft created by `/explore LUM-469`
 - 2026-06-11: Finalised by `/verify-plan LUM-469` — Linux P0 server profile + tray + systemd script shipped; P1 macOS/Windows and full deb/manual prove deferred within ticket
+- 2026-11-10: public-boundary wording (LUM-898).

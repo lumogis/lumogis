@@ -3,7 +3,7 @@
 **Status:** Finalised — all acceptance criteria green
 **Decided by:** composer-2 (Opus 4.7) running `/explore personal_shared_system_memory_scopes`
 **Created:** 2026-04-18
-**Last updated:** 2026-04-19 (closure pass — acceptance #4 resolved; `tools.py` symmetry fix)
+**Last updated:** 2026-11-11 (LUM-36 — real-store scope tests; revisit conditions reviewed)
 
 > **Note for future readers.** This ADR finalises the architectural decision recorded in
 > *(maintainer-local only; not part of the tracked repository)* (Draft (revised)). The decision shipped
@@ -212,7 +212,12 @@ pass above.
   `orchestrator/services/search.py`, `orchestrator/services/entities.py`, `orchestrator/services/ingest.py`, and the MCP tools
   (`memory.search`, `memory.get_recent`, `entity.lookup`, `entity.search`) honour the union
   semantics correctly. The publish/unpublish round-trip is reversible, idempotent, and tested
-  end-to-end in `tests/integration/test_household_sharing.py`.
+  ~~end-to-end in `tests/integration/test_household_sharing.py`~~.
+  **Amended 2026-11-11 (LUM-36):** that file was never end-to-end. It runs against an in-memory
+  store and now lives at `orchestrator/tests/test_household_sharing.py` (moved by LUM-753). The
+  real-store proof is `orchestrator/tests/integration/test_memory_scope_isolation_live.py`, which
+  runs against Postgres, Qdrant and FalkorDB under `scripts/test-env.sh run --tier 2`. See
+  "Test surface grows" below.
 - **System-scope facts get a home.** `signals.source_id='__system__'` rows backfill to
   `scope='system'` and become visible to everyone without leaking into per-user attribution.
 - **App-scope intelligence becomes feasible** — household digest, shared-scope relevance boost,
@@ -227,12 +232,45 @@ pass above.
   Mitigation: the `Scope` enum can grow without breaking anything; a future `acl_entries` table
   can co-exist as an "advanced sharing" override.
 - **Every read site needs to be either rewritten or tagged.** Acceptance #4 exists precisely to
-  enforce this; the implementation deviation above means the work is partially complete.
+  enforce this; ~~the implementation deviation above means the work is partially complete~~.
+  **Amended 2026-11-11 (LUM-36):** the 2026-04-19 closure pass finished the work, and the CI gate
+  `orchestrator/tests/test_no_raw_user_id_filter_outside_admin.py` keeps it finished.
 - **Entity dedup interaction.** Today dedup operates per-user on personal-scope rows only;
   shared/system rows are never dedup candidates (plan §2.11). Merge sweeps `published_from`
   references across all six projection-capable tables in the same transaction.
-- **Test surface grows.** Headline integration test (`test_household_sharing.py`, 11 named
-  scenarios + 3 docker-only skipped pins) plus per-surface unit tests for the new helper.
+- **Test surface grows.** ~~Headline integration test (`test_household_sharing.py`, 11 named
+  scenarios + 3 docker-only skipped pins) plus per-surface unit tests for the new helper.~~
+  **Amended 2026-11-11 (LUM-36):** the coverage now has three layers:
+  - **Contract (in-memory):** `orchestrator/tests/test_household_sharing.py`, scenarios S1–S11 and
+    S15–S18. The three docker-only pins (S12 backup/restore, S13 entity-relations follow-back, S14
+    MCP `memory.get_recent`) had `pass` bodies and never ran. LUM-753 deleted them and LUM-754
+    tracks the gap.
+  - **Real stores, memory surfaces:** `orchestrator/tests/integration/test_memory_scope_isolation_live.py`
+    (LUM-36). It uses three members who allow shared scope, a fourth member with
+    `allows_shared=false` and one admin, against real Postgres, Qdrant and FalkorDB. Its tests
+    prove that:
+    - a personal session never reaches another member, through either recall (Qdrant) or recent
+      sessions (Postgres);
+    - a shared projection reaches every member who allows shared scope;
+    - publish and unpublish start and stop the Qdrant visibility filter matching, for both
+      `conversations` payload shapes (sessions and notes);
+    - purge removes the personal source and its projection from both stores, and the tombstone
+      blocks a late re-write;
+    - an admin follows the member rule on retrieval, and `admin_unshare` is retract-only and
+      audited;
+    - MCP `memories` recall is owner-only after fusion and at the semantic and BM25 legs;
+    - the Cypher fragment admits the same rows in FalkorDB.
+
+    The tests were checked against seven mutants of the production rules they guard: the Qdrant
+    `user_id` arm, the Postgres `user_id` arm, `allows_shared`, the Cypher `user_id` arm, the
+    purge projection delete, the unpublish Qdrant delete and the recall semantic-leg `user_id`.
+    Every mutant fails at least one test, and every test fails under at least one mutant. S14 is covered at the service layer: `recent_sessions` backs MCP `memory.get_recent`.
+    S12 and S13 remain open under LUM-754.
+  - **Real stores, documents and governance:** the `*_live.py` modules beside it.
+    `test_two_user_qdrant_isolation_live`, `test_document_share_projection_live`,
+    `test_conversation_share_live`, `test_admin_unshare_live` and
+    `test_document_entity_unshare_live` cover document chunks, document sharing and admin unshare
+    of files.
 
 ## Revisit conditions
 
@@ -251,6 +289,23 @@ pass above.
 - **Dedup pipeline change** — if the entity dedup pipeline gains household-aware resolution
   (so two users' "John" mentions can be unified into a single shared entity), revisit the
   FalkorDB MERGE-key decision.
+
+**Amended 2026-11-11 (LUM-36): condition review.** Each condition above was checked against the
+code on `dev` as of this date. None is met, so the decision stands. The last four rows were
+recorded as revisit items in the implementation plan but never reached this list. They are added
+here so that this list is the one place to look.
+
+| Condition | Status | Evidence |
+|-----------|--------|----------|
+| Per-item granularity | Not met | No ACL table exists in `postgres/migrations/`. The only finer control is the member-level `users.allows_shared` opt-out (migration `045`, LUM-577). It removes shared scope from one member's reads; it is not a per-item grant. |
+| Public knowledge bases | Not met | The CHECK constraint is still `scope IN ('personal','shared','system')` (migration `013`), `visibility._VALID_SCOPES` holds the same three, and there is no public-KB ingestion path. |
+| Hosted-tenant pivot | Not met | Deployment is still single-household family LAN. No table enables row-level security, and isolation stays application-side in `orchestrator/visibility.py`. |
+| FalkorDB cross-graph queries | Not met | Nothing in the repo uses or relies on cross-graph union. FalkorDB graphs are now split by **bank** (`config.get_graph_store(bank)`, `services/banks.py`), not by scope. Scope is still a node property inside each graph, as decided here. |
+| Dedup pipeline change | Not met | Dedup still narrows to `scope = 'personal'` (`services/deduplication.py`). A shared entity projection is keyed on its single personal source (`projection_pk` uuid5 + `(published_from, scope)`), so two members' "John" give two shared projections. LUM-586's `share_origin` (migration `050`) merges two share paths for one source entity, not entities from different users. |
+| Qdrant tenant index (`is_tenant`) | Not met | `scope` and `user_id` have plain keyword indexes on the embedding collections (`services/embedding_readiness.py`). `is_tenant=true` is used only for `memories.bank` (`config.ensure_memories_qdrant_indexes`). No latency problem from `user_id`/`scope` filtering is on record. The adapter already has `ensure_tenant_payload_index`, so the upgrade is a small change when a measurement calls for it. |
+| Bulk share → rate-limit `publish` | Not met | There is no bulk-share surface. Publish is per item (`POST /api/v1/<resource>/{id}/publish`, `routes/scope.py`). A large document share runs as a background job under a per-document advisory lock (`services/share_lock.py`). Publish has no rate limit, and none is needed until a bulk path exists. |
+| Shared audit projection (`audit_log`) | Not met | `audit_log.scope` exists (migration `013`), but `actions/audit.write_audit` never sets it, so every row is `personal`, and `get_audit` is keyed on `user_id`. Admin governance retractions are audited against the acting admin (`services/admin_unshare.py`). No household-wide audit view exists or has been asked for. |
+| Graph cost of bulk publish | Not met | There is no bulk publish to measure. Each publish resets `graph_projected_at = NULL` on one row, and the reconciler picks it up on its next pass. Revisit together with the bulk-share row. |
 
 ## Status history
 
@@ -274,3 +329,9 @@ pass above.
   by a new source-inspection regression test
   (`test_tools_query_entity_qdrant_fallback_uses_visible_filter`). All 12/12 acceptance
   criteria green; 788 orchestrator tests pass.
+- **2026-11-11 (LUM-36):** Real-store scope tests added
+  (`orchestrator/tests/integration/test_memory_scope_isolation_live.py`, 7 tests, tier 2; each
+  rule they guard was mutation-checked). The stale test-location and "partially complete" text
+  in Consequences was struck through and amended. Revisit conditions reviewed against code: none
+  met. Four plan-level revisit items were added (Qdrant tenant index, bulk-share rate limit,
+  shared audit projection, graph bulk-publish cost). The decision is unchanged.

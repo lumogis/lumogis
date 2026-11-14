@@ -1,0 +1,63 @@
+# Lumogis parity-test overlay — used ONLY by `make test-graph-parity`
+# (tests/integration/test_graph_parity.py, compose project `lumogis-parity`).
+#
+# Why each key exists (LUM-929):
+#   * /fixtures mount + INGEST_PATHS — the parity ingest reads
+#     `ada_lovelace.md` through the body-less Rescan (LUM-884). Mounted at
+#     /fixtures (NOT /data/fixtures) because the base compose file already
+#     bind-mounts the host data root at /data with `:ro`.
+#   * GRAPH_MODE / AUTH_ENABLED / GRAPH_BACKEND / FALKORDB_URL / KG_SERVICE_URL /
+#     GRAPH_WEBHOOK_SECRET — the orchestrator reads its environment from
+#     `env_file: .env`, so a shell-level GRAPH_MODE only feeds interpolation and
+#     never reached the container. The overlay sets these keys itself.
+#   * INBOX_OWNER_USER_ID "" — the inbox watcher stays off; only Rescan ingests.
+#   * POSTGRES_HOST / POSTGRES_PORT literals — a `.env` copied from
+#     config/test.env.example points at 127.0.0.1:5433 for host-side pytest, which
+#     inside the container crash-loops Core (docker-compose.test.yml overrides the
+#     same pair for the RC orchestrator).
+#   * ./orchestrator:/app and ./services/lumogis-graph:/services/lumogis-graph:ro —
+#     the live branch tree, so no stale image and no rebuild; the second mount lets
+#     the in-process phase import `graph.*`.
+#   * parity_ollama — an EXTERNAL volume, so `down -v` cannot discard the pulled
+#     models (about 2-3 GB). Created by the test (`docker volume create`).
+#
+# Enable by appending to COMPOSE_FILE:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.falkordb.yml:docker-compose.premium.yml:docker-compose.parity.yml
+#
+# This file is still parity-only. Do NOT add other test plumbing here — every extra
+# bit makes the parity stack drift from the production stack.
+#
+# The base compose file mounts the checkout itself (`.:/project`) and several services
+# read the checkout's `.env`; the test refuses to run unless that `.env` is the test
+# template. Auth is off on this stack by design (it proves Rescan to projection, not
+# access control); it listens on loopback only.
+
+services:
+  orchestrator:
+    environment:
+      # POST /ingest is a body-less Rescan of the configured library folders
+      # (LUM-884), so /fixtures must be declared as one.
+      INGEST_PATHS: '["/fixtures"]'
+      GRAPH_MODE: ${GRAPH_MODE:?set by test_graph_parity.py}
+      AUTH_ENABLED: "false"
+      GRAPH_BACKEND: falkordb
+      FALKORDB_URL: redis://falkordb:6379
+      KG_SERVICE_URL: http://lumogis-graph:8001
+      GRAPH_WEBHOOK_SECRET: parity-webhook-secret-not-real
+      INBOX_OWNER_USER_ID: ""
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+    volumes:
+      # Read-only: parity tests must never mutate fixtures (they assert on
+      # ingest counts; a mutated fixture would silently break repeatability).
+      - ./tests/fixtures:/fixtures:ro
+      - ./orchestrator:/app
+      - ./services/lumogis-graph:/services/lumogis-graph:ro
+  ollama:
+    volumes:
+      - parity_ollama:/root/.ollama
+
+volumes:
+  parity_ollama:
+    external: true
+    name: lumogis-parity-ollama

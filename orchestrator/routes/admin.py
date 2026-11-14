@@ -57,6 +57,7 @@ from services import connector_credentials
 
 _DASHBOARD_HTML = Path(__file__).parent.parent / "dashboard" / "index.html"
 _GRAPH_MGM_HTML = Path(__file__).parent.parent / "static" / "graph_mgm.html"
+_GRAPH_VENDOR_DIR = _GRAPH_MGM_HTML.parent / "vendor"
 _PROJECT_ENV_FILE = Path("/project/.env")
 
 router = APIRouter()
@@ -455,6 +456,32 @@ def graph_mgm():
     return FileResponse(_GRAPH_MGM_HTML, media_type="text/html")
 
 
+# The two vendored scripts the graph pages load (LUM-941). Filenames carry the
+# version, so a response never changes; a bump gets a new name.
+_GRAPH_ASSETS: frozenset[str] = frozenset({"cytoscape-3.28.1.min.js", "alpine-3.14.8.min.js"})
+# No ``public``: a shared cache must not store a response to an Authorization request.
+_GRAPH_ASSET_HEADERS = {"Cache-Control": "max-age=31536000, immutable"}
+
+
+@router.get(
+    "/graph/assets/{name}",
+    dependencies=[Depends(require_admin)],
+    include_in_schema=False,
+)
+def graph_asset(name: str):
+    """Serve a vendored script for the graph pages (same gate as ``/graph/mgm``).
+
+    The allowlist check runs before any path is built, so no request input
+    reaches the filesystem except an exact allowlisted literal.
+    """
+    if name not in _GRAPH_ASSETS:
+        raise HTTPException(status_code=404, detail="graph asset not found")
+    path = _GRAPH_VENDOR_DIR / name
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="graph asset not found")
+    return FileResponse(path, media_type="text/javascript", headers=_GRAPH_ASSET_HEADERS)
+
+
 # ---------------------------------------------------------------------------
 # GET /kg/job-status
 # ---------------------------------------------------------------------------
@@ -630,6 +657,9 @@ def _write_stop_entity_file_atomic(path: str, phrases: list[str]) -> None:
             fh.write(header)
             for phrase in phrases:
                 fh.write(phrase + "\n")
+        # mkstemp creates 0600; the list is not secret, and the DR snapshot keeps
+        # the mode, so 0644 like the shipped list (LUM-922).
+        os.chmod(tmp_path, 0o644)
         os.replace(tmp_path, path)
     except Exception:
         try:
@@ -645,8 +675,10 @@ def kg_stop_entities_get():
 
     Returns 200 with an empty list when the file does not exist.
     Returns 500 when the file exists but cannot be read.
+    ``source_path`` is the file the list was read from: the persisted list, or
+    the shipped one until the first edit creates it (LUM-922).
     """
-    path = config.get_stop_entities_path()
+    path = config.get_stop_entities_read_path()
     phrases: list[str] = []
     try:
         phrases = _read_stop_entity_file(path)
@@ -687,12 +719,14 @@ def kg_stop_entities_post(body: StopEntityRequest):
     if any(ord(c) < 32 for c in phrase):
         raise HTTPException(status_code=400, detail="phrase must not contain control characters")
 
+    # Read the effective list (the shipped one until the persisted file exists),
+    # write the persisted one (LUM-922).
     path = config.get_stop_entities_path()
 
     # Load current phrases (empty if file missing)
     current: list[str] = []
     try:
-        current = _read_stop_entity_file(path)
+        current = _read_stop_entity_file(config.get_stop_entities_read_path())
     except FileNotFoundError:
         pass
     except OSError as exc:
@@ -1011,6 +1045,16 @@ def _get_settings_response(
         "ingest_paths": effective_ingest_paths,
         "pending_ingest_paths": pending_ingest_paths,
         "restart_required": restart_required,
+        # LUM-834 chunk B — this now reports FALSE for a stored-but-DISABLED
+        # paperless credential, because `get_payload` carries `AND enabled`.
+        #
+        # That is the intended reading here and not an oversight: this flag
+        # feeds an operator screen asking "can paperless ingest run?", and for
+        # a switched-off connector the answer is no. It deliberately differs
+        # from the connectors card, which distinguishes the two states
+        # ("Configured (untested) · Off") because a user needs to know their
+        # credential is still stored. Named so the next reader does not
+        # "fix" one of the two surfaces into agreeing with the other.
         "paperless_configured": bool(connector_credentials.get_payload(user.user_id, PAPERLESS)),
         "models": models,
         "default_model": default_model,
@@ -1180,8 +1224,18 @@ def _host_path_for_env(host_path: str) -> str:
 
 
 def _write_ingest_paths_env(host_paths: list[str], container_paths: list[str]) -> None:
-    """Persist FILESYSTEM_ROOT, INGEST_PATHS_HOST, and INGEST_PATHS to /project/.env."""
+    """Persist FILESYSTEM_ROOT, INGEST_PATHS_HOST, and INGEST_PATHS to /project/.env.
+
+    Gated on ``project_env_writable`` — the same gate ``_apply_compose_ingest_auto_tier``
+    honours. Without it the two halves of one response disagree: the caller is told
+    ``ingest_compose_override_written: False`` and handed a snippet to apply by hand,
+    having already had three keys rewritten underneath it. A deployment that declares
+    its project tree read-only means it for the whole tree, not just the override.
+    """
     if not host_paths or not _PROJECT_ENV_FILE.is_file():
+        return
+    if not project_env_writable(_PROJECT_ENV_FILE):
+        _log.info("Project .env not writable; returning ingest snippet instead of writing")
         return
     try:
         content = _PROJECT_ENV_FILE.read_text()
@@ -1455,7 +1509,7 @@ def _browse_root_info() -> tuple[Path, str, str | None]:
     return data, "/", note
 
 
-@router.get("/browse")
+@router.get("/browse", dependencies=[Depends(require_admin)])
 def browse_directories(path: str = "/"):
     """List immediate subdirectories at an absolute path.
 
@@ -2477,6 +2531,11 @@ def review_queue_decide(body: DecideRequest, ctx: UserContext = Depends(require_
                 )
             except Exception as exc:
                 raise HTTPException(status_code=500, detail=f"DB error: {exc}") from exc
+            # LUM-599: edges to the staged entity may have used up their reconcile
+            # retries while it had no node; promotion gives them a fresh budget.
+            from services.entity_edges import reset_edge_reconcile_attempts_for_entity
+
+            reset_edge_reconcile_attempts_for_entity(item_id, user_id=user_id, ms=meta)
 
         else:  # discard
             try:

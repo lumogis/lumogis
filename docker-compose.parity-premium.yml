@@ -1,0 +1,34 @@
+# Lumogis parity-test graph overlay — used ONLY by the service-mode
+# phase of `make test-graph-parity`.
+#
+# Purpose: expose the lumogis-graph host port so the parity test (which runs on
+# the host) can poll its /health endpoint. The production premium overlay
+# deliberately hides this port behind a reverse proxy. The mapping is loopback-only
+# and overridable (KG_HOST_PORT; the test uses 18011 so it never clashes with a
+# daily stack on 8001) — LUM-929.
+#
+# Also (LUM-929): the KG's own environment is set here because it reads
+# `env_file: .env` — auth off, the parity webhook literal, FalkorDB, and Postgres
+# as literals (premium.yml interpolates ${POSTGRES_HOST:-postgres} from `.env`, which
+# a test-template `.env` points at 127.0.0.1:5433). The live tree is mounted at /app
+# so the shared `lumogis-graph:dev` image tag is never rebuilt.
+#
+# Layered AFTER docker-compose.premium.yml so the lumogis-graph service
+# already exists and we only add the overrides. Do NOT layer this in
+# the inprocess phase — without docker-compose.premium.yml the service
+# definition is invalid (no image/build context) and `docker compose
+# config` will reject the merged project. VERIFY-PLAN.
+
+services:
+  lumogis-graph:
+    ports:
+      - "127.0.0.1:${KG_HOST_PORT:-8001}:8001"
+    environment:
+      AUTH_ENABLED: "false"
+      GRAPH_WEBHOOK_SECRET: parity-webhook-secret-not-real
+      GRAPH_BACKEND: falkordb
+      FALKORDB_URL: redis://falkordb:6379
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+    volumes:
+      - ./services/lumogis-graph:/app

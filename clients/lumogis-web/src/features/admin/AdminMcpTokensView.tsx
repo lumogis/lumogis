@@ -4,16 +4,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useAuth, useUser } from "../../auth/AuthProvider";
 import { ApiError } from "../../api/client";
+import type { McpTokenAdminRow } from "../../api/mcpTokens";
 import { UserPicker } from "../_shared/UserPicker";
 import { accessLabel } from "../me/mcpTokenDisplay";
-
-interface McpRow {
-  id: string;
-  user_id: string;
-  label: string;
-  created_at: string;
-  scopes: string[] | null;
-}
 
 function errMsg(e: unknown): string {
   if (e instanceof ApiError) return e.detail;
@@ -38,7 +31,7 @@ export function AdminMcpTokensView(): JSX.Element {
 
   const listQ = useQuery({
     queryKey: ["mcp", "admin", userId],
-    queryFn: () => client.getJson<McpRow[]>(base!),
+    queryFn: () => client.getJson<McpTokenAdminRow[]>(base!),
     enabled: Boolean(base),
   });
 

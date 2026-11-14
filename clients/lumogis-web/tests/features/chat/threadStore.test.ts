@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 
 import {
+  clearPersistedThreads,
   createSessionPersistence,
   deriveTitle,
   initialThreadState,
@@ -329,5 +330,24 @@ describe("useChatThreads", () => {
     const id = result.current.state.threads[0]!.id;
     act(() => result.current.setModel(id, "m2"));
     expect(result.current.state.threads[0]?.model).toBe("m2");
+  });
+});
+
+describe("clearPersistedThreads (LUM-886)", () => {
+  it("removes only lumogis-chat-threads", () => {
+    sessionStorage.setItem("lumogis-chat-threads", "{}");
+    sessionStorage.setItem("lumogis_login_flash", "keep me");
+    expect(clearPersistedThreads()).toBe(true);
+    expect(sessionStorage.getItem("lumogis-chat-threads")).toBeNull();
+    expect(sessionStorage.getItem("lumogis_login_flash")).toBe("keep me");
+  });
+
+  it("returns false when removal throws", () => {
+    const storage = {
+      removeItem: () => {
+        throw new Error("denied");
+      },
+    } as unknown as Storage;
+    expect(clearPersistedThreads(storage)).toBe(false);
   });
 });

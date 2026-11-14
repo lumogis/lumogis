@@ -18,7 +18,8 @@ fastapi>=0.115.0
 httpx>=0.27.0
 pyyaml>=6.0.0
 pydantic[email]>=2.0.0
-python-dotenv>=1.0.0
+# >=1.2.0: first release that honours PYTHON_DOTENV_DISABLED, which the test lanes set (LUM-912).
+python-dotenv>=1.2.0
 packaging>=21.0
 tiktoken>=0.10.0
 watchdog>=5.0.0
@@ -34,3 +35,19 @@ jsonschema>=4.22.0
 # the /mcp mount + /capabilities tests can exercise the real SDK.
 # Keep in lockstep with requirements-core.txt.
 mcp>=1.27.2,<2
+# LUM-790 — argon2-cffi is a top-level import in services/users.py (`from argon2 import
+# PasswordHasher`), which conftest does not mock, so WITHOUT it 28 test modules fail at
+# COLLECTION — not at assertion — and `pytest orchestrator/tests` aborts before running
+# anything. Same class as IMAPClient below: a real test-time dependency that only looked
+# optional because CI installs requirements.txt -> requirements-core.txt and never
+# exercised this file's own documented path. Keep in lockstep with requirements-core.txt.
+argon2-cffi>=23.1.0,<24
+# LUM-790 — IMAPClient is a genuine test-time import, not a lazy Docker-only one.
+# tests/test_imap_transport.py monkeypatches `imapclient.tls.wrap_socket` and drives
+# services/imap_transport.py::_connect_via_proxy, which imports IMAPClient at call
+# time. Neither has a skip guard, so without this the two CONNECT-tunnel tests fail
+# on a clean venv and look like a regression in the LUM-625 egress path. CI never saw
+# it: CI installs requirements.txt -> requirements-core.txt, which has IMAPClient.
+# Deliberately added rather than skip-guarded — a silently skipped egress test is the
+# failure mode LUM-788 is about. Keep the pin in lockstep with requirements-core.txt.
+IMAPClient>=3.1,<4

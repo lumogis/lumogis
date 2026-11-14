@@ -19,6 +19,11 @@ Two modes:
       to drain.
 
   --mode core --url http://localhost:8000 [--timeout 60]
+      NOTE (LUM-929): this mode cannot observe projection. Core's
+      `/graph/health` returns no `nodes`/`edges`, so it reads (-1, -1)
+      twice and returns almost at once. The parity test uses
+      `test_graph_parity._wait_for_projection` (a FalkorDB snapshot)
+      instead.
       Polls Core's `GET /graph/health`. Returns 0 when the
       `(nodes, edges)` tuple is stable for two consecutive 2-second
       polls (i.e. nothing new projected in the last 2 s). Sidesteps

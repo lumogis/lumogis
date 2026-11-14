@@ -18,6 +18,9 @@ import os
 import httpx
 import pytest
 
+from _reachability import skip_unless_reachable
+from _smoke_auth import login_access_token, smoke_credentials
+
 pytestmark = pytest.mark.integration
 
 ORIGIN = (
@@ -32,22 +35,13 @@ CHAT_MODEL = os.environ.get("LUMOGIS_E2E_CHAT_MODEL", "claude")
 
 
 def _smoke_login(base: str) -> str | None:
-    email = os.environ.get("LUMOGIS_WEB_SMOKE_EMAIL", "").strip()
-    password = os.environ.get("LUMOGIS_WEB_SMOKE_PASSWORD", "")
-    if not email or len(password) < 12:
+    if smoke_credentials() is None:
         pytest.skip("smoke credentials unset")
-    with httpx.Client(base_url=base, timeout=180.0) as raw:
-        lr = raw.post(
-            "/api/v1/auth/login",
-            json={"email": email, "password": password},
-            headers={"Origin": ORIGIN},
-        )
-        if lr.status_code == 503:
-            pytest.skip("AUTH_ENABLED=false — login unavailable")
-        assert lr.status_code == 200, lr.text[:800]
-        token = lr.json().get("access_token")
-        assert token, "login must return access_token"
-        return token
+    skip_unless_reachable(base, what="orchestrator")
+    token = login_access_token(base)
+    if token is None:
+        pytest.skip("AUTH_ENABLED=false — login unavailable")
+    return token
 
 
 def _find_seeded_document_id(base: str, token: str) -> int:

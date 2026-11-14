@@ -6,16 +6,32 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { onlineManager } from "@tanstack/react-query";
 
 import { ApiClient } from "../../../src/api/client";
 import { AccessTokenStore } from "../../../src/api/tokens";
-import { AuthProvider } from "../../../src/auth/AuthProvider";
+import { AuthProvider, useAuth } from "../../../src/auth/AuthProvider";
 import { NAV_ITEMS } from "../../../src/components/BottomNav";
 import { QuickCapturePage } from "../../../src/features/capture/QuickCapturePage";
-import { __setCaptureOutboxBackendForTests } from "../../../src/pwa/captureOutbox";
+import {
+  __setCaptureOutboxBackendForTests,
+  addTextUrlOutboxItem,
+  listOutboxItems,
+} from "../../../src/pwa/captureOutbox";
+import { installMockMediaRecorder } from "../../helpers/mockMediaRecorder";
 import { MemoryRouter } from "react-router-dom";
+import { seedSignedInDevice } from "../../helpers/signedInDevice";
+
+// LUM-886: this suite mounts a real AuthProvider; mark the device as already reconciled so the
+// first-sign-in wipe does not remove the view's own queries.
+beforeEach(() => {
+  seedSignedInDevice("u1");
+});
 
 function setNavigatorOnline(on: boolean): void {
+  // TanStack Query pauses fetches while its onlineManager says offline, and the manager only
+  // follows window events while a query is observed — set it directly so /me never stalls.
+  onlineManager.setOnline(on);
   Object.defineProperty(window.navigator, "onLine", {
     configurable: true,
     writable: true,
@@ -87,7 +103,7 @@ afterEach(() => {
   __setCaptureOutboxBackendForTests(null);
 });
 
-function installOutboxMemory(): void {
+function installOutboxMemory(): Map<string, unknown> {
   const store = new Map<string, unknown>();
   __setCaptureOutboxBackendForTests({
     get: async (k) => store.get(k),
@@ -98,12 +114,23 @@ function installOutboxMemory(): void {
       store.delete(k);
     },
   });
+  return store;
+}
+
+/**
+ * LUM-886: the page reads the member id from `useAuth().user`, which is set only after the
+ * sign-in reconcile. Tests that act on the outbox wait for this probe first.
+ */
+function ReconciledProbe(): JSX.Element | null {
+  const { status } = useAuth();
+  return status === "authenticated" ? <span data-testid="reconciled" /> : null;
 }
 
 function renderPage(client: ApiClient, initialEntries: string[] = ["/capture"]) {
   return render(
     <MemoryRouter initialEntries={initialEntries}>
       <AuthProvider client={client} skipRefreshOnMount>
+        <ReconciledProbe />
         <QuickCapturePage />
       </AuthProvider>
     </MemoryRouter>,
@@ -600,7 +627,6 @@ describe("QuickCapturePage", () => {
   });
 
   it("offline text save goes to outbox and does not POST /captures", async () => {
-    setNavigatorOnline(false);
     installOutboxMemory();
 
     const tokens = new AccessTokenStore();
@@ -614,6 +640,8 @@ describe("QuickCapturePage", () => {
     const user = userEvent.setup();
 
     renderPage(client);
+    await screen.findByTestId("reconciled");
+    setNavigatorOnline(false); // go offline only after sign-in has settled: /me cannot load offline
 
     await waitFor(() => expect(screen.getByPlaceholderText(/short note/i)).toBeInTheDocument());
     await user.type(screen.getByPlaceholderText(/short note/i), "local only");
@@ -632,7 +660,6 @@ describe("QuickCapturePage", () => {
   });
 
   it("offline voice file goes to outbox and does not POST /captures", async () => {
-    setNavigatorOnline(false);
     installOutboxMemory();
 
     const tokens = new AccessTokenStore();
@@ -646,6 +673,8 @@ describe("QuickCapturePage", () => {
     const user = userEvent.setup();
 
     renderPage(client);
+    await screen.findByTestId("reconciled");
+    setNavigatorOnline(false); // go offline only after sign-in has settled: /me cannot load offline
 
     await waitFor(() => expect(screen.getByTestId("quick-capture-offline-audio-file")).toBeInTheDocument());
     const f = new File([new Uint8Array([1, 2])], "v.webm", { type: "audio/webm" });
@@ -698,7 +727,6 @@ describe("QuickCapturePage", () => {
   });
 
   it("Sync now posts client_id; going online alone does not sync", async () => {
-    setNavigatorOnline(false);
     installOutboxMemory();
 
     const tokens = new AccessTokenStore();
@@ -717,6 +745,8 @@ describe("QuickCapturePage", () => {
     const user = userEvent.setup();
 
     renderPage(client);
+    await screen.findByTestId("reconciled");
+    setNavigatorOnline(false); // go offline only after sign-in has settled: /me cannot load offline
 
     await user.type(screen.getByPlaceholderText(/short note/i), "queued");
     await user.click(screen.getByTestId("quick-capture-save-local"));
@@ -803,5 +833,157 @@ describe("QuickCapturePage", () => {
       ([u, i]) => pathnameOf(u) === "/api/v1/captures" && i?.method === "POST",
     );
     expect(posts.length).toBe(0);
+  });
+
+  describe("outbox ownership (LUM-886)", () => {
+    function meOnlyClient(posts: Array<{ client_id: string }> = []): ApiClient {
+      const tokens = new AccessTokenStore();
+      tokens.set("tok");
+      const fetchImpl = vi.fn(async (input: RequestInfo, init?: RequestInit) => {
+        const path = pathnameOf(input);
+        if (path.includes("/auth/me")) return meResponse();
+        if (path === "/api/v1/captures" && init?.method === "POST") {
+          const body = JSON.parse(String(init?.body)) as { client_id: string };
+          posts.push(body);
+          return jsonResponse(201, { capture_id: `srv-${body.client_id}`, status: "pending" });
+        }
+        return jsonResponse(404, { detail: "unexpected" });
+      });
+      return new ApiClient({ tokens, fetchImpl: fetchImpl as unknown as typeof fetch });
+    }
+
+    function seedLegacy(store: Map<string, unknown>, id: string, extra: Record<string, unknown> = {}): void {
+      const idx = (store.get("lumogis:capture-outbox:index") as string[] | undefined) ?? [];
+      store.set("lumogis:capture-outbox:index", [...idx, id]);
+      store.set(`lumogis:capture-outbox:meta:${id}`, {
+        local_capture_id: id,
+        kind: "text",
+        text: "grocery list for the weekend trip to the lake house",
+        created_at: "2026-11-01T10:00:00Z",
+        status: "local_pending",
+        last_error: null,
+        ...extra,
+      });
+    }
+
+    it("Outbox tab lists only the signed-in member's rows", async () => {
+      installOutboxMemory();
+      await addTextUrlOutboxItem({ ownerUserId: "u1", kind: "text", text: "mine" });
+      await addTextUrlOutboxItem({ ownerUserId: "u2", kind: "text", text: "someone else's" });
+      const user = userEvent.setup();
+
+      renderPage(meOnlyClient());
+      await screen.findByTestId("reconciled");
+      await user.click(screen.getByTestId("capture-tab-outbox"));
+
+      const list = await screen.findByTestId("capture-outbox-list");
+      expect(list.querySelectorAll("li")).toHaveLength(1);
+      expect(screen.getByTestId("capture-outbox-stats").textContent).toMatch(/Pending:\s*1/);
+    });
+
+    it("legacy rows render in their own section with a preview, Sync to my account and Discard", async () => {
+      const store = installOutboxMemory();
+      seedLegacy(store, "legacy-1");
+      const user = userEvent.setup();
+
+      renderPage(meOnlyClient());
+      await screen.findByTestId("reconciled");
+      await user.click(screen.getByTestId("capture-tab-outbox"));
+
+      const panel = await screen.findByTestId("capture-outbox-legacy-panel");
+      expect(panel.textContent).toMatch(/Saved on this device before an update/);
+      const list = screen.getByTestId("capture-outbox-legacy-list");
+      const full = "grocery list for the weekend trip to the lake house";
+      expect(list.textContent).toContain(full.slice(0, 40)); // a short preview, not the whole text
+      expect(list.textContent).not.toContain(full);
+      expect(screen.getByRole("button", { name: "Sync to my account" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Discard" })).toBeEnabled();
+      // not counted in the member's stats and not in the member's own list
+      expect(screen.getByTestId("capture-outbox-stats").textContent).toMatch(/Pending:\s*0/);
+      expect(screen.queryByTestId("capture-outbox-list")).toBeNull();
+    });
+
+    it("Sync to my account claims and uploads only that row", async () => {
+      const store = installOutboxMemory();
+      seedLegacy(store, "legacy-1");
+      seedLegacy(store, "legacy-2");
+      const posts: Array<{ client_id: string }> = [];
+      const user = userEvent.setup();
+
+      renderPage(meOnlyClient(posts));
+      await screen.findByTestId("reconciled");
+      await user.click(screen.getByTestId("capture-tab-outbox"));
+      const buttons = await screen.findAllByRole("button", { name: "Sync to my account" });
+      await user.click(buttons[0]!);
+
+      await waitFor(() => expect(posts).toHaveLength(1));
+      expect(posts[0]!.client_id).toBe("legacy-1");
+      await waitFor(() =>
+        expect(screen.getByTestId("capture-outbox-legacy-list").querySelectorAll("li")).toHaveLength(1),
+      );
+      expect(await listOutboxItems("u1")).toHaveLength(0);
+    });
+
+    it("Sync now sends only the member's rows", async () => {
+      installOutboxMemory();
+      await addTextUrlOutboxItem({ ownerUserId: "u1", kind: "text", text: "mine" });
+      await addTextUrlOutboxItem({ ownerUserId: "u2", kind: "text", text: "someone else's" });
+      const posts: Array<{ client_id: string }> = [];
+      const user = userEvent.setup();
+
+      renderPage(meOnlyClient(posts));
+      await screen.findByTestId("reconciled");
+      await user.click(screen.getByTestId("capture-tab-outbox"));
+      await user.click(await screen.findByTestId("quick-capture-sync-outbox"));
+
+      await waitFor(() => expect(posts).toHaveLength(1));
+      expect(await listOutboxItems("u2")).toHaveLength(1);
+      expect(await listOutboxItems("u1")).toHaveLength(0);
+    });
+
+    it("unmounting while recording stops the recorder and every track and saves nothing", async () => {
+      const store = installOutboxMemory();
+      const rec = installMockMediaRecorder();
+      const user = userEvent.setup();
+
+      const view = renderPage(meOnlyClient());
+      await screen.findByTestId("reconciled");
+      setNavigatorOnline(false);
+      await user.click(await screen.findByTestId("quick-capture-record-local-start"));
+      await waitFor(() => expect(rec.last?.state).toBe("recording"));
+      expect(rec.trackStops).toHaveLength(1);
+
+      view.unmount();
+
+      expect(rec.last?.state).toBe("inactive");
+      expect(rec.last?.ondataavailable).toBeNull();
+      expect(rec.trackStops[0]).toHaveBeenCalled();
+      expect(store.get("lumogis:capture-outbox:index")).toBeUndefined();
+      rec.uninstall();
+    });
+
+    it("a getUserMedia that resolves after unmount releases the microphone", async () => {
+      installOutboxMemory();
+      const rec = installMockMediaRecorder();
+      const stop = vi.fn();
+      let resolveStream!: (s: MediaStream) => void;
+      (navigator.mediaDevices.getUserMedia as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+        () =>
+          new Promise<MediaStream>((resolve) => {
+            resolveStream = resolve;
+          }),
+      );
+      const user = userEvent.setup();
+
+      const view = renderPage(meOnlyClient());
+      await screen.findByTestId("reconciled");
+      setNavigatorOnline(false);
+      await user.click(await screen.findByTestId("quick-capture-record-local-start"));
+      view.unmount();
+      resolveStream({ getTracks: () => [{ stop }] } as unknown as MediaStream);
+      await waitFor(() => expect(stop).toHaveBeenCalled());
+      expect(rec.last).toBeNull();
+      rec.uninstall();
+    });
   });
 });

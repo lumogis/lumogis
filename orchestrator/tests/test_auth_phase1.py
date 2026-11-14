@@ -51,7 +51,14 @@ class FakeUsersStore:
         self.auth_sessions: dict[str, dict] = {}
         self.settings: dict[str, str] = {}
         self.exec_log: list[tuple[str, tuple]] = []
+        # Every statement, in order, across execute / fetch_one / fetch_all
+        # (LUM-885: lets a test assert the revocation helper's statement order).
+        self.stmt_log: list[str] = []
         self.sid_revoked_lookup_calls = 0
+        # LUM-885: MCP tokens and user invites, so the account-state cascade
+        # can be asserted without a real database.
+        self.mcp_tokens: dict[str, dict] = {}
+        self.invites: dict[str, dict] = {}
 
     def ping(self) -> bool:
         return True
@@ -59,6 +66,7 @@ class FakeUsersStore:
     def execute(self, query: str, params: tuple | None = None) -> None:
         self.exec_log.append((query, params or ()))
         q = " ".join(query.split()).lower()
+        self.stmt_log.append(q)
         p = params or ()
 
         if q.startswith("insert into users"):
@@ -115,13 +123,13 @@ class FakeUsersStore:
             self.rows[p[1]]["role"] = p[0]
             return
 
-        # LUM-29 combined disable (+ token_version bump lives in services.users.disable path)
+        # LUM-885: the token_version bump moved into the revocation helper
+        # (a separate ``UPDATE … RETURNING token_version``), so this is the flag only.
         if "update users set disabled = true" in q:
             uid = str(p[-1])
             row = self.rows.get(uid)
             if row:
                 row["disabled"] = True
-                row["token_version"] = int(row.get("token_version") or 1) + 1
             return
 
         if q.startswith("update users set disabled = false where id ="):
@@ -131,10 +139,10 @@ class FakeUsersStore:
             self.rows[p[0]]["last_login_at"] = datetime.now(timezone.utc)
             return
 
-        # Password change (+ token_version bump) — `_apply_new_password`
-        if "update users set password_hash" in q and "token_version" in q:
+        # Password change — `_apply_new_password` (the token_version bump is the
+        # revocation helper's, LUM-885).
+        if "update users set password_hash" in q:
             self.rows[p[1]]["password_hash"] = p[0]
-            self.rows[p[1]]["token_version"] = int(self.rows[p[1]].get("token_version") or 1) + 1
             return
 
         if q.startswith("delete from auth_sessions where user_id ="):
@@ -170,7 +178,25 @@ class FakeUsersStore:
 
     def fetch_one(self, query: str, params: tuple | None = None) -> dict | None:
         q = " ".join(query.split()).lower()
+        self.stmt_log.append(q)
         p = params or ()
+        # LUM-885 row locks used by update_role / delete_user.
+        if q.startswith("select role from users where id = %s for update"):
+            row = self.rows.get(str(p[0]))
+            return {"role": row["role"]} if row else None
+        if q.startswith("select id from users where id = %s for update"):
+            return {"id": str(p[0])} if str(p[0]) in self.rows else None
+        # LUM-885 mcp_tokens.verify(): token LEFT JOIN its owner row.
+        if q.startswith("select t.*, u.id as owner_id, u.disabled as owner_disabled"):
+            for tok in self.mcp_tokens.values():
+                if tok["token_prefix"] == p[0] and tok.get("revoked_at") is None:
+                    owner = self.rows.get(tok["user_id"])
+                    return {
+                        **tok,
+                        "owner_id": owner["id"] if owner else None,
+                        "owner_disabled": owner["disabled"] if owner else None,
+                    }
+            return None
         if q.startswith("select id from users where lower(email) ="):
             target = p[0].lower()
             for row in self.rows.values():
@@ -229,6 +255,18 @@ class FakeUsersStore:
                 return None
             return dict(srow)
 
+        # LUM-896: rotate_refresh consumes the presented row inside its transaction.
+        if (
+            "update auth_sessions set revoked_at" in q
+            and "where id =" in q
+            and "revoked_at is null returning id" in q
+        ):
+            srow = self.auth_sessions.get(str(p[0]))
+            if not srow or srow["revoked_at"] is not None:
+                return None
+            srow["revoked_at"] = datetime.now(timezone.utc)
+            return {"id": srow["id"]}
+
         if "select * from auth_sessions where id =" in q and len(p) == 1:
             sid = str(p[0])
             srow = self.auth_sessions.get(sid)
@@ -252,6 +290,7 @@ class FakeUsersStore:
 
     def fetch_all(self, query: str, params: tuple | None = None) -> list[dict]:
         q = " ".join(query.split()).lower()
+        self.stmt_log.append(q)
         p = params or ()
         if q.startswith("select * from users order by created_at"):
             return sorted((dict(r) for r in self.rows.values()), key=lambda r: r["created_at"])
@@ -302,12 +341,51 @@ class FakeUsersStore:
                     out.append(dict(srow))
             return out
         if "update mcp_tokens set revoked_at" in q and "returning" in q:
-            return []
+            uid = str(p[0])
+            out = []
+            for tok in self.mcp_tokens.values():
+                if tok["user_id"] == uid and tok.get("revoked_at") is None:
+                    tok["revoked_at"] = now
+                    out.append(dict(tok))
+            return out
+        if "update user_invites set revoked_at" in q and "where created_by" in q:
+            out = []
+            for inv in self.invites.values():
+                if (
+                    inv["created_by"] == str(p[0])
+                    and inv.get("used_at") is None
+                    and inv.get("revoked_at") is None
+                ):
+                    inv["revoked_at"] = now
+                    out.append({"id": inv["id"]})
+            return out
 
         return []
 
     def close(self) -> None:
         pass
+
+    def isolated_transaction(self):
+        """Yield ``self`` as the bound handle (LUM-65).
+
+        The real adapter runs this on a dedicated connection so a request path
+        or scheduler job never touches the process-wide one. A fake has no
+        connections, so what it can honestly model is the *shape* — callers
+        write through the yielded handle — and nothing more.
+
+        Read that limitation plainly: this fake cannot fail the way production
+        failed. Every LUM-65 P0 lived in the gap between a no-op fake
+        transaction and a real shared connection, so the behaviour is proved in
+        ``tests/integration/test_postgres_store_concurrency_live.py`` against a
+        real Postgres, and deliberately not asserted here.
+        """
+        from contextlib import contextmanager
+
+        @contextmanager
+        def _yield_self():
+            yield self
+
+        return _yield_self()
 
     def transaction(self):
         # Plan ``mcp_token_user_map`` D7 made ``services.users.set_disabled``
@@ -441,7 +519,13 @@ def test_invalid_role_in_jwt_returns_401(auth_env, users_store):
     import jwt
 
     bad = jwt.encode(
-        {"sub": "alice", "role": "superuser", "iat": 0, "exp": int(time.time()) + 60},
+        {
+            "typ": "access",
+            "sub": "alice",
+            "role": "superuser",
+            "iat": 0,
+            "exp": int(time.time()) + 60,
+        },
         os.environ["AUTH_SECRET"],
         algorithm="HS256",
     )
@@ -457,7 +541,7 @@ def test_missing_role_claim_defaults_to_user(auth_env, users_store):
 
     user = users_svc.create_user("alice@home.lan", "verylongpassword12", "user")
     legacy = jwt.encode(
-        {"sub": user.id, "iat": 0, "exp": int(time.time()) + 60},
+        {"typ": "access", "sub": user.id, "iat": 0, "exp": int(time.time()) + 60},
         os.environ["AUTH_SECRET"],
         algorithm="HS256",
     )
@@ -785,6 +869,70 @@ def test_enforce_auth_consistency_passes_true_mode_with_admin(
 
     users_svc.create_user("a@home.lan", "verylongpassword12", "admin")
     main._enforce_auth_consistency()
+
+
+# --- LUM-885: refresh-secret boot gate -------------------------------------
+
+
+def _seed_admin_and_gate(users_store):
+    import main
+    import services.users as users_svc
+
+    users_svc.create_user("a@home.lan", "verylongpassword12", "admin")
+    main._enforce_auth_consistency()
+
+
+def test_enforce_auth_consistency_refuses_missing_refresh_secret(
+    users_store, auth_env, no_skip_consistency, monkeypatch
+):
+    monkeypatch.delenv("LUMOGIS_JWT_REFRESH_SECRET", raising=False)
+    monkeypatch.delenv("JWT_REFRESH_SECRET", raising=False)
+    with pytest.raises(RuntimeError, match="refresh secret"):
+        _seed_admin_and_gate(users_store)
+
+
+@pytest.mark.parametrize("placeholder", ["change-me-in-production", "__GENERATE_ME__"])
+@pytest.mark.parametrize("var", ["LUMOGIS_JWT_REFRESH_SECRET", "JWT_REFRESH_SECRET"])
+def test_enforce_auth_consistency_refuses_placeholder_refresh_secret(
+    users_store, auth_env, no_skip_consistency, monkeypatch, placeholder, var
+):
+    monkeypatch.delenv("LUMOGIS_JWT_REFRESH_SECRET", raising=False)
+    monkeypatch.delenv("JWT_REFRESH_SECRET", raising=False)
+    monkeypatch.setenv(var, placeholder)
+    with pytest.raises(RuntimeError, match=var):
+        _seed_admin_and_gate(users_store)
+
+
+def test_enforce_auth_consistency_refuses_refresh_secret_equal_to_auth_secret(
+    users_store, auth_env, no_skip_consistency, monkeypatch
+):
+    shared = "shared-secret-value-that-must-not-leak-into-the-message"
+    monkeypatch.setenv("AUTH_SECRET", shared)
+    monkeypatch.setenv("LUMOGIS_JWT_REFRESH_SECRET", shared)
+    with pytest.raises(RuntimeError, match="equals AUTH_SECRET") as exc:
+        _seed_admin_and_gate(users_store)
+    assert shared not in str(exc.value)
+
+
+def test_enforce_auth_consistency_placeholder_message_holds_no_secret(
+    users_store, auth_env, no_skip_consistency, monkeypatch
+):
+    monkeypatch.setenv("LUMOGIS_JWT_REFRESH_SECRET", "change-me-in-production")
+    with pytest.raises(RuntimeError) as exc:
+        _seed_admin_and_gate(users_store)
+    assert "test-access-secret-do-not-use-in-prod" not in str(exc.value)
+
+
+def test_enforce_auth_consistency_passes_distinct_refresh_secret(
+    users_store, auth_env, no_skip_consistency
+):
+    _seed_admin_and_gate(users_store)
+
+
+def test_auth_off_ignores_refresh_secret(users_store, dev_env, no_skip_consistency, monkeypatch):
+    monkeypatch.delenv("LUMOGIS_JWT_REFRESH_SECRET", raising=False)
+    monkeypatch.delenv("JWT_REFRESH_SECRET", raising=False)
+    _seed_admin_and_gate(users_store)
 
 
 # ---------------------------------------------------------------------------
@@ -1188,6 +1336,8 @@ def test_login_in_dev_mode_returns_503(users_store, dev_env):
 
 
 def test_me_in_dev_mode_returns_synthesised_admin(users_store, dev_env):
+    """Lumogis Web's single-user probe (LUM-853) depends on this and on
+    ``test_me_without_bearer_in_true_mode_returns_401``."""
     import main
 
     with TestClient(main.app) as client:
@@ -1213,8 +1363,26 @@ def test_me_with_bearer_returns_user(users_store, auth_env):
 
 
 def test_me_without_bearer_in_true_mode_returns_401(users_store, auth_env):
+    """Lumogis Web's single-user probe (LUM-853) depends on this and on
+    ``test_me_in_dev_mode_returns_synthesised_admin``."""
     with _client_with_admin(users_store) as client:
         resp = client.get("/api/v1/auth/me")
+    assert resp.status_code == 401
+
+
+def test_me_with_refresh_cookie_but_no_bearer_in_true_mode_returns_401(users_store, auth_env):
+    """A stale ``lumogis_refresh`` cookie rides along with Lumogis Web's unauthenticated
+    single-user probe (LUM-853); the middleware reads only ``Authorization``, so the answer
+    must still be 401. The probe depends on this and on
+    ``test_me_in_dev_mode_returns_synthesised_admin``."""
+    with _client_with_admin(users_store) as client:
+        login = client.post(
+            "/api/v1/auth/login",
+            json={"email": "alice@home.lan", "password": "verylongpassword12"},
+        )
+        assert login.status_code == 200, login.text
+        assert client.cookies.get("lumogis_refresh")
+        resp = client.get("/api/v1/auth/me")  # cookie held, no Authorization header
     assert resp.status_code == 401
 
 
@@ -1471,6 +1639,60 @@ def test_rotate_refresh_invalidates_prior_sid_under_sid_gate(users_store, auth_e
         assert new_ok.status_code == 200
 
 
+def test_rotate_refresh_fails_when_the_row_was_revoked_after_the_read(
+    users_store, auth_env, monkeypatch
+):
+    """LUM-896: a revoke landing between the pre-read and the rotation wins.
+
+    The pre-read is pinned to the row as it was before "log out everywhere"
+    ran, which is what a revoke committing in that window looks like. Only the
+    ``UPDATE … RETURNING`` inside the transaction can then refuse the refresh.
+    The real-lock interleave is proved in
+    ``tests/integration/test_account_state_cascade_live.py``.
+    """
+    import services.users as users_svc
+
+    with _client_with_admin(users_store) as client:
+        login = client.post(
+            "/api/v1/auth/login",
+            json={"email": "alice@home.lan", "password": "verylongpassword12"},
+        )
+        assert login.status_code == 200
+        cookie = login.cookies.get("lumogis_refresh")
+        uid = users_svc.get_user_by_email("alice@home.lan").id
+        (sid,) = [k for k, v in users_store.auth_sessions.items() if v["user_id"] == uid]
+        stale = dict(users_store.auth_sessions[sid])
+
+        users_svc.revoke_all_credentials(uid)
+        assert users_store.auth_sessions[sid]["revoked_at"] is not None
+
+        orig_fetch = users_store.fetch_one
+
+        def stale_preread(query: str, params: tuple | None = None):
+            if query.lower().startswith("select * from auth_sessions where id =") and params == (
+                sid,
+                uid,
+            ):
+                return dict(stale)
+            return orig_fetch(query, params)
+
+        monkeypatch.setattr(users_store, "fetch_one", stale_preread)
+
+        client.cookies.clear()
+        r = client.post(
+            "/api/v1/auth/refresh",
+            cookies={"lumogis_refresh": cookie},
+            headers=_csrf_origin_headers(),
+        )
+        assert r.status_code == 401, r.text
+        live = [
+            v
+            for v in users_store.auth_sessions.values()
+            if v["user_id"] == uid and v["revoked_at"] is None
+        ]
+        assert live == [], "a lost race must not mint a live session"
+
+
 def test_sid_revocation_ttl_zero_hits_db_each_time(users_store, auth_env, monkeypatch):
     monkeypatch.setenv("LUMOGIS_REQUIRE_SID_REVOCATION_CHECK", "true")
     monkeypatch.setenv("LUMOGIS_SID_REVOCATION_CACHE_TTL_SECONDS", "0")
@@ -1508,6 +1730,7 @@ def test_sid_claim_wrong_user_sub_denied_under_sid_gate(users_store, auth_env, m
         crossed = jwt.encode(
             {
                 "sub": "not-alices-row",
+                "typ": "access",
                 "role": "admin",
                 "sid": sid_alice,
                 "tv": 0,

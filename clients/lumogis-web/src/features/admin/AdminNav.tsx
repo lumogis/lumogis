@@ -5,6 +5,9 @@ import { NavLink } from "react-router-dom";
 const mainLinks: { to: string; label: string }[] = [
   { to: "/admin/users", label: "Users" },
   { to: "/admin/connector-credentials", label: "Connector credentials" },
+  // After credentials: a source needs one first, and the add flow (chunk B)
+  // will point at the credentials page for step one.
+  { to: "/admin/system-mail", label: "System mail" },
   { to: "/admin/connector-permissions", label: "Connector permissions" },
   { to: "/admin/mcp-tokens", label: "MCP tokens" },
   { to: "/admin/shared-items", label: "Household shared items" },

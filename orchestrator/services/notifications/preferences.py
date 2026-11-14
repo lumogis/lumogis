@@ -7,6 +7,8 @@ from __future__ import annotations
 import logging
 from datetime import time
 from typing import Any
+from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfoNotFoundError
 
 from fastapi import HTTPException
 from models.notifications import ChannelId
@@ -100,6 +102,17 @@ def _load_sparse_prefs(user_id: str) -> dict[tuple[NotificationType, ChannelId],
     return out
 
 
+def _parse_quiet_hour(raw: str) -> time:
+    for fmt in ("%H:%M:%S", "%H:%M"):
+        try:
+            from datetime import datetime as _dt
+
+            return _dt.strptime(raw, fmt).time()
+        except ValueError:
+            continue
+    raise HTTPException(status_code=422, detail="invalid_quiet_hours_format")
+
+
 def _load_user_settings(user_id: str) -> dict[str, Any]:
     ms = config.get_metadata_store()
     # SCOPE-EXEMPT: notification_user_settings is per-user settings (no scope column).
@@ -174,6 +187,48 @@ def _validate_patch_item(
         )
 
 
+_SETTINGS_FIELDS = frozenset({"timezone", "quiet_hours_start", "quiet_hours_end"})
+
+
+def _patch_user_settings(user_id: str, patch: NotificationPreferencesPatch) -> None:
+    """Upsert the caller-provided subset of quiet-hours/timezone settings (LUM-700).
+
+    ``model_fields_set`` distinguishes "field omitted" (leave the stored column
+    untouched) from "field explicitly null" (clear it) — a plain ``Optional[str]``
+    can't tell those apart. Unprovided columns keep their current value, read via
+    ``_load_user_settings``, so a partial patch (e.g. quiet hours only) never
+    clobbers a timezone set by an earlier call.
+    """
+    fields_set = patch.model_fields_set & _SETTINGS_FIELDS
+    if not fields_set:
+        return
+
+    if patch.timezone is not None:
+        try:
+            ZoneInfo(patch.timezone)
+        except (ZoneInfoNotFoundError, ValueError, KeyError):
+            raise HTTPException(status_code=422, detail="invalid_timezone") from None
+
+    new_start = _parse_quiet_hour(patch.quiet_hours_start) if patch.quiet_hours_start else None
+    new_end = _parse_quiet_hour(patch.quiet_hours_end) if patch.quiet_hours_end else None
+
+    current = _load_user_settings(user_id)
+    tz = patch.timezone if "timezone" in fields_set else current.get("timezone")
+    start = new_start if "quiet_hours_start" in fields_set else current.get("quiet_hours_start")
+    end = new_end if "quiet_hours_end" in fields_set else current.get("quiet_hours_end")
+
+    ms = config.get_metadata_store()
+    ms.execute(
+        "INSERT INTO notification_user_settings "
+        "(user_id, timezone, quiet_hours_start, quiet_hours_end, updated_at) "
+        "VALUES (%s, %s, %s, %s, NOW()) "
+        "ON CONFLICT (user_id) DO UPDATE SET "
+        "timezone = EXCLUDED.timezone, quiet_hours_start = EXCLUDED.quiet_hours_start, "
+        "quiet_hours_end = EXCLUDED.quiet_hours_end, updated_at = NOW()",
+        (user_id, tz, start, end),
+    )
+
+
 def patch_preferences(
     user_id: str,
     patch: NotificationPreferencesPatch,
@@ -184,6 +239,9 @@ def patch_preferences(
     merged: dict[tuple[NotificationType, ChannelId], NotificationPreferencePatchItem] = {}
     for item in patch.preferences:
         merged[(item.notification_type, item.channel)] = item
+
+    if not merged and not (patch.model_fields_set & _SETTINGS_FIELDS):
+        raise HTTPException(status_code=422, detail="empty_patch")
 
     ms = config.get_metadata_store()
     for item in merged.values():
@@ -201,6 +259,8 @@ def patch_preferences(
                 item.enabled,
             ),
         )
+
+    _patch_user_settings(user_id, patch)
 
     return get_effective_preferences(user_id)
 

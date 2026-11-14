@@ -59,7 +59,7 @@ BENV="$ROOT/.venv-bandit-check"
 BEXE="$BENV/bin/bandit"
 if [ ! -x "$BEXE" ]; then
   "$PYTHON" -m venv "$BENV"
-  "$BENV/bin/pip" install -q -r "$ROOT/scripts/requirements-security-audit.txt"
+  "$BENV/bin/pip" install -q --require-hashes -r "$ROOT/scripts/requirements-security-audit.txt"
 fi
 
 set +e

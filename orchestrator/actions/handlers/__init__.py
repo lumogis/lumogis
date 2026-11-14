@@ -3,8 +3,11 @@
 # Concrete action handlers live here.
 #
 # Implement ActionHandler from ports/action_handler.py and register via
-# actions.registry.register_action(). Each handler file in this directory
-# is auto-discovered at startup — drop a file here and it is active.
+# actions.registry.register_action(). Handler modules are NOT auto-discovered —
+# there is no scanning machinery here. A handler becomes active only when it is
+# explicitly imported at startup (see main.py, which imports the handler modules
+# so their module-level register_action() calls run), mirroring the
+# `from services import batch_handlers` precedent.
 #
 # For distributable handlers, prefer packaging them as a plugin under
 # orchestrator/plugins/<name>/ so they can be mounted independently.

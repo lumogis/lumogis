@@ -68,14 +68,14 @@ export function AdminSafetyPlaygroundView(): JSX.Element {
 
       {msg && <p role="alert">{msg}</p>}
 
-      <div className="safety-actions">
+      <div className="lumogis-safety-playground__actions">
         <button type="button" onClick={() => runM.mutate()} disabled={runM.isPending}>
           {runM.isPending ? "Running…" : "Run injection test suite"}
         </button>
       </div>
 
       {suite && (
-        <div className="safety-summary" data-testid="safety-summary">
+        <div className="lumogis-safety-playground__summary" data-testid="safety-summary">
           <p>
             Ran {suite.ran_at} — <strong>{suite.passed}/{suite.total} passed</strong>
             {suite.failed > 0 && <span style={STYLE_FAIL}> · {suite.failed} FAILED</span>}
@@ -115,7 +115,7 @@ export function AdminSafetyPlaygroundView(): JSX.Element {
       <hr />
 
       <h3>Craft a test payload</h3>
-      <div className="safety-probe">
+      <div className="lumogis-safety-playground__probe">
         <label>
           Vector{" "}
           <select value={vector} onChange={(e) => setVector(e.target.value as SafetyVector)}>

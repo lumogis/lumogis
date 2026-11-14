@@ -117,6 +117,7 @@ def _mint_admin_jwt(user_id: str) -> str:
     return jwt.encode(
         {
             "sub": user_id,
+            "typ": "access",
             "role": "admin",
             "iat": int(time.time()),
             "exp": int(time.time()) + 600,

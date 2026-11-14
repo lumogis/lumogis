@@ -101,6 +101,10 @@ CREATE TABLE IF NOT EXISTS entity_relations (
 CREATE UNIQUE INDEX IF NOT EXISTS entity_relations_evidence_uniq
     ON entity_relations (source_id, evidence_id, relation_type, user_id);
 
+-- LUM-952: evidence-side lookups for the co-occurrence aggregate (migration 081).
+CREATE INDEX IF NOT EXISTS entity_relations_evidence_user_idx
+    ON entity_relations (evidence_id, user_id);
+
 -- Partial index: fast lookup of staged entities per user (reconcile + promotion queries).
 CREATE INDEX IF NOT EXISTS idx_entities_staged ON entities (user_id, is_staged) WHERE is_staged = TRUE;
 CREATE INDEX IF NOT EXISTS idx_entities_user_memory_correction
@@ -233,6 +237,9 @@ CREATE TABLE IF NOT EXISTS signals (
     relevance_score  FLOAT NOT NULL DEFAULT 0.0,
     notified        BOOLEAN NOT NULL DEFAULT FALSE,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- LUM-642: persisted email sender (bare address + display name); '' for non-email.
+    from_addr       TEXT NOT NULL DEFAULT '',
+    from_display    TEXT NOT NULL DEFAULT '',
     -- Memory-scopes (migration 013): see plan personal_shared_system_memory_scopes.
     -- `source_url` / `source_label` denormalize sources(url, name) so shared/system
     -- signals are renderable without joining `sources` (which is intentionally NOT
@@ -249,6 +256,22 @@ CREATE INDEX IF NOT EXISTS idx_signals_url ON signals (url);
 CREATE UNIQUE INDEX IF NOT EXISTS signals_published_from_scope_uniq
     ON signals (published_from, scope) WHERE published_from IS NOT NULL;
 CREATE INDEX IF NOT EXISTS signals_user_scope_idx ON signals (user_id, scope);
+
+-- Per-(user, signal) triage state (LUM-643, migration 057). Durable,
+-- Lumogis-owned status decoupled from the mailbox read-state. Each household
+-- member triages a shared signal independently. Snooze re-surfaces at query time
+-- (snoozed_until <= now()); no scheduler. Index shaped for LUM-648's expiry scan.
+CREATE TABLE IF NOT EXISTS signal_triage (
+    user_id       TEXT NOT NULL DEFAULT 'default',
+    signal_id     UUID NOT NULL REFERENCES signals(signal_id) ON DELETE CASCADE,
+    status        TEXT NOT NULL CHECK (status IN ('needs_you','good_to_know','snoozed','done')),
+    snoozed_until TIMESTAMPTZ,   -- non-null iff status='snoozed'
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (user_id, signal_id),
+    CONSTRAINT snoozed_until_pairing CHECK ((status = 'snoozed') = (snoozed_until IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_signal_triage_user_status_due
+    ON signal_triage (user_id, status, snoozed_until);
 
 -- Relevance profiles: per-user topic/location/entity/keyword tracking.
 CREATE TABLE IF NOT EXISTS relevance_profiles (

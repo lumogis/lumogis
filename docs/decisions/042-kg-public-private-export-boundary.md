@@ -1,6 +1,6 @@
 # ADR-042: KG ships in `lumogis-app` only — public AGPL export boundary
 
-**Status:** Finalised
+**Status:** **Superseded by [ADR 229](229-lum-855-kg-agpl-relicence.md)** (2026-11-07) — the knowledge graph is AGPL-3.0-only and ships in the public export. The strip-list mechanism, the `GRAPH_MODE` default and the fail-closed degradation this ADR introduced all survive; only the KG's place behind the boundary is reversed. Previously: Finalised
 **Created:** 2026-05-15
 **Finalised:** 2026-05-15 (`/verify-plan` LUM-242 — implementation confirmed)
 **Decided by:** Exploration LUM-242 + plan `LUM-242-kg-public-private-boundary`; arbitration R1 2026-05-15

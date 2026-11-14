@@ -10,6 +10,7 @@ and router includes. All endpoint logic lives in routes/.
 import importlib.util
 import logging
 import os
+import sys
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -32,15 +33,19 @@ from correlation import correlation_middleware
 from fastapi import FastAPI
 from fastapi import HTTPException
 from fastapi import Request
+from fastapi.responses import JSONResponse
 from plugins import load_plugins
+from ports.metadata_store import PoolExhaustedError
 from routes.actions import router as actions_router
 from routes.admin import router as admin_router
 from routes.admin_diagnostics import router as admin_diagnostics_router
 from routes.admin_ollama import router as admin_ollama_router
 from routes.admin_safety import router as admin_safety_router
 from routes.admin_sharing import router as admin_sharing_router
+from routes.admin_system_mail import router as admin_system_mail_router
 from routes.admin_users import imports_router as admin_user_imports_router
 from routes.admin_users import router as admin_users_router
+from routes.altcha import router as altcha_router
 from routes.auth import router as auth_router
 from routes.capabilities import router as capabilities_router
 from routes.chat import router as chat_router
@@ -60,6 +65,7 @@ from routes.mcp_tokens import admin_router as mcp_tokens_admin_router
 from routes.mcp_tokens import router as mcp_tokens_router
 from routes.me import router as me_router
 from routes.me_sessions import router as me_sessions_router
+from routes.password_reset import router as password_reset_router
 from routes.scope import router as scope_router
 from routes.signals import router as signals_router
 from routes.web import router as web_router
@@ -67,6 +73,38 @@ from routes.web import router as web_router
 import config
 
 _log = logging.getLogger(__name__)
+
+_FALSEY_ENV = ("false", "0", "no")
+
+# LUM-762: the legacy spelling is `ACTION_PROPOSALS_QUEUE_ENABLED`, which gated a
+# SWEEPER and never gated a queue — part of why this module read as a live queue for
+# three releases. Remove the fallback next release.
+_PROPOSAL_SWEEPER_ENV = "ACTION_PROPOSALS_SWEEPER_ENABLED"
+_PROPOSAL_SWEEPER_ENV_LEGACY = "ACTION_PROPOSALS_QUEUE_ENABLED"
+
+
+def _proposal_sweeper_enabled(env) -> bool:
+    """Resolve the stale-claim sweeper flag, honouring the legacy spelling.
+
+    Extracted as a pure function so the env precedence is testable. Asserting it
+    through APScheduler job registration would need a lifespan harness that does
+    not exist for ANY queue in this tree, which is disproportionate to an env
+    rename — and the precedence is the part that can actually be wrong.
+    """
+    raw = env.get(_PROPOSAL_SWEEPER_ENV)
+    if raw is None:
+        raw = env.get(_PROPOSAL_SWEEPER_ENV_LEGACY)
+        if raw is not None:
+            _log.warning(
+                "%s is deprecated and will be removed next release; use %s "
+                "(it gates the stale-claim sweeper, not a queue)",
+                _PROPOSAL_SWEEPER_ENV_LEGACY,
+                _PROPOSAL_SWEEPER_ENV,
+            )
+    if raw is None:
+        return True
+    return raw.lower() not in _FALSEY_ENV
+
 
 # Qdrant collections created on startup.
 # "signals" stores embedded content summaries for semantic dedup.
@@ -78,8 +116,8 @@ def _wire_graph_mode_handlers(graph_mode: str) -> str:
     """Wire Core to the graph layer per validated ``GRAPH_MODE``.
 
     Returns the **effective** mode Core runs after fail-soft degradation.
-    ``service`` / ``inprocess`` may become ``disabled`` when premium wiring or
-    the in-process plugin package is absent (one WARNING per degraded path).
+    ``service`` / ``inprocess`` may become ``disabled`` when the optional graph
+    component's wiring or the in-process plugin package is absent (one WARNING per degraded path).
 
     Callers normally pass validated tokens from :func:`config.read_graph_mode_from_env`.
     A non-canonical literal defends depth-first by returning ``disabled`` with a WARNING.
@@ -188,7 +226,7 @@ def _run_post_bootstrap_default_user_remap() -> None:
     try:
         import db_default_user_remap
 
-        rc = db_default_user_remap.main()
+        rc = db_default_user_remap.main(post_bootstrap=True)
         if rc != 0:
             _log.warning(
                 "post-bootstrap default-user remap exited %d — legacy "
@@ -219,9 +257,16 @@ def _enforce_auth_consistency() -> None:
     * ``AUTH_ENABLED=true`` AND ``users`` is empty (bootstrap already ran
       and didn't create anyone — env unset or password too short) — the
       LAN would have no way in. Refuse with a remediation hint.
+
+    With ``AUTH_ENABLED=true`` it also refuses a missing or placeholder
+    ``AUTH_SECRET`` or ``LUMOGIS_CREDENTIAL_KEY[S]``, and (LUM-885) a missing
+    or placeholder refresh secret, or one equal to ``AUTH_SECRET``.
     """
+    import hmac
+
     import services.users as users_svc
     from auth import auth_enabled
+    from services._credential_internals import _PLACEHOLDER_KEYS
 
     # Exposure invariant (LUM-473 Chunk A): auth must NEVER be off on a
     # non-loopback bind. Checked BEFORE the test escape hatch below because it
@@ -281,7 +326,7 @@ def _enforce_auth_consistency() -> None:
         # as "not set". See .cursor/plans/family_lan_multi_user.plan.md
         # Implementation Log → "Recommended next steps" #1.
         secret = os.environ.get("AUTH_SECRET", "").strip()
-        if not secret or secret in ("change-me-in-production", "__GENERATE_ME__"):
+        if secret in _PLACEHOLDER_KEYS:
             raise RuntimeError(
                 "AUTH_ENABLED=true but AUTH_SECRET is unset or a placeholder — "
                 "refusing to boot. Generate a real secret with "
@@ -291,6 +336,41 @@ def _enforce_auth_consistency() -> None:
                 "JWT_REFRESH_SECRET / RESTART_SECRET but intentionally does NOT "
                 "auto-rotate AUTH_SECRET — operators flip family-LAN mode on "
                 "deliberately and must own the access-token signing secret."
+            )
+
+        # Refresh-secret hardening (LUM-885, security audit #2 AUTH-002): the
+        # refresh secret must be a real value and must differ from AUTH_SECRET.
+        # Equal secrets let a refresh JWT verify as an access token on any
+        # verifier that does not check ``typ``. The check sits here (inside
+        # ``if enabled:``, after the AUTH_SECRET block) so it follows the test
+        # escape hatch exactly like AUTH_SECRET. The messages name the variable
+        # the value came from and never contain either secret value.
+        from auth import _refresh_secret
+
+        refresh = _refresh_secret()
+        if refresh in _PLACEHOLDER_KEYS:
+            if os.environ.get("LUMOGIS_JWT_REFRESH_SECRET", "").strip():
+                source = "LUMOGIS_JWT_REFRESH_SECRET is a placeholder"
+            elif os.environ.get("JWT_REFRESH_SECRET", "").strip():
+                source = "JWT_REFRESH_SECRET is a placeholder"
+            else:
+                source = "neither LUMOGIS_JWT_REFRESH_SECRET nor JWT_REFRESH_SECRET is set"
+            raise RuntimeError(
+                "AUTH_ENABLED=true but the refresh secret is unusable (%s) — "
+                "refusing to boot. Set a real refresh secret that differs from "
+                "AUTH_SECRET, for example `openssl rand -hex 32`, as "
+                "JWT_REFRESH_SECRET (or LUMOGIS_JWT_REFRESH_SECRET) in .env, then "
+                "restart. The compose entrypoint fills JWT_REFRESH_SECRET "
+                "automatically when it is missing, empty or the placeholder, but "
+                "never overrides a non-empty LUMOGIS_JWT_REFRESH_SECRET." % source
+            )
+        if hmac.compare_digest(refresh.encode("utf-8"), secret.encode("utf-8")):
+            raise RuntimeError(
+                "AUTH_ENABLED=true but the refresh secret equals AUTH_SECRET — "
+                "refusing to boot. A refresh token must not verify as an access "
+                "token. Set a distinct JWT_REFRESH_SECRET (or "
+                "LUMOGIS_JWT_REFRESH_SECRET), for example `openssl rand -hex 32`, "
+                "and restart. Existing sessions sign in again once."
             )
 
         # LUMOGIS_CREDENTIAL_KEY[S] hardening (per_user_connector_credentials
@@ -316,7 +396,7 @@ def _enforce_auth_consistency() -> None:
             os.environ.get("LUMOGIS_CREDENTIAL_KEYS", "").strip()
             or os.environ.get("LUMOGIS_CREDENTIAL_KEY", "").strip()
         )
-        if not cred_keys or cred_keys in ("change-me-in-production", "__GENERATE_ME__"):
+        if cred_keys in _PLACEHOLDER_KEYS:
             raise RuntimeError(
                 "AUTH_ENABLED=true but LUMOGIS_CREDENTIAL_KEY[S] is unset or a "
                 "placeholder — refusing to boot. Generate a real key with "
@@ -329,8 +409,105 @@ def _enforce_auth_consistency() -> None:
             )
 
 
+def _requested_worker_count(argv=None, environ=None):
+    """Return ``(count, source)`` for an explicitly requested worker count.
+
+    ``None`` when nothing asked for one. Mirrors uvicorn's own precedence
+    (``uvicorn/config.py``): an explicit ``--workers`` wins, and
+    ``WEB_CONCURRENCY`` is consulted only when the flag is absent. A value
+    that is not an integer is ignored here — uvicorn raises on it first, and
+    guessing at operator intent from a malformed number is worse than letting
+    the launcher's own error speak.
+
+    ``sys.argv`` is readable from a spawned uvicorn worker too
+    (``multiprocessing.spawn`` carries it into the child), so this sees the
+    flag whichever process runs it.
+    """
+    argv = list(sys.argv if argv is None else argv)
+    environ = os.environ if environ is None else environ
+
+    for i, arg in enumerate(argv):
+        raw = None
+        if arg.startswith("--workers="):
+            raw = arg.split("=", 1)[1]
+        elif arg == "--workers" and i + 1 < len(argv):
+            raw = argv[i + 1]
+        if raw is not None:
+            try:
+                return int(raw.strip()), "--workers"
+            except ValueError:
+                return None
+
+    env_raw = environ.get("WEB_CONCURRENCY", "").strip()
+    if env_raw:
+        try:
+            return int(env_raw), "WEB_CONCURRENCY"
+        except ValueError:
+            return None
+    return None
+
+
+def _enforce_single_worker(argv=None, environ=None):
+    """Refuse to boot when more than one worker process was asked for (LUM-832).
+
+    Lumogis holds five pieces of correctness-bearing state **in process**:
+    rate-limit buckets, the ``tv`` token-version cache, the ``sid`` revocation
+    LRU (LUM-29 / LUM-243), the batch queue (LUM-407) and the
+    connector-permission cache (LUM-34) — plus a Postgres pool sized per
+    process (LUM-816). A second worker gives each its own copy, so a 30/min
+    limit becomes 30xN and a revoked session stays valid on the workers that
+    did not serve the revocation.
+
+    None of that crashes. It is silent incorrectness, which is why this is a
+    refusal and not the warning it replaced: an operator who sets
+    ``WEB_CONCURRENCY=4`` to make things faster gets a stack that appears to
+    work and has quietly stopped enforcing rate limits and session revocation.
+    A log line at boot does not reach them. Same posture as migration ``074``
+    — a partial schema is worse than a refusal, and the refusal names the
+    remedy rather than emitting a bare error.
+
+    Making any of the five multi-worker-safe is explicitly out of scope; this
+    says the mode is unsupported, it does not schedule supporting it.
+
+    Raising here refuses cleanly rather than crash-looping: uvicorn's
+    ``Multiprocess.keep_subprocess_alive`` special-cases ``STARTUP_FAILURE``
+    and stops the *parent* instead of respawning the worker (verified against
+    uvicorn 0.52), so the operator gets one refusal and an exited stack.
+    """
+    requested = _requested_worker_count(argv=argv, environ=environ)
+    if requested is None:
+        return
+    count, source = requested
+    if count <= 1:
+        return
+    remedy = (
+        "drop the `--workers` flag from the uvicorn command (or pass `--workers 1`)"
+        if source == "--workers"
+        else "unset WEB_CONCURRENCY in .env (or set it to 1)"
+    )
+    raise RuntimeError(
+        f"STARTUP FAILED: {source}={count} — Lumogis does not support more than "
+        "one orchestrator worker process, and refuses to boot rather than run "
+        "incorrectly. Rate limiting, session revocation, the token-version "
+        "cache, the batch queue and the connector-permission cache are all "
+        "held IN PROCESS: with N workers a 30/min rate limit becomes 30xN, and "
+        "a revoked session keeps working on every worker that did not serve "
+        "the revocation. The Postgres pool is per process too, so N workers "
+        "open N x LUMOGIS_PG_POOL_MAX connections. None of this fails loudly, "
+        f"which is why it is refused here. Remedy: {remedy}, then restart — "
+        "one worker is the shipped and only supported mode. To serve more "
+        "load, run a bigger box or put a cache in front; do not add workers. "
+        "See LUM-832, LUM-816, LUM-407."
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # LUM-832 — refuse a multi-worker boot before anything opens a connection.
+    # First in the lifespan on purpose: there is no point sizing a pool or
+    # pinging backends for a process that must not come up.
+    _enforce_single_worker()
+
     _log.info("Startup: pinging backends...")
 
     # Qdrant and Postgres are hard requirements — crash if unavailable.
@@ -346,6 +523,14 @@ async def lifespan(app: FastAPI):
             )
         _log.info("  %s (%s): OK", name, type(backend).__name__)
 
+    # LUM-571: process-wide egress ceiling (opt-in, default off). After store
+    # health checks so the allowlist is built from a live config and the rest of
+    # startup runs under the ceiling. Fails closed (refuses boot) if enabled but
+    # `tethered` is unavailable.
+    from services.egress_guard import activate_ceiling
+
+    activate_ceiling()
+
     # Auth bootstrap + consistency gate. Migrations have already been
     # applied by docker-entrypoint.sh before uvicorn started, so the
     # `users` table exists. Order is intentional: bootstrap creates the
@@ -359,10 +544,17 @@ async def lifespan(app: FastAPI):
         _log.exception("Bootstrap admin creation hit an unexpected error")
     _run_post_bootstrap_default_user_remap()
     _enforce_auth_consistency()
-    # Plan llm_provider_keys_per_user_migration Pass 2.6: refuse to boot if
-    # SIGNAL_LLM_MODEL is a cloud model under AUTH_ENABLED=true (no per-user
-    # key resolution is possible for non-user-scoped signal sources). Local
-    # default + auth-off both pass silently.
+    # LUM-918: ACCESS_TOKEN_TTL_SECONDS is clamped to an hour; say so at boot
+    # when the operator asked for more.
+    from auth import warn_if_access_token_ttl_clamped
+
+    warn_if_access_token_ttl_clamped()
+    # Plan llm_provider_keys_per_user_migration Pass 2.6, generalised to every
+    # background model task by LUM-877: refuse to boot if a task that runs
+    # without a user has no keyless model candidate under AUTH_ENABLED=true (no
+    # per-user key resolution is possible for non-user-scoped sources). Also
+    # warns about retired env vars and a bad ``tasks:`` block. The shipped
+    # defaults + auth-off both pass silently.
     config._check_background_model_defaults()
 
     # Embedder is a soft requirement — start in degraded mode if model unavailable.
@@ -424,6 +616,10 @@ async def lifespan(app: FastAPI):
         "Inbox pipeline platform: %s",
         " ".join(platform.uname()),
     )
+    # LUM-922: the admin's stop-entities list lives in the workspace now. Copy the
+    # old in-image list there once; an existing file is never overwritten.
+    config.ensure_stop_entities_file()
+
     inbox_mode = config.get_inbox_mode()
     inbox_owner = config.get_inbox_owner_user_id()
     if inbox_mode != "off" and inbox_owner:
@@ -468,19 +664,71 @@ async def lifespan(app: FastAPI):
     start_egress_deny_tail()
 
     # Register SSE hook callbacks and notification dispatcher.
+    from services.notifications.migrate_webpush_prefs import reset_notify_on_signals_for_consent
     from services.notifications.migrate_webpush_prefs import run_if_needed
 
     run_if_needed()
+    # LUM-648: one-time fresh-consent reset now that notify_on_signals is a live gate.
+    reset_notify_on_signals_for_consent()
 
     from services.notifications.dispatcher import register_hook_listeners
 
     register_hook_listeners()
+
+    # LUM-645: opt-in mailbox-organization go-forward hook.
+    from services import email_organize
+
+    email_organize.register_hooks()
 
     register_sse_hooks()
 
     from services.routines import register_all as register_routines
 
     register_routines()
+
+    # LUM-625 Layer 2: when IMAP egress containment is enabled, keep the Squid
+    # email-IMAP allow file in sync with configured mailboxes (regen on credential
+    # change). Since LUM-758 the proxy APPLIES the file itself — its entrypoint
+    # watches the allow directory — so this no longer waits on an operator.
+    # Best-effort — never blocks startup.
+    #
+    # Note this is gated on the Layer-1 flag alone, which says nothing about
+    # whether a proxy is deployed; email_egress_acl._should_notify carries the
+    # extra condition so a flag-on/no-proxy install never notifies about an
+    # egress surface nothing is enforcing.
+    from services.egress_guard import imap_egress_enabled
+
+    if imap_egress_enabled():
+        try:
+            from services.email_egress_acl import register as register_imap_egress_acl
+
+            register_imap_egress_acl()
+        except Exception:  # noqa: BLE001 - audit-layer wiring must not break startup
+            _log.exception("email-IMAP egress allow-file listener registration failed")
+
+    # LUM-728 — notice the reverse ordering: paperless connected AFTER a mailbox
+    # already has filing rules, which the rule-creation gate can never catch.
+    try:
+        from services.paperless_overlap import register as register_paperless_overlap
+
+        register_paperless_overlap()
+    except Exception:  # noqa: BLE001 - advisory wiring must not break startup
+        _log.exception("paperless overlap listener registration failed")
+
+    # LUM-794: act-tier action handlers register UNCONDITIONALLY. Module import runs
+    # the module-level register_action() calls (LUM-623) — there is no scheduler or
+    # queue dependency in them, and no auto-discovery.
+    #
+    # These two imports used to sit inside `if scheduler and _batch_queue_enabled:`
+    # below, so two unrelated features shared one flag: `BATCH_QUEUE_ENABLED=false`,
+    # or any scheduler-less startup, left the action registry EMPTY and every
+    # legitimately approved proposal failed with `Unknown action`. Harmless-looking
+    # until LUM-762 made failure terminal — those rows used to return to `approved`
+    # and survive the misconfiguration; now they die on the first attempt, and until
+    # LUM-793 ships a `dead` row appears on no surface at all. A configuration
+    # mistake should not silently destroy a household member's approved email.
+    from actions.handlers import imap_writeback as _imap_writeback_registered  # noqa: F401
+    from actions.handlers import smtp_send as _smtp_send_registered  # noqa: F401
 
     _batch_queue_enabled = os.environ.get("BATCH_QUEUE_ENABLED", "true").lower() not in (
         "false",
@@ -562,11 +810,57 @@ async def lifespan(app: FastAPI):
         )
         _log.info("Batch queue APScheduler jobs registered")
 
-    _proposals_q_en = os.environ.get("ACTION_PROPOSALS_QUEUE_ENABLED", "true").lower() not in (
-        "false",
-        "0",
-        "no",
-    )
+    # LUM-65: drain the system-mail outbox. This job is why the public
+    # password-reset request can answer in constant time — the SMTP submission
+    # happens here, off the request path, so neither the enumeration timing
+    # guarantee nor the shared AnyIO threadpool depends on how healthy the
+    # operator's relay is today.
+    def _system_mail_drain() -> None:
+        from services import system_mail as _system_mail
+
+        try:
+            _system_mail.drain_outbox()
+        except Exception:
+            _log.exception("system_mail: outbox drain tick failed")
+
+    def _system_mail_purge() -> None:
+        from services import system_mail as _system_mail
+
+        try:
+            _system_mail.purge_expired()
+        except Exception:
+            _log.exception("system_mail: outbox purge failed")
+
+    # `if scheduler:` for the same reason as the blocks above — tests run
+    # without an APScheduler. Without the guard the `except` below would
+    # swallow an AttributeError on None and leave the drain silently
+    # unregistered behind a traceback that looks like a real failure.
+    if scheduler:
+        from services import system_mail as _system_mail_cfg
+
+        scheduler.add_job(
+            _system_mail_drain,
+            trigger="interval",
+            seconds=_system_mail_cfg.drain_interval_seconds(),
+            id="system_mail_outbox_drain",
+            name="System mail outbox drain",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        scheduler.add_job(
+            _system_mail_purge,
+            trigger="interval",
+            seconds=3600,
+            id="system_mail_outbox_purge",
+            name="System mail outbox expiry purge",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        _log.info("System mail outbox APScheduler jobs registered")
+
+    _proposals_q_en = _proposal_sweeper_enabled(os.environ)
     if scheduler and _proposals_q_en:
         from services.proposal_queue import ACTION_PROPOSALS_CLAIM_STUCK_AFTER_SECONDS
         from services.proposal_queue import ACTION_PROPOSALS_CLAIM_SWEEPER_SECONDS
@@ -614,6 +908,68 @@ async def lifespan(app: FastAPI):
         )
         _log.info(
             "Purge reconciliation sweeper registered (interval=%ds)", PURGE_SWEEPER_INTERVAL_SECONDS
+        )
+
+    if scheduler:
+        # LUM-695: reclaim staged email attachments. Keyed on PROPOSAL STATE,
+        # not wall clock — a live proposal's attachments are never swept however
+        # old, because proposals themselves never expire. Idempotent and bounded
+        # per tick, so a missed run costs nothing but a later reclaim.
+        from services.email_attachment_staging import SWEEP_INTERVAL_SECONDS
+        from services.email_attachment_staging import sweep as sweep_staged_attachments
+
+        def _email_attachment_staging_sweep() -> None:
+            try:
+                sweep_staged_attachments()
+            except Exception:
+                _log.exception("email_attachment_staging_sweep failed")
+
+        scheduler.add_job(
+            _email_attachment_staging_sweep,
+            trigger="interval",
+            seconds=SWEEP_INTERVAL_SECONDS,
+            id="email_attachment_staging_sweep",
+            name="Email attachment staging sweeper",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        _log.info(
+            "Email attachment staging sweeper registered (interval=%ds)",
+            SWEEP_INTERVAL_SECONDS,
+        )
+
+        # LUM-702 — auto-file opted-in mailboxes' attachments into the document
+        # library. Off for every mailbox until someone opts in, so registering the
+        # job costs one no-op query per tick on an installation that never uses it.
+        from services.email_attachment_ingest import INGEST_TICK_INTERVAL_SECONDS
+        from services.email_attachment_ingest import ingest_tick as _attachment_ingest_tick
+
+        def _email_attachment_ingest_sweep() -> None:
+            # One unhandled exception at the top of a tick would kill the job for
+            # the process's lifetime, so the tick body is wrapped like every
+            # sibling job in this file.
+            try:
+                _attachment_ingest_tick()
+            except Exception:
+                _log.exception("email_attachment_ingest_sweep failed")
+
+        scheduler.add_job(
+            _email_attachment_ingest_sweep,
+            trigger="interval",
+            seconds=INGEST_TICK_INTERVAL_SECONDS,
+            id="email_attachment_ingest_sweep",
+            name="Email attachment document ingest",
+            replace_existing=True,
+            # Without max_instances=1 a slow mailbox lets tick N+1 start while N
+            # is still fetching, and two sweeps racing uq_..._part turn a bounded
+            # job into duplicate-key errors.
+            max_instances=1,
+            coalesce=True,
+        )
+        _log.info(
+            "Email attachment document ingest registered (interval=%ds)",
+            INGEST_TICK_INTERVAL_SECONDS,
         )
 
     _graph_mode = _wire_graph_mode_handlers(config.read_graph_mode_from_env())
@@ -881,6 +1237,27 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Lumogis", description="Personal AI assistant orchestrator", lifespan=lifespan)
 
 
+@app.exception_handler(PoolExhaustedError)
+def _pool_exhausted(request: Request, exc: PoolExhaustedError) -> JSONResponse:
+    """Every Postgres connection is busy — that is 503, not 500 (LUM-816).
+
+    A 500 says the server is broken. This one says it is *busy*: the database is
+    healthy, the pool is simply full, and the same request will succeed shortly.
+    The distinction is what a client needs to decide whether retrying is
+    sensible, and it is what stops an operator hunting a fault that is really a
+    sizing problem — the message names ``LUMOGIS_PG_POOL_MAX``.
+
+    ``Retry-After: 1`` because the caller already waited out the checkout
+    deadline before this was raised.
+    """
+    _log.warning("pool exhausted serving %s %s: %s", request.method, request.url.path, exc)
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "Database connections are all busy; please retry."},
+        headers={"Retry-After": "1"},
+    )
+
+
 def _library_index_deferred() -> bool:
     """When set (Lumogis Hub bundled wizard), skip auto bulk library scan."""
     return os.environ.get("LUMOGIS_DEFER_LIBRARY_INDEX", "").strip().lower() in (
@@ -947,6 +1324,9 @@ app.middleware("http")(correlation_middleware)
 app.middleware("http")(auth_middleware)
 app.include_router(auth_router)
 app.include_router(invites_router)
+app.include_router(password_reset_router)
+app.include_router(altcha_router)
+app.include_router(admin_system_mail_router)
 app.include_router(admin_users_router)
 app.include_router(admin_user_imports_router)
 app.include_router(me_router)

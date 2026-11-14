@@ -11,6 +11,7 @@ import {
   type NotificationType,
   patchNotificationPreference,
 } from "../../api/notificationPreferences";
+import { QuietHoursEditor } from "./QuietHoursEditor";
 
 const TYPE_LABELS: Record<string, string> = {
   routine_elevation: "Routine elevation",
@@ -19,6 +20,11 @@ const TYPE_LABELS: Record<string, string> = {
   action_executed: "Action executed",
   security_alert: "Security alert",
   consolidation_done: "Consolidation done",
+  signal_needs_you: "Email needs you",
+  signal_morning_brief: "Morning brief",
+  // LUM-758. The prefs matrix lists every notification type for every user, so an
+  // admin-only type still needs a label here or the raw slug renders.
+  egress_allowlist_widened: "New mail host allowed",
 };
 
 const CHANNEL_LABELS: Record<ChannelId, string> = {
@@ -93,6 +99,7 @@ export function NotificationPrefsEditor({ client, prefs }: Props): JSX.Element {
         Choose which channels receive each notification type. ntfy server credentials are configured
         under <a href="/me/connectors">Connectors</a>.
       </p>
+      <QuietHoursEditor client={client} prefs={prefs} />
       <div style={{ overflowX: "auto" }}>
         <table
           style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.9rem", marginTop: "0.75rem" }}

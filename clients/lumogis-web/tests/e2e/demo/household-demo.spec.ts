@@ -72,7 +72,7 @@ test("household KB demo: admin shares → member finds + asks", async ({ browser
   // Record admin scenes, then CLOSE that context (flushes a tight admin video),
   // then record member scenes — so the two .webm files concatenate with no idle
   // footage. Scenes are sequential anyway (member reads what admin persisted).
-  let sharedDocId: string | null = null;
+  let sharedDocId: string | null;
 
   // ── Scenes 1–2 — Admin: upload → share ─────────────────────────────────────
   const adminCtx: BrowserContext = await newRecordedContext();

@@ -41,13 +41,16 @@ export function PrivacyModePanel({ initial }: Props): JSX.Element {
       // as GET) — seed AdminPrivacyModeView's query directly instead of
       // invalidating, so the effective-policy readout updates without a refetch.
       queryClient.setQueryData(["admin", "settings", "privacy"], data);
+      // LUM-881: the model-picker hint reads the caller's own view of the policy.
+      void queryClient.invalidateQueries({ queryKey: ["me", "privacy-mode"] });
     },
     onError: (e) => setError(errMsg(e)),
   });
 
   return (
     <div>
-      <h2>Privacy mode</h2>
+      {/* No heading of its own: AdminPrivacyModeView's <h1> titles the page, and
+          a second "Privacy mode" here repeated it as an <h2>. */}
       <p style={{ maxWidth: "42rem", opacity: 0.9 }}>
         Control whether cloud LLM providers may be used. This is routing policy at the
         orchestrator — it does not guarantee network isolation. Local-only mode blocks
@@ -55,7 +58,7 @@ export function PrivacyModePanel({ initial }: Props): JSX.Element {
         model with an explicit warning.
       </p>
       <fieldset style={{ border: "none", padding: 0, marginTop: "1rem" }}>
-        <legend className="sr-only">Household privacy mode</legend>
+        <legend className="lumogis-visually-hidden">Household privacy mode</legend>
         <label style={{ display: "block", marginBottom: "0.5rem" }}>
           <input
             type="radio"

@@ -46,6 +46,7 @@ def _mint(user_id: str, role: str) -> str:
     return jwt.encode(
         {
             "sub": user_id,
+            "typ": "access",
             "role": role,
             "iat": int(time.time()),
             "exp": int(time.time()) + 600,
@@ -179,7 +180,11 @@ _EXPECTED_ADMIN_PATHS: tuple[tuple[str, str], ...] = (
     ("POST", "/restore"),
     ("POST", "/entities/merge"),
     ("POST", "/entities/deduplicate"),
-    ("POST", "/sources"),
+    # POST /sources moved from require_admin -> require_user in LUM-839.
+    # Source creation is now per-user and owner-scoped, matching its three
+    # siblings (GET / PATCH / DELETE), which were already require_user; create
+    # was the only admin-gated verb. Coverage moved to test_source_create.py
+    # (member creation, cross-user attribution, and the per-user cap).
     # POST /review-queue/decide moved from require_admin → require_user
     # in audit B9 (review_queue_per_user_approval_scope). Per-item
     # authorization now enforces "originating user OR admin" inside the
@@ -190,10 +195,13 @@ _EXPECTED_ADMIN_PATHS: tuple[tuple[str, str], ...] = (
     ("POST", "/kg/settings"),
     ("DELETE", "/kg/settings/{key}"),
     ("GET", "/graph/mgm"),
+    ("GET", "/graph/assets/{name}"),
     ("GET", "/kg/job-status"),
     ("POST", "/kg/trigger-weekly"),
     ("GET", "/kg/stop-entities"),
     ("POST", "/kg/stop-entities"),
+    ("GET", "/browse"),
+    ("POST", "/ingest"),
     ("POST", "/browse/mkdir"),
     # /api/v1/admin/users — full CRUD via router-level dependency.
     ("POST", "/api/v1/admin/users"),
@@ -271,6 +279,7 @@ def test_every_admin_path_has_require_admin_dependency(users_store, auth_env):
     "method,path",
     [
         ("GET", "/dashboard"),
+        ("GET", "/graph/assets/alpine-3.14.8.min.js"),
         ("POST", "/settings/restart"),
         ("GET", "/settings"),
         ("POST", "/backup"),
@@ -296,6 +305,7 @@ def test_admin_routes_return_401_when_unauthenticated(users_store, auth_env, met
     "method,path",
     [
         ("GET", "/dashboard"),
+        ("GET", "/graph/assets/alpine-3.14.8.min.js"),
         ("POST", "/settings/restart"),
         ("GET", "/settings"),
         ("POST", "/api/v1/admin/users"),
@@ -326,6 +336,17 @@ def test_dashboard_get_returns_200_for_admin(users_store, auth_env):
     assert resp.status_code == 200
 
 
+def test_graph_asset_returns_200_for_admin(users_store, auth_env):
+    """Sign-in on: an admin gets the vendored script, byte for byte (LUM-941)."""
+    from routes import admin as admin_routes
+
+    name = "alpine-3.14.8.min.js"
+    with _client(users_store) as client:
+        resp = client.get(f"/graph/assets/{name}", headers=_admin_headers(users_store))
+    assert resp.status_code == 200
+    assert resp.content == (admin_routes._GRAPH_VENDOR_DIR / name).read_bytes()
+
+
 def test_settings_get_returns_200_for_admin(users_store, auth_env):
     with _client(users_store) as client:
         resp = client.get("/settings", headers=_admin_headers(users_store))
@@ -341,6 +362,27 @@ def test_admin_routes_open_in_dev_mode(users_store, dev_env):
         # GET /dashboard is HTML; we just need a non-401/403.
         resp = client.get("/dashboard")
     assert resp.status_code == 200
+
+
+def test_graph_asset_served_in_dev_mode(users_store, dev_env):
+    """``AUTH_ENABLED=false``: the vendored graph scripts are served from disk (LUM-941).
+
+    No ``/graph/assets/../mgm`` case on purpose: httpx collapses dot segments
+    client-side, so that request is really ``GET /graph/mgm`` (legitimately 200).
+    ``%2e%2e%2f`` stays encoded and must 404.
+    """
+    import main
+    from routes import admin as admin_routes
+
+    name = "alpine-3.14.8.min.js"
+    with TestClient(main.app) as client:
+        resp = client.get(f"/graph/assets/{name}")
+        traversal = client.get("/graph/assets/%2e%2e%2fgraph_mgm.html")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/javascript")
+    assert resp.headers["cache-control"] == "max-age=31536000, immutable"
+    assert resp.content == (admin_routes._GRAPH_VENDOR_DIR / name).read_bytes()
+    assert traversal.status_code == 404
 
 
 # ---------------------------------------------------------------------------

@@ -5,13 +5,15 @@
 // user email, JWT, or structured messages. Fail-soft when IDB unavailable.
 //
 
-import { del, get, set } from "idb-keyval";
+import { del, delMany, get, keys, set } from "idb-keyval";
 
 /** Conservative cap (~32 KiB Unicode code units); avoids bloating IndexedDB when pasting dumps. */
 export const DRAFT_MAX_CHARS = 32_768;
 
 const DB_PREFIX_CHAT = "lumogis:draft:chat:";
 const DB_PREFIX_CAPTURE = "lumogis:draft:capture:";
+/** Shared prefix of every draft key — used to remove all drafts at sign-out. */
+const DB_PREFIX_ALL = "lumogis:draft:";
 
 export function makeChatDraftKey(threadId: string): string {
   return `${DB_PREFIX_CHAT}${threadId}`;
@@ -59,5 +61,25 @@ async function deleteDraftQuiet(key: string): Promise<void> {
     await del(key);
   } catch {
     /* soft fail */
+  }
+}
+
+/**
+ * Delete every draft (chat and capture) by key prefix — called by the sign-out
+ * boundary module (LUM-886). Returns `false` when IndexedDB failed.
+ *
+ * Never use the store-wide `clear()` here: the capture outbox shares this default
+ * store and holds the only copy of unsynced captures. `keys()` and `delMany` are two
+ * transactions, so a draft written between them by another live tab survives; that
+ * tab is signed out by the boundary module and the next sign-in wipe is the backstop.
+ */
+export async function clearAllDrafts(): Promise<boolean> {
+  try {
+    const all = await keys();
+    const mine = all.filter((k) => typeof k === "string" && k.startsWith(DB_PREFIX_ALL));
+    if (mine.length > 0) await delMany(mine);
+    return true;
+  } catch {
+    return false;
   }
 }

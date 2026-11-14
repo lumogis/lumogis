@@ -259,11 +259,88 @@ def send_templates_to_user(
     result = WebPushSendResult()
     for row in rows:
         sid = int(row["id"])
-        sub_info = {
-            "endpoint": row["endpoint"],
-            "keys": {"p256dh": row["p256dh"], "auth": row["auth"]},
-        }
-        kind, _status = send_web_push_to_subscription(sid, sub_info, payload_json)
+        kind, _status = send_web_push_to_subscription(sid, _subscription_info(row), payload_json)
+        if kind == "ok":
+            result.sent += 1
+        elif kind == "pruned":
+            result.pruned += 1
+        else:
+            result.failed += 1
+    return result
+
+
+def _subscription_info(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "endpoint": row["endpoint"],
+        "keys": {"p256dh": row["p256dh"], "auth": row["auth"]},
+    }
+
+
+def _safe_send_one(
+    subscription_id: int, subscription_info: dict[str, Any], payload_json: str
+) -> None:
+    """Executor-thread wrapper: send one push, never raise (best-effort, prune-on-fail)."""
+    try:
+        send_web_push_to_subscription(subscription_id, subscription_info, payload_json)
+    except Exception:
+        _log.warning("webpush async send failed subscription_id=%s", subscription_id)
+
+
+def send_dynamic_to_user(
+    user_id: str,
+    title: str,
+    body: str,
+    url: str,
+    *,
+    require_notify_on_signals: bool = True,
+    async_send: bool = False,
+) -> WebPushSendResult:
+    """Fan out a **dynamic-body** push (title/body/url) to ``user_id``'s subscriptions.
+
+    Unlike :func:`send_templates_to_user` (fixed, no external strings), this carries
+    a runtime title/body — used ONLY by the LUM-648 signal notification types
+    (needs-you / morning brief). Serialization goes through the same
+    :func:`build_safe_push_json_from_dict` choke point (``{title, body, url}``
+    allowlist only), so nothing beyond those three keys can reach the wire.
+
+    When ``require_notify_on_signals`` (the default), only subscriptions with
+    ``notify_on_signals = TRUE`` are targeted — the explicit opt-in gate for
+    PII-bearing email content. Fixed templates (ROUTINE_ELEVATION) never call this,
+    so their delivery is unaffected by the signals-only pref.
+
+    ``async_send`` (LUM-662): resolve the target subscriptions **synchronously** (a
+    fast local DB read — so ``no_subscriptions`` vs dispatched is still determined
+    accurately), then submit each per-subscription network send to the module
+    ``_executor`` and return immediately. The returned ``sent`` is the **dispatched**
+    count; per-subscription success/failure (and pruning) happens asynchronously.
+    This keeps the slow pywebpush network I/O off the caller's thread — critical on
+    the ingest path (``signal_processor._notify``), where a needs-you email must not
+    block signal processing on a slow push endpoint (mirrors the fire-and-forget
+    ``ROUTINE_ELEVATION`` hook).
+    """
+    if not isinstance(user_id, str) or not user_id:
+        return WebPushSendResult(skipped=0, disabled_reason="invalid_user_id")
+
+    if not vapid_send_configured():
+        return WebPushSendResult(disabled_reason="webpush_vapid_incomplete")
+
+    payload_json = build_safe_push_json_from_dict({"title": title, "body": body, "url": url})
+    rows = _list_subscriptions_for_user(user_id)
+    if require_notify_on_signals:
+        rows = [r for r in rows if bool(r.get("notify_on_signals"))]
+    if not rows:
+        return WebPushSendResult()
+
+    if async_send:
+        for row in rows:
+            _executor.submit(_safe_send_one, int(row["id"]), _subscription_info(row), payload_json)
+        # `sent` here means "dispatched to the executor"; real outcomes land async.
+        return WebPushSendResult(sent=len(rows))
+
+    result = WebPushSendResult()
+    for row in rows:
+        sid = int(row["id"])
+        kind, _status = send_web_push_to_subscription(sid, _subscription_info(row), payload_json)
         if kind == "ok":
             result.sent += 1
         elif kind == "pruned":

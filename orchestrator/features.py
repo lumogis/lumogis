@@ -71,8 +71,23 @@ _FLAG_LIST: tuple[FeatureFlag, ...] = (
         ),
     ),
     FeatureFlag(
+        key="EGRESS_GUARD_CEILING",
+        description=(
+            "Process-wide egress ceiling — tethered.activate(locked=True) at boot; "
+            "whole-process defense-in-depth on top of EGRESS_GUARD's LLM scope (LUM-571). "
+            "Opt-in strict mode; allowlist baked at boot (restart to change)."
+        ),
+    ),
+    FeatureFlag(
         key="GRAPH_CONSOLIDATION",
         description="Graph consolidation pipeline — Memify-pattern community summaries (LUM-106).",
+    ),
+    FeatureFlag(
+        key="IMAP_EGRESS_GUARD",
+        description=(
+            "In-process egress allowlist on IMAP connections — Layer 1 containment, "
+            "independent of EGRESS_GUARD (LUM-625)."
+        ),
     ),
     FeatureFlag(
         key="PROACTIVE_PIPES",

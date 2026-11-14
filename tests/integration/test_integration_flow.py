@@ -3,15 +3,21 @@
 Run: docker compose up -d && make test-integration
 
 Covers: health, ingest → search, entity extraction, session memory, signal sources,
-feedback, routine execution → audit log, export (NDJSON).
+feedback, routine execution → audit log, the retired /export route, and the
+LUM-884 Rescan contract (no body fields, admin only).
+
+With ``AUTH_ENABLED=true`` the ``api`` fixture logs in with the smoke credentials.
+Full live lane: ``make e2e-ingest-live``.
 """
 
-import json
+import os
 import time
 import uuid
 from pathlib import Path
 
+import httpx
 import pytest
+from _smoke_auth import current_user_id, file_index_row, llm_wait_s
 
 pytestmark = pytest.mark.integration
 
@@ -35,16 +41,28 @@ def test_status_page(api):
 
 
 @pytest.mark.integration
-def test_ingest_and_file_index(api, repo_root: Path):
-    """Ingest a real file and verify it appears in the file_index count (not semantic search).
+def test_ingest_and_file_index(api, inbox_dir: Path):
+    """Drop a real file in the inbox and verify its file_index row exists and is
+    filed under the seeded owner (LUM-884).
 
-    Semantic search with random tokens has a poor embedding match; checking
-    file_index_count in /health is a more reliable end-to-end ingest proof.
+    The row is read from Postgres: the global ``/health`` ``file_index_count``
+    would pass on any owner's row, and semantic search with random tokens has a
+    poor embedding match.
     """
-    inbox = repo_root / "ai-workspace" / "inbox"
-    inbox.mkdir(parents=True, exist_ok=True)
+    # /ingest no longer takes a folder (LUM-884); the inbox watcher picks the file up.
+    hz = {}
+    try:
+        hz = api.get("/healthz").json()
+    except Exception:
+        pass
+    if hz.get("inbox_watcher") != "ok":
+        pytest.skip(
+            "inbox watcher not running (set INBOX_OWNER_USER_ID); "
+            "/ingest no longer takes a folder — LUM-884"
+        )
+    inbox_dir.mkdir(parents=True, exist_ok=True)
     token = f"lginteg_{uuid.uuid4().hex[:12]}"
-    test_file = inbox / f"{token}.txt"
+    test_file = inbox_dir / f"{token}.txt"
     test_file.write_text(
         "Integration test ingest.\n"
         "The project roadmap was reviewed during the quarterly meeting.\n"
@@ -52,23 +70,15 @@ def test_ingest_and_file_index(api, repo_root: Path):
         encoding="utf-8",
     )
     try:
-        hr_before = api.get("/health")
-        assert hr_before.status_code == 200
-        count_before = hr_before.json().get("file_index_count", 0)
-
-        ir = api.post("/ingest", json={"path": "/workspace/inbox"})
-        assert ir.status_code == 200
-
-        found = False
+        row = None
         for _ in range(60):
             time.sleep(2)
-            hr = api.get("/health")
-            if hr.status_code == 200 and hr.json().get("file_index_count", 0) > count_before:
-                found = True
+            row = file_index_row(token)
+            if row is not None:
                 break
-        assert found, (
-            f"file_index_count should increase after ingest "
-            f"(was {count_before}, still {api.get('/health').json().get('file_index_count')})"
+        assert row is not None, f"no file_index row for {token} after 120 s"
+        assert row["user_id"] == current_user_id(api), (
+            "inbox file must be filed under the seeded owner (INBOX_OWNER_USER_ID)"
         )
     finally:
         test_file.unlink(missing_ok=True)
@@ -94,8 +104,9 @@ def test_entity_extraction_pipeline(api):
     Uses a realistic, clearly-formed person name so the LLM reliably classifies
     it as PERSON. Searches by first name substring to tolerate minor variations
     in how the LLM formats the extracted name. Skips (not fails) if the LLM
-    does not complete within 90 seconds — entity extraction depends on Ollama
-    response time which varies by hardware tier.
+    does not complete in time (``LUMOGIS_INTEG_LLM_TIMEOUT_S``, default 90 s) —
+    entity extraction depends on Ollama response time which varies by hardware
+    tier. The live lane (``make e2e-ingest-live``) fails on any skip.
     """
     # Use a realistic person name. "Elena" is unambiguous as a first name.
     # The hex suffix makes the full name unique across test runs.
@@ -114,10 +125,13 @@ def test_entity_extraction_pipeline(api):
         },
     )
     assert er.status_code == 200
-    assert er.json().get("status") == "extraction started"
+    # /entities/extract queues the job (orchestrator/routes/data.py) since b263fbd2;
+    # this assertion only surfaced once the test stopped skipping (LUM-929).
+    assert er.json().get("status") == "extraction queued"
 
+    wait_s = llm_wait_s(90)
     found = False
-    for _ in range(45):
+    for _ in range(max(1, int(wait_s // 2))):
         time.sleep(2)
         lr = api.get("/entities", params={"limit": 200})
         if lr.status_code != 200:
@@ -132,7 +146,7 @@ def test_entity_extraction_pipeline(api):
 
     if not found:
         pytest.skip(
-            f"{full_name!r} was not found in /entities after 90 seconds. "
+            f"{full_name!r} was not found in /entities after {wait_s:.0f} seconds. "
             "This usually means the LLM is still processing or returned malformed JSON. "
             "Re-run with a warmed-up Ollama model or increase the timeout."
         )
@@ -143,6 +157,10 @@ def test_session_memory_pipeline(api):
     """Requires Ollama with a working llama model for summarization."""
     sid = str(uuid.uuid4())
     unique = f"sessionmem_{uuid.uuid4().hex[:8]}"
+    # Baseline first: sessions_stored is global and the RC volume persists across runs.
+    before = api.get("/")
+    assert before.status_code == 200
+    baseline = before.json().get("sessions_stored", 0)
     r = api.post(
         "/session/end",
         json={
@@ -155,13 +173,15 @@ def test_session_memory_pipeline(api):
     )
     assert r.status_code == 200
 
-    for _ in range(40):
+    wait_s = llm_wait_s(120)
+    for _ in range(max(1, int(wait_s // 3))):
         time.sleep(3)
         st = api.get("/")
-        if st.status_code == 200 and st.json().get("sessions_stored", 0) > 0:
+        if st.status_code == 200 and st.json().get("sessions_stored", 0) > baseline:
             return
     pytest.skip(
-        "sessions_stored still 0 — check Ollama llama model and embedder (session pipeline)"
+        f"sessions_stored still {baseline} after {wait_s:.0f} s — "
+        "check Ollama llama model and embedder (session pipeline)"
     )
 
 
@@ -252,12 +272,31 @@ def test_routine_run_writes_audit_log(api):
 
 
 @pytest.mark.integration
-def test_export_ndjson(api):
+def test_export_legacy_route_is_gone(api):
+    """GET /export is retired (410) and names its successor."""
     r = api.get("/export")
-    assert r.status_code == 200
-    lines = [ln for ln in r.text.strip().split("\n") if ln.strip()]
-    assert lines, "export should yield at least one NDJSON line"
-    first = json.loads(lines[0])
-    assert "section" in first and "rows" in first
-    sections = {json.loads(ln)["section"] for ln in lines}
-    assert "file_index" in sections or "entities" in sections
+    assert r.status_code == 410
+    assert r.json()["detail"]["successor"] == "POST /api/v1/me/export"
+
+
+@pytest.mark.integration
+def test_rescan_rejects_body_fields(api):
+    """LUM-884: POST /ingest takes no folder. A body field is a 422 (extra="forbid"),
+    raised before the handler runs, so no library scan is queued."""
+    r = api.post("/ingest", json={"path": "/workspace"})
+    assert r.status_code == 422, f"expected 422, got {r.status_code}: {r.text[:300]}"
+
+
+@pytest.mark.integration
+def test_rescan_requires_auth():
+    """LUM-884: Rescan is admin-only. Without a token it is a 401."""
+    base_url = os.environ.get("LUMOGIS_API_URL", "http://127.0.0.1:8000")
+    with httpx.Client(base_url=base_url, timeout=30.0) as anon:
+        try:
+            probe = anon.get("/")
+        except httpx.ConnectError as exc:
+            pytest.skip(f"Orchestrator unreachable at {base_url}: {exc}")
+        if probe.status_code == 200:
+            pytest.skip("AUTH_ENABLED=false — unauthenticated Rescan cannot be refused")
+        r = anon.post("/ingest")
+        assert r.status_code == 401, f"expected 401, got {r.status_code}: {r.text[:300]}"

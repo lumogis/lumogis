@@ -13,7 +13,6 @@ from __future__ import annotations
 
 from auth import auth_enabled
 from auth import get_user
-from auth import invalidate_token_version_cache
 from authz import require_user
 from csrf import require_same_origin
 from fastapi import APIRouter
@@ -26,6 +25,7 @@ from models.auth import SessionListResponse
 from models.auth import SessionRowPublic
 
 from services import auth_sessions as auth_sess
+from services import users as users_service
 
 router = APIRouter(
     prefix="/api/v1/me",
@@ -91,9 +91,7 @@ def logout_all_sessions(request: Request) -> Response:
             detail="sessions API requires AUTH_ENABLED=true",
         )
     ctx = get_user(request)
-    auth_sess.bump_token_version_and_revoke_all_sessions(
-        user_id=ctx.user_id,
-        cascade_actor_user_id=ctx.user_id,
-    )
-    invalidate_token_version_cache(ctx.user_id)
+    # LUM-885: one door for "revoke everything" — sessions, MCP tokens and
+    # ``token_version`` in one transaction; the service clears the caches.
+    users_service.revoke_all_credentials(ctx.user_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

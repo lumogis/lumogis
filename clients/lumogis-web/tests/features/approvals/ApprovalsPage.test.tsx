@@ -80,6 +80,30 @@ const HARD_LIMIT_ITEM = {
   suggested_action: "explain_only",
 };
 
+const STALE_ITEM = {
+  kind: "denied_action",
+  action_log_id: 77,
+  connector: "filesystem-mcp",
+  action_type: "integration_probe_read",
+  risk_tier: "medium",
+  input_summary: "stale row",
+  occurred_at: "2026-04-24T10:00:00Z",
+  elevation_eligible: false,
+  suggested_action: "explain_only",
+};
+
+const CAPABILITY_ITEM = {
+  kind: "denied_action",
+  action_log_id: 78,
+  connector: "capability.notes",
+  action_type: "notes_write",
+  risk_tier: "medium",
+  input_summary: "capability write",
+  occurred_at: "2026-04-24T10:00:00Z",
+  elevation_eligible: false,
+  suggested_action: "set_connector_do",
+};
+
 // ── SSE mock ──────────────────────────────────────────────────────────────
 // We return a never-closing stream for the SSE connection (same approach
 // as `tests/api/sse.test.ts`) so the reconnecting SSE client stays open
@@ -108,6 +132,7 @@ function buildClient(
   options: {
     pendingOverride?: PendingOverride;
     onSetMode?: () => void;
+    setModeResponse?: () => Response;
     onElevate?: () => void;
     sseEvents?: string[];
   } = {},
@@ -128,6 +153,7 @@ function buildClient(
 
     if (url.includes("/api/v1/approvals/connector") && url.includes("/mode") && method === "POST") {
       options.onSetMode?.();
+      if (options.setModeResponse) return options.setModeResponse();
       return jsonResponse(200, { connector: "filesystem", mode: "DO" });
     }
 
@@ -171,6 +197,53 @@ function mountApprovals(
 describe("ApprovalsPage", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  // LUM-962 — Playwright is a justified skip for the hidden Switch button: its
+  // visibility is a pure render of the server-computed `suggested_action`
+  // (vacuous-test principle). The server logic is proven in
+  // orchestrator/tests/test_api_v1_approvals.py, the live API path by
+  // `integration-public-rc.sh full-cycle`; here we only prove the rendering.
+  it("hides Switch and Always allow on a row the server marks explain_only", async () => {
+    mountApprovals([STALE_ITEM]);
+    await waitFor(() => {
+      expect(screen.getByText("filesystem-mcp")).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("button", { name: /switch .* to do mode/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /always allow/i })).toBeNull();
+    expect(screen.getByText("This can't be switched from here.")).toBeInTheDocument();
+  });
+
+  // A pin, not a discriminating test: it also passes on the pre-LUM-962 component.
+  it("offers Switch but not Always allow on a capability row", async () => {
+    mountApprovals([CAPABILITY_ITEM]);
+    await waitFor(() => {
+      expect(screen.getByText("capability.notes")).toBeInTheDocument();
+    });
+    expect(
+      screen.getByRole("button", { name: /switch capability\.notes to do mode/i }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /always allow/i })).toBeNull();
+    expect(screen.queryByText(/can't be switched/i)).toBeNull();
+  });
+
+  it("humanizes unknown_connector without claiming an action-registry lookup", async () => {
+    mountApprovals([CAPABILITY_ITEM], {
+      setModeResponse: () => jsonResponse(404, { detail: { error: "unknown_connector" } }),
+    });
+    await waitFor(() => {
+      expect(screen.getByText("capability.notes")).toBeInTheDocument();
+    });
+    await userEvent.click(
+      screen.getByRole("button", { name: /switch capability\.notes to do mode/i }),
+    );
+    const dialog = await waitFor(() => screen.getByRole("dialog"));
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: /switch capability\.notes to do mode/i }),
+    );
+    const alert = await waitFor(() => screen.getByRole("alert"));
+    expect(alert.textContent).toContain("This connector can't be switched to DO mode right now.");
+    expect(alert.textContent).not.toMatch(/action registry/i);
   });
 
   it("renders the page title", async () => {

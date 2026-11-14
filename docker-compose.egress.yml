@@ -46,20 +46,34 @@ services:
     # as of 2026-07 is NOT — default to an OpenSSL Squid; pin by digest in deploy.
     # Verify: `docker run --rm <img> squid -v | grep -- --with-openssl`.
     image: ${EGRESS_PROXY_IMAGE:-jacobalberty/squid@sha256:559a8dd2178cf9a40b9a526948467448bb627de98cb22edfddf4699b86a9f370}
-    # Generate the (never-committed, splice-only) bump cert, then run Squid in
-    # the foreground.
-    entrypoint:
-      - /bin/sh
-      - -c
-      - "mkdir -p /var/log/squid /var/spool/squid && /usr/local/bin/gen-bump-cert.sh /etc/squid/bump.pem && chown -R proxy:proxy /var/log/squid /var/spool/squid /etc/squid/bump.pem && exec squid -N -d1 -f /etc/squid/squid.conf"
+    # Generate the (never-committed, splice-only) bump cert, start the LUM-758
+    # allow-file watcher, then run Squid in the foreground. Extracted to a script
+    # so the watcher is readable and unit-testable — and so the three overlays
+    # that boot this proxy cannot drift apart.
+    entrypoint: ["/usr/local/bin/entrypoint.sh"]
+    environment:
+      # LUM-758. Consumed here AND by Core's email-providers route: if the watcher
+      # is off, Core must tell members a mailbox add still needs an operator. The
+      # two must never disagree, or setup goes back to promising a sync that never
+      # happens.
+      LUMOGIS_EGRESS_ALLOW_WATCH: ${LUMOGIS_EGRESS_ALLOW_WATCH:-1}
+      LUMOGIS_EGRESS_ALLOW_POLL_SECONDS: ${LUMOGIS_EGRESS_ALLOW_POLL_SECONDS:-2}
     volumes:
       - ./docker/egress-proxy/squid.conf:/etc/squid/squid.conf:ro
       - ./docker/egress-proxy/allow:/etc/squid/allow:ro
       - ./docker/egress-proxy/gen-bump-cert.sh:/usr/local/bin/gen-bump-cert.sh:ro
+      - ./docker/egress-proxy/entrypoint.sh:/usr/local/bin/entrypoint.sh:ro
       - egress_proxy_logs:/var/log/squid
     healthcheck:
-      # LIVENESS: TCP connect (needs bash — dash has no /dev/tcp).
-      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/3128"]
+      # LIVENESS: TCP connect (needs bash — dash has no /dev/tcp) AND, when the
+      # watcher is enabled, a fresh heartbeat. Squid stays reachable on 3128 whether
+      # or not the watch loop is alive, so a TCP probe alone would report green
+      # while a member's mailbox additions silently stopped being applied.
+      test:
+        - CMD
+        - bash
+        - -c
+        - 'exec 3<>/dev/tcp/127.0.0.1/3128 && { [ "$${LUMOGIS_EGRESS_ALLOW_WATCH:-1}" = "0" ] || find /var/run/lumogis-allow-watch.alive -mmin -1 2>/dev/null | grep -q .; }'
       interval: 15s
       timeout: 5s
       retries: 5
@@ -81,15 +95,44 @@ services:
   orchestrator:
     networks:
       default: {}
-      community-egress-internal: {}
+      # Static IP on the isolated network so the Squid `core_egress_src` ACL can
+      # scope the LUM-625 email-IMAP CONNECT egress to Core alone (172.31.0.3),
+      # keeping contained community capabilities (172.31.0.10+) out of it.
+      community-egress-internal:
+        ipv4_address: 172.31.0.3
     environment:
       LUMOGIS_CONTAINED_CAPABILITIES_FILE: /etc/lumogis/contained_capabilities.txt
       LUMOGIS_EGRESS_ACCESS_LOG: /var/log/squid/access.log
       LUMOGIS_EGRESS_SRC_MAP: /etc/lumogis/egress_src_map.txt
       LUMOGIS_EGRESS_DENY_DEDUP_SECONDS: "60"
+      # LUM-625 Pass 3 (opt-in): to route Core's IMAP(S) egress through the Squid
+      # CONNECT proxy, set LUMOGIS_IMAP_EGRESS_PROXY=egress-proxy:3128 (e.g. in
+      # your .env). Do this ONLY when the `community-egress` profile is active
+      # (so the proxy is running) — otherwise every TLS IMAP connect fails closed
+      # because `egress-proxy` won't resolve. Deliberately NOT set unconditionally:
+      # this overlay is designed to also run with the profile inactive, where email
+      # must keep working under Layer 1. Core is pinned to 172.31.0.3 for the
+      # source-scoped Squid ACL. Pair with LUMOGIS_FF_IMAP_EGRESS_GUARD.
+      LUMOGIS_IMAP_EGRESS_PROXY: ${LUMOGIS_IMAP_EGRESS_PROXY:-}
+      # LUM-673: pin the Layer-2 allow-file dir to the SAME host directory Squid
+      # serves (mounted below), so the in-container credential-change regen lands
+      # where the proxy reads it. Without this the module writes to a
+      # container-local /docker/egress-proxy/allow that nothing mounts.
+      LUMOGIS_IMAP_EGRESS_ALLOW_DIR: /etc/lumogis/egress-allow
+      # LUM-758: the SAME interpolation source the egress-proxy uses above. Core
+      # reads this to decide whether setup must warn that a new mailbox still
+      # needs an operator. Declared explicitly here rather than relying on the
+      # base compose's `env_file: .env`, because that only agrees when the
+      # operator happens to set the variable *in .env* — `LUMOGIS_EGRESS_ALLOW_WATCH=0
+      # docker compose up` would reach the proxy and never reach Core, leaving the
+      # watcher off while the UI told members no operator was needed.
+      LUMOGIS_EGRESS_ALLOW_WATCH: ${LUMOGIS_EGRESS_ALLOW_WATCH:-1}
     volumes:
       - ./docker/egress-proxy/contained_capabilities.rc.txt:/etc/lumogis/contained_capabilities.txt:ro
       - ./docker/egress-proxy/src_capability_map.txt:/etc/lumogis/egress_src_map.txt:ro
+      # LUM-673: read-write — the credential-change listener regenerates the allow
+      # file here; Squid mounts the SAME host dir read-only at /etc/squid/allow.
+      - ./docker/egress-proxy/allow:/etc/lumogis/egress-allow
       - egress_proxy_logs:/var/log/squid:ro
 
   # The community capability — contained. Isolated network ONLY (no default
@@ -102,8 +145,34 @@ services:
     networks:
       community-egress-internal:
         ipv4_address: 172.31.0.10
+    # Internal networks drop host port publishing. Clear the public-rc-stack
+    # `18080:8080` mapping so the host-bridge below can own that port.
+    ports: []
     environment:
       HTTP_PROXY: http://egress-proxy:3128
       HTTPS_PROXY: http://egress-proxy:3128
       # Do NOT list the allowed host here — it must go through the proxy.
       NO_PROXY: localhost,127.0.0.1
+
+  # Host-side RC probe bridge (LUM-618). The mock stays on the isolated network
+  # only (Pass C). Published ports on an `internal: true` network are unreachable
+  # from the host, which breaks `test_mock_capability_manifest_and_echo` (expects
+  # http://127.0.0.1:18080). This dual-homed socat publishes 18080 on the default
+  # network and dials INTO the mock — inbound-only; the mock still has no internet.
+  mock-capability-host-bridge:
+    profiles: ["community-egress"]
+    image: alpine/socat:1.8.0.1
+    ports:
+      - "18080:18080"
+    networks:
+      default: {}
+      # Stay off 172.31.0.2 (proxy), .3 (orchestrator), .10 (mock).
+      community-egress-internal:
+        ipv4_address: 172.31.0.11
+    depends_on:
+      lumogis-mock-capability:
+        condition: service_healthy
+    command:
+      - TCP-LISTEN:18080,fork,reuseaddr
+      - TCP:172.31.0.10:8080
+    restart: unless-stopped

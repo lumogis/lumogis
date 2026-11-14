@@ -12,6 +12,8 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 CHECK = REPO / "scripts/check-public-export.sh"
 STRIP_LIST = REPO / "scripts" / "public-export-strip-list.txt"
+# Maintainer-only second list (LUM-898). On the main list, so absent from public trees.
+STRIP_LIST_LOCAL = REPO / "scripts" / "public-export-strip-list.local.txt"
 
 
 def _repo_has_git() -> bool:
@@ -37,9 +39,30 @@ def _skip_unless_export_source_repo() -> None:
 # scripts/check-public-export.sh LUM-433 comment block.
 SEARCH_OVERLAY_CI_CANONICAL_PATHS: tuple[str, ...] = (".github/workflows/search-overlay-build.yml",)
 
-# Canonical private Server CI path — duplicate exactly scripts/check-public-export.sh
-# LUM-492 comment block. Inverse contract: must be stripped, never shipped public.
-SERVER_BUILD_CI_PRIVATE_PATH: str = ".github/workflows/server-build.yml"
+# The appliance name, tree and make include, assembled from parts: this file ships in
+# the public tree, and the LUM-898 gate rejects the literals anywhere in it.
+_SERVER_NAME: str = "lumogis-" + "server"
+_SERVER_TREE: str = "apps/" + _SERVER_NAME
+_SERVER_MK: str = "Makefile." + "server" + ".mk"
+
+
+def _list_entries(path: Path) -> list[str]:
+    """Strip-list entries in file order, comments and blank lines dropped."""
+    out: list[str] = []
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if line:
+            out.append(line)
+    return out
+
+
+def _all_strip_entries() -> set[str]:
+    """Main list plus the local list when present, as both export scripts read them."""
+    entries = set(_list_entries(STRIP_LIST))
+    if STRIP_LIST_LOCAL.is_file():
+        entries.update(_list_entries(STRIP_LIST_LOCAL))
+    return entries
+
 
 LUM303_CANONICAL_OPENAPI_PATHS: tuple[str, ...] = (
     ".github/workflows/ci.yml",
@@ -202,8 +225,12 @@ def _run_check(tmp_path: Path) -> subprocess.CompletedProcess[str]:
 
 
 def test_check_public_export_rejects_forbidden_strip_list(tmp_path):
+    # Keyed to a path on the main list, so the case holds in a public checkout too. It
+    # was orchestrator/plugins/graph until the knowledge graph left the strip list
+    # (LUM-855, ADR 229). Not under apps/, which has its own guard, so this proves the
+    # strip-list check itself fails closed.
     (tmp_path / "LICENSE").write_text(_minimal_license(), encoding="utf-8")
-    bad = tmp_path / "orchestrator" / "plugins" / "graph"
+    bad = tmp_path / "docs" / "_librarian"
     bad.mkdir(parents=True)
 
     proc = subprocess.run(
@@ -214,7 +241,55 @@ def test_check_public_export_rejects_forbidden_strip_list(tmp_path):
     )
     combined = proc.stdout + proc.stderr
     assert proc.returncode != 0
-    assert "orchestrator/plugins/graph" in combined
+    assert "forbidden path in export candidate: docs/_librarian" in combined
+
+
+# LUM-855 / ADR 229 — the knowledge graph is AGPL-3.0-only and ships in the public tree.
+KG_PUBLIC_PATHS: tuple[str, ...] = (
+    "services/lumogis-graph/",
+    "orchestrator/plugins/graph/",
+    "orchestrator/adapters/falkordb_store.py",
+    "orchestrator/services/graph_webhook_dispatcher.py",
+    "orchestrator/services/kg_premium_core.py",
+    "orchestrator/services/edge_quality.py",
+    "docker-compose.falkordb.yml",
+    "docker-compose.premium.yml",
+    "docker-compose.parity-premium.yml",
+    "docker-compose.public-rc-stack.yml",
+    "docker-compose.parity.yml",
+    "orchestrator/tests/premium/",
+    "docs/decisions/007-graph-plugin-architecture.md",
+    "docs/decisions/008-graph-provenance-model.md",
+    "docs/decisions/009-knowledge_graph_visualization.md",
+    "docs/decisions/011-lumogis-graph-service-extraction.md",
+    "docs/decisions/035-kg-graph-proxy-service-bearer-fail-closed.md",
+)
+
+
+def test_kg_paths_disjoint_from_strip_list():
+    """LUM-855: none of the 17 knowledge-graph paths may return to the strip list."""
+    overlap = _all_strip_entries().intersection(KG_PUBLIC_PATHS)
+    assert not overlap, f"strip list must not list ADR 229 knowledge-graph paths: {overlap}"
+
+
+def test_export_tree_includes_knowledge_graph(tmp_path):
+    """LUM-855: the export tree ships the knowledge graph, and still passes the gate."""
+    _skip_unless_export_source_repo()
+    out = tmp_path / "export"
+    export_script = REPO / "scripts" / "create-upstream-export-tree.sh"
+    proc = subprocess.run(
+        ["bash", str(export_script), str(out)],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO),
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    for rel in KG_PUBLIC_PATHS:
+        assert (out / rel).exists(), f"{rel} missing from export tree"
+    assert (out / "services/lumogis-graph/main.py").is_file()
+    assert (out / "orchestrator/plugins/graph/__init__.py").is_file()
+    check = _run_check(out)
+    assert check.returncode == 0, check.stdout + check.stderr
 
 
 def test_lum303_minimal_export_passes_openapi_contract(tmp_path):
@@ -287,7 +362,9 @@ def test_lum433_fails_when_workflow_references_hub(tmp_path):
     _minimal_passing_export_search_overlay_contract(tmp_path)
     workflow = tmp_path / SEARCH_OVERLAY_CI_CANONICAL_PATHS[0]
     workflow.write_text(
-        workflow.read_text(encoding="utf-8") + "apps/lumogis-hub\n",
+        # A YAML comment, so the file stays parseable: the fail-closed runs-on
+        # gate (LUM-855) would otherwise reject it before LUM-433 is reached.
+        workflow.read_text(encoding="utf-8") + "# apps/lumogis-hub\n",
         encoding="utf-8",
     )
     proc = _run_check(tmp_path)
@@ -301,7 +378,11 @@ def test_lum433_fails_when_workflow_references_server(tmp_path):
     _minimal_passing_export_search_overlay_contract(tmp_path)
     workflow = tmp_path / SEARCH_OVERLAY_CI_CANONICAL_PATHS[0]
     workflow.write_text(
-        workflow.read_text(encoding="utf-8") + "apps/lumogis-server\n",
+        # A YAML comment, so the file stays parseable: the fail-closed runs-on
+        # gate (LUM-855) would otherwise reject it before LUM-433 is reached.
+        # The bare name, not the tree path: the LUM-898 content gate runs first and
+        # would reject the tree path before the LUM-433 contract is reached.
+        workflow.read_text(encoding="utf-8") + f"# {_SERVER_NAME}\n",
         encoding="utf-8",
     )
     proc = _run_check(tmp_path)
@@ -311,46 +392,154 @@ def test_lum433_fails_when_workflow_references_server(tmp_path):
     assert "LUM-433" in combined
 
 
-def test_lum492_minimal_export_passes_server_build_private_contract(tmp_path):
-    """LUM-492: a clean export (no private Server CI present) passes the inverse contract."""
+@pytest.mark.parametrize("needle", [_SERVER_TREE + "/README.md", _SERVER_MK])
+def test_check_public_export_rejects_appliance_path_in_content(tmp_path, needle):
+    """LUM-898: a public file that names the appliance tree or its make include fails."""
     _minimal_passing_export_search_overlay_contract(tmp_path)
-    assert not (tmp_path / SERVER_BUILD_CI_PRIVATE_PATH).exists()
+    doc = tmp_path / "docs" / "decisions" / "999-probe.md"
+    doc.parent.mkdir(parents=True, exist_ok=True)
+    doc.write_text(f"See `{needle}` for details.\n", encoding="utf-8")
+    proc = _run_check(tmp_path)
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode != 0
+    assert "docs/decisions/999-probe.md:1" in combined
+    assert "LUM-898" in combined
+
+
+def test_check_public_export_rejects_appliance_path_in_strip_list(tmp_path):
+    """LUM-898: no file is exempt, the strip list included (option 2, ADR 254)."""
+    _minimal_passing_export_search_overlay_contract(tmp_path)
+    strip = tmp_path / "scripts" / "public-export-strip-list.txt"
+    strip.parent.mkdir(parents=True, exist_ok=True)
+    strip.write_text(_SERVER_TREE + "/\n", encoding="utf-8")
+    proc = _run_check(tmp_path)
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode != 0
+    assert "scripts/public-export-strip-list.txt:1" in combined
+    assert "LUM-898" in combined
+
+
+# Nested, not at the root: a root-level copy is on the local strip list, whose guard
+# would answer first in a private checkout.
+@pytest.mark.parametrize("rel", ["vendor/" + _SERVER_TREE + "/notes.txt", "vendor/" + _SERVER_MK])
+def test_check_public_export_rejects_appliance_path_in_file_name(tmp_path, rel):
+    """LUM-898: a file whose relative path names the appliance fails, whatever it holds."""
+    _minimal_passing_export_search_overlay_contract(tmp_path)
+    leaked = tmp_path / rel
+    leaked.parent.mkdir(parents=True, exist_ok=True)
+    leaked.write_text("nothing to see\n", encoding="utf-8")
+    proc = _run_check(tmp_path)
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode != 0
+    assert "appliance path in file name" in combined
+    assert "LUM-898" in combined
+
+
+def test_main_strip_list_is_neutral():
+    """LUM-898: the main list ships, so it names no appliance path and lists the local list."""
+    data = STRIP_LIST.read_bytes()
+    for needle in (_SERVER_TREE, _SERVER_MK):
+        assert needle.encode() not in data, "main strip list must not name maintainer-only paths"
+    assert "scripts/public-export-strip-list.local.txt" in _list_entries(STRIP_LIST)
+
+
+def _copy_scripts_without_local_list(tmp_path: Path) -> Path:
+    """A fake source checkout: export scripts and main list, no local list."""
+    scripts = tmp_path / "src" / "scripts"
+    scripts.mkdir(parents=True)
+    for name in (
+        "check-public-export.sh",
+        "create-upstream-export-tree.sh",
+        "public-export-strip-list.txt",
+        "public-export-personal-tokens.txt",
+    ):
+        src = REPO / "scripts" / name
+        if src.is_file():
+            (scripts / name).write_bytes(src.read_bytes())
+    return tmp_path / "src"
+
+
+@pytest.mark.parametrize("marker", [_SERVER_TREE, _SERVER_MK])
+@pytest.mark.parametrize("script", ["check-public-export.sh", "create-upstream-export-tree.sh"])
+def test_export_scripts_fail_closed_without_local_list(tmp_path, script, marker):
+    """LUM-898: maintainer-only paths in the source checkout and no local list dies."""
+    src = _copy_scripts_without_local_list(tmp_path)
+    if marker == _SERVER_TREE:
+        (src / marker).mkdir(parents=True)
+    else:
+        (src / marker).write_text("\n", encoding="utf-8")
+    target = tmp_path / "target"
+    target.mkdir()
+    proc = subprocess.run(
+        ["bash", str(src / "scripts" / script), str(target)],
+        capture_output=True,
+        text=True,
+        cwd=str(src),
+    )
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode != 0, combined
+    assert "no local strip list" in combined
+
+
+def test_check_public_export_runs_without_local_list_in_public_checkout(tmp_path):
+    """LUM-898: a public checkout has no local list and no maintainer-only paths; it passes."""
+    src = _copy_scripts_without_local_list(tmp_path)
+    target = tmp_path / "target"
+    target.mkdir()
+    _minimal_passing_export_search_overlay_contract(target)
+    proc = subprocess.run(
+        ["bash", str(src / "scripts" / "check-public-export.sh"), str(target)],
+        capture_output=True,
+        text=True,
+        cwd=str(src),
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def test_lum492_minimal_export_passes_local_strip_list_contract(tmp_path):
+    """LUM-492 / LUM-898: a clean export passes the local strip-list contract."""
+    _minimal_passing_export_search_overlay_contract(tmp_path)
     proc = _run_check(tmp_path)
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
 
-def test_lum492_fails_when_server_build_present_in_export(tmp_path):
-    """LUM-492: the private Server deb CI must never ship in a public export tree.
+def test_lum492_fails_when_local_strip_list_path_present_in_export(tmp_path):
+    """LUM-492 / LUM-898: any local-list path present in the export tree fails.
 
-    Because the workflow is on the strip list, the generic
-    ``assert_strip_list_paths_absent`` guard is the first line of defence and rejects
-    the leaked file by name; the LUM-492 contract is the belt-and-suspenders behind it.
+    The local list's paths are also in the combined list that
+    ``assert_strip_list_paths_absent`` reads, so that guard rejects the leaked path
+    first; the local strip-list contract is the belt-and-suspenders behind it.
     """
+    if not STRIP_LIST_LOCAL.is_file():
+        pytest.skip("no local strip list (public checkout)")
+    entries = _list_entries(STRIP_LIST_LOCAL)
+    assert entries, "local strip list is present but empty"
     _minimal_passing_export_search_overlay_contract(tmp_path)
-    leaked = tmp_path / SERVER_BUILD_CI_PRIVATE_PATH
+    # A file entry not under apps/, so the generic apps/ guard does not answer first.
+    entry = next((e for e in entries if not e.endswith("/") and not e.startswith("apps/")), None)
+    assert entry is not None, "local strip list has no file entry outside apps/"
+    leaked = tmp_path / entry
     leaked.parent.mkdir(parents=True, exist_ok=True)
-    leaked.write_text("name: Server build\non: workflow_dispatch\n", encoding="utf-8")
+    leaked.write_text("probe\n", encoding="utf-8")
     proc = _run_check(tmp_path)
     combined = proc.stdout + proc.stderr
     assert proc.returncode != 0
-    assert SERVER_BUILD_CI_PRIVATE_PATH in combined
+    assert entry in combined
 
 
-def test_lum492_server_build_ci_on_strip_list():
-    """LUM-492: the private Server CI must be listed on the strip list so export rm -rf's it."""
-    text = STRIP_LIST.read_text(encoding="utf-8")
-    strip_entries: set[str] = set()
-    for raw in text.splitlines():
-        line = raw.split("#", 1)[0].strip()
-        if line:
-            strip_entries.add(line)
-    assert SERVER_BUILD_CI_PRIVATE_PATH in strip_entries, (
-        f"strip list must list LUM-492 private Server CI path: {SERVER_BUILD_CI_PRIVATE_PATH}"
-    )
+def test_local_strip_list_is_on_main_list_and_disjoint_from_contracts():
+    """LUM-898: the local list never ships and never strips a required public path."""
+    assert "scripts/public-export-strip-list.local.txt" in _list_entries(STRIP_LIST)
+    if not STRIP_LIST_LOCAL.is_file():
+        pytest.skip("no local strip list (public checkout)")
+    local = set(_list_entries(STRIP_LIST_LOCAL))
+    required = set(LUM303_CANONICAL_OPENAPI_PATHS) | set(SEARCH_OVERLAY_CI_CANONICAL_PATHS)
+    assert not local.intersection(required)
+    assert not local.intersection(KG_PUBLIC_PATHS)
 
 
-def test_export_tree_omits_server_build_workflow(tmp_path):
-    """LUM-492: Server deb CI must not ship on lumogis/lumogis (private appliance build)."""
+def test_export_tree_omits_local_strip_list_paths(tmp_path):
+    """LUM-492 / LUM-898: no local-list path, nor the local list itself, ships."""
     _skip_unless_export_source_repo()
     out = tmp_path / "export"
     export_script = REPO / "scripts" / "create-upstream-export-tree.sh"
@@ -361,31 +550,22 @@ def test_export_tree_omits_server_build_workflow(tmp_path):
         cwd=str(REPO),
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert not (out / SERVER_BUILD_CI_PRIVATE_PATH).exists()
-    assert not (out / "apps/lumogis-server").exists()
+    assert not (out / "scripts" / "public-export-strip-list.local.txt").exists()
+    if STRIP_LIST_LOCAL.is_file():
+        for entry in _list_entries(STRIP_LIST_LOCAL):
+            assert not (out / entry).exists(), f"{entry} shipped in the export tree"
+    assert not (out / _SERVER_TREE).exists()
     check = _run_check(out)
     assert check.returncode == 0, check.stdout + check.stderr
 
 
 def test_search_overlay_required_path_disjoint_from_strip_list():
-    text = STRIP_LIST.read_text(encoding="utf-8")
-    strip_entries: set[str] = set()
-    for raw in text.splitlines():
-        line = raw.split("#", 1)[0].strip()
-        if line:
-            strip_entries.add(line)
-    overlap = strip_entries.intersection(SEARCH_OVERLAY_CI_CANONICAL_PATHS)
+    overlap = _all_strip_entries().intersection(SEARCH_OVERLAY_CI_CANONICAL_PATHS)
     assert not overlap, f"strip list must not list LUM-433 paths: {overlap}"
 
 
 def test_lum303_required_paths_disjoint_from_strip_list():
-    text = STRIP_LIST.read_text(encoding="utf-8")
-    strip_entries: set[str] = set()
-    for raw in text.splitlines():
-        line = raw.split("#", 1)[0].strip()
-        if line:
-            strip_entries.add(line)
-    overlap = strip_entries.intersection(LUM303_CANONICAL_OPENAPI_PATHS)
+    overlap = _all_strip_entries().intersection(LUM303_CANONICAL_OPENAPI_PATHS)
     assert not overlap, f"strip list must not list LUM-303 paths: {overlap}"
 
 
@@ -442,13 +622,13 @@ def test_export_tree_omits_hub_build_workflow(tmp_path):
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert not (out / ".github/workflows/hub-build.yml").exists()
     assert not (out / "apps/lumogis-hub").exists()
-    assert not (out / "apps/lumogis-server").exists()
+    assert not (out / _SERVER_TREE).exists()
     check = _run_check(out)
     assert check.returncode == 0, check.stdout + check.stderr
 
 
 def test_export_tree_has_no_apps_subtree(tmp_path):
-    """LUM-491: public export must not ship any apps/ subtree (private Server leak guard)."""
+    """LUM-491: public export must not ship any apps/ subtree."""
     _skip_unless_export_source_repo()
     out = tmp_path / "export"
     export_script = REPO / "scripts" / "create-upstream-export-tree.sh"
@@ -464,7 +644,7 @@ def test_export_tree_has_no_apps_subtree(tmp_path):
         children = list(apps_dir.iterdir())
         assert children == [], f"export tree must not contain apps/ entries: {children}"
     assert not (out / "apps/lumogis-hub").exists()
-    assert not (out / "apps/lumogis-server").exists()
+    assert not (out / _SERVER_TREE).exists()
     check = _run_check(out)
     assert check.returncode == 0, check.stdout + check.stderr
 

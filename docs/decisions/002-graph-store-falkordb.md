@@ -40,8 +40,10 @@ stay swappable without forking Core.
 - **Minimal installs stay unaware of graph infra** unless overlays and env are
   added.
 - **`GraphStore` remains the abstraction** for contributed graph tooling.
-- **Premium / full-tree operators** adopt the Falkor reference (or equivalents)
-  from the separately distributed capability bundles; contributors without that
+- **Graph operators** adopt the Falkor reference (or equivalents) from the
+  graph capability, **which ships in the public AGPL tree** as of
+  [ADR 229](229-lum-855-kg-agpl-relicence.md) (it was previously described here as a
+  separately distributed premium bundle); contributors without that
   tree still rely on the public Protocol docs.
 - **No Redis-backed graph substrate in Core by default.** Optional stacks bring
   their backing services via explicit Compose merges.

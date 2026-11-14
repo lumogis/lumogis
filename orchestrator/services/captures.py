@@ -37,6 +37,7 @@ from models.api_v1 import CapturePatchRequest
 from models.api_v1 import CaptureTranscriptSummary
 from models.api_v1 import TranscriptionResult
 from ports.metadata_store import MetadataStore
+from services.memory import conversation_payload
 from services.point_ids import note_conversation_point_id
 
 import config
@@ -1068,14 +1069,14 @@ def index_capture(ms: MetadataStore, *, user_id: str, capture_id: str) -> Captur
             collection="conversations",
             id=point_id,
             vector=vector,
-            payload={
-                "session_id": note_id_str,
-                "summary": combined,
-                "user_id": user_id,
-                "scope": "personal",
-                "note_id": note_id_str,
-                "source": "lumogis_web_capture",
-            },
+            payload=conversation_payload(
+                item_id=note_id_str,
+                summary=combined,
+                user_id=user_id,
+                scope="personal",
+                note_id=note_id_str,
+                source="lumogis_web_capture",
+            ),
         )
     except Exception as exc:
         _log.exception("capture index: Qdrant/embed failed capture_id=%s", capture_id)

@@ -5,7 +5,7 @@
 **Last updated:** 2026-06-25
 **Decided by:** /explore (LUM-301); finalised by /verify-plan
 **Linear:** LUM-301
-**Scope:** APP / proprietary — ships in the strip-listed `services/lumogis-graph/` (paid KG add-in, `CapabilityLicenseMode.COMMERCIAL`, off by default). Per ADR-101 / ADR-042, only the `GraphStore` Protocol/port stays AGPL-public.
+**Scope:** **AGPL public** (amended 2026-11-07 by [ADR 229](229-lum-855-kg-agpl-relicence.md); was "APP / proprietary") — ships in `services/lumogis-graph/`, which is no longer strip-listed (`CapabilityLicenseMode.COMMUNITY`, off by default). Per ADR-101 / ADR-042, only the `GraphStore` Protocol/port stays AGPL-public.
 
 ## Context
 

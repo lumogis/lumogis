@@ -75,7 +75,7 @@ Details and examples: **[`docs/LUMOGIS_REFERENCE_MANUAL.md`](docs/LUMOGIS_REFERE
 
 ![Lumogis system architecture diagram: browser and optional LibreChat through Caddy to Core and Lumogis Web; backing services include Postgres, vectors, optional graph capability, and local LLMs.](branding/lumogis_architecture.svg)
 
-† **Graph capability** is optional. The bundled community stack defaults **`GRAPH_MODE=disabled`**. Falkor-backed in-process projection, HTTP graph capability services, and related Compose overlays ship with the **premium** distribution—not the minimal AGPL export line. Architectural contract: **`ports/graph_store.py`** (Protocol) plus **[`docs/decisions/002-graph-store-falkordb.md`](docs/decisions/002-graph-store-falkordb.md)** and **`docs/extending/extending-the-stack.md`**.
+† **Graph capability** is optional. The bundled community stack defaults **`GRAPH_MODE=disabled`**. Falkor-backed in-process projection, HTTP graph capability services, and related Compose overlays ship in this repository under AGPL-3.0-only (**[ADR 229](docs/decisions/229-lum-855-kg-agpl-relicence.md)**). **`GRAPH_MODE=service`** is the only mode that works on the standard Core image; `inprocess` needs a Core build that includes `services/lumogis-graph/`. Architectural contract: **`ports/graph_store.py`** (Protocol) plus **[`docs/decisions/002-graph-store-falkordb.md`](docs/decisions/002-graph-store-falkordb.md)** and **`docs/extending/extending-the-stack.md`**.
 
 ### Data flow
 
@@ -123,9 +123,9 @@ First-party SPA: **[`clients/lumogis-web/`](clients/lumogis-web/)**, served behi
 |---|---|
 | **Recommended** | **http://localhost/** — SPA; `/api/*`, `/events`, `/v1/*`, `/mcp/*`, `/health`, and legacy orchestrator HTML routes proxied per **[`docker/caddy/Caddyfile`](docker/caddy/Caddyfile)** |
 | **Core directly** | **http://localhost:8000** — Swagger at `/docs` |
-| **LibreChat** (`COMPOSE_PROFILES` contains `librechat`) | **http://localhost:3080** — targets **`http://orchestrator:8000/v1`** (**[`config/librechat.coldstart.yaml`](config/librechat.coldstart.yaml)**)
+| **LibreChat** (`COMPOSE_PROFILES` contains `librechat`) | **http://localhost:3080**, on this machine only (published on `127.0.0.1`; it is not behind Caddy) — targets **`http://orchestrator:8000/v1`** (**[`config/librechat.coldstart.yaml`](config/librechat.coldstart.yaml)**)
 
-**Operators:** pin **`LUMOGIS_PUBLIC_ORIGIN`** (see **`.env.example`**) when `AUTH_ENABLED=true`; set **`LUMOGIS_TRUSTED_PROXIES`** whenever a trusted reverse proxy terminates TLS (**[`docker-compose.yml`](docker-compose.yml)** passes them through). Playwright/Lighthouse/header checks live in **`clients/lumogis-web/README.md`** and **`Makefile`** targets `web-e2e*`, `web-caddy-headers*`.
+**Operators:** pin **`LUMOGIS_PUBLIC_ORIGIN`** (see **`.env.example`**) when `AUTH_ENABLED=true`; compose trusts only the Caddy container for `X-Forwarded-For` (`LUMOGIS_TRUSTED_PROXIES=caddy`); put an upstream proxy in front of Caddy (Tailscale Serve, a tunnel) in **`LUMOGIS_CADDY_TRUSTED_PROXIES`** (see **`.env.example`**). Playwright/Lighthouse/header checks live in **`clients/lumogis-web/README.md`** and **`Makefile`** targets `web-e2e*`, `web-caddy-headers*`.
 
 ---
 
@@ -181,12 +181,12 @@ Lumogis is reachable on your local network by default (**http://localhost/** or 
 
 | Add-on | How | Notes |
 |---|---|---|
-| Knowledge graph overlays (Falkor / in-process plugin / HTTP KG bridge) | Premium Compose bundles + explicit `GRAPH_MODE` | **`GRAPH_MODE` defaults to `disabled`**—set `inprocess` or `service` only with the matching premium modules; see **ADR-002** (`docs/decisions/002-graph-store-falkordb.md`) and **`docs/extending/extending-the-stack.md`** |
+| Knowledge graph (FalkorDB + `lumogis-graph` service) | **`docker-compose.falkordb.yml`** + **`docker-compose.premium.yml`** + `GRAPH_MODE=service` | **`GRAPH_MODE` defaults to `disabled`**. `service` is the only mode that works on the standard Core image; `inprocess` needs a Core build that includes `services/lumogis-graph/`. Setup: the overlay header and [`services/lumogis-graph/README.md`](services/lumogis-graph/README.md); see **ADR-002** (`docs/decisions/002-graph-store-falkordb.md`) and **`docs/extending/extending-the-stack.md`** |
 | LiteLLM | **`docker-compose.litellm.yml`** | Unified proxy overlay |
 | Activepieces | **`docker-compose.activepieces.yml`** | Automation UI |
-| GPU | **`docker-compose.gpu.yml`** | NVIDIA Container Toolkit (**[`docs/guides/gpu-setup.md`](docs/guides/gpu-setup.md)**) |
+| GPU | **`docker-compose.gpu.yml`** | NVIDIA Container Toolkit (**[`docs/guides/gpu-setup.md`](docs/guides/gpu-setup.md)**). **Optional** — Ollama runs on CPU without it. `make dev` includes this overlay only when Docker reports an `nvidia` runtime; force with **`LUMOGIS_GPU=1`** (hard-fails if absent) or **`LUMOGIS_GPU=0`** (never use it). |
 | Speech-to-text sidecar | **`docker-compose.stt.yml`** | Speaches-backed **`POST /api/v1/voice/transcribe`**—see overlay comments and **`docs/guides/troubleshooting.md`** |
-| LibreChat | `COMPOSE_PROFILES=librechat` (often default in **`.env.example`** for continuity) | **[`docker-compose.yml`](docker-compose.yml)** profile comments |
+| LibreChat | `COMPOSE_PROFILES=librechat` (off in **`.env.example`**; retired in favour of Lumogis Web) | **[`docker-compose.yml`](docker-compose.yml)** profile comments |
 
 Merge overlays with **`COMPOSE_FILE`** in `.env` (patterns in **`.env.example`**).
 

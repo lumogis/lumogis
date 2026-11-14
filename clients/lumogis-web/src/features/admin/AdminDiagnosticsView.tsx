@@ -7,7 +7,11 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { ApiError } from "../../api/client";
-import { fetchAdminDiagnostics } from "../../api/adminDiagnostics";
+import {
+  fetchAdminDiagnostics,
+  type AdminDiagnosticsTask,
+  type AdminDiagnosticsTaskSkipReason,
+} from "../../api/adminDiagnostics";
 import { useAuth } from "../../auth/AuthProvider";
 
 type RowsByKey = {
@@ -15,6 +19,42 @@ type RowsByKey = {
   household: Record<string, number>;
   system: Record<string, number>;
 };
+
+const SKIP_LABELS: Record<AdminDiagnosticsTaskSkipReason, string> = {
+  unknown: "not configured",
+  not_on_box: "not on this network",
+  no_tools: "no tool support",
+  no_credentials: "no key",
+  optional_disabled: "switched off",
+  privacy_mode: "blocked by privacy mode",
+  error: "check failed",
+};
+
+function skipLabel(reason: AdminDiagnosticsTaskSkipReason | null | undefined): string | null {
+  return reason ? SKIP_LABELS[reason] : null;
+}
+
+function taskRules(t: AdminDiagnosticsTask): string[] {
+  const rules: string[] = [];
+  if (t.local_only) rules.push("On-box only");
+  if (t.needs_tools) rules.push("Needs tools");
+  if (!t.threads_user_id) rules.push("Runs without a user");
+  if (t.destructive) rules.push("First entry only");
+  return rules;
+}
+
+function usesNow(t: AdminDiagnosticsTask): string {
+  if (t.resolved_model === null) return "Skipped (no on-box model)";
+  let text = t.resolved_model;
+  if (t.resolved_from === "default") {
+    const why = skipLabel(t.default_skip_reason);
+    text += why ? ` (default — ${why})` : " (default)";
+  } else if (t.destructive) {
+    const why = skipLabel(t.configured[0]?.skip_reason);
+    if (why) text += ` — ${why}`;
+  }
+  return text;
+}
 
 export function AdminDiagnosticsView(): JSX.Element {
   const { client } = useAuth();
@@ -214,6 +254,62 @@ export function AdminDiagnosticsView(): JSX.Element {
           apply.
         </p>
       )}
+
+      {d.tasks && d.tasks.length > 0 ? (
+        <>
+          <h3 style={{ fontSize: "1rem", marginTop: "1.25rem" }}>Background model tasks</h3>
+          <div className="lumogis-table-scroll">
+            <table className="lumogis-dense-table">
+              <thead>
+                <tr>
+                  <th>Task</th>
+                  <th>Rules</th>
+                  <th>Configured</th>
+                  <th>Uses now (for you)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {d.tasks.map((t) => (
+                  <tr key={t.task}>
+                    <td className="lumogis-long-text">
+                      <code>{t.task}</code>
+                      <div style={{ fontSize: "0.8rem", opacity: 0.85 }}>{t.description}</div>
+                    </td>
+                    <td>
+                      {taskRules(t).map((r) => (
+                        <span key={r} className="lumogis-badge" style={{ marginRight: "0.25rem" }}>
+                          {r}
+                        </span>
+                      ))}
+                    </td>
+                    <td className="lumogis-long-text" style={{ fontSize: "0.85rem" }}>
+                      {t.configured.length === 0
+                        ? "—"
+                        : t.configured.map((e, i) => {
+                            const why = skipLabel(e.skip_reason);
+                            return (
+                              <div key={`${e.model}-${i}`}>
+                                <code>{e.model}</code>
+                                {why ? ` (${why})` : ""}
+                              </div>
+                            );
+                          })}
+                    </td>
+                    <td className="lumogis-long-text" style={{ fontSize: "0.85rem" }}>
+                      {usesNow(t)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p style={{ fontSize: "0.8rem", opacity: 0.85, maxWidth: "42rem" }}>
+            Resolved for your account from configuration. Members without the same keys may use a
+            later entry. A task marked First entry only ignores any later entries (Core warns at
+            start-up). This is not a health check: a listed model that is down still shows here.
+          </p>
+        </>
+      ) : null}
 
       {d.warnings.length > 0 ? (
         <>

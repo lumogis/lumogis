@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Lumogis
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { dehydrate, QueryClient } from "@tanstack/react-query";
 
 import packageJson from "../../package.json";
 import {
+  clearPersistedQueryCache,
   PERSISTED_QUERY_MAX_AGE_MS,
   QUERY_PERSIST_LOCALSTORAGE_KEY,
   getQueryPersistenceBuster,
@@ -89,5 +90,22 @@ describe("query persistence (Phase 3D)", () => {
 
   it("Vitest disables runtime persistence hooks", () => {
     expect(isQueryPersistenceRuntimeEnabled()).toBe(false);
+  });
+});
+
+describe("clearPersistedQueryCache (LUM-886)", () => {
+  it("removes the slot and tolerates a throwing localStorage", () => {
+    localStorage.setItem(QUERY_PERSIST_LOCALSTORAGE_KEY, "{}");
+    clearPersistedQueryCache();
+    expect(localStorage.getItem(QUERY_PERSIST_LOCALSTORAGE_KEY)).toBeNull();
+
+    const spy = vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => {
+      throw new Error("denied");
+    });
+    try {
+      expect(() => clearPersistedQueryCache()).not.toThrow();
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

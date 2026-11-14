@@ -437,10 +437,21 @@ export function AdminSystemStatusView(): JSX.Element {
         >
           <h3 style={{ fontSize: "1rem", margin: "0 0 0.5rem" }}>Disaster recovery backup</h3>
           {backupStatus.data.stale || backupStatus.data.warnings.length > 0 ? (
-            <p role="alert" style={{ color: "#ed6c02", fontSize: "0.9rem" }}>
-              {backupStatus.data.warnings[0]?.message ??
-                `Last backup is older than ${backupStatus.data.stale_threshold_hours}h — run make backup on the host.`}
-            </p>
+            <div role="alert" style={{ color: "#ed6c02", fontSize: "0.9rem" }}>
+              {backupStatus.data.warnings.length > 0 ? (
+                // Every warning, not the first: a stale-backup warning must not hide
+                // "files are missing from disk" (LUM-892).
+                backupStatus.data.warnings.map((w) => (
+                  <p key={w.code} style={{ margin: "0 0 0.25rem" }}>
+                    {w.message}
+                  </p>
+                ))
+              ) : (
+                <p style={{ margin: "0 0 0.25rem" }}>
+                  {`Last backup is older than ${backupStatus.data.stale_threshold_hours}h — run make backup on the host.`}
+                </p>
+              )}
+            </div>
           ) : null}
           <div style={{ fontSize: "0.85rem", lineHeight: 1.5 }}>
             <div>
@@ -462,13 +473,40 @@ export function AdminSystemStatusView(): JSX.Element {
             <div>
               Stores:{" "}
               {backupStatus.data.stores
-                .map((s) => `${s.id}${s.skipped ? " (skipped)" : s.present ? "" : " (missing)"}`)
+                .map((s) => {
+                  if (s.skipped) return `${s.id} (skipped)`;
+                  if (!s.present) return `${s.id} (missing)`;
+                  return s.id === "files" && s.file_count != null
+                    ? `files (${s.file_count} files)`
+                    : s.id;
+                })
                 .join(", ")}
             </div>
             <div>
               Verify: <strong>{backupStatus.data.last_verify_status ?? "unknown"}</strong>
             </div>
           </div>
+          {(backupStatus.data.coverage ?? []).length > 0 ? (
+            <div style={{ fontSize: "0.85rem", lineHeight: 1.5, marginTop: "0.5rem" }}>
+              {(
+                [
+                  ["Covered", true],
+                  ["Not covered", false],
+                ] as const
+              ).map(([heading, covered]) => (
+                <div key={heading}>
+                  <h4 style={{ fontSize: "0.9rem", margin: "0.5rem 0 0.25rem" }}>{heading}</h4>
+                  <ul style={{ margin: 0, paddingLeft: "1.25rem" }}>
+                    {(backupStatus.data.coverage ?? [])
+                      .filter((c) => c.covered === covered)
+                      .map((c) => (
+                        <li key={c.id}>{c.note ? `${c.label} — ${c.note}` : c.label}</li>
+                      ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          ) : null}
         </div>
       ) : backupStatus.isError ? (
         <p style={{ fontSize: "0.85rem", opacity: 0.85 }}>DR backup status unavailable.</p>
@@ -557,168 +595,176 @@ export function AdminSystemStatusView(): JSX.Element {
         ))}
       </ul>
 
-      <h3 style={{ fontSize: "1rem", marginTop: "1.25rem" }}>Ollama models</h3>
+      {/* LUM-792 — grouped so a test can say "no error from the Ollama mutation"
+          without asserting on the whole System status section, which also carries the
+          DR-backup staleness advisory (permanently present on a fresh stack, where no
+          backup has run). Also a real a11y gain: visual heading, no programmatic group. */}
+      <section aria-labelledby="ollama-models-heading">
+        <h3 id="ollama-models-heading" style={{ fontSize: "1rem", marginTop: "1.25rem" }}>
+          Ollama models
+        </h3>
 
-      {discoveryError ? (
-        <p role="alert" style={{ color: "#c62828", fontSize: "0.9rem" }}>
-          {discoveryError}
-        </p>
-      ) : null}
+        {discoveryError ? (
+          <p role="alert" style={{ color: "#c62828", fontSize: "0.9rem" }}>
+            {discoveryError}
+          </p>
+        ) : null}
 
-      {ollamaActionError ? (
-        <p role="alert" style={{ color: "#c62828", fontSize: "0.9rem" }}>
-          {ollamaActionError}
-        </p>
-      ) : null}
+        {ollamaActionError ? (
+          <p role="alert" style={{ color: "#c62828", fontSize: "0.9rem" }}>
+            {ollamaActionError}
+          </p>
+        ) : null}
 
-      {ollamaPullWarning ? (
-        <p role="status" style={{ color: "#e65100", fontSize: "0.9rem" }}>
-          {ollamaPullWarning}
-        </p>
-      ) : null}
+        {ollamaPullWarning ? (
+          <p role="status" style={{ color: "#e65100", fontSize: "0.9rem" }}>
+            {ollamaPullWarning}
+          </p>
+        ) : null}
 
-      {disc ? (
-        <div
-          style={{ marginBottom: "1rem", maxWidth: "42rem" }}
-          aria-busy={pullInFlight ? "true" : undefined}
-        >
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", alignItems: "center" }}>
-            <label style={{ fontSize: "0.85rem" }}>
-              Catalog{" "}
-              <select
-                value={selectedCatalogName}
-                onChange={(e) => setSelectedCatalogName(e.target.value)}
-                disabled={pullBusy}
-                aria-label="Ollama catalog model"
-              >
-                <option value="">— select —</option>
-                {disc.catalog.map((entry) => (
-                  <option key={entry.name} value={entry.name}>
-                    {entry.display_name}
-                    {entry.installed ? " (installed)" : ""}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label style={{ fontSize: "0.85rem" }}>
-              Model name{" "}
-              <input
-                type="text"
-                value={pullNameInput}
-                onChange={(e) => setPullNameInput(e.target.value)}
-                placeholder="catalog or typed name"
-                disabled={pullBusy}
-                aria-label="Ollama model name to pull"
-              />
-            </label>
-            <button
-              type="button"
-              disabled={!pullTarget || pullBusy}
-              onClick={() => pullM.mutate(pullTarget)}
-            >
-              Pull
-            </button>
-          </div>
-          {pullTarget && isEmbeddingPullTarget(pullTarget, disc.embedding_model) ? (
-            <p style={{ fontSize: "0.85rem", color: "#ed6c02", margin: "0.5rem 0 0" }}>
-              Pulling the embedding model may re-initialize Qdrant collections.
-            </p>
-          ) : null}
-          {pullInFlight && pullJob ? (
-            <div style={{ margin: "0.5rem 0 0", maxWidth: "24rem" }}>
-              <p style={{ fontSize: "0.85rem", margin: "0 0 0.35rem" }}>
-                Pulling {pullJob.model_name}
-                {pullJob.status_message ? ` — ${pullJob.status_message}` : ""}
-              </p>
-              {pullJob.progress_pct != null ? (
-                <progress
-                  value={pullJob.progress_pct}
-                  max={100}
-                  aria-label="Ollama pull progress"
-                  style={{ width: "100%" }}
+        {disc ? (
+          <div
+            style={{ marginBottom: "1rem", maxWidth: "42rem" }}
+            aria-busy={pullInFlight ? "true" : undefined}
+          >
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", alignItems: "center" }}>
+              <label style={{ fontSize: "0.85rem" }}>
+                Catalog{" "}
+                <select
+                  value={selectedCatalogName}
+                  onChange={(e) => setSelectedCatalogName(e.target.value)}
+                  disabled={pullBusy}
+                  aria-label="Ollama catalog model"
+                >
+                  <option value="">— select —</option>
+                  {disc.catalog.map((entry) => (
+                    <option key={entry.name} value={entry.name}>
+                      {entry.display_name}
+                      {entry.installed ? " (installed)" : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label style={{ fontSize: "0.85rem" }}>
+                Model name{" "}
+                <input
+                  type="text"
+                  value={pullNameInput}
+                  onChange={(e) => setPullNameInput(e.target.value)}
+                  placeholder="catalog or typed name"
+                  disabled={pullBusy}
+                  aria-label="Ollama model name to pull"
                 />
-              ) : (
-                <p style={{ fontSize: "0.8rem", opacity: 0.85 }}>Preparing download…</p>
-              )}
+              </label>
+              <button
+                type="button"
+                disabled={!pullTarget || pullBusy}
+                onClick={() => pullM.mutate(pullTarget)}
+              >
+                Pull
+              </button>
             </div>
-          ) : null}
-        </div>
-      ) : null}
+            {pullTarget && isEmbeddingPullTarget(pullTarget, disc.embedding_model) ? (
+              <p style={{ fontSize: "0.85rem", color: "#ed6c02", margin: "0.5rem 0 0" }}>
+                Pulling the embedding model may re-initialize Qdrant collections.
+              </p>
+            ) : null}
+            {pullInFlight && pullJob ? (
+              <div style={{ margin: "0.5rem 0 0", maxWidth: "24rem" }}>
+                <p style={{ fontSize: "0.85rem", margin: "0 0 0.35rem" }}>
+                  Pulling {pullJob.model_name}
+                  {pullJob.status_message ? ` — ${pullJob.status_message}` : ""}
+                </p>
+                {pullJob.progress_pct != null ? (
+                  <progress
+                    value={pullJob.progress_pct}
+                    max={100}
+                    aria-label="Ollama pull progress"
+                    style={{ width: "100%" }}
+                  />
+                ) : (
+                  <p style={{ fontSize: "0.8rem", opacity: 0.85 }}>Preparing download…</p>
+                )}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
 
-      {d.ollama.length === 0 ? (
-        <p style={{ fontSize: "0.9rem" }}>No local models reported (Ollama may be down).</p>
-      ) : (
-        <div className="lumogis-table-scroll">
-          <table className="lumogis-dense-table lumogis-responsive-table">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Role</th>
-                <th>Size</th>
-                <th>Loaded</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {d.ollama.map((m) => {
-                const registryAlias =
-                  disc != null ? resolveRegistryAlias(m.name, disc.alias_map) : null;
-                const embedding =
-                  disc != null && isEmbeddingModel(m.name, disc.embedding_model);
-                const isDefault =
-                  disc != null &&
-                  isDefaultChatModel(m.name, disc.alias_map, disc.default_model);
+        {d.ollama.length === 0 ? (
+          <p style={{ fontSize: "0.9rem" }}>No local models reported (Ollama may be down).</p>
+        ) : (
+          <div className="lumogis-table-scroll">
+            <table className="lumogis-dense-table lumogis-responsive-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Role</th>
+                  <th>Size</th>
+                  <th>Loaded</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {d.ollama.map((m) => {
+                  const registryAlias =
+                    disc != null ? resolveRegistryAlias(m.name, disc.alias_map) : null;
+                  const embedding =
+                    disc != null && isEmbeddingModel(m.name, disc.embedding_model);
+                  const isDefault =
+                    disc != null &&
+                    isDefaultChatModel(m.name, disc.alias_map, disc.default_model);
 
-                return (
-                  <tr key={m.name}>
-                    <td data-label="Name" style={{ fontFamily: "monospace", fontSize: "0.85rem" }} className="lumogis-long-text">
-                      {m.name}
-                    </td>
-                    <td data-label="Role" style={{ fontSize: "0.85rem" }}>
-                      {embedding ? (
-                        <span
-                          style={{
-                            background: "#e3f2fd",
-                            padding: "0.1rem 0.35rem",
-                            borderRadius: 3,
-                            fontWeight: isDefault ? 700 : 400,
-                          }}
+                  return (
+                    <tr key={m.name}>
+                      <td data-label="Name" style={{ fontFamily: "monospace", fontSize: "0.85rem" }} className="lumogis-long-text">
+                        {m.name}
+                      </td>
+                      <td data-label="Role" style={{ fontSize: "0.85rem" }}>
+                        {embedding ? (
+                          <span
+                            style={{
+                              background: "#e3f2fd",
+                              padding: "0.1rem 0.35rem",
+                              borderRadius: 3,
+                              fontWeight: isDefault ? 700 : 400,
+                            }}
+                          >
+                            embedding
+                          </span>
+                        ) : registryAlias ? (
+                          <span
+                            style={{
+                              background: "#f3e5f5",
+                              padding: "0.1rem 0.35rem",
+                              borderRadius: 3,
+                              fontWeight: isDefault ? 700 : 400,
+                            }}
+                          >
+                            {registryAlias}
+                          </span>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                      <td data-label="Size">{formatBytes(m.size_bytes)}</td>
+                      <td data-label="Loaded">{m.loaded == null ? "—" : m.loaded ? "yes" : "no"}</td>
+                      <td data-label="Actions">
+                        <button
+                          type="button"
+                          disabled={pullBusy}
+                          onClick={() => handleDelete(m.name)}
                         >
-                          embedding
-                        </span>
-                      ) : registryAlias ? (
-                        <span
-                          style={{
-                            background: "#f3e5f5",
-                            padding: "0.1rem 0.35rem",
-                            borderRadius: 3,
-                            fontWeight: isDefault ? 700 : 400,
-                          }}
-                        >
-                          {registryAlias}
-                        </span>
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-                    <td data-label="Size">{formatBytes(m.size_bytes)}</td>
-                    <td data-label="Loaded">{m.loaded == null ? "—" : m.loaded ? "yes" : "no"}</td>
-                    <td data-label="Actions">
-                      <button
-                        type="button"
-                        disabled={pullBusy}
-                        onClick={() => handleDelete(m.name)}
-                      >
-                        Delete
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
 
       {d.warnings.length > 0 ? (
         <>

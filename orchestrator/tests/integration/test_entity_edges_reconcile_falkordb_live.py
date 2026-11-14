@@ -18,6 +18,7 @@ import os
 import uuid
 
 import pytest
+from tests.integration._pgguard import require_postgres
 
 if importlib.util.find_spec("plugins.graph") is None:
     pytest.skip(
@@ -28,8 +29,6 @@ if importlib.util.find_spec("plugins.graph") is None:
 from plugins.graph.reconcile import reconcile_entity_edges
 
 import config
-
-pytestmark = pytest.mark.integration
 
 
 def _live_stores_or_skip(monkeypatch):
@@ -58,9 +57,7 @@ def _live_stores_or_skip(monkeypatch):
             raise RuntimeError("FalkorDB graph store unavailable")
         return ms, gs
     except Exception as exc:  # pragma: no cover - env-dependent
-        pytest.skip(
-            f"FalkorDB/Postgres live stack required — run make compose-test-integration: {exc}"
-        )
+        require_postgres(exc, what="FalkorDB/Postgres")
 
 
 def _cleanup(ms, gs, edge_id: str, user_id: str, src: str, dst: str) -> None:

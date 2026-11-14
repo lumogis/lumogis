@@ -44,7 +44,7 @@ Shipped via agent branch cherry-pick onto `dev` (`740bfc460`); ADR numbered
 | LLM provider calls (`loop` → `provider.chat` / `chat_stream`) | none (cross-call) | ✗ → **breaker added** | ✓ (`circuit_opened`) | **This ADR** |
 | Agent tool-call loop (`loop._run_session_loop`) | `MAX_TOOL_ROUNDS` + `get_tool_chain_cap` (default 10) | ✓ | ✓ (`tool_chain_cap`) | none |
 | Batch queue (`services/batch_queue`) | `BATCH_QUEUE_MAX_ATTEMPTS` | ✓ | ✓ | none |
-| Proposal queue (`services/proposal_queue`) | `ACTION_PROPOSALS_MAX_ATTEMPTS=3` + exp. backoff → `dead` | ✓ | ✓ | none |
+| Proposal claim (`services/proposal_queue`) | **terminal on first failure** (LUM-762) — no retry, no backoff; `dead_letter` is the sole disposal | ✓ | ✓ | none |
 | Memory purge (`services/memory_purge`) | `_RETRY_ATTEMPTS=3` + backoff; sweeper `_SWEEPER_MAX_ATTEMPTS=20` | ✓ | ✓ | none |
 | MCP token mint (`services/mcp_tokens`) | `_MINT_COLLISION_BUDGET` | ✓ | ✓ | none |
 | Ingest progress (`services/ingest_progress`) | `max_attempts` param | ✓ | ✓ | none |

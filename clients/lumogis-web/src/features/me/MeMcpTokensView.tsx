@@ -4,18 +4,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useAuth } from "../../auth/AuthProvider";
 import { ApiError } from "../../api/client";
+import type { McpTokenRow } from "../../api/mcpTokens";
 import { CopyOnceModal } from "../_shared/CopyOnceModal";
 import { accessLabel } from "./mcpTokenDisplay";
 
-interface McpRow {
-  id: string;
-  label: string;
-  created_at: string;
-  scopes: string[] | null;
-}
 interface MintRes {
   plaintext: string;
-  token: McpRow;
+  token: McpTokenRow;
 }
 
 export function MeMcpTokensView(): JSX.Element {
@@ -29,7 +24,7 @@ export function MeMcpTokensView(): JSX.Element {
 
   const listQ = useQuery({
     queryKey: ["mcp", "me"],
-    queryFn: () => client.getJson<McpRow[]>("/api/v1/me/mcp-tokens"),
+    queryFn: () => client.getJson<McpTokenRow[]>("/api/v1/me/mcp-tokens"),
   });
 
   const mintM = useMutation({

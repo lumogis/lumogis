@@ -11,23 +11,38 @@ PYTHON ?= python3
 # `make doctor ARGS="--fix --dry-run"` (repair dry-run; JSON v2 with `ARGS="--json --fix"`).
 ARGS ?=
 
+# LUM-808 — GPU overlay selection for `make dev`.
+# The README lists `docker-compose.gpu.yml` under "Composition: required vs
+# optional" as an ADD-ON, but `make dev` used to include it unconditionally, so a
+# host without the NVIDIA container runtime failed the whole `up` with
+#     Error response from daemon: could not select device driver "nvidia" ...
+# — a raw daemon error naming a device driver rather than a missing prerequisite.
+# Ollama runs fine on CPU; the GPU is an optimisation here, not a requirement.
+#   LUMOGIS_GPU=1  → require the overlay; fail loudly if the runtime is absent
+#   LUMOGIS_GPU=0  → never use the overlay
+#   unset (default) → auto-detect, and say so out loud when falling back to CPU
+LUMOGIS_GPU ?=
+
 # LUM-319 / POSIX: recipes use `set -o pipefail` (e.g. `compose-test-doctor`); Ubuntu `/bin/sh` is dash — use bash.
 SHELL := /bin/bash
 
-.PHONY: dev build test check-pytest test-integration test-integration-full e2e-ingest-restart lint ingest health logs doctor doctor-fix doctor-fix-dry doctor-fix-apply \
+.PHONY: dev build test bench-recall check-pytest test-integration test-integration-full e2e-ingest-restart e2e-ingest-live lint ingest health logs doctor doctor-fix doctor-fix-dry doctor-fix-apply \
+        compose-test-paperless check-integration-hermeticity \
+        test-env-unit test-env-build test-env-test test-env-integration \
         search-dev search-build search-build-client \
         lumogis-cursor-install test-lumogis-mcp test-cursor-integration test-cursor-integration-full \
         seed-cursor-integration-fixture prove-cursor-integration-full \
         audit-local bandit-check web-audit-fix zap-rc-baseline-lum318 \
-        compose-policy-check \
+        compose-policy-check caddy-keepalive-check \
         graph-relates-to-merge-policy-check \
         verify-public-rc verify-public-rc-full release-doc-sync-check \
         compose-test-backup backup backup-prune backup-verify restore \
         migrate-dry-run update rollback \
-        test-backup-retention \
+        test-backup-retention test-backup-files rescue-captures rescue-stop-entities \
         compose-policy-check compose-policy-check-baseline compose-policy-check-adversarial \
         compose-policy-check-adversarial-envfile compose-policy-check-community \
-        compose-policy-check-egress egress-containment-test \
+        compose-policy-check-egress compose-policy-check-name-squat egress-containment-test \
+        egress-imap-test egress-guard-test \
         check-egress-acl-divergence \
         check-no-tethered-lum613 \
         mock-capability-test \
@@ -36,10 +51,11 @@ SHELL := /bin/bash
         demo-seed demo-test demo-ready \
         web-install web-codegen web-codegen-check openapi-check openapi-breaking-check web-dockerfile-check shellcheck-web-docker-build-paths shellcheck-ci-paths web-docker-build web-test web-lint web-build web-dev web-e2e \
         test-web-e2e \
-        web-e2e-prove web-e2e-ollama-prove web-demo web-screenshots overlay-e2e overlay-e2e-smoke web-caddy-headers web-caddy-headers-prove \
+        web-e2e-prove web-e2e-ollama-prove web-demo web-screenshots overlay-e2e overlay-e2e-smoke web-caddy-headers web-caddy-headers-prove caddy-client-ip-prove caddy-config-check \
+        verify-lum-811 \
         m1-compat-with-retry \
         auth-sessions-grep-guard \
-        changelog-check \
+        changelog-check exec-bit-check \
         coverage-matrix-check \
         verify-no-telemetry \
         render-site-pages check-site-pages \
@@ -47,8 +63,21 @@ SHELL := /bin/bash
 
 # ─── User-facing convenience ─────────────────────────────────────────────────
 
+# LUM-892: the rescues (captures; the stop-entities list, LUM-922) sit between
+# the (slow) build and the recreate, so the orchestrator is stopped for seconds,
+# not for the whole build. The second
+# --build is a cache hit; the last line keeps today's pull semantics.
 build:
+	docker compose build --pull
+	bash scripts/update/rescue-captures.sh
+	bash scripts/update/rescue-stop-entities.sh
 	docker compose up --build --pull always -d
+
+rescue-captures: ## Copy capture media out of the orchestrator container before it is recreated (LUM-892)
+	bash scripts/update/rescue-captures.sh
+
+rescue-stop-entities: ## Copy an edited stop-entities list out of the orchestrator container before it is recreated (LUM-922)
+	bash scripts/update/rescue-stop-entities.sh
 
 health:
 	curl -s http://localhost:8000/health | python3 -m json.tool
@@ -93,28 +122,107 @@ compose-test-doctor:
 	trap - EXIT INT TERM; \
 	cleanup
 
+# LUM-753 — the membership rule for orchestrator/tests/integration/: a test
+# there requires a real external backend. Two checks, run with every backend
+# deliberately unreachable: nothing may PASS (anything that does never needed a
+# backend), and nothing may be unconditionally skipped (a bare @pytest.mark.skip
+# satisfies the first check vacuously — three such stubs lived there for months
+# with skip reasons naming Postgres and FalkorDB and bodies containing `pass`).
+#
+# INVARIANT: this target must neutralise EVERY env var that can point a test at
+# a live service. Miss one and the verdict depends on the operator's shell —
+# FALKORDB_URL and LUMOGIS_INTEGRATION_POSTGRES_DSN are the two that bite,
+# because two modules skip only when the former is *absent* and three connect
+# via the latter rather than POSTGRES_*.
+check-integration-hermeticity: check-pytest
+	@cd "$(CURDIR)/orchestrator" && \
+	  env -u FALKORDB_URL -u LUMOGIS_INTEGRATION_POSTGRES_DSN \
+	      -u LUMOGIS_REQUIRE_INTEGRATION_DB -u LUMOGIS_REQUIRE_PAPERLESS_FIXTURE \
+	    AUTH_ENABLED=false \
+	    LUMOGIS_ASSERT_NO_HERMETIC_INTEGRATION=1 \
+	    POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=1 \
+	    QDRANT_URL=http://127.0.0.1:1 \
+	    PAPERLESS_BASE_URL=http://127.0.0.1:1 \
+	    $(PYTHON) -m pytest tests/integration -q --tb=no -p no:cacheprovider
+
+# LUM-309 — live paperless-ngx fixture. Brings up a throwaway paperless (plus
+# its redis broker, and from Pass 2 a dedicated Postgres + Qdrant), then runs
+# the two live modules against it. ~2 min warm; Step 0 measured 68s.
+#
+# THE PROJECT NAME IS A SAFETY MECHANISM, NOT A TIDINESS ONE. The trap runs
+# `down -v`, which deletes volumes. Scoped to COMPOSE_PROJECT_NAME=
+# lumogis-paperless-test it deletes only this fixture's volumes; under the
+# default project name it would delete the developer's real dev-stack volumes —
+# their household data — on the very first run. Do not remove the export, and
+# do not reuse this recipe's teardown shape without it.
+# check-pytest first, deliberately: without it a contributor whose $(PYTHON) is
+# not the venv pays a ~60s container boot before failing on a bare
+# "No module named pytest", with the trap tearing the evidence down behind it.
+compose-test-paperless: check-pytest
+	@REPO="$(CURDIR)"; \
+	set -euo pipefail; \
+	export COMPOSE_PROJECT_NAME=lumogis-paperless-test; \
+	export COMPOSE_FILE=docker-compose.paperless-test.yml; \
+	PAPERLESS_ADMIN_USER=admin; \
+	PAPERLESS_ADMIN_PASSWORD="$$(openssl rand -hex 16 2>/dev/null || $(PYTHON) -c 'import secrets;print(secrets.token_hex(16))')"; \
+	PAPERLESS_SECRET_KEY="$$(openssl rand -hex 32 2>/dev/null || $(PYTHON) -c 'import secrets;print(secrets.token_hex(32))')"; \
+	export PAPERLESS_ADMIN_USER PAPERLESS_ADMIN_PASSWORD PAPERLESS_SECRET_KEY; \
+	cleanup() { \
+	  status=$$?; \
+	  if [ "$$status" -ne 0 ]; then \
+	    echo "--- paperless container logs (dumped before teardown destroys them) ---" >&2; \
+	    (cd "$$REPO" && docker compose logs --tail 200 paperless) >&2 || true; \
+	  fi; \
+	  (cd "$$REPO" && docker compose down -v) || true; \
+	  return $$status; \
+	}; \
+	trap cleanup EXIT INT TERM; \
+	cd "$$REPO"; \
+	docker compose up -d --wait --wait-timeout 420; \
+	cd "$$REPO/orchestrator" && \
+	  LUMOGIS_MIGRATIONS_DIR="$$REPO/postgres/migrations" \
+	  POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=5434 \
+	  POSTGRES_USER=lumogis POSTGRES_PASSWORD=lumogis-dev POSTGRES_DB=lumogis \
+	  $(PYTHON) -m db_migrations; \
+	cd "$$REPO/orchestrator" && \
+	  AUTH_ENABLED=false \
+	  LUMOGIS_REQUIRE_PAPERLESS_FIXTURE=1 \
+	  LUMOGIS_REQUIRE_INTEGRATION_DB=1 \
+	  PAPERLESS_BASE_URL=http://127.0.0.1:8010 \
+	  PAPERLESS_ADMIN_USER="$$PAPERLESS_ADMIN_USER" \
+	  PAPERLESS_ADMIN_PASSWORD="$$PAPERLESS_ADMIN_PASSWORD" \
+	  POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=5434 \
+	  POSTGRES_USER=lumogis POSTGRES_PASSWORD=lumogis-dev POSTGRES_DB=lumogis \
+	  QDRANT_URL=http://127.0.0.1:6337 \
+	  $(PYTHON) -m pytest tests/integration -v --tb=short -m paperless_live
+	@$(MAKE) --no-print-directory coverage-matrix-check
+
+# Admin-only Rescan of the configured library folders (LUM-884); no folder argument.
+# Works as-is on an AUTH_ENABLED=false dev stack; with auth on, use the dashboard
+# or add an admin Bearer header.
 ingest:
-	curl -s -X POST http://localhost:8000/ingest \
-	  -H "Content-Type: application/json" \
-	  -d '{"path": "/data"}' | python3 -m json.tool
+	curl -s -X POST http://localhost:8000/ingest | python3 -m json.tool
 
 # LUM-43 — compose policy (host Python + PyYAML + Docker Compose CLI).
+# LUM-620 — every first-party compose file is passed as --core-file; only core files
+# may define a service named in scripts/compose_core_allowlist.txt. Fixtures and
+# capability overlays stay -f (non-core).
 compose-policy-check-baseline:
-	$(PYTHON) scripts/check_compose_policy.py -f docker-compose.yml
+	$(PYTHON) scripts/check_compose_policy.py --core-file docker-compose.yml
 
 # compose-policy-check: mock overlay needs MOCK_CAPABILITY_SHARED_SECRET for `docker compose config`.
 # Also validates docker-compose.ghcr.yml (CI publish path).
 
 # Expect checker exit 1 (policy violation); make exit 0 means the guard caught the regression.
 compose-policy-check-adversarial:
-	@$(PYTHON) scripts/check_compose_policy.py -f docker-compose.yml -f docker-compose.test-policy-adversarial.yml; \
+	@$(PYTHON) scripts/check_compose_policy.py --core-file docker-compose.yml -f docker-compose.test-policy-adversarial.yml; \
 	ec=$$?; \
 	if [ $$ec -eq 1 ]; then exit 0; fi; \
 	echo "compose-policy-check-adversarial: expected policy violation (exit 1), got $$ec" >&2; \
 	exit 1
 
 compose-policy-check-adversarial-envfile:
-	@$(PYTHON) scripts/check_compose_policy.py -f docker-compose.yml -f docker-compose.test-policy-adversarial-envfile.yml; \
+	@$(PYTHON) scripts/check_compose_policy.py --core-file docker-compose.yml -f docker-compose.test-policy-adversarial-envfile.yml; \
 	ec=$$?; \
 	if [ $$ec -eq 1 ]; then exit 0; fi; \
 	echo "compose-policy-check-adversarial-envfile: expected policy violation (exit 1), got $$ec" >&2; \
@@ -123,11 +231,30 @@ compose-policy-check-adversarial-envfile:
 # LUM-613 — a COMMUNITY capability overlay must not obtain Core creds via env_file.
 # Expect checker exit 1 (policy violation); make exit 0 means the guard caught it.
 compose-policy-check-community:
-	@$(PYTHON) scripts/check_compose_policy.py -f docker-compose.yml -f docker-compose.test-policy-community-capability.yml; \
+	@$(PYTHON) scripts/check_compose_policy.py --core-file docker-compose.yml -f docker-compose.test-policy-community-capability.yml; \
 	ec=$$?; \
 	if [ $$ec -eq 1 ]; then exit 0; fi; \
 	echo "compose-policy-check-community: expected policy violation (exit 1), got $$ec" >&2; \
 	exit 1
+
+# LUM-620 — a non-core overlay must not define an allowlisted service name
+# (`backup`, `playwright`). Expect exit 1 AND a name-squat line for each service, so
+# a different Pass A rule firing cannot satisfy the target. Pass A fails before
+# `docker compose config`, so this needs no Docker.
+compose-policy-check-name-squat:
+	@out=$$($(PYTHON) scripts/check_compose_policy.py --core-file docker-compose.yml \
+	  -f docker-compose.test-policy-name-squat.yml 2>&1); ec=$$?; \
+	if [ $$ec -ne 1 ]; then \
+	  echo "$$out" >&2; \
+	  echo "compose-policy-check-name-squat: expected policy violation (exit 1), got $$ec" >&2; exit 1; \
+	fi; \
+	for svc in backup playwright; do \
+	  if ! printf '%s\n' "$$out" | grep -q "name-squat: service '$$svc'"; then \
+	    echo "$$out" >&2; \
+	    echo "compose-policy-check-name-squat: no name-squat violation for '$$svc'" >&2; exit 1; \
+	  fi; \
+	done; \
+	echo "compose-policy-check-name-squat: PASSED (overlay squatting backup + playwright rejected)"
 
 # LUM-618 — Pass C (network membership). Two proofs:
 #  (1) the adversarial violation fixture MUST exit 1 (proves Pass C actually
@@ -140,6 +267,7 @@ compose-policy-check-egress:
 	@python3 -c "import yaml" 2>/dev/null || \
 	  python3 -m pip install -q -r scripts/requirements-compose-policy.txt
 	@echo "==> Pass C fires on the violation fixture (expect exit 1)"
+	@# No --core-file: the fixture is a non-core overlay (it defines no allowlisted name).
 	@$(PYTHON) scripts/check_compose_policy.py \
 	  -f docker-compose.test-policy-community-egress-violation.yml \
 	  --community-service bad-community-cap; \
@@ -148,18 +276,15 @@ compose-policy-check-egress:
 	  echo "compose-policy-check-egress: violation fixture expected exit 1, got $$ec" >&2; exit 1; \
 	fi
 	@echo "==> Pass C passes on the real RC render — mock must be contained (expect exit 0)"
-	@if [ -f docker-compose.public-rc-stack.yml ]; then \
-	  _EGRESS_COMPOSE="-f docker-compose.yml \
-	    -f docker-compose.public-rc-stack.yml -f docker-compose.egress.yml"; \
-	else \
-	  echo "compose-policy-check-egress: public-rc-stack absent — mock-capability chain (AGPL export)"; \
-	  _EGRESS_COMPOSE="-f docker-compose.yml \
-	    -f docker-compose.mock-capability.yml -f docker-compose.egress.yml"; \
-	fi; \
-	COMPOSE_PROFILES=community-egress MOCK_CAPABILITY_SHARED_SECRET=lumogis-ci-mock-capability-placeholder \
+	@# Do NOT merge docker-compose.test.yml here: its `include:` of the base file
+	@# triggers GHA Compose "services.orchestrator conflicts with imported resource"
+	@# (same class as LUM-319 / LUM-60 doctor + web-e2e overlays). Pass C only needs
+	@# network topology from base + public-rc-stack + egress.
+	@COMPOSE_PROFILES=community-egress MOCK_CAPABILITY_SHARED_SECRET=lumogis-ci-mock-capability-placeholder \
 	  $(PYTHON) scripts/check_compose_policy.py \
 	  --project-directory "$(CURDIR)" \
-	  $$_EGRESS_COMPOSE \
+	  --core-file docker-compose.yml \
+	  --core-file docker-compose.public-rc-stack.yml --core-file docker-compose.egress.yml \
 	  --community-service lumogis-mock-capability
 	@echo "compose-policy-check-egress: PASSED"
 
@@ -168,13 +293,43 @@ compose-policy-check-egress:
 # host is reachable (spliced), a non-declared host is refused via a Squid deny,
 # and a proxy-bypass has no route (incl. IPv6). Runs the PoC-validated Squid
 # config (plan step 1). Requires Docker; ~1–2 min.
-egress-containment-test:
+egress-containment-test: check-pytest
 	$(PYTHON) -m pytest tests/integration/test_egress_containment.py -v --tb=short -m integration
+
+# LUM-625 — email-IMAP cooperative-audit egress: proxy splices a declared-host
+# CONNECT to 993 through to the real server, and refuses undeclared hosts /
+# non-993 ports / non-Core sources. Allowed-vs-denied is read off the peer
+# certificate, not the CONNECT status line, which under `ssl_bump peek` is 200
+# either way (LUM-763). Proves the audit layer, NOT that a dual-homed Core cannot
+# bypass the proxy (that is Layer 1). Requires Docker; ~1 min.
+egress-imap-test:
+	$(PYTHON) -m pytest tests/integration/test_email_imap_egress.py -v --tb=short -m integration
+
+# LUM-811 — LUM-810 pre-main gate: live IMAP + p95 + adversarial parse + Playwright.
+# Starts Greenmail when LUM811_IMAP_HOST is unset. Requires docker compose stack for e2e.
+verify-lum-811:
+	bash scripts/verify_lum_811.sh
+
+# LUM-572 — Layer-1 scoped egress guard against a REAL container environment.
+# build_allowlist derives from env vars AND DB state, and every other test supplies
+# both itself, so the guard's inputs are otherwise untested: a compose overlay that
+# renames a service or drops a variable silently yields an allowlist that is too
+# narrow (blocks local traffic) or too wide (permits egress it should stop).
+# Deliberately does NOT assert a route-level 503 — build_allowlist allowlists every
+# configured model's own endpoint, so that test cannot be built honestly. Requires
+# Docker; ~35s.
+egress-guard-test:
+	$(PYTHON) -m pytest tests/integration/test_egress_guard_compose.py -v --tb=short -m integration
 
 # LUM-621 — allow file must match declared external_endpoints (mock RC fixture).
 check-egress-acl-divergence:
 	$(PYTHON) -m scripts.gen_capability_egress_acl --check \
 		--id lumogis.mock.echo --endpoints example.com
+
+# LUM-625 — the email-IMAP Layer-2 Squid ACL wiring must not be silently dropped
+# (offline grep guard; complements the live make egress-imap-test).
+check-email-imap-egress-wiring:
+	$(PYTHON) scripts/check_email_imap_egress_wiring.py
 
 # LUM-613 — LUM-613 files must stay tethered-free (tethered DiD deferred to LUM-619).
 check-no-tethered-lum613:
@@ -209,6 +364,27 @@ check-site-pages: check-pytest ## Dry-run renderer + pytest harness for site pag
 coverage-matrix-check:
 	@node scripts/check-coverage-matrix.mjs
 
+# Ratchet against new duplicate ADR numbers in docs/decisions/ (two ADRs both
+# numbered 199 landed from parallel branches on 2026-08-02). Historical
+# duplicates are baselined in scripts/adr-duplicate-baseline.txt.
+adr-check:
+	@bash scripts/check-adr-numbering.sh
+
+# LUM-784 — core.fileMode=false makes git ignore exec bits, so a script committed
+# from a local checkout lands as 100644 and fails with "permission denied" on a
+# clean checkout. Reads modes from the index; sourced-only files are allowlisted
+# in scripts/exec-bit-allowlist.txt.
+exec-bit-check:
+	@bash scripts/check-exec-bits.sh
+
+# LUM-789 — report files origin/main changed that this tree does not have the change
+# for, so RC-cycle CI fixes stop stranding on the release line. Needs a FULL clone
+# (git fetch --unshallow) and a current origin/main; known dev-ahead paths are
+# retired in scripts/main-dev-drift-baseline.txt. Run after a promotion goes green
+# (/prepare-private-release-from-dev Step 10).
+main-dev-drift-check:
+	@bash scripts/check-main-dev-drift.sh
+
 verify-no-telemetry:
 	grep -r "posthog\|mixpanel\|amplitude" orchestrator/ && echo "FAIL: analytics library found" && exit 1 || echo "OK: no analytics libraries found"
 
@@ -219,19 +395,19 @@ compose-lint:
 	QDRANT_HOST_PORT=$${QDRANT_HOST_PORT:-6335} \
 	docker compose run --rm --entrypoint "" orchestrator \
 	  sh -c 'pip install -q -r /project/orchestrator/requirements-dev.txt && \
-	         ruff check /project/orchestrator/ && \
-	         ruff format --check /project/orchestrator/ && \
+	         ruff check /project/orchestrator/ /project/services/lumogis-graph/ && \
+	         ruff format --check /project/orchestrator/ /project/services/lumogis-graph/ && \
 	         python /project/scripts/check_refresh_token_jti_guard.py'
 
 compose-policy-check:
 	@python3 -c "import yaml" 2>/dev/null || \
 	  python3 -m pip install -q -r scripts/requirements-compose-policy.txt
 	MOCK_CAPABILITY_SHARED_SECRET=lumogis-ci-mock-capability-placeholder \
-	  $(PYTHON) scripts/check_compose_policy.py -f docker-compose.yml -f docker-compose.mock-capability.yml
+	  $(PYTHON) scripts/check_compose_policy.py --core-file docker-compose.yml -f docker-compose.mock-capability.yml
 	@python3 scripts/check_compose_policy.py \
 	  --project-directory "$(CURDIR)" \
-	  -f docker-compose.yml \
-	  -f docker-compose.ghcr.yml
+	  --core-file docker-compose.yml \
+	  --core-file docker-compose.ghcr.yml
 
 # ─── RC verification gates (LUM-225) ─────────────────────────────────────────
 # verify-public-rc: smoke gate — run before /publish-private-main-to-public.
@@ -245,6 +421,9 @@ compose-policy-check:
 # Set VERIFY_PUBLIC_RC_SKIP_WEB_E2E=1 in full mode to skip Playwright (discouraged).
 # Set LUMOGIS_RC_GRAPH_PARITY=1 in full mode to include test-graph-parity.
 
+caddy-keepalive-check: ## LUM-875 — live: POSTs through Caddy after ~5 s idle must not 502 (throwaway containers; ARGS="--around 75" etc.)
+	scripts/check-caddy-upstream-keepalive.sh $(ARGS)
+
 graph-relates-to-merge-policy-check: ## LUM-208 — AST-aware scan for invalid RELATES_TO MERGE shapes
 	$(PYTHON) scripts/check_graph_relates_to_merge_policy.py
 
@@ -255,15 +434,7 @@ m1-compat-with-retry: ## Live FalkorDB compat gate — e.g. FALKORDB_URL=redis:/
 verify-public-rc: ## RC gate (smoke) — run before /publish-private-main-to-public
 	@echo "==> verify-public-rc (smoke)"
 	scripts/check-main-hygiene.sh
-	$(MAKE) compose-lint
-	$(MAKE) compose-policy-check-baseline
 	$(MAKE) compose-policy-check
-	$(MAKE) compose-policy-check-adversarial
-	$(MAKE) compose-policy-check-adversarial-envfile
-	$(MAKE) compose-policy-check-community
-	$(MAKE) compose-policy-check-egress
-	$(MAKE) check-egress-acl-divergence
-	$(MAKE) check-no-tethered-lum613
 	$(MAKE) graph-relates-to-merge-policy-check
 	$(MAKE) compose-test
 	@if [ -z "$${VERIFY_PUBLIC_RC_SKIP_WEB_CODEGEN_CHECK:-}" ]; then \
@@ -321,7 +492,6 @@ verify-public-rc-full: ## Full RC gate — includes e2e and optional graph parit
 	@if [ "$${LUMOGIS_RC_GRAPH_PARITY:-0}" = "1" ]; then \
 	  $(MAKE) test-graph-parity; \
 	fi
-	$(MAKE) egress-containment-test
 	@echo "==> verify-public-rc-full PASSED"
 
 # Run unit tests inside the orchestrator container (does not require a running stack).
@@ -338,17 +508,18 @@ verify-public-rc-full: ## Full RC gate — includes e2e and optional graph parit
 # Force AUTH_ENABLED=false so host .env (e.g. local smoke / family-LAN) does not
 # leak into TestClient runs — most suites assume dev-mode auth unless they monkeypatch.
 # Orchestrator depends on Qdrant; avoid host port clash when dev stack already publishes Qdrant on 6334.
+# These targets pip install into the image, so they keep root (LUM-887).
 compose-test:
 	COMPOSE_FILE=docker-compose.yml \
 	QDRANT_HOST_PORT=$${QDRANT_HOST_PORT:-6335} \
-	docker compose run --rm -e AUTH_ENABLED=false -w /project/orchestrator orchestrator sh -c \
+	docker compose run --rm -e LUMOGIS_RUN_UID=0 -e AUTH_ENABLED=false -w /project/orchestrator orchestrator sh -c \
 	  "pip install -q -r requirements.txt && pip install -q -r requirements-dev.txt && python -m pytest tests -x -q"
 
 # Stack-control unit tests (mounts stack-control/; dev deps from stack-control/requirements-dev.txt).
 compose-test-stack-control:
 	COMPOSE_FILE=docker-compose.yml \
 	QDRANT_HOST_PORT=$${QDRANT_HOST_PORT:-6335} \
-	docker compose run --rm -v $(PWD)/stack-control:/sc:rw orchestrator sh -c \
+	docker compose run --rm -e LUMOGIS_RUN_UID=0 -v $(PWD)/stack-control:/sc:rw orchestrator sh -c \
 	  "pip install -q -r /sc/requirements-dev.txt && cd /sc && python -m pytest test_main.py -q"
 
 # Run integration tests (requires stack to be up; mounts repo-root tests/ into container).
@@ -361,11 +532,12 @@ compose-test-integration:
 	COMPOSE_FILE=docker-compose.yml:docker-compose.falkordb.yml \
 	QDRANT_HOST_PORT=$${QDRANT_HOST_PORT:-6335} \
 	docker compose run --rm \
+	  -e LUMOGIS_RUN_UID=0 \
 	  -e GRAPH_BACKEND=falkordb \
 	  -e FALKORDB_URL=redis://falkordb:6379 \
 	  -v $(PWD)/tests:/integration-tests:ro \
 	  orchestrator \
-	  sh -c "pip install -q -r /project/orchestrator/requirements-dev.txt && cd /project/orchestrator && PYTHONPATH=/project/services/lumogis-graph:. python -m pytest /integration-tests/integration tests/integration/test_entity_edges_reconcile_falkordb_live.py tests/integration/test_document_shared_entity_cascade_live.py tests/integration/test_document_shared_graph_recall_live.py tests/integration/test_document_entity_unshare_live.py tests/integration/test_document_reingest_entity_retraction_live.py -v --tb=short -m 'integration and not slow and not manual'"
+	  sh -c "pip install -q -r /project/orchestrator/requirements-dev.txt && cd /project/orchestrator && PYTHONPATH=/project/services/lumogis-graph:. python -m pytest /integration-tests/integration tests/integration/test_entity_edges_reconcile_falkordb_live.py tests/integration/test_entity_merge_edges_live.py tests/integration/test_document_shared_entity_cascade_live.py tests/integration/test_document_shared_graph_recall_live.py tests/integration/test_document_entity_unshare_live.py tests/integration/test_document_reingest_entity_retraction_live.py -v --tb=short -m 'integration and not slow and not manual'"
 
 compose-test-temporal-compose:
 	COMPOSE_FILE=docker-compose.yml:docker-compose.test.yml:docker-compose.public-rc-stack.yml \
@@ -414,6 +586,10 @@ test-backup-retention:
 test-backup-bgsave-wait:
 	bash tests/unit/test_backup_bgsave_wait.sh
 
+# LUM-892 — needs rsync + sha256sum on the host (apt install rsync)
+test-backup-files:
+	bash tests/unit/test_backup_files.sh
+
 # Phase 5 dev-only second capability (not part of default compose); see services/lumogis-mock-capability/README.md
 mock-capability-test:
 	cd services/lumogis-mock-capability && $(PYTHON) -m pip install -q -r requirements-dev.txt && $(PYTHON) -m pytest tests -q
@@ -440,7 +616,7 @@ audit-local:
 #     zap-baseline.py -t "https://<rc-base-url>/" -J zap-baseline-2026.json -I
 # Do not use deprecated Docker Hub owasp/zap2docker-stable; pin ghcr.io/zaproxy/zaproxy by digest for reproducibility.
 bandit-check:
-	@test -x "$(CURDIR)/.venv-bandit-check/bin/bandit" || ( $(PYTHON) -m venv "$(CURDIR)/.venv-bandit-check" && "$(CURDIR)/.venv-bandit-check/bin/pip" install -q -r scripts/requirements-security-audit.txt )
+	@test -x "$(CURDIR)/.venv-bandit-check/bin/bandit" || ( $(PYTHON) -m venv "$(CURDIR)/.venv-bandit-check" && "$(CURDIR)/.venv-bandit-check/bin/pip" install -q --require-hashes -r scripts/requirements-security-audit.txt )
 	-@"$(CURDIR)/.venv-bandit-check/bin/bandit" -r orchestrator/ -ll -ii
 
 # LUM-318 — RC-target OWASP ZAP baseline + update audit artefacts (after release / verify-public-rc-full).
@@ -452,9 +628,11 @@ web-audit-fix:
 	cd clients/lumogis-web && npm audit fix
 
 # Requires local venv (contributors only)
+# LUM-946 — services/lumogis-graph/ is linted with Core's settings (root
+# pyproject.toml); it had drifted while only orchestrator/ was checked.
 lint: check-pytest
-	ruff check orchestrator/
-	ruff format --check orchestrator/
+	ruff check orchestrator/ services/lumogis-graph/
+	ruff format --check orchestrator/ services/lumogis-graph/
 	@$(PYTHON) scripts/check_refresh_token_jti_guard.py
 
 # LUM-321 — fail fast when pytest is missing from $(PYTHON)'s environment.
@@ -467,17 +645,55 @@ check-pytest:
 # supplies a bearer token. Host shells often export AUTH_ENABLED=true from compose.
 test: check-pytest
 	$(MAKE) test-backup-retention
+	$(MAKE) test-backup-files
 	$(MAKE) test-backup-bgsave-wait
+	$(MAKE) test-env-unit
 	cd orchestrator && AUTH_ENABLED=false $(PYTHON) -m pytest -x -q
 	cd stack-control && $(PYTHON) -m pytest test_main.py -q
+	$(MAKE) --no-print-directory check-integration-hermeticity
+
+# LUM-894 — offline test environment (scripts/test-env.sh). Needs Docker only:
+# no local venv or node_modules. Tier 1 = test-runner image, no network;
+# tier 2 = plus throwaway Postgres/Qdrant/FalkorDB, removed after every run.
+test-env-unit:
+	bash tests/unit/test_test_env.sh
+
+test-env-build:
+	scripts/test-env.sh build
+
+test-env-test:
+	scripts/test-env.sh run --tier 1 -- make test
+
+# Every orchestrator/tests/integration module against real backends, with
+# LUMOGIS_REQUIRE_INTEGRATION_DB=1 (modules using the LUM-718 guard fail rather than skip).
+test-env-integration:
+	scripts/test-env.sh run --tier 2 -- bash -c 'cd orchestrator && python -m pytest tests/integration -q -rs'
+
+# LUM-542: recall latency at bank scale (1k/5k/10k synthetic memories) against
+# throwaway tier-2 Postgres + Qdrant; no network model. Not part of `make test`.
+#   make bench-recall BENCH_RECALL_MAX_P95_MS=200   # exit 1 if a p95 is above 200ms
+#   make bench-recall BENCH_RECALL_ARGS="--modes fusion --sizes 10000"
+BENCH_RECALL_SIZES ?= 1000,5000,10000
+BENCH_RECALL_QUERIES ?= 200
+BENCH_RECALL_MAX_P95_MS ?=
+BENCH_RECALL_JSON ?= target/bench-recall/latest.json
+BENCH_RECALL_ARGS ?=
+bench-recall:
+	scripts/test-env.sh run --tier 2 -- python3 orchestrator/benchmarks/recall_bench.py \
+	  --sizes $(BENCH_RECALL_SIZES) --queries $(BENCH_RECALL_QUERIES) \
+	  --json-out $(BENCH_RECALL_JSON) \
+	  $(if $(BENCH_RECALL_MAX_P95_MS),--max-p95-ms $(BENCH_RECALL_MAX_P95_MS)) \
+	  $(BENCH_RECALL_ARGS)
 
 # Requires local venv (contributors only). Uses orchestrator venv/deps.
 test-integration: check-pytest
-	cd orchestrator && $(PYTHON) -m pytest ../tests/integration -v --tb=short -m "integration and not slow"
+	cd orchestrator && $(PYTHON) -m pytest ../tests/integration -v --tb=short -m "integration and not slow and not restart_e2e"
 
-# Includes slow cases (e.g. wait for signal poll).
+# Includes slow cases (e.g. wait for signal poll). Still excludes ``restart_e2e``
+# (LUM-400) — that lane is ``make e2e-ingest-restart`` only; it recreates the
+# orchestrator and rewrites ``.env``.
 test-integration-full:
-	cd orchestrator && $(PYTHON) -m pytest ../tests/integration -v --tb=short -m integration
+	cd orchestrator && $(PYTHON) -m pytest ../tests/integration -v --tb=short -m "integration and not restart_e2e"
 
 # LUM-400 — disruptive live-stack proof: ingest_paths change + POST /settings/restart.
 # Requires Docker and scripts/integration-public-rc.sh RC stack (~3–5 min). Not part of
@@ -490,8 +706,62 @@ e2e-ingest-restart:
 	scripts/integration-public-rc.sh restart-e2e-pytest
 	scripts/integration-public-rc.sh gate-end
 
+# LUM-929 — live proof of the LUM-884 ingest-ownership change: test_graph.py and
+# test_integration_flow.py on the seeded RC stack (AUTH_ENABLED=true, a real
+# INBOX_OWNER_USER_ID, GRAPH_MODE=service, the extraction model pulled and warmed),
+# failing on any skip. About 15-40 min on CPU (LLM waits). Opt-in: NOT part of
+# verify-public-rc or test-integration. The RC port preflight covers only Core
+# (ORCHESTRATOR_HOST_PORT, default 8000) and the RC Qdrant (6335): a Qdrant on 6334 is
+# left alone, but a daily Core publishing 8000 is still stopped by gate-start (existing
+# behaviour). Evidence lands in .cache/lum929/.
+# No OLLAMA_SKIP_WAIT here, unlike e2e-ingest-restart: this lane needs the models.
+# Line 1 refuses (exit 2) before any container starts or .env is touched. Line 2 is one
+# shell line so gate-end runs even when gate-start fails.
+e2e-ingest-live:
+	scripts/integration-public-rc.sh ingest-live-preflight
+	set +e; scripts/integration-public-rc.sh gate-start && scripts/integration-public-rc.sh ingest-live-pytest; ec=$$?; scripts/integration-public-rc.sh gate-end; exit $$ec
+
+# LUM-808 — see the LUMOGIS_GPU block at the top of this file. The overlay is
+# included only when the NVIDIA container runtime is actually present, so a
+# GPU-less contributor gets a working stack and a one-line notice instead of a
+# device-driver error. `LUMOGIS_GPU=1` restores the old hard requirement.
 dev:
-	docker compose -f docker-compose.yml -f docker-compose.gpu.yml -f docker-compose.dev.yml up --build --pull always
+	@set -euo pipefail; \
+	if docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q '"nvidia"'; then \
+	  have_gpu=1; \
+	else \
+	  have_gpu=0; \
+	fi; \
+	gpu_file=""; \
+	case "$(LUMOGIS_GPU)" in \
+	  1) \
+	    if [ "$$have_gpu" != 1 ]; then \
+	      echo "make dev: LUMOGIS_GPU=1 but Docker has no 'nvidia' runtime." >&2; \
+	      echo "  Install nvidia-container-toolkit and load the driver (docs/guides/gpu-setup.md)," >&2; \
+	      echo "  or run without the GPU overlay: LUMOGIS_GPU=0 make dev" >&2; \
+	      exit 1; \
+	    fi; \
+	    gpu_file="-f docker-compose.gpu.yml"; \
+	    echo "make dev: GPU overlay ON (LUMOGIS_GPU=1)"; \
+	    ;; \
+	  0) \
+	    echo "make dev: GPU overlay OFF (LUMOGIS_GPU=0) — Ollama on CPU"; \
+	    ;; \
+	  *) \
+	    if [ "$$have_gpu" = 1 ]; then \
+	      gpu_file="-f docker-compose.gpu.yml"; \
+	      echo "make dev: NVIDIA runtime detected — GPU overlay ON"; \
+	    else \
+	      echo "make dev: no NVIDIA runtime in Docker — starting WITHOUT the GPU overlay (Ollama on CPU)."; \
+	      echo "  This is supported; the GPU is an optimisation. See docs/guides/gpu-setup.md to enable it,"; \
+	      echo "  or set LUMOGIS_GPU=1 to make its absence a hard error."; \
+	    fi; \
+	    ;; \
+	esac; \
+	bash scripts/update/rescue-captures.sh; \
+	bash scripts/update/rescue-stop-entities.sh; \
+	set -x; \
+	docker compose -f docker-compose.yml $$gpu_file -f docker-compose.dev.yml up --build --pull always
 
 # ─── lumogis-graph (out-of-process KG service) ────────────────────────────────
 
@@ -567,8 +837,7 @@ compose-test-temporal-eval:
 	  -e LUMOGIS_TEMPORAL_EVAL=1 \
 	  -e LUMOGIS_FF_TEMPORAL_KG=true \
 	  -e OLLAMA_URL=http://ollama:11434 \
-	  -e LUMOGIS_TEMPORAL_JUDGE_MODEL=llama \
-	  -e LUMOGIS_TEMPORAL_EXTRACT_MODEL=llama \
+	  -e MODELS_CONFIG=/project/orchestrator/tests/fixtures/models.temporal-eval.yaml \
 	  -e GRAPH_MODE=inprocess \
 	  orchestrator \
 	  -c "pip install -q -r /project/orchestrator/requirements.txt && pip install -q -r /project/orchestrator/requirements-dev.txt && cd /project/orchestrator && PYTHONPATH=/project/services/lumogis-graph:/project/orchestrator python -m pytest tests/premium/temporal_eval/test_contradiction_eval.py::test_contradiction_eval_runs_and_emits_report tests/premium/test_temporal_pipeline.py -q --tb=short"
@@ -583,10 +852,18 @@ test-kg:
 # the full stack twice) — not part of the default `test-integration`
 # target. Requires Docker. The test itself self-skips if `docker` is
 # not on PATH so contributors without Docker can still collect it.
+#
+# LUM-929 — runs in its own compose project (lumogis-parity) on its own host ports and
+# never touches another stack's volumes. The checkout's .env must be the test template
+# (a fresh worktree gets one here); the test refuses to run otherwise. Skips fail the run.
 test-graph-parity:
+	test -f .env || cp config/test.env.example .env
+	mkdir -p .cache/lum929
 	cd orchestrator && $(PYTHON) -m pytest \
-	  ../tests/integration/test_graph_parity.py -v --tb=short \
-	  -m 'integration and slow'
+	  ../tests/integration/test_graph_parity.py -v --tb=short -rs \
+	  --junitxml $(CURDIR)/.cache/lum929/parity-junit.xml \
+	  -m 'integration and slow and not manual'
+	python3 scripts/junit_skip_guard.py .cache/lum929/parity-junit.xml --min-tests 1
 
 # ─── Lumogis Web (clients/lumogis-web/) ──────────────────────────────────────
 # Phase 1 Pass 1.1 introduced the React + TypeScript SPA. These targets run
@@ -640,6 +917,7 @@ shellcheck-web-docker-build-paths:
 shellcheck-ci-paths:
 	@command -v shellcheck >/dev/null 2>&1 || (echo "shellcheck-ci-paths: shellcheck not on PATH. Install e.g. apt install shellcheck" >&2; exit 2)
 	shellcheck .github/scripts/web-e2e-paths.sh
+	shellcheck .github/scripts/web-checks-paths.sh
 	shellcheck .github/scripts/openapi-check-paths.sh
 	shellcheck .github/scripts/doctor-integration-paths.sh
 	shellcheck .github/scripts/backup-integration-paths.sh
@@ -698,8 +976,8 @@ prove-cursor-integration-full: seed-cursor-integration-fixture
 	@set -a && . ai-workspace/mcp/cursor-integration-full.env && set +a && \
 	  $(MAKE) test-cursor-integration-full
 
-# Optional extended Server targets when `Makefile.server.mk` is present.
--include Makefile.server.mk
+# Optional maintainer extension makefiles (`Makefile.<name>.mk` at the repo root), when present.
+-include $(sort $(wildcard Makefile.*.mk))
 
 # Playwright e2e (Phase 1 Pass 1.5; FP-046 me/admin shell spec included). Requires stack
 # + Caddy on PLAYWRIGHT_BASE_URL (default http://127.0.0.1) and
@@ -738,7 +1016,7 @@ web-e2e-ollama-prove:
 	  E2E_REQUIRE_CREDS=1 \
 	  LUMOGIS_E2E_EXPECT_ADMIN=1 \
 	  LUMOGIS_E2E_EXPECT_OLLAMA=1 \
-	  npx playwright test admin_ollama_mutations --workers=1
+	  npx playwright test admin_ollama_mutations capture-inbox-archive-live --workers=1
 
 # LUM-402 — overlay GUI E2E (WebdriverIO + tauri-driver) for the Lumogis Search Tauri
 # overlay. Linux + xvfb only (WebKitGTK WebDriver); needs webkit2gtk-driver + Rust + Node.
@@ -755,16 +1033,27 @@ overlay-e2e-smoke:
 # and fetches the Caddy service at http://caddy (set LUMOGIS_WEB_BASE_URL to override).
 # Skips if Caddy is unreachable unless LUMOGIS_CADDY_HEADER_PROVE=1 (then fails).
 web-caddy-headers:
-	docker compose run --rm -e LUMOGIS_WEB_BASE_URL=$${LUMOGIS_WEB_BASE_URL:-http://caddy} \
+	docker compose run --rm -e LUMOGIS_RUN_UID=0 -e LUMOGIS_WEB_BASE_URL=$${LUMOGIS_WEB_BASE_URL:-http://caddy} \
 	  -w /project/orchestrator orchestrator sh -c \
 	  "pip install -q -r requirements-dev.txt && python -m pytest ../tests/integration/test_caddy_security_headers.py -m integration -q"
 
 # Same as web-caddy-headers but fails when the front door is down (for automation).
 web-caddy-headers-prove:
-	docker compose run --rm -e LUMOGIS_CADDY_HEADER_PROVE=1 \
+	docker compose run --rm -e LUMOGIS_RUN_UID=0 -e LUMOGIS_CADDY_HEADER_PROVE=1 \
 	  -e LUMOGIS_WEB_BASE_URL=$${LUMOGIS_WEB_BASE_URL:-http://caddy} \
 	  -w /project/orchestrator orchestrator sh -c \
 	  "pip install -q -r requirements-dev.txt && python -m pytest ../tests/integration/test_caddy_security_headers.py -m integration -q"
+
+# Live: a spoofed X-Forwarded-For through Caddy must not mint new rate-limit buckets (LUM-887).
+caddy-client-ip-prove: ## Live: spoofed X-Forwarded-For through Caddy does not mint new rate-limit buckets (LUM-887)
+	docker compose run --rm -e LUMOGIS_RUN_UID=0 -e LUMOGIS_CADDY_CLIENT_IP_PROVE=1 \
+	  -e LUMOGIS_WEB_BASE_URL=$${LUMOGIS_WEB_BASE_URL:-http://caddy} \
+	  -w /project/orchestrator orchestrator sh -c \
+	  "pip install -q -r requirements-dev.txt && python -m pytest ../tests/integration/test_caddy_client_ip.py -m integration -q"
+
+# Static: the Caddyfile adapts, and LUMOGIS_CADDY_TRUSTED_PROXIES reaches trusted_proxies (LUM-887).
+caddy-config-check: ## Static: the Caddyfile adapts, and LUMOGIS_CADDY_TRUSTED_PROXIES reaches trusted_proxies (LUM-887)
+	bash scripts/check-caddy-config.sh
 
 # ─── Demo helpers ─────────────────────────────────────────────────────────────
 
@@ -776,5 +1065,5 @@ demo-test: ## Test all demo queries pass before recording
 
 demo-ready: demo-seed demo-test ## Full demo prep in one command
 
-linear-graph: ## Serve Linear backlog graph (paste lin_api_… key in browser)
-	bash scripts/serve-linear-graph.sh
+test-export-gates: ## Regression tests for the public-export gates (runner allowlist + personal-token scan)
+	bash scripts/test-public-export-gates.sh

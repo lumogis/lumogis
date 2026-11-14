@@ -4,25 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Lumogis Knowledge Graph</title>
-<!--
-  Cytoscape.js loaded from CDN.
-  For offline / air-gapped deployments, download the file and place it at
-  orchestrator/static/cytoscape.min.js, then change the src below to
-  "/static/cytoscape.min.js".  The fallback loader below also handles this.
--->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"
-        integrity="sha512-1qhH9fxNjz0GvRb/aTxdxmH3ysqMD+Jl8E1SBWDQ7PjZPWJEGHFpVJGu3xpFO5/eaOagQrLFGDFZ0rByPlhg=="
-        crossorigin="anonymous"
-        referrerpolicy="no-referrer"
-        onerror="loadCytoscapeLocal()">
-</script>
-<script>
-function loadCytoscapeLocal() {
-  var s = document.createElement('script');
-  s.src = '/static/cytoscape.min.js';
-  document.head.appendChild(s);
-}
-</script>
+<!-- Cytoscape.js 3.28.1 (MIT), vendored in static/vendor/ (notices:
+     static/vendor/LICENSES.md) and served same-origin by GET /graph/assets/{name}.
+     No third-party request, so the page also works offline / air-gapped (LUM-941). -->
+<script src="/graph/assets/cytoscape-3.28.1.min.js"
+        integrity="sha384-J7Q85oZE4GJ/e7+n2aOQsLXfDwwfnA8S2nZAL5BpFsfpCF84zQD7LroZ/dMnLgex"></script>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48' fill='none'%3E%3Ccircle cx='24' cy='24' r='11' fill='%23E8632A' opacity='0.12'/%3E%3Ccircle cx='24' cy='24' r='8.5' fill='%23FDE8D8' opacity='0.55'/%3E%3Ccircle cx='24' cy='24' r='5.5' fill='%23E8632A'/%3E%3Ccircle cx='24' cy='24' r='2.6' fill='%23FDE8D8'/%3E%3C/svg%3E">
 <style>
 :root {

@@ -55,7 +55,7 @@ Any skipped checklist row must be marked **N/A** with a **one-line reason** in t
 
 Manual behaviours map to **MS-###** IDs cited in [TEST-COVERAGE-MATRIX-core.md](testing/TEST-COVERAGE-MATRIX-core.md) and sibling matrices ([testing README](testing/README.md)).
 
-**Hub code-signing** rows (`4.2.4`, `4.2.5` in the private Hub matrix) remain **`MS-TBD pending LUM-408`** until a signing procedure is documented.
+**Hub code-signing** rows (`4.2.4`, `4.2.5` in the Hub matrix) remain **`MS-TBD pending LUM-408`** until a signing procedure is documented.
 
 ## Related docs
 

@@ -35,8 +35,58 @@ def parse_state_lines(text: str) -> list[tuple[str, str]]:
     return pairs
 
 
-def render_override_yaml(pairs: list[tuple[str, str]]) -> str:
-    """Render compose override YAML pinning each service image."""
+_CAPTURE_ENV_KEYS = ("CAPTURE_MEDIA_ROOT", "LUMOGIS_DATA_DIR")
+_STOP_ENTITIES_ENV_KEYS = ("STOP_ENTITIES_PATH",)
+_STOP_ENTITIES_PIN = "/workspace/config/stop_entities.txt"
+
+
+def _env_sets_any(env_file: Path | None, keys: tuple[str, ...]) -> bool:
+    """True when the env file gives one of ``keys`` a value.
+
+    A blank value counts as unset, and so does a missing file.
+    """
+    if env_file is None:
+        return False
+    try:
+        text = env_file.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        if key.strip() in keys and value.strip().strip("\"'").strip():
+            return True
+    return False
+
+
+def env_sets_capture_root(env_file: Path | None) -> bool:
+    """True when the env file gives ``CAPTURE_MEDIA_ROOT`` or ``LUMOGIS_DATA_DIR`` a value (LUM-892)."""
+    return _env_sets_any(env_file, _CAPTURE_ENV_KEYS)
+
+
+def env_sets_stop_entities_path(env_file: Path | None) -> bool:
+    """True when the env file gives ``STOP_ENTITIES_PATH`` a value (LUM-922)."""
+    return _env_sets_any(env_file, _STOP_ENTITIES_ENV_KEYS)
+
+
+def render_override_yaml(
+    pairs: list[tuple[str, str]],
+    *,
+    pin_capture_root: bool = False,
+    pin_stop_entities: bool = False,
+) -> str:
+    """Render compose override YAML pinning each service image.
+
+    ``pin_capture_root`` adds ``CAPTURE_MEDIA_ROOT=/workspace/captures`` to the
+    orchestrator: a pre-LUM-892 image defaults to an unmounted path and would
+    neither see the captures in the workspace nor keep new ones (LUM-892).
+
+    ``pin_stop_entities`` adds ``STOP_ENTITIES_PATH`` for the same reason: a
+    pre-LUM-922 image reads the list shipped inside it and would neither see the
+    admin's list in the workspace nor keep edits made after the rollback.
+    """
     if not pairs:
         raise ValueError("no service/image pairs to pin")
 
@@ -49,15 +99,28 @@ def render_override_yaml(pairs: list[tuple[str, str]]) -> str:
         lines.append(f"  {service}:")
         lines.append(f"    image: {ref}")
         lines.append("    build: !reset null")
+        if service == "orchestrator" and (pin_capture_root or pin_stop_entities):
+            lines.append("    environment:")
+            if pin_capture_root:
+                lines.append("      CAPTURE_MEDIA_ROOT: /workspace/captures")
+            if pin_stop_entities:
+                lines.append(f"      STOP_ENTITIES_PATH: {_STOP_ENTITIES_PIN}")
     lines.append("")
     return "\n".join(lines)
 
 
-def write_rollback_override(state_path: Path, out_path: Path) -> int:
+def write_rollback_override(state_path: Path, out_path: Path, env_file: Path | None = None) -> int:
     pairs = parse_state_lines(state_path.read_text(encoding="utf-8"))
     if not pairs:
         return 1
-    out_path.write_text(render_override_yaml(pairs), encoding="utf-8")
+    out_path.write_text(
+        render_override_yaml(
+            pairs,
+            pin_capture_root=not env_sets_capture_root(env_file),
+            pin_stop_entities=not env_sets_stop_entities_path(env_file),
+        ),
+        encoding="utf-8",
+    )
     return 0
 
 
@@ -65,9 +128,17 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("state_file", type=Path, help="TSV rollback state (service, image, ref)")
     parser.add_argument("out_file", type=Path, help="Output rollback-compose.override.yml path")
+    parser.add_argument(
+        "--env-file",
+        type=Path,
+        default=None,
+        help="the install's .env; the capture root is pinned only if it sets neither "
+        "CAPTURE_MEDIA_ROOT nor LUMOGIS_DATA_DIR (LUM-892), the stop-entities list only "
+        "if it does not set STOP_ENTITIES_PATH (LUM-922)",
+    )
     args = parser.parse_args(argv)
     try:
-        return write_rollback_override(args.state_file, args.out_file)
+        return write_rollback_override(args.state_file, args.out_file, env_file=args.env_file)
     except (OSError, ValueError) as exc:
         print(f"write_rollback_override: {exc}", file=sys.stderr)
         return 1

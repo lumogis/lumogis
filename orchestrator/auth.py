@@ -61,12 +61,50 @@ def auth_enabled() -> bool:
     return os.environ.get("AUTH_ENABLED", "false").strip().lower() == "true"
 
 
-def access_token_ttl_seconds() -> int:
-    raw = os.environ.get("ACCESS_TOKEN_TTL_SECONDS", "900")
+# Access-token lifetime bounds (LUM-918, security audit #2 ID-009). An access
+# JWT cannot be recalled before ``exp`` by anything that does not consult
+# Postgres (the KG service, and Core itself for a single-session revoke while
+# ``LUMOGIS_REQUIRE_SID_REVOCATION_CHECK`` is off), so its lifetime is capped.
+# The Web client refreshes on 401, so a shorter lifetime costs one refresh.
+ACCESS_TOKEN_TTL_DEFAULT_SECONDS = 900
+ACCESS_TOKEN_TTL_MIN_SECONDS = 60
+ACCESS_TOKEN_TTL_MAX_SECONDS = 3600
+
+
+def _access_token_ttl_requested() -> int:
+    """The configured ``ACCESS_TOKEN_TTL_SECONDS`` before clamping."""
+    raw = os.environ.get("ACCESS_TOKEN_TTL_SECONDS", str(ACCESS_TOKEN_TTL_DEFAULT_SECONDS))
     try:
-        return max(60, int(raw))
+        return int(raw)
     except ValueError:
-        return 900
+        return ACCESS_TOKEN_TTL_DEFAULT_SECONDS
+
+
+def access_token_ttl_seconds() -> int:
+    """Access-JWT lifetime, clamped to ``[60, 3600]`` seconds (LUM-918)."""
+    return min(
+        ACCESS_TOKEN_TTL_MAX_SECONDS,
+        max(ACCESS_TOKEN_TTL_MIN_SECONDS, _access_token_ttl_requested()),
+    )
+
+
+def warn_if_access_token_ttl_clamped() -> bool:
+    """Log a boot WARNING when ``ACCESS_TOKEN_TTL_SECONDS`` exceeds the cap.
+
+    Returns True when the warning fired. Called once from the lifespan.
+    """
+    requested = _access_token_ttl_requested()
+    if requested <= ACCESS_TOKEN_TTL_MAX_SECONDS:
+        return False
+    _log.warning(
+        "ACCESS_TOKEN_TTL_SECONDS=%d is above the maximum of %d seconds; access "
+        "tokens will expire after %d seconds. Clients refresh automatically. "
+        "Lower the value in .env to silence this warning (LUM-918).",
+        requested,
+        ACCESS_TOKEN_TTL_MAX_SECONDS,
+        ACCESS_TOKEN_TTL_MAX_SECONDS,
+    )
+    return True
 
 
 def refresh_token_ttl_seconds() -> int:
@@ -78,8 +116,13 @@ def refresh_token_ttl_seconds() -> int:
 
 
 def require_tv_claim() -> bool:
-    raw = os.environ.get("LUMOGIS_REQUIRE_TV_CLAIM", "false").strip().lower()
-    return raw in ("true", "1", "yes")
+    """Reject an access JWT that carries no ``tv`` claim. Default **on** (LUM-918).
+
+    Every production mint (login and refresh, ``routes/auth._login_response``)
+    sets ``tv``. Only ``false`` / ``0`` / ``no`` turns it off.
+    """
+    raw = os.environ.get("LUMOGIS_REQUIRE_TV_CLAIM", "true").strip().lower()
+    return raw not in ("false", "0", "no")
 
 
 def token_version_cache_ttl_seconds() -> int:
@@ -91,6 +134,17 @@ def token_version_cache_ttl_seconds() -> int:
 
 
 def require_sid_revocation_check() -> bool:
+    """Per-request ``sid`` revocation lookup. Default **off** (kept off by LUM-918).
+
+    Not safe to default on yet: ``rotate_refresh`` revokes the presented
+    ``auth_sessions`` row and mints the access token for a new row, so with
+    this check on, a refresh in one browser tab invalidates the access token
+    held in memory by every other tab on the same refresh cookie. The tabs then
+    refresh in turn, and two refreshes of one cookie at the same moment end in
+    a 401 that clears the cookie (or in reuse detection, which revokes the
+    family). Defaulting on needs the check to ask whether the ``sid``'s
+    family still has a live row, not whether that exact row is live.
+    """
     raw = os.environ.get("LUMOGIS_REQUIRE_SID_REVOCATION_CHECK", "false").strip().lower()
     return raw in ("true", "1", "yes")
 
@@ -337,25 +391,30 @@ def _access_secret() -> str:
     return os.environ.get("AUTH_SECRET", "").strip()
 
 
+ACCESS_TOKEN_TYP = "access"
+REFRESH_TOKEN_TYP = "refresh"
+
+
 def _refresh_secret() -> str:
     """Refresh-token signing secret.
 
-    Resolution order, first non-empty wins:
+    Resolution order, first non-empty wins (two sources, **no fallback**):
 
     1. ``LUMOGIS_JWT_REFRESH_SECRET`` — Lumogis-only, lets operators keep
        a separate secret from LibreChat. **Preferred for new installs.**
     2. ``JWT_REFRESH_SECRET`` — historical name, also used by LibreChat.
-       Kept for backward-compatibility so single-secret deployments
-       continue to work.
-    3. ``AUTH_SECRET`` — dev-mode fallback only. The entrypoint refuses
-       to boot in family-LAN mode if no refresh secret is set, so this
-       branch is never reached in production.
+
+    Returns ``""`` when neither is set. There is deliberately no fallback to
+    ``AUTH_SECRET`` (LUM-885): a refresh secret equal to the access secret lets
+    a refresh JWT pass as an access token. With ``AUTH_ENABLED=true``,
+    ``main._enforce_auth_consistency`` refuses a missing or placeholder
+    secret, or one equal to ``AUTH_SECRET``.
     """
     for var in ("LUMOGIS_JWT_REFRESH_SECRET", "JWT_REFRESH_SECRET"):
         s = os.environ.get(var, "").strip()
         if s:
             return s
-    return os.environ.get("AUTH_SECRET", "").strip()
+    return ""
 
 
 def mint_access_token(
@@ -391,6 +450,7 @@ def mint_access_token(
         "role": role,
         "iat": now,
         "exp": now + access_token_ttl_seconds(),
+        "typ": ACCESS_TOKEN_TYP,
     }
     if session_id is not None and token_version is not None:
         payload["sid"] = session_id
@@ -415,6 +475,7 @@ def mint_refresh_token(user_id: str, jti: str) -> str:
         "jti": jti,
         "iat": now,
         "exp": now + refresh_token_ttl_seconds(),
+        "typ": REFRESH_TOKEN_TYP,
     }
     return jwt.encode(payload, secret, algorithm="HS256")
 
@@ -425,15 +486,24 @@ def verify_token(token: str) -> dict | None:
     Returns the payload dict (containing at least ``sub``; ``role`` may be
     absent in legacy tokens — callers default to ``user``) or ``None`` on
     any verification failure.
+
+    The payload must carry ``typ == "access"`` (LUM-885). A refresh JWT, or a
+    token without ``typ``, is rejected even when signed with the same secret,
+    so a refresh cookie can never be presented as a Bearer. A typ-less access
+    token gets 401, which the Web client's 401 → refresh → retry absorbs.
     """
     secret = _access_secret()
     if not secret:
         _log.warning("AUTH_ENABLED=true but AUTH_SECRET is not set")
         return None
     try:
-        return jwt.decode(token, secret, algorithms=["HS256"])
+        payload = jwt.decode(token, secret, algorithms=["HS256"])
     except jwt.InvalidTokenError:
         return None
+    if not isinstance(payload, dict) or payload.get("typ") != ACCESS_TOKEN_TYP:
+        _log.debug("verify_token: rejected token without typ=access")
+        return None
+    return payload
 
 
 def verify_refresh_token(token: str) -> dict | None:
@@ -450,9 +520,17 @@ def verify_refresh_token(token: str) -> dict | None:
         )
         return None
     try:
-        return jwt.decode(token, secret, algorithms=["HS256"])
+        payload = jwt.decode(token, secret, algorithms=["HS256"])
     except jwt.InvalidTokenError:
         return None
+    # LUM-885: a missing typ is tolerated so refresh JWTs minted before this
+    # release keep working (they are bound to their auth_sessions row by hash).
+    # Drop the None branch one REFRESH_TOKEN_TTL_SECONDS (default 30 days) after
+    # the release that ships LUM-885.
+    if not isinstance(payload, dict) or payload.get("typ") not in (None, REFRESH_TOKEN_TYP):
+        _log.debug("verify_refresh_token: rejected token with wrong typ")
+        return None
+    return payload
 
 
 # Module-level latch for the multi-user CRITICAL log line so it fires
@@ -677,6 +755,12 @@ _AUTH_BYPASS_PREFIXES: tuple[str, ...] = (
     "/api/v1/auth/refresh",
     "/api/v1/auth/logout",
     "/api/v1/invites",
+    # LUM-65: forgot-password is by definition reachable only by someone who
+    # cannot authenticate. Both routes do their own gating — the reset pair is
+    # Altcha + rate-limited and 503s unless an admin has proven SMTP, and the
+    # challenge endpoint hands out nothing but a proof-of-work puzzle.
+    "/api/v1/password-reset",
+    "/api/v1/altcha",
     "/healthz",
     "/bundled/start-library-index",
     "/web",
@@ -717,6 +801,10 @@ async def auth_middleware(request: Request, call_next):
         rejection = _check_mcp_bearer(request)
         if rejection is not None:
             return rejection
+        # LUM-885: this UserContext is synthetic (user_id="default", role="admin")
+        # and is NOT the caller's identity. MCP tools resolve identity via
+        # mcp_server._resolve_user_id and must never read ctx.role. A tool that
+        # needs role must resolve it from the token owner first.
         request.state.user = UserContext()
         # Phase 3.1 — make the inbound Bearer visible to MCP tool handlers
         # via the per-request ContextVar in mcp_server. The handler runs

@@ -16,8 +16,6 @@ from __future__ import annotations
 import logging
 from contextlib import contextmanager
 
-import psycopg2
-
 import config
 
 _log = logging.getLogger(__name__)
@@ -43,8 +41,11 @@ def share_document_lock(document_id: int):
     conn = None
     try:
         store = config.get_metadata_store()
-        conn = psycopg2.connect(**store._dsn)
-        conn.autocommit = True
+        # `new_lock_connection()` rather than `psycopg2.connect(**store._dsn)`:
+        # the DSN is the adapter's business, and this connection is deliberately
+        # outside the pool (LUM-816 decision 5) — closing it is what releases the
+        # advisory lock if the explicit unlock below is ever lost.
+        conn = store.new_lock_connection()
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT pg_advisory_lock(%s::integer, %s::integer)",

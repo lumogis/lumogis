@@ -233,3 +233,50 @@ def test_egress_guard_disabled_does_not_alter_privacy_gate(privacy_store, monkey
     with patch("services.privacy_mode.record_privacy_block"):
         with pytest.raises(PrivacyModeBlocked):
             config.get_llm_provider("claude", user_id="default")
+
+
+# ---------------------------------------------------------------------------
+# LUM-881 — disabled_reason against the real privacy store
+# ---------------------------------------------------------------------------
+
+
+def test_reason_privacy_mode_for_keyless_remote_under_local_only(privacy_store):
+    assert config.model_disabled_reason("remote_no_key") == "privacy_mode"
+
+
+def test_reason_none_for_keyless_remote_under_allow_cloud(privacy_store):
+    privacy_store.app_settings["privacy_mode"] = "allow_cloud"
+    assert config.model_disabled_reason("remote_no_key") is None
+
+
+def test_reason_privacy_mode_from_user_restriction(privacy_store, monkeypatch):
+    privacy_store.app_settings["privacy_mode"] = "allow_cloud"
+    privacy_store.privacy_user["alice"] = "local_only"
+    monkeypatch.setattr("auth.auth_enabled", lambda: True)
+    assert config.model_disabled_reason("remote_no_key", user_id="alice") == "privacy_mode"
+
+
+def test_models_route_end_to_end_reasons(privacy_store, monkeypatch):
+    """The one route test with nothing reason-related patched: real
+    ``model_disabled_reason`` and real ``blocks_remote_models`` against the store."""
+    import main
+    from fastapi.testclient import TestClient
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("AUTH_ENABLED", "false")
+    with TestClient(main.app) as client:
+
+        def reasons() -> dict:
+            body = client.get("/api/v1/models").json()
+            for d in body["models"]:
+                assert (d["disabled_reason"] is None) == d["enabled"]
+            return {d["id"]: d["disabled_reason"] for d in body["models"]}
+
+        local_only = reasons()
+        assert local_only["remote_no_key"] == "privacy_mode"
+        assert local_only["llama"] is None
+        assert local_only["claude"] == "no_credentials"
+
+        privacy_store.app_settings["privacy_mode"] = "allow_cloud"
+        assert reasons()["remote_no_key"] is None

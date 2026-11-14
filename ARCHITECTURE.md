@@ -55,7 +55,7 @@ The default `docker-compose.yml` runs **Caddy** (host **80** / **443**), **`lumo
 
 **Routing (Caddy → upstream):** `/api/*`, `/events`, `/v1/*`, `/mcp/*`, `/health`, and root-mounted **legacy** orchestrator routes from `routes/admin.py` (e.g. `/dashboard`, `/settings`, `/graph/*`, `/kg/*`, `/review-queue`, `/backup`, `/restore`, `/permissions`, `/browse`, `/export`, `/entities/*`) go to `orchestrator:8000` **before** the catch-all to `lumogis-web:80`. The SPA’s nginx `try_files` would otherwise return `index.html` for those paths and hide the FastAPI pages.
 
-**Operators:** set `LUMOGIS_PUBLIC_ORIGIN` to the browser’s canonical URL when `AUTH_ENABLED=true`; set `LUMOGIS_TRUSTED_PROXIES` for `X-Forwarded-For` when a reverse proxy is in front. See `.env.example` and root `README.md`.
+**Operators:** set `LUMOGIS_PUBLIC_ORIGIN` to the browser’s canonical URL when `AUTH_ENABLED=true`; compose trusts only the Caddy container for `X-Forwarded-For` (`LUMOGIS_TRUSTED_PROXIES=caddy`); upstream proxies in front of Caddy go in `LUMOGIS_CADDY_TRUSTED_PROXIES`. See `.env.example` and root `README.md`.
 
 ---
 

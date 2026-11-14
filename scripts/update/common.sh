@@ -46,10 +46,26 @@ capture_rollback_state() {
     return 0
   fi
 
-  if ! python3 "$write_script" "$state_file" "$override_file"; then
+  if ! python3 "$write_script" "$state_file" "$override_file" --env-file "${ROOT:-.}/.env"; then
     die "failed to write rollback compose override"
   fi
   log "wrote rollback override -> $override_file"
+}
+
+# The orchestrator's health URL on this host. Asks compose for the published
+# port, so ORCHESTRATOR_HOST_PORT (environment or .env) and override files are
+# honoured; a hard-coded :8000 failed every update on a moved port (LUM-900).
+# LUMOGIS_HEALTH_URL still wins. Call it after `docker compose up`.
+orchestrator_health_url() {
+  if [[ -n "${LUMOGIS_HEALTH_URL:-}" ]]; then
+    printf '%s\n' "$LUMOGIS_HEALTH_URL"
+    return 0
+  fi
+  local addr port
+  addr="$(docker compose port orchestrator 8000 2>/dev/null | head -1 || true)"
+  port="${addr##*:}"
+  [[ "$port" =~ ^[0-9]+$ ]] || port=8000
+  printf 'http://127.0.0.1:%s/healthz\n' "$port"
 }
 
 # Wait for /healthz then verify migrations applied and boot did not log migration errors.

@@ -10,7 +10,15 @@ import userEvent from "@testing-library/user-event";
 
 import { ApiClient } from "../../src/api/client";
 import { AccessTokenStore } from "../../src/api/tokens";
-import { AuthProvider, RequireAuth, useAuth, useUser } from "../../src/auth/AuthProvider";
+import {
+  AuthProvider,
+  RequireAuth,
+  SIGN_IN_OFF_LOGIN_COPY,
+  humaniseLoginError,
+  useAuth,
+  useUser,
+} from "../../src/auth/AuthProvider";
+import { TURN_ON_SIGN_IN_DOC_URL } from "../../src/components/SingleUserBanner";
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -260,5 +268,45 @@ describe("AuthProvider — onAuthExpired wiring", () => {
       expect(screen.getByLabelText(/email/i)).toBeInTheDocument();
     });
     expect(tokens.get()).toBeNull();
+  });
+});
+
+describe("LoginForm — sign-in turned off (LUM-853)", () => {
+  it("C5 auth-off login 503 says so and links to how to turn sign-in on", async () => {
+    const tokens = new AccessTokenStore();
+    // Core could not be asked at boot (for example it was still starting): refresh 401, me 401.
+    const fetchImpl = vi.fn(async () => jsonResponse(401, { detail: "x" }));
+    const client = new ApiClient({ tokens, fetchImpl: fetchImpl as unknown as typeof fetch });
+    let loginAnswer = () =>
+      jsonResponse(503, { detail: "login is disabled in single-user dev mode" });
+    globalThis.fetch = vi.fn(async () => loginAnswer()) as unknown as typeof fetch;
+
+    render(
+      <AuthProvider client={client} tokens={tokens}>
+        <RequireAuth>
+          <MeProbe />
+        </RequireAuth>
+      </AuthProvider>,
+    );
+    await waitFor(() => screen.getByLabelText(/email/i));
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText(/email/i), "a@home.lan");
+    await user.type(screen.getByLabelText(/password/i), "correct-horse-battery");
+    await user.click(screen.getByRole("button", { name: /sign in/i }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe(SIGN_IN_OFF_LOGIN_COPY);
+    expect(screen.getByRole("link", { name: "How to turn on sign-in" }).getAttribute("href")).toBe(
+      TURN_ON_SIGN_IN_DOC_URL,
+    );
+
+    loginAnswer = () => jsonResponse(401, { detail: "invalid credentials" });
+    await user.click(screen.getByRole("button", { name: /sign in/i }));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toBe("Email or password is incorrect."));
+    expect(screen.queryByRole("link", { name: "How to turn on sign-in" })).toBeNull();
+  });
+
+  it("C5b humaniseLoginError maps the auth-off 503 to the new copy", () => {
+    expect(humaniseLoginError(503, "login is disabled in single-user dev mode")).toBe(SIGN_IN_OFF_LOGIN_COPY);
   });
 });

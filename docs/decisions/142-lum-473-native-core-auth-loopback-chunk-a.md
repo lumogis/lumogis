@@ -34,7 +34,7 @@ Work was planned, verified on `origin/claude/lum-473-native-core-multiuser-lan-b
 
 Concrete as-built surface:
 
-- **App (`apps/lumogis-server`):**
+- **App (Lumogis Server appliance):**
   - `SharingState` (`Off` / `Pending` / `On`) in `server-profile.json` — commit-after-verify: `On` only after a healthy auth boot proves admin seeding (`sharing.rs`, `supervisor.rs`).
   - On enable: mint `AUTH_SECRET`, Fernet `LUMOGIS_CREDENTIAL_KEY`, bootstrap admin email/password (password in supervisor memory only while `Pending`).
   - UI: `householdSharing.ts` + tests for first-enable flow.
@@ -84,7 +84,7 @@ Concrete as-built surface:
 | Item | Detail |
 | --- | --- |
 | Tests added/changed | `test_auth_phase1.py` (exposure guard), `test_default_user_remap_target.py`, `householdSharing.test.ts`, Rust unit tests in `sharing.rs` |
-| Commands | `.venv/bin/python -m pytest orchestrator/tests/test_auth_phase1.py orchestrator/tests/test_default_user_remap_target.py` (84 passed); `orchestrator/tests/integration/test_two_user_isolation.py` (7 passed); `apps/lumogis-server npm test` (41 passed); live `lumogis-test` stack `/healthz` on `:8000` |
+| Commands | `.venv/bin/python -m pytest orchestrator/tests/test_auth_phase1.py orchestrator/tests/test_default_user_remap_target.py` (84 passed); `orchestrator/tests/integration/test_two_user_isolation.py` (7 passed); appliance UI `npm test` (41 passed); live `lumogis-test` stack `/healthz` on `:8000` |
 | Full orchestrator | 836 passed, 1 failed (`test_check_coverage_matrix_script.py` — pre-existing matrix drift, unrelated to LUM-473), 25 skipped |
 | Gaps | LUM-307 full-stack integration CI-gated on branch; Rust integration not run locally (CI gate); coverage matrix rows deferred to dev-merge |
 | Follow-ups | Chunk B integration; LUM-548 transport; wire On-state owner-UUID resolution |
@@ -93,3 +93,4 @@ Concrete as-built surface:
 ## Status history
 
 - 2026-06-29: Finalised by /record-retro (Chunk A merged to `dev` at `294b069ce`).
+- 2026-11-10: public-boundary wording (LUM-898).

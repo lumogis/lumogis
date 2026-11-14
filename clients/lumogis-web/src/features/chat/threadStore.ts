@@ -13,6 +13,8 @@
 // `useChatThreads` hook below), not inside the reducer, so reducer outputs
 // stay deterministic.
 //
+// Cleared on sign-out by `auth/clientStateBoundary.ts` (`clearPersistedThreads`).
+//
 // Why sessionStorage and not localStorage:
 //
 //  * sessionStorage is per-tab — opening Lumogis in two tabs gives two
@@ -298,6 +300,19 @@ export function createSessionPersistence(
       }
     },
   };
+}
+
+/**
+ * Remove the persisted thread mirror (LUM-886). Returns `true` on success or when
+ * there is no storage to clear, `false` when the removal threw.
+ */
+export function clearPersistedThreads(storage: Storage | null = readableSessionStorage()): boolean {
+  try {
+    storage?.removeItem(SESSION_STORAGE_KEY);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function readableSessionStorage(): Storage | null {

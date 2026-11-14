@@ -9,6 +9,7 @@ Security:
 - Runs as non-root inside the container.
 """
 
+import hmac
 import json
 import logging
 import os
@@ -117,7 +118,8 @@ def _check_token(request: Request) -> None:
     if not secret:
         raise HTTPException(status_code=503, detail="RESTART_SECRET not configured on server.")
     token = request.headers.get("X-Lumogis-Restart-Token", "")
-    if token != secret:
+    # Constant-time compare on bytes: a non-ASCII header must not raise (500).
+    if not hmac.compare_digest(token.encode("utf-8"), secret.encode("utf-8")):
         raise HTTPException(status_code=403, detail="Invalid or missing restart token.")
 
 

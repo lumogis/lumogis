@@ -32,6 +32,12 @@ export default defineConfig({
       name: "chromium",
       testIgnore: [
         "**/demo/**",
+        // Its own lane: playwright.screenshots.config.ts (`make web-screenshots`).
+        // testDir is ./tests/e2e, which otherwise swallows this subdirectory and
+        // makes the default e2e run rewrite all 15 tracked branding/screenshots
+        // PNGs as a side effect — test output landing in a `git status` as if it
+        // were a real change.
+        "**/screenshots/**",
         "**/me_admin_mobile_shell.spec.ts",
         "**/admin_users_mobile.spec.ts",
         "**/phase_2b_mobile_surfaces.spec.ts",
@@ -41,6 +47,8 @@ export default defineConfig({
         "**/admin_ollama_mutations.spec.ts",
         "**/chat-degradation.spec.ts",
         "**/chat-sidebar-mobile.spec.ts",
+        "**/privacy_mode_hint.spec.ts",
+        "**/chat_library_empty.spec.ts",
       ],
     },
     {
@@ -55,6 +63,8 @@ export default defineConfig({
         "**/admin_ollama_mutations.spec.ts",
         "**/chat-degradation.spec.ts",
         "**/chat-sidebar-mobile.spec.ts",
+        "**/privacy_mode_hint.spec.ts",
+        "**/chat_library_empty.spec.ts",
       ],
       fullyParallel: false,
       workers: 1,

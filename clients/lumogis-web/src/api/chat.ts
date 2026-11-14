@@ -45,8 +45,19 @@ export interface DocumentCitationDTO {
   score_kind: string;
 }
 
+/**
+ * Transient stream status (LUM-876). Not part of the answer: show it while the
+ * assistant bubble is empty and drop it when the first token arrives. Sent on
+ * an empty-delta chunk, e.g. when a cold local model is loading.
+ */
+export interface LumogisStreamStatus {
+  code: string;
+  message: string;
+}
+
 export interface LumogisChatExtensions {
   context_citations?: DocumentCitationDTO[];
+  status?: LumogisStreamStatus;
 }
 
 /**

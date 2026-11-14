@@ -16,9 +16,14 @@ import {
   useLocation,
   useNavigate,
 } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 
 import { AuthAdminRouteRefetch } from "./auth/AuthAdminRouteRefetch";
-import { AuthProvider, RequireAuth, useUser } from "./auth/AuthProvider";
+import { AuthProvider, RequireAuth, useAuth, useUser } from "./auth/AuthProvider";
+import { listSources } from "./api/emailSources";
+import { EmailAttachmentsPage } from "./features/email/EmailAttachmentsPage";
+import { EmailInboxView } from "./features/email/EmailInboxView";
+import { isEmailActivated, readCachedEmailActivated, writeCachedEmailActivated } from "./features/email/activation";
 import { AppShell } from "./components/AppShell";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
 import { NAV_ITEMS, type NavItem } from "./components/BottomNav";
@@ -29,6 +34,9 @@ import { MePage } from "./features/me/MePage";
 import { MeAppearanceView } from "./features/me/MeAppearanceView";
 import { MeProfileView } from "./features/me/MeProfileView";
 import { MeConnectorsView } from "./features/me/MeConnectorsView";
+import { SourcesView } from "./features/me/SourcesView";
+import { MeEmailLabelsView } from "./features/me/MeEmailLabelsView";
+import { MeRelevanceView } from "./features/me/MeRelevanceView";
 import { MePermissionsView } from "./features/me/MePermissionsView";
 import { MeLlmProvidersView } from "./features/me/MeLlmProvidersView";
 import { MeMcpTokensView } from "./features/me/MeMcpTokensView";
@@ -36,6 +44,7 @@ import { MeSharedItemsView } from "./features/me/MeSharedItemsView";
 import { MeNotificationsView } from "./features/me/MeNotificationsView";
 import { MeExportView } from "./features/me/MeExportView";
 import { MePrivacyModeView } from "./features/me/MePrivacyModeView";
+import { EmailSignalsView } from "./features/signals/EmailSignalsView";
 import { MeToolsCapabilitiesView } from "./features/me/MeToolsCapabilitiesView";
 import { AdminPage } from "./features/admin/AdminPage";
 import { AdminUsersView } from "./features/admin/AdminUsersView";
@@ -56,11 +65,15 @@ import { DocumentsPage } from "./features/documents/DocumentsPage";
 import { DocumentDetailView } from "./features/documents/DocumentDetailView";
 import { EntityDetailPage } from "./features/entities/EntityDetailPage";
 import { InviteRedemptionPage } from "./features/invite/InviteRedemptionPage";
+import { ForgotPasswordPage } from "./features/auth/ForgotPasswordPage";
+import { ResetPasswordPage } from "./features/auth/ResetPasswordPage";
+import { AdminSystemMailView } from "./features/admin/AdminSystemMailView";
 import { AuditLogView } from "./features/audit/AuditLogView";
 import { OnboardingGate } from "./features/onboarding/OnboardingGate";
 
 function pathToNavKey(pathname: string): string {
   if (pathname.startsWith("/documents")) return "documents";
+  if (pathname.startsWith("/email")) return "email";
   if (pathname.startsWith("/search")) return "search";
   if (pathname.startsWith("/capture")) return "capture";
   if (pathname.startsWith("/approvals")) return "approvals";
@@ -76,6 +89,12 @@ export function App(): JSX.Element {
       <AuthProvider>
         <Routes>
           <Route path="/invite" element={<InviteRedemptionPage />} />
+          {/* LUM-65: siblings of /invite, deliberately OUTSIDE <RequireAuth>.
+              Anything under `/*` renders <LoginForm/> for an anonymous
+              visitor — and the only visitor these two pages exist for is the
+              one who cannot sign in. */}
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
           <Route
             path="/*"
             element={
@@ -100,25 +119,46 @@ function ShellRoutes(): JSX.Element {
   const navigate = useNavigate();
   const location = useLocation();
   const user = useUser();
+  const { client } = useAuth();
   const activeKey = useMemo(() => pathToNavKey(location.pathname), [location.pathname]);
+
+  // LUM-642/LUM-655: email is a core opt-in integration — the Email destination
+  // appears only once a mailbox is configured. Fail closed (hidden) while the
+  // sources query is loading or errors; it pops in ~1 RTT after shell render on
+  // a cold load (documented; a persisted-activation follow-up removes the CLS).
+  const emailSourcesQ = useQuery({
+    queryKey: ["email", "sources"],
+    queryFn: () => listSources(client),
+  });
+  // LUM-658: seed from last-known activation so the Email item renders on the
+  // first paint of a cold load; reconcile with the fresh fetch when it resolves.
+  const freshEmailActive = emailSourcesQ.data
+    ? isEmailActivated(emailSourcesQ.data.sources)
+    : undefined;
+  const emailActive = freshEmailActive ?? readCachedEmailActivated();
+  useEffect(() => {
+    if (freshEmailActive !== undefined) writeCachedEmailActivated(freshEmailActive);
+  }, [freshEmailActive]);
 
   const navItems = useMemo((): ReadonlyArray<NavItem> => {
     const base = [...NAV_ITEMS];
+    if (emailActive) base.push({ key: "email", label: "Email", href: "/email" });
     const extra = [EXTRA_NAV[0]!];
     if (user?.role === "admin") {
       extra.push(EXTRA_NAV[1]!);
     }
     return [...base, ...extra];
-  }, [user?.role]);
+  }, [user?.role, emailActive]);
 
   const handleNavigate = useCallback(
     (key: string) => {
-      if (key === "chat" || key === "search" || key === "capture" || key === "approvals" || key === "documents" || key === "me" || key === "admin") {
+      if (key === "chat" || key === "search" || key === "capture" || key === "approvals" || key === "documents" || key === "email" || key === "me" || key === "admin") {
         if (key === "chat") navigate("/chat");
         else if (key === "search") navigate("/search");
         else if (key === "capture") navigate("/capture");
         else if (key === "approvals") navigate("/approvals");
         else if (key === "documents") navigate("/documents");
+        else if (key === "email") navigate("/email");
         else if (key === "me") navigate("/me");
         else if (key === "admin") navigate("/admin");
       }
@@ -139,6 +179,11 @@ function ShellRoutes(): JSX.Element {
           <Route path="/chat" element={<ChatPage />} />
           <Route path="/documents/:documentId/chat" element={<DocumentChatPage />} />
           <Route path="/search" element={<SearchPage />} />
+          <Route path="/email" element={<EmailInboxView />} />
+          {/* LUM-742: nested under /email so no sixth top-level nav item is
+              needed — `pathToNavKey` already matches on startsWith("/email"),
+              so the Email item stays highlighted here. */}
+          <Route path="/email/attachments" element={<EmailAttachmentsPage />} />
           <Route path="/capture" element={<QuickCapturePage />} />
           <Route path="/approvals" element={<ApprovalsPage />} />
           <Route path="/documents" element={<DocumentsPage />} />
@@ -150,6 +195,10 @@ function ShellRoutes(): JSX.Element {
             <Route path="profile" element={<MeProfileView />} />
             <Route path="appearance" element={<MeAppearanceView />} />
             <Route path="connectors" element={<MeConnectorsView />} />
+            <Route path="sources" element={<SourcesView />} />
+            <Route path="email-signals" element={<EmailSignalsView />} />
+            <Route path="email-labels" element={<MeEmailLabelsView />} />
+            <Route path="relevance" element={<MeRelevanceView />} />
             <Route path="permissions" element={<MePermissionsView />} />
             <Route path="tools-capabilities" element={<MeToolsCapabilitiesView />} />
             <Route path="llm-providers" element={<MeLlmProvidersView />} />
@@ -164,6 +213,7 @@ function ShellRoutes(): JSX.Element {
             <Route index element={<Navigate to="users" replace />} />
             <Route path="users" element={<AdminUsersView />} />
             <Route path="connector-credentials" element={<AdminConnectorCredentialsView />} />
+            <Route path="system-mail" element={<AdminSystemMailView />} />
             <Route path="connector-permissions" element={<AdminConnectorPermissionsView />} />
             <Route path="mcp-tokens" element={<AdminMcpTokensView />} />
             <Route path="shared-items" element={<AdminSharedItemsView />} />

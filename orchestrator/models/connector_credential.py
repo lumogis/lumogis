@@ -16,6 +16,7 @@ import json
 from datetime import datetime
 from typing import Any
 from typing import ClassVar
+from typing import Literal
 
 from pydantic import BaseModel
 from pydantic import ConfigDict
@@ -30,6 +31,12 @@ class ConnectorCredentialPublic(BaseModel):
 
     user_id: str
     connector: str
+    # LUM-170: instance discriminator for multi-instance connectors (e.g. imap
+    # keys per-mailbox by source_id). Empty string for single-instance connectors.
+    # Required here because _to_public projects via asdict(CredentialRecord),
+    # which now carries `instance`; without this field extra="forbid" would 500
+    # every connector's credential route.
+    instance: str = ""
     created_at: datetime
     updated_at: datetime
     created_by: str
@@ -38,6 +45,37 @@ class ConnectorCredentialPublic(BaseModel):
     delivery_paused: bool = False
     delivery_paused_reason: str | None = None
     delivery_paused_at: datetime | None = None
+    # LUM-834 chunk B — user-set on/off, distinct from delivery_paused.
+    enabled: bool = True
+    #: Payload key NAMES the user has set — never a value.
+    #:
+    #: ``None`` is a THIRD state and it is load-bearing: the row predates
+    #: migration 079, so which fields are set is genuinely unknown. It is not
+    #: "no fields set" — a pre-migration credential is usually a working one.
+    #:
+    #: The card must destructure this explicitly. ``?? []`` / ``|| []`` are
+    #: FORBIDDEN on this field in the web client: that idiom appears 60+ times
+    #: in `clients/lumogis-web/src` and applying it here collapses unknown into
+    #: nothing-set at the render layer, which is the failure the nullable
+    #: column exists to prevent.
+    configured_fields: list[str] | None = None
+    #: Which of the connector's declared fields hold secrets. From the
+    #: REGISTRY, never from the row — secrecy is a property of the connector,
+    #: not of one user's payload. Never ``None``: the registry always knows.
+    secret_fields: list[str] = Field(default_factory=list)
+
+
+class PatchConnectorCredentialRequest(BaseModel):
+    """Request body for ``PATCH /…/connector-credentials/{connector}``.
+
+    Deliberately **not** ``PUT``: on this surface ``PUT`` means whole-payload
+    replacement, and reusing it for a flag would be the third time that verb's
+    semantics bit this feature.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
 
 
 class PutConnectorCredentialRequest(BaseModel):
@@ -146,3 +184,42 @@ class InstanceSystemConnectorCredentialList(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     items: list[InstanceSystemConnectorCredentialPublic]
+
+
+class ConnectorTestResponse(BaseModel):
+    """``POST /api/v1/me/connector-credentials/{connector}/test`` (LUM-834).
+
+    ``ok`` is **tri-state on purpose**: ``true`` verified, ``false`` tried and
+    failed, ``null`` **not attempted**. Collapsing ``null`` into ``false`` would
+    render a red ✗ on a connector that has no probe and is perfectly healthy.
+    Chunk B's four-state chip is built on the three states; a client that treats
+    this as a boolean breaks that card before it is written.
+
+    ``code`` is a ``Literal``, not a ``str``, because this shape freezes into
+    ``openapi.snapshot.json`` on first ship and a bare ``str`` widens to
+    anything later without a contract break. Adding a code is then a visible
+    wire change, which is what it is.
+
+    ``detail`` is a fixed string selected by ``code`` in
+    :mod:`services.connector_probes` — **never** an exception message. See that
+    module's header for why truncating one is not sanitising it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    ok: bool | None
+    code: Literal[
+        "verified",
+        "auth_failed",
+        "unreachable",
+        "not_configured",
+        "credential_unavailable",
+        "invalid_config",
+        "unsupported",
+        "tested_elsewhere",
+        # LUM-834 chunk B. Ninth member, added deliberately — ADR-218 §3 froze
+        # this Literal so that widening it is a reviewable wire change rather
+        # than a silent one. Carries ok=null (not attempted).
+        "disabled",
+    ]
+    detail: str

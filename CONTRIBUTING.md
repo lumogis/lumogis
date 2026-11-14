@@ -106,6 +106,15 @@ make dev
 
 `make dev` uses `docker-compose.dev.yml`, which mounts the orchestrator source and reloads on file changes. You do not need to rebuild the Docker image during development.
 
+**A GPU is not required (LUM-808).** `make dev` also layers `docker-compose.gpu.yml`, which reserves an NVIDIA device for Ollama — but only when Docker actually reports an `nvidia` runtime. Without one it starts the same stack on CPU and says so; Ollama works either way, and the GPU is an optimisation rather than a prerequisite. Override the detection with:
+
+| | |
+| --- | --- |
+| `LUMOGIS_GPU=0 make dev` | never use the GPU overlay, even if a GPU is available |
+| `LUMOGIS_GPU=1 make dev` | require it — fail loudly if the `nvidia` runtime is missing, instead of silently running on CPU |
+
+Enabling the runtime needs **`nvidia-container-toolkit`** plus a loaded driver — see [`docs/guides/gpu-setup.md`](docs/guides/gpu-setup.md). Note that a GPU being physically present is not sufficient: `docker info` must list `nvidia` under runtimes.
+
 ### Python dependencies for tests and lint
 
 Production images install only each service’s `requirements.txt`. For **local** pytest and ruff, install the dev extras (not baked into runtime images):
@@ -186,6 +195,24 @@ docker compose run --rm -w /project/orchestrator orchestrator sh -c \
 ```
 
 Other compose targets: `make compose-lint`, `make compose-test-stack-control`, `make compose-test-integration` (see `Makefile`).
+
+### Running tests in the offline test environment (Docker only)
+
+`scripts/test-env.sh` runs any command in a clean, offline environment. It needs Docker and nothing else: no host venv and no `node_modules`.
+
+```bash
+scripts/test-env.sh run --tier 1 -- make test
+```
+
+```bash
+scripts/test-env.sh run --tier 2 -- bash -c 'cd orchestrator && python -m pytest tests/integration -q -rs'
+```
+
+- **Tier 1** runs the command in the test-runner image (`docker/test-runner/Dockerfile`) with **no network**. It covers `make test`, `make lint`, `make test-kg`, `make test-lumogis-mcp`, `cd clients/lumogis-web && npm run codegen:check`, and `make web-test`, `make web-lint` and `make web-codegen web-build` (the build needs the generated client, as in CI). The image holds dependencies only. Your worktree is mounted at its own path and the command runs as you.
+- **Tier 2** adds throwaway databases (`docker/test-env/compose.dbs.yml`): Postgres 16.8 with `postgres/init.sql` and every migration applied, Qdrant, and FalkorDB. They sit on an internal network with no host ports, keep their data in tmpfs, and are removed when the command ends, even when it fails. The command sees `POSTGRES_*`, `LUMOGIS_INTEGRATION_POSTGRES_DSN`, `QDRANT_URL` and `FALKORDB_URL`, and runs with `LUMOGIS_REQUIRE_INTEGRATION_DB=1`, so the modules that use the LUM-718 guard (`orchestrator/tests/integration/_pgguard.py`) fail instead of skipping when a backend is unreachable. Some live modules still call `pytest.skip` themselves; the `integration lane (LUM-718)` line at the end of the run counts what skipped.
+- **`--tier auto`** (the default) picks tier 2 when the command is `make test` (it collects `orchestrator/tests/integration`) or mentions integration tests, or when your diff against `origin/dev` touches a path in `docker/test-env/tier2-paths.txt`. Otherwise it picks tier 1. Run `scripts/test-env.sh tier` to see the choice and the reason.
+
+The first run builds the image, which is the only step that uses the network. The tag is a hash of the requirements files, the web lockfile and the Dockerfile, so the image rebuilds only when one of them changes. Shortcuts: `make test-env-build`, `make test-env-test`, `make test-env-integration`. If a run is killed hard, `scripts/test-env.sh gc` lists leftover tier-2 projects and `gc --apply` removes them.
 
 ### Coverage matrices
 

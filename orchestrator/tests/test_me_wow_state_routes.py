@@ -34,6 +34,11 @@ class _WowFakeStore(_OnboardingFakeStore):
             if row is not None:
                 row.setdefault("wow_dismissed_at", None)
             return
+        if q.startswith("insert into app_settings") and "on conflict (key) do update" in q:
+            # settings_store.put_settings is a real upsert (it overwrites); the base fake only
+            # inserts when absent, which would hide a missing "first dismissal wins" guard.
+            self.settings[str(p[0])] = str(p[1])
+            return
         super().execute(query, params)
 
     def fetch_one(self, query: str, params: tuple | None = None) -> dict | None:
@@ -166,6 +171,7 @@ def _mint_jwt(user_id: str, role: str) -> str:
     return jwt.encode(
         {
             "sub": user_id,
+            "typ": "access",
             "role": role,
             "iat": int(time.time()),
             "exp": int(time.time()) + 600,
@@ -193,16 +199,78 @@ def _seed(store: _WowFakeStore, *, email: str, role: str) -> str:
     return user.id
 
 
-def test_wow_get_dev_synthetic(store, dev_env):
+_SU_KEY = "single_user_wow_dismissed_at"
+
+
+def test_wow_get_auth_off_real_readiness(store, dev_env):
+    """LUM-853 Part B: with auth off, readiness is real for the single user (``default``)."""
+    with _client() as client:
+        r = client.get("/api/v1/me/wow-state")
+        assert r.status_code == 200, r.text
+        assert r.headers.get("cache-control") == "no-store"
+        body = r.json()
+        assert body["entities_ready"] is False
+        assert body["top_entities"] == []
+        assert body["wow_dismissed_at"] is None
+        assert body["onboarding_completed_at"] is not None
+
+        # Someone else's personal entity does not make the single user ready.
+        store.insert_entity(user_id="someone-else", name="Theirs", scope="personal")
+        r = client.get("/api/v1/me/wow-state")
+        assert r.json()["entities_ready"] is False
+
+        store.insert_entity(user_id="default", name="Mine", mention_count=4)
+        r = client.get("/api/v1/me/wow-state")
+    body = r.json()
+    assert body["entities_ready"] is True
+    assert body["top_entities"][0]["name"] == "Mine"
+
+
+def test_wow_patch_auth_off_stores_dismissal(store, dev_env):
+    """LUM-853 Part B: the auth-off dismissal is instance state in ``app_settings``."""
+    with _client() as client:
+        p1 = client.patch("/api/v1/me/wow-state", json={"dismissed": True})
+        assert p1.status_code == 200, p1.text
+        first = p1.json()["wow_dismissed_at"]
+        assert first is not None
+        assert client.get("/api/v1/me/wow-state").json()["wow_dismissed_at"] == first
+        # First dismissal wins.
+        p2 = client.patch("/api/v1/me/wow-state", json={"dismissed": True})
+        assert p2.json()["wow_dismissed_at"] == first
+    # Startup seeds other app_settings keys; this route writes exactly one of its own.
+    assert datetime.fromisoformat(store.settings[_SU_KEY]) == datetime.fromisoformat(first)
+    assert [k for k in store.settings if "wow" in k] == [_SU_KEY]
+
+
+@pytest.mark.parametrize("auth_mode", ["dev_env", "auth_env"])
+def test_wow_get_db_error_is_503(store, request, monkeypatch, auth_mode):
+    """An entity-query failure maps to ``503 database_unavailable`` in both auth modes."""
+    request.getfixturevalue(auth_mode)
+    import services.wow_state as wow_state
+
+    def boom(_user_id):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(wow_state, "count_visible_entities", boom)
+    headers = {}
+    if auth_mode == "auth_env":
+        uid = _seed(store, email="wow-503@home.lan", role="user")
+        headers = {"Authorization": f"Bearer {_mint_jwt(uid, 'user')}"}
+    with _client() as client:
+        r = client.get("/api/v1/me/wow-state", headers=headers)
+        assert r.status_code == 503, r.text
+        assert r.json()["detail"] == "database_unavailable"
+        p = client.patch("/api/v1/me/wow-state", headers=headers, json={"dismissed": True})
+    assert p.status_code == 503, p.text
+    assert p.json()["detail"] == "database_unavailable"
+
+
+def test_wow_get_auth_off_unparsable_dismissal_ignored(store, dev_env):
+    store.settings[_SU_KEY] = "not-a-date"
     with _client() as client:
         r = client.get("/api/v1/me/wow-state")
     assert r.status_code == 200, r.text
-    assert r.headers.get("cache-control") == "no-store"
-    body = r.json()
-    assert body["entities_ready"] is True
-    assert body["top_entities"] == []
-    assert body["wow_dismissed_at"] is None
-    assert body["onboarding_completed_at"] is not None
+    assert r.json()["wow_dismissed_at"] is None
 
 
 def test_wow_get_auth_null_not_ready(store, auth_env):

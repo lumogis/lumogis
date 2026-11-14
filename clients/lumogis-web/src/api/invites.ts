@@ -12,6 +12,17 @@ export type {
 } from "./invitesTypes";
 export { INVITE_ONBOARDING_STORAGE_KEY } from "./invitesTypes";
 
+import { INVITE_ONBOARDING_STORAGE_KEY as ONBOARDING_KEY } from "./invitesTypes";
+
+/** Remove the invitee onboarding hint (full sign-out wipe only, LUM-886). */
+export function clearInviteOnboardingHint(): void {
+  try {
+    globalThis.sessionStorage?.removeItem(ONBOARDING_KEY);
+  } catch {
+    /* storage disabled — nothing to clear */
+  }
+}
+
 import type { ApiClient } from "./client";
 import type {
   InviteAdminRow,

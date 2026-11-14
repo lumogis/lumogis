@@ -83,6 +83,26 @@ def _config_port_8000() -> str:
     return json.dumps(doc) + "\n"
 
 
+def _config_port_loopback(published: str = "18000") -> str:
+    """Compose publishes the orchestrator on 127.0.0.1 only (LUM-887)."""
+    doc = {
+        "services": {
+            "orchestrator": {
+                "ports": [
+                    {
+                        "published": published,
+                        "target": 8000,
+                        "protocol": "tcp",
+                        "host_ip": "127.0.0.1",
+                    }
+                ]
+            },
+            "ollama": {"image": "ollama/ollama:test"},
+        }
+    }
+    return json.dumps(doc) + "\n"
+
+
 def _config_with_falkor() -> str:
     doc = {
         "services": {
@@ -144,6 +164,10 @@ def _docker_stub(ps_path: Path, config_path: Path, root: Path) -> str:
     return textwrap.dedent(
         f"""\
         #!/bin/sh
+        if [ "$1" = "info" ]; then
+          echo "${{LUMOGIS_DOCTOR_STUB_OS:-Ubuntu 24.04 LTS}}"
+          exit 0
+        fi
         if [ "$1" != "compose" ]; then exit 1; fi
         shift
         case "$1" in
@@ -164,6 +188,19 @@ def _docker_stub(ps_path: Path, config_path: Path, root: Path) -> str:
             shift
             _args="$*"
             case "$_args" in
+              *caddy*ip*route*)
+                _gw="${{LUMOGIS_DOCTOR_STUB_GATEWAY:-172.19.0.1}}"
+                if [ "$_gw" = "none" ]; then exit 1; fi
+                printf '%s\n' "default via $_gw dev eth0" \
+                  "172.19.0.0/16 dev eth0 scope link  src 172.19.0.5"
+                exit 0 ;;
+              *caddy*caddy*validate*)
+                echo "$_args" >>"{root}/_stub_validate.log"
+                if [ -n "${{LUMOGIS_DOCTOR_STUB_VALIDATE_ERR:-}}" ]; then
+                  echo "$LUMOGIS_DOCTOR_STUB_VALIDATE_ERR" >&2
+                  exit 1
+                fi
+                exit 0 ;;
               *ollama*pull*)
                 echo "stub-pull-ok" >>"{root}/_stub_exec.log"
                 exit 0 ;;
@@ -298,6 +335,55 @@ def test_doctor_json_schema_version(tmp_path):
     assert doc["version"] == 1
     for ch in doc["checks"]:
         assert set(ch.keys()) >= {"category", "name", "status", "message", "remediation"}
+
+
+def _config_rows(proc) -> dict[str, dict]:
+    doc = json.loads(proc.stdout)
+    return {c["name"]: c for c in doc["checks"] if c["category"] == "config"}
+
+
+_REFRESH_ROW = "JWT_REFRESH_SECRET"
+_ENV_AUTH_ON = "AUTH_ENABLED=true\nLUMOGIS_PUBLIC_ORIGIN=http://localhost\n"
+
+
+@pytest.mark.parametrize(
+    "secrets",
+    [
+        "AUTH_SECRET=shared-value-1234\nJWT_REFRESH_SECRET=shared-value-1234\n",
+        "AUTH_SECRET=real-access-secret\nJWT_REFRESH_SECRET=change-me-in-production\n",
+        "AUTH_SECRET=real-access-secret\n",  # refresh unset altogether
+        # LUMOGIS_JWT_REFRESH_SECRET wins (first non-empty) even when it is a placeholder.
+        "AUTH_SECRET=real-access-secret\nLUMOGIS_JWT_REFRESH_SECRET=__GENERATE_ME__\n"
+        "JWT_REFRESH_SECRET=a-real-refresh-secret\n",
+    ],
+)
+def test_doctor_flags_unusable_refresh_secret_when_auth_on(tmp_path, secrets):
+    """LUM-885: warn before the upgrade makes the orchestrator refuse to boot."""
+    root = _fixture_repo(tmp_path, ps_body=_healthy_ps_ndjson(), env_extra=_ENV_AUTH_ON + secrets)
+    proc = _run(root, "--json")
+    row = _config_rows(proc).get(_REFRESH_ROW)
+    assert row is not None, proc.stdout
+    assert row["status"] == "error"
+    assert "openssl rand -hex 32" in row["remediation"]
+    for leaked in ("shared-value-1234", "real-access-secret"):
+        assert leaked not in proc.stdout
+
+
+@pytest.mark.parametrize(
+    "env_extra",
+    [
+        _ENV_AUTH_ON + "AUTH_SECRET=real-access-secret\nJWT_REFRESH_SECRET=a-distinct-refresh\n",
+        _ENV_AUTH_ON
+        + "AUTH_SECRET=real-access-secret\nLUMOGIS_JWT_REFRESH_SECRET=a-distinct-refresh\n",
+        # Auth off: the gate does not run, so no error row.
+        "AUTH_ENABLED=false\nAUTH_SECRET=same\nJWT_REFRESH_SECRET=same\n",
+    ],
+)
+def test_doctor_accepts_distinct_refresh_secret(tmp_path, env_extra):
+    root = _fixture_repo(tmp_path, ps_body=_healthy_ps_ndjson(), env_extra=env_extra)
+    proc = _run(root, "--json")
+    row = _config_rows(proc).get(_REFRESH_ROW)
+    assert row is None or row["status"] != "error", proc.stdout
 
 
 def test_doctor_exit_code_all_ok(tmp_path):
@@ -435,6 +521,26 @@ def test_doctor_fatal_prereq_stderr_only(tmp_path):
     assert proc.returncode == 3
     assert "DOCTOR_FATAL:" in proc.stderr
     assert proc.stdout.strip() == ""
+
+
+def test_doctor_reads_loopback_published_port(tmp_path):
+    """The services check follows a long-form port with host_ip (LUM-887)."""
+    root = _fixture_repo(
+        tmp_path,
+        ps_body=_healthy_ps_ndjson(),
+        config_body=_config_port_loopback("18000"),
+        curl_stub=textwrap.dedent(
+            f"""\
+            #!/bin/sh
+            echo "$@" >> {tmp_path}/curl.log
+            exit 0
+            """
+        ),
+    )
+    proc = _run(root, "--json")
+    assert proc.returncode in (0, 1, 2), proc.stderr
+    log = (tmp_path / "curl.log").read_text()
+    assert "http://127.0.0.1:18000/healthz" in log
 
 
 def test_doctor_stack_down_json(tmp_path):
@@ -1618,6 +1724,10 @@ def _docker_stub_up_fails() -> str:
     return textwrap.dedent(
         """\
         #!/bin/sh
+        if [ "$1" = "info" ]; then
+          echo "${{LUMOGIS_DOCTOR_STUB_OS:-Ubuntu 24.04 LTS}}"
+          exit 0
+        fi
         if [ "$1" != "compose" ]; then exit 1; fi
         shift
         case "$1" in
@@ -1927,3 +2037,200 @@ def test_doctor_env_edit_end_to_end_via_config_detection(tmp_path):
         r["target"]["key"] == "GRAPH_MODE" and r["outcome"] == "applied" for r in env_repairs
     )
     assert "GRAPH_MODE=" in (root / ".env").read_text(encoding="utf-8")
+
+
+# --- LUM-901: compose gateway + LUMOGIS_CADDY_TRUSTED_PROXIES ------------------
+
+_KNOB = "LUMOGIS_CADDY_TRUSTED_PROXIES"
+
+
+def _config_with_caddy(value: str | None = None) -> str:
+    """Compose config with a caddy service; ``value`` None = knob not set."""
+    env = {"CADDY_DOMAIN": ":80"}
+    if value is not None:
+        env[_KNOB] = value
+    doc = json.loads(_config_port_8000())
+    doc["services"]["caddy"] = {"image": "caddy:test", "environment": env}
+    return json.dumps(doc) + "\n"
+
+
+def _caddy_rows(proc) -> dict[str, dict]:
+    doc = json.loads(proc.stdout)
+    return {
+        c["name"]: c
+        for c in doc["checks"]
+        if c["category"] == "network" and c["name"] in ("caddy-gateway", "caddy-trusted-proxies")
+    }
+
+
+def _caddy_fixture(tmp_path, value, *, ps_body=None):
+    return _fixture_repo(
+        tmp_path,
+        ps_body=ps_body or _healthy_ps_ndjson(),
+        config_body=_config_with_caddy(value),
+    )
+
+
+def _validate_log(root: Path) -> str:
+    p = root / "_stub_validate.log"
+    return p.read_text(encoding="utf-8") if p.exists() else ""
+
+
+def test_doctor_caddy_rows_skipped_without_caddy_service(tmp_path):
+    root = _fixture_repo(tmp_path, ps_body=_healthy_ps_ndjson())
+    proc = _run(root, "--json")
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    rows = _caddy_rows(proc)
+    assert rows["caddy-gateway"]["status"] == "skipped"
+    assert rows["caddy-trusted-proxies"]["status"] == "skipped"
+
+
+def test_doctor_reports_gateway_and_default_trusts_no_upstream(tmp_path):
+    """Knob unset: gateway printed, default reported, the /32 to set suggested."""
+    root = _caddy_fixture(tmp_path, None)
+    proc = _run(root, "--json")
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    rows = _caddy_rows(proc)
+    gw = rows["caddy-gateway"]
+    assert gw["status"] == "ok"
+    # The address after `via` on the `default` line, not the subnet or src.
+    assert "172.19.0.1 " in gw["message"]
+    assert "172.19.0.0/16" not in gw["message"] and "172.19.0.5" not in gw["message"]
+    tp = rows["caddy-trusted-proxies"]
+    assert tp["status"] == "ok"
+    assert "trusts no upstream" in tp["message"]
+    assert f"{_KNOB}=172.19.0.1/32" in tp["message"]
+    # caddy validate ran in the running container with the configured value.
+    assert f"-e {_KNOB}=127.0.0.1/32 caddy caddy validate" in _validate_log(root)
+
+
+def test_doctor_human_output_shows_gateway(tmp_path):
+    root = _caddy_fixture(tmp_path, None)
+    proc = _run(root)
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert "caddy-gateway" in proc.stdout
+    assert "compose gateway is 172.19.0.1" in proc.stdout
+
+
+@pytest.mark.parametrize("value", ["172.19.0.1/32", "172.19.0.1/32 100.64.0.0/10", "172.19.0.1"])
+def test_doctor_trusted_proxies_matching_gateway_ok(tmp_path, value):
+    root = _caddy_fixture(tmp_path, value)
+    proc = _run(root, "--json")
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    tp = _caddy_rows(proc)["caddy-trusted-proxies"]
+    assert tp["status"] == "ok", tp
+    assert "includes the compose gateway 172.19.0.1" in tp["message"]
+    assert "passes caddy validate" in tp["message"]
+    assert "wider than" not in tp["message"]
+
+
+def test_doctor_trusted_proxies_wide_range_noted(tmp_path):
+    root = _caddy_fixture(tmp_path, "172.19.0.0/16")
+    proc = _run(root, "--json")
+    tp = _caddy_rows(proc)["caddy-trusted-proxies"]
+    assert tp["status"] == "ok"
+    assert "wider than the gateway alone" in tp["message"]
+
+
+def test_doctor_trusted_proxies_stale_gateway_warns(tmp_path):
+    """The network was recreated (`down`/`up`) and the gateway moved: warn."""
+    root = _caddy_fixture(tmp_path, "172.18.0.1/32")
+    proc = _run(root, "--json")
+    assert proc.returncode == 1, proc.stderr + proc.stdout
+    tp = _caddy_rows(proc)["caddy-trusted-proxies"]
+    assert tp["status"] == "warn"
+    assert "does not include the current compose gateway 172.19.0.1" in tp["message"]
+    assert f'{_KNOB}="172.19.0.1/32"' in tp["remediation"]
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["172.19.0.1/32,100.64.0.0/10", "172.19.0.1/33", "gateway", "172.19.0.1/032"],
+)
+@pytest.mark.parametrize("caddy_up", [True, False])
+def test_doctor_trusted_proxies_malformed_value_is_error(tmp_path, value, caddy_up):
+    """A value Caddy refuses keeps Caddy (and the web UI) down; that is an
+    error whether or not Caddy is still running with an older value."""
+    ps = _healthy_ps_ndjson()
+    if not caddy_up:
+        ps = ps.replace(
+            '"Service":"caddy","State":"running"', '"Service":"caddy","State":"restarting"'
+        )
+    root = _caddy_fixture(tmp_path, value, ps_body=ps)
+    proc = _run(root, "--json")
+    assert proc.returncode == 2, proc.stderr + proc.stdout
+    tp = _caddy_rows(proc)["caddy-trusted-proxies"]
+    assert tp["status"] == "error"
+    assert "does not start" in tp["message"]
+    assert "space-separated" in tp["remediation"]
+    if "," in value:
+        assert "commas are not separators" in tp["message"]
+
+
+def test_doctor_trusted_proxies_caddy_validate_refusal_is_error(tmp_path):
+    root = _caddy_fixture(tmp_path, "172.19.0.1/32")
+    proc = _run(
+        root,
+        "--json",
+        extra_env={
+            "LUMOGIS_DOCTOR_STUB_VALIDATE_ERR": (
+                '{"level":"error","ts":1,"msg":"provision http: bad trusted proxy"}'
+            )
+        },
+    )
+    assert proc.returncode == 2, proc.stderr + proc.stdout
+    tp = _caddy_rows(proc)["caddy-trusted-proxies"]
+    assert tp["status"] == "error"
+    assert "caddy validate refuses" in tp["message"]
+    assert "provision http: bad trusted proxy" in tp["message"]
+    assert '"level"' not in tp["message"]  # Caddy's JSON log line is unwrapped
+
+
+def test_doctor_trusted_proxies_docker_desktop_gateway_warns(tmp_path):
+    """Docker Desktop: every LAN client arrives through the gateway."""
+    root = _caddy_fixture(tmp_path, "172.19.0.1/32")
+    proc = _run(root, "--json", extra_env={"LUMOGIS_DOCTOR_STUB_OS": "Docker Desktop"})
+    assert proc.returncode == 1, proc.stderr + proc.stdout
+    tp = _caddy_rows(proc)["caddy-trusted-proxies"]
+    assert tp["status"] == "warn"
+    assert "Docker Desktop" in tp["message"]
+    assert f"Remove {_KNOB}" in tp["remediation"]
+
+
+def test_doctor_trusted_proxies_docker_desktop_default_does_not_suggest_gateway(tmp_path):
+    root = _caddy_fixture(tmp_path, None)
+    proc = _run(root, "--json", extra_env={"LUMOGIS_DOCTOR_STUB_OS": "Docker Desktop"})
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    tp = _caddy_rows(proc)["caddy-trusted-proxies"]
+    assert tp["status"] == "ok"
+    assert "do not set it to the gateway" in tp["message"]
+    assert "/32" not in tp["message"].replace("127.0.0.1/32", "")
+
+
+def test_doctor_caddy_not_running_skips_gateway(tmp_path):
+    ps = _healthy_ps_ndjson().replace(
+        '"Service":"caddy","State":"running"', '"Service":"caddy","State":"exited"'
+    )
+    root = _caddy_fixture(tmp_path, "172.18.0.1/32", ps_body=ps)
+    proc = _run(root, "--json")
+    rows = _caddy_rows(proc)
+    assert rows["caddy-gateway"]["status"] == "skipped"
+    tp = rows["caddy-trusted-proxies"]
+    assert tp["status"] == "ok"
+    assert "gateway match not checked" in tp["message"]
+    assert _validate_log(root) == ""  # no exec into a stopped container
+
+
+def test_doctor_gateway_unreadable_is_skipped(tmp_path):
+    root = _caddy_fixture(tmp_path, "172.19.0.1/32")
+    proc = _run(root, "--json", extra_env={"LUMOGIS_DOCTOR_STUB_GATEWAY": "none"})
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    rows = _caddy_rows(proc)
+    assert rows["caddy-gateway"]["status"] == "skipped"
+    assert "gateway match not checked" in rows["caddy-trusted-proxies"]["message"]
+
+
+def test_doctor_client_ip_check_is_wired_and_executable():
+    check = REPO / "scripts" / "doctor" / "checks" / "client-ip.sh"
+    assert os.access(check, os.X_OK)
+    assert "checks/client-ip.sh" in RUN_SH.read_text(encoding="utf-8")

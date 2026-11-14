@@ -56,6 +56,10 @@ def test_on_moved_dest_not_ignored_when_src_was_tmp(inbox_tree: Path, monkeypatc
     def _fake_enqueue(path, *, user_id, source):
         called.append(str(path))
 
+    # Pin the extractor registry so the test does not depend on which extractor
+    # adapters are installed (pdf_extractor is skipped when its deps are absent,
+    # which would make _handle_path drop the .pdf before enqueue).
+    monkeypatch.setattr(config, "get_extractors", lambda: {".pdf": lambda _p: ""})
     monkeypatch.setattr(ingest_mod, "enqueue_inbox_file", _fake_enqueue)
     handler = ingest_mod._InboxHandler(owner_user_id="owner-1")
     event = MagicMock(is_directory=False, dest_path=str(inbox_tree / "a.pdf"))

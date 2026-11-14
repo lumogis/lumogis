@@ -61,7 +61,7 @@ owned by the `mcp` SDK, not Lumogis code. The pin was tightened to
 `mcp>=1.27.2,<2` (from the previous open `>=1.10.0`), in lockstep across
 `orchestrator/requirements-core.txt`, `requirements-test.txt`, and the KG
 service's `requirements.txt`. The floor is **1.27.2 — the exact version pinned
-in the bundled Core lock** (`orchestrator/locks-bundled/*.lock.txt`), so the
+in the bundled Core lock**, so the
 hash-pinned lock stays consistent without a regenerate; it guarantees
 `ToolAnnotations` and a negotiated protocol ≥ 2025-06-18 (CI installs the latest
 in range, currently 1.28.0 → 2025-11-25). The `<2` upper bound prevents a future
@@ -99,3 +99,4 @@ fails if the SDK ever drops below the 2025-06-18 floor.
 - 2026-06-23: `mcp` pin tightened `>=1.10.0` → `>=1.27.2,<2` across Core +
   KG requirements (floor = bundled-lock version; major-version guard for the
   stateless-mount internals); bundled lock-inputs stamp regenerated.
+- 2026-11-10: public-boundary wording (LUM-898).

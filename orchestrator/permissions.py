@@ -126,15 +126,44 @@ def check_permission(
     is_write: bool,
     *,
     user_id: str,
+    approved: bool = False,
+    force_ask: bool = False,
 ) -> bool:
-    """Permission gate. ``user_id`` is keyword-only and required (Phase 3)."""
+    """Permission gate. ``user_id`` is keyword-only and required (Phase 3).
+
+    ``approved`` (LUM-623): an explicit per-message human approval already
+    occurred (a claimed approved-proposal execute, or a token-authenticated
+    reverse of the caller's own audit row). Under ASK, such an approval
+    satisfies the gate for a reversible write — the correct reading of the
+    Ask/Do model ("Ask" = per-message approval, not "blocked until DO"). It
+    never relaxes a hard-limited action_type.
+
+    ``force_ask`` (LUM-650): a per-call escalation that makes a DO-mode write
+    behave like ASK for THIS call — a per-message approval is required even
+    when the connector is in DO. Used for a first-contact email send: the
+    ``email_send`` action_type is (correctly) non-hard-limited, but a send to a
+    brand-new address must never be auto-approved (Do). The flag is computed
+    from the proposal's stored ``first_contact`` annotation (or, on the direct
+    execute path, recomputed fail-closed), so "a send to a new address always
+    prompts" holds regardless of the user's ``email_send`` mode.
+    """
     if not isinstance(user_id, str) or not user_id:
         raise TypeError("check_permission: user_id (keyword-only) is required")
 
+    from actions.executor import is_hard_limited
+
     mode = get_connector_mode(user_id=user_id, connector=connector)
     allowed = True
-    if is_write and mode == "ASK":
-        allowed = False
+    # Hard limits are applied only under ASK, so a DO-mode connector runs a
+    # hard-limited write without approval. Approvals refuses to flip any connector
+    # with ANY hard-limited gated action type (services/permission_connectors.do_refused),
+    # but PUT /api/v1/me/permissions does not, so a connector already in DO is not
+    # protected; tracked as LUM-914 AI-005 (LUM-962).
+    if is_write and (mode == "ASK" or force_ask):
+        # A per-message approval satisfies ASK (and a force_ask escalation) for a
+        # non-hard-limited write. force_ask thus turns a DO-mode connector into an
+        # Ask for this one call — the first-contact Do→Ask escalation.
+        allowed = bool(approved) and not is_hard_limited(action_type)
     log_action(
         connector=connector,
         action_type=action_type,
@@ -307,16 +336,26 @@ def get_all_permissions() -> list[dict]:
 def get_user_permissions(*, user_id: str) -> list[dict]:
     """Return one row per explicit per-user permission for ``user_id``.
 
-    Returns ``[{"connector": str, "mode": str}, ...]`` sorted by connector.
-    Connectors without an explicit row are NOT included; callers that
+    Returns ``[{"connector", "mode", "scopes", "updated_at"}, ...]`` sorted by
+    connector. Connectors without an explicit row are NOT included; callers that
     want the lazy-default fan-out should use
     :func:`get_user_effective_permissions` instead.
+
+    ``updated_at`` is selected because :func:`routes.connector_permissions.
+    list_my_permissions` projects it onto the wire on its registry-degrade
+    branch. It was omitted here, so every explicit row came back
+    ``updated_at: null`` while the registry was down — the surface that exists
+    to say the true thing about what may act on your behalf, quietly reporting
+    "never changed" for a setting the user had changed. Found by code review of
+    LUM-849; the field is additive for the other caller
+    (:func:`get_user_effective_permissions`), which overwrites it from the same
+    row.
     """
     if not isinstance(user_id, str) or not user_id:
         raise TypeError("get_user_permissions: user_id (keyword-only) is required")
     store = config.get_metadata_store()
     return store.fetch_all(
-        "SELECT connector, mode, scopes FROM connector_permissions "
+        "SELECT connector, mode, scopes, updated_at FROM connector_permissions "
         "WHERE user_id = %s ORDER BY connector "
         "-- SCOPE-EXEMPT: connector_permissions is not memory-visibility-scoped; "
         "scopes[] here are permission grants, not the visibility scope",

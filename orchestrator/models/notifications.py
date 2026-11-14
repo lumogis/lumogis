@@ -23,6 +23,17 @@ class NotificationType(str, Enum):
     ACTION_EXECUTED = "action_executed"
     SECURITY_ALERT = "security_alert"
     CONSOLIDATION_DONE = "consolidation_done"
+    # LUM-648: proactive email surfacing. SIGNAL_NEEDS_YOU is the single
+    # per-email push (ingest needs-you + snooze re-surface); SIGNAL_MORNING_BRIEF
+    # is the daily needs-you summary. Both carry a dynamic body and deep-link /email.
+    SIGNAL_NEEDS_YOU = "signal_needs_you"
+    SIGNAL_MORNING_BRIEF = "signal_morning_brief"
+    # LUM-758: the Layer-2 egress allowlist grew because a member connected a
+    # mailbox. Admins are INFORMED, never asked to approve — the actor is an
+    # authenticated member adding their own already-validated host, and gating a
+    # routine action just trains reflexive approval. Widening only; a removal
+    # narrows the surface and needs no notice.
+    EGRESS_ALLOWLIST_WIDENED = "egress_allowlist_widened"
 
 
 class NotificationTier(str, Enum):
@@ -116,7 +127,16 @@ class NotificationPreferencePatchItem(BaseModel):
 class NotificationPreferencesPatch(BaseModel):
     model_config = _REQ
 
-    preferences: list[NotificationPreferencePatchItem] = Field(min_length=1, max_length=50)
+    # LUM-700: settings-only patches (quiet hours / timezone, no channel toggles)
+    # are valid, so `preferences` is no longer required to be non-empty; the
+    # service layer rejects a wholly-empty patch (neither preferences nor any
+    # settings field present) instead.
+    preferences: list[NotificationPreferencePatchItem] = Field(default_factory=list, max_length=50)
+    # Unset (field omitted) leaves the stored value unchanged; explicit ``null``
+    # clears it. Distinguished via ``model_fields_set`` — see patch_preferences.
+    timezone: str | None = None
+    quiet_hours_start: str | None = None
+    quiet_hours_end: str | None = None
 
 
 class NotificationTierPolicyRow(BaseModel):

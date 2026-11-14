@@ -9,7 +9,7 @@
 **Exploration:** `.cursor/explorations/lum-471-server-deb-release-prove_retro.md`
 **Draft mirror:** `.cursor/adrs/lum-471-server-deb-release-prove.md`
 
-> Private Hub/server packaging scope; stripped from public AGPL export like ADR-093/094.
+> Hub/Server appliance packaging scope, like ADR-093/094.
 
 ## Context
 
@@ -68,3 +68,4 @@
 ## Status history
 
 - 2026-06-11: Finalised by `/record-retro` (retrospective as-built record for LUM-471)
+- 2026-11-10: public-boundary wording (LUM-898).

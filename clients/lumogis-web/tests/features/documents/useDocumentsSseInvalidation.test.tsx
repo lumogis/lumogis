@@ -82,4 +82,27 @@ describe("useDocumentsSseInvalidation", () => {
     unmount();
     expect(closeMock).toHaveBeenCalled();
   });
+
+  it("10 does not subscribe when enabled is false (LUM-853)", () => {
+    const qc = new QueryClient();
+    renderHook(() => useDocumentsSseInvalidation(tokens, { enabled: false }), {
+      wrapper: wrapper(qc),
+    });
+    expect(openReconnectingSse).not.toHaveBeenCalled();
+  });
+
+  it("11 closes the stream when enabled flips to false, and reopens when true (LUM-853)", () => {
+    const qc = new QueryClient();
+    const { rerender } = renderHook(
+      ({ enabled }: { enabled: boolean }) => useDocumentsSseInvalidation(tokens, { enabled }),
+      { wrapper: wrapper(qc), initialProps: { enabled: true } },
+    );
+    expect(openReconnectingSse).toHaveBeenCalledTimes(1);
+    expect(closeMock).not.toHaveBeenCalled();
+    rerender({ enabled: false });
+    expect(closeMock).toHaveBeenCalledTimes(1);
+    expect(openReconnectingSse).toHaveBeenCalledTimes(1);
+    rerender({ enabled: true });
+    expect(openReconnectingSse).toHaveBeenCalledTimes(2);
+  });
 });

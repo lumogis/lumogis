@@ -301,14 +301,22 @@ def admin_unfiltered_cypher_fragment(
 # scope-filtering rules in one greppable location.
 
 
-def authored_by_filter(user_id: str) -> tuple[str, tuple]:
-    """Return ``(parenthesised SQL clause, params tuple)`` for per-user export.
+def authored_by_filter(user_id: str, *, qualifier: str = "") -> tuple[str, tuple]:
+    """Return ``(parenthesised SQL clause, params tuple)`` for owner-only reads.
 
     Always parameterised; never f-strings into params. Caller composes
     with ``AND`` against any per-table predicates.
+
+    ``qualifier`` prefixes the columns (e.g. ``"signals"`` →
+    ``signals.scope``). Required when this is composed inside a join or LATERAL
+    where another table also has a ``user_id`` column — unqualified columns
+    there raise ``42702 ambiguous column`` at runtime, which no test against a
+    fake store reproduces. Used by email search (LUM-819), whose
+    ``email_body_text`` LATERAL carries both ``user_id`` and ``signal_id``.
     """
+    p = f"{qualifier}." if qualifier else ""
     return (
-        "(scope IN ('personal', 'shared') AND user_id = %s)",
+        f"({p}scope IN ('personal', 'shared') AND {p}user_id = %s)",
         (user_id,),
     )
 
@@ -335,9 +343,8 @@ def authored_by_qdrant_filter(user_id: str) -> dict:
 def authored_by_cypher_fragment(user_id: str, alias: str = "n") -> tuple[str, dict]:
     """Cypher fragment + params dict for per-user FalkorDB extraction.
 
-    Note: FalkorDB nodes/edges in v1 do NOT carry a ``scope`` property
-    (the model lives only in Postgres + Qdrant), so this fragment only
-    constrains ``user_id``. Returned shape mirrors
+    Note: FalkorDB nodes carry a ``scope`` property (LUM-961); personal
+    edges do not. This fragment constrains ``user_id`` only. Returned shape mirrors
     ``visible_cypher_fragment`` so callers can substitute uniformly.
     """
     return (f"({alias}.user_id = $vis_me)", {"vis_me": user_id})

@@ -285,14 +285,24 @@ def _emit_audit(
     key_version: int,
     tier: Literal["user", "household", "system"],
     ok: bool = True,
+    input_extra: dict[str, Any] | None = None,
 ) -> None:
     """Write a single ``audit_log`` row for a credential lifecycle event.
 
     NEVER logs ciphertext or plaintext: ``input_summary`` carries only
-    ``{actor, key_version, tier}``; ``result_summary`` carries only
-    ``{ok}``. Audit failures are caught and logged at exception level,
-    never re-raised — a missed audit row is a hygiene loss; the
-    underlying mutation has already succeeded.
+    ``{actor, key_version, tier}`` plus any ``input_extra``;
+    ``result_summary`` carries only ``{ok}``. Audit failures are caught and
+    logged at exception level, never re-raised — a missed audit row is a
+    hygiene loss; the underlying mutation has already succeeded.
+
+    ``input_extra`` (LUM-834 chunk B) carries event-specific **non-secret**
+    scalars — currently only ``{"enabled": bool}`` from ``set_enabled``. It
+    exists so that new state does not get smuggled through ``ok``: that flag
+    means "the write succeeded" in every other event of this vocabulary, and
+    reusing it for "turned off" would make ``ok=false`` mean two different
+    things and hand every operator filtering for failed writes a stream of
+    successful disables. Callers MUST NOT put payload values in here — the
+    never-log-plaintext rule above is not relaxed by this parameter.
 
     ``user_id`` semantics depend on the tier:
 
@@ -311,7 +321,12 @@ def _emit_audit(
                 connector=connector,
                 mode="DO",
                 input_summary=json.dumps(
-                    {"actor": actor, "key_version": key_version, "tier": tier},
+                    {
+                        "actor": actor,
+                        "key_version": key_version,
+                        "tier": tier,
+                        **(input_extra or {}),
+                    },
                     default=str,
                 ),
                 result_summary=json.dumps({"ok": bool(ok)}, default=str),

@@ -27,6 +27,28 @@ def _sse_payload(notification: TypedNotification) -> tuple[str, dict]:
         }
         return "signal_received", data
 
+    if ntype == NotificationType.SIGNAL_NEEDS_YOU:
+        data = {
+            "emit_id": emit_id,
+            "signal_id": meta.get("signal_id"),
+            "count": meta.get("count"),
+            "target_path": meta.get("target_path", "/email"),
+            "title": notification.title,
+            "body": notification.body,
+        }
+        return "needs_you", data
+
+    if ntype == NotificationType.SIGNAL_MORNING_BRIEF:
+        data = {
+            "emit_id": emit_id,
+            "signal_id": meta.get("signal_id"),
+            "count": meta.get("count"),
+            "target_path": meta.get("target_path", "/email"),
+            "title": notification.title,
+            "body": notification.body,
+        }
+        return "morning_brief", data
+
     if ntype == NotificationType.SIGNAL_DIGEST:
         data = {
             "digest_id": meta.get("digest_id"),

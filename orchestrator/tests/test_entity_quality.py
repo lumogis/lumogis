@@ -305,6 +305,14 @@ class TestStagedEntityPromotion:
         executed_sql = " ".join(str(call) for call in ms.execute.call_args_list)
         assert "is_staged = FALSE" in executed_sql
         assert "graph_projected_at = NULL" in executed_sql
+        # LUM-599: promotion gives the entity's spent typed edges new retries.
+        resets = [
+            c
+            for c in ms.execute.call_args_list
+            if "UPDATE entity_edges SET reconcile_attempts = 0" in c.args[0]
+        ]
+        assert len(resets) == 1
+        assert resets[0].args[1] == ("default", "eid-staged", "eid-staged")
 
     def test_promoted_when_quality_exceeds_upper_threshold(self, monkeypatch, fixture_stop_list):
         monkeypatch.setenv("ENTITY_PROMOTE_ON_MENTION_COUNT", "10")

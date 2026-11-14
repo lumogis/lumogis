@@ -23,17 +23,27 @@ services:
     # DEPLOY: set EGRESS_PROXY_IMAGE=…@sha256:… after verifying
     # `docker run --rm <img> squid -v | grep -- --with-openssl`.
     image: ${EGRESS_PROXY_IMAGE:-jacobalberty/squid@sha256:559a8dd2178cf9a40b9a526948467448bb627de98cb22edfddf4699b86a9f370}
-    entrypoint:
-      - /bin/sh
-      - -c
-      - "mkdir -p /var/log/squid /var/spool/squid && /usr/local/bin/gen-bump-cert.sh /etc/squid/bump.pem && chown -R proxy:proxy /var/log/squid /var/spool/squid /etc/squid/bump.pem && exec squid -N -d1 -f /etc/squid/squid.conf"
+    # LUM-758: the shared entrypoint. This overlay validates LUM-618 containment
+    # against the production proxy config, so it must boot the production path —
+    # an inline copy here would mean the containment test proves a boot sequence
+    # nothing else uses.
+    entrypoint: ["/usr/local/bin/entrypoint.sh"]
+    environment:
+      LUMOGIS_EGRESS_ALLOW_WATCH: ${LUMOGIS_EGRESS_ALLOW_WATCH:-1}
+      LUMOGIS_EGRESS_ALLOW_POLL_SECONDS: ${LUMOGIS_EGRESS_ALLOW_POLL_SECONDS:-2}
     volumes:
       - ./docker/egress-proxy/squid.conf:/etc/squid/squid.conf:ro
       - ./docker/egress-proxy/allow:/etc/squid/allow:ro
       - ./docker/egress-proxy/gen-bump-cert.sh:/usr/local/bin/gen-bump-cert.sh:ro
+      - ./docker/egress-proxy/entrypoint.sh:/usr/local/bin/entrypoint.sh:ro
     healthcheck:
-      # Liveness: TCP connect (needs bash — dash has no /dev/tcp).
-      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/3128"]
+      # Liveness: TCP connect (needs bash — dash has no /dev/tcp) AND a fresh
+      # watcher heartbeat when the watcher is enabled.
+      test:
+        - CMD
+        - bash
+        - -c
+        - 'exec 3<>/dev/tcp/127.0.0.1/3128 && { [ "$${LUMOGIS_EGRESS_ALLOW_WATCH:-1}" = "0" ] || find /var/run/lumogis-allow-watch.alive -mmin -1 2>/dev/null | grep -q .; }'
       interval: 10s
       timeout: 5s
       retries: 6

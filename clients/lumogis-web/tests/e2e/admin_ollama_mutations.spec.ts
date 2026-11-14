@@ -95,6 +95,15 @@ test.describe("LUM-450 admin Ollama mutations", () => {
     await modelRow().getByRole("button", { name: /^delete$/i }).click();
 
     await expect(modelRow()).toHaveCount(0, { timeout: 60_000 });
-    await expect(section.getByRole("alert")).toHaveCount(0);
+    // LUM-792 — scoped to the Ollama panel, NOT the whole System status section. The
+    // section also holds the DR-backup staleness advisory, which is permanently present
+    // on a fresh CI stack (no backup has ever run there), so the old section-wide
+    // `toHaveCount(0)` could never pass in CI no matter how well the delete worked.
+    // Narrowing does not weaken the check: the mutation error this test cares about
+    // (`ollamaActionError`) renders inside this panel, so a real delete failure is still
+    // caught — only unrelated advisories are excluded.
+    await expect(
+      page.getByRole("region", { name: /^ollama models$/i }).getByRole("alert"),
+    ).toHaveCount(0);
   });
 });

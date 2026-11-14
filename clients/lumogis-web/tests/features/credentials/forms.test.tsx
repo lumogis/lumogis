@@ -10,7 +10,11 @@ import { LlmApiKeyForm } from "../../../src/features/credentials/forms/LlmApiKey
 import { NtfyForm } from "../../../src/features/credentials/forms/NtfyForm";
 
 describe("CalDavForm", () => {
-  it("on edit, omits password from payload when the password field is left blank", async () => {
+  // LUM-846: this block previously asserted the OPPOSITE — that a blank
+  // password on edit produced a payload without the key. That was not a stale
+  // test; it was the bug, written down and kept green. `put_payload` replaces
+  // the whole payload, so the payload it asserted DELETED the stored password.
+  it("on edit, refuses to submit when the password is left blank", async () => {
     const onChange = vi.fn();
     const u = userEvent.setup();
     render(
@@ -21,10 +25,56 @@ describe("CalDavForm", () => {
       />,
     );
     await u.click(screen.getByRole("button", { name: /^apply$/i }));
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent(/re-enter the password/i);
+  });
+
+  it("tells the user on edit that saving replaces the whole credential", () => {
+    render(
+      <CalDavForm
+        value={{ base_url: "https://c.example.com/", username: "alice" }}
+        onChange={vi.fn()}
+        isEdit
+      />,
+    );
+    expect(screen.getByText(/saving replaces the whole credential/i)).toBeInTheDocument();
+  });
+
+  it("submits every key, including the password, when it is entered", async () => {
+    const onChange = vi.fn();
+    const u = userEvent.setup();
+    render(
+      <CalDavForm
+        value={{ base_url: "https://c.example.com/", username: "alice" }}
+        onChange={onChange}
+        isEdit
+      />,
+    );
+    await u.type(screen.getByLabelText(/^password/i), "s3cret");
+    await u.click(screen.getByRole("button", { name: /^apply$/i }));
     expect(onChange).toHaveBeenCalledWith({
       base_url: "https://c.example.com/",
       username: "alice",
+      password: "s3cret",
     });
+  });
+
+  it("a whitespace-only password does not count as entered", async () => {
+    // `required` accepts "   " happily, and every loader in this codebase
+    // rejects a whitespace-padded secret — so letting one through would save a
+    // credential that can never authenticate.
+    const onChange = vi.fn();
+    const u = userEvent.setup();
+    render(
+      <CalDavForm
+        value={{ base_url: "https://c.example.com/", username: "alice" }}
+        onChange={onChange}
+        isEdit
+      />,
+    );
+    await u.type(screen.getByLabelText(/^password/i), "   ");
+    await u.click(screen.getByRole("button", { name: /^apply$/i }));
+    expect(onChange).not.toHaveBeenCalled();
   });
 });
 

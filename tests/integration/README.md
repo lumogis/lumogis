@@ -89,7 +89,10 @@ cd orchestrator && python3 -m pytest ../tests/integration/test_phase3_checkpoint
 Override base URL:
 
 ```bash
-LUMOGIS_API_URL=http://host.docker.internal:8000 make test-integration
+LUMOGIS_API_URL=http://127.0.0.1:8000 make test-integration   # host-side pytest
+# or, from inside the compose network: LUMOGIS_API_URL=http://orchestrator:8000
 ```
+
+Port 8000 is published on **loopback only** (`127.0.0.1`), so `host.docker.internal:8000` does not reach it from a container on Linux; use the service name inside the compose network.
 
 CI runs **orchestrator and stack-control unit tests** on each PR (see `.github/workflows/ci.yml`). **Integration** tests need a live stack; **`make compose-test-integration`** uses the FalkorDB overlay. See [`../docs/testing/automated-test-strategy.md`](../docs/testing/automated-test-strategy.md) for the full matrix (web, Playwright, KG image, mock capability, parity).

@@ -3,8 +3,10 @@
 """Consecutive-failure circuit breaker (LUM-125).
 
 Most retry loops in the codebase are already bounded by an attempt cap
-(``batch_queue``, ``proposal_queue``, ``memory_purge``, the tool-chain cap in
-:mod:`loop`, etc.). What was missing is protection against *cross-call*
+(``batch_queue``, ``memory_purge``, the tool-chain cap in :mod:`loop`, etc.;
+``proposal_queue`` is bounded more simply still — since LUM-762 it does
+not retry at all, so a failed proposal is terminal on the first attempt).
+What was missing is protection against *cross-call*
 runaway spend: when an expensive upstream (a cloud LLM, in particular) fails
 repeatedly, every new request keeps paying to hit it. Claude Code's own
 telemetry showed sessions racking up thousands of consecutive failures —

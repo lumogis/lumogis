@@ -16,7 +16,7 @@ render_crontab() {
     {
       echo "SHELL=/bin/bash"
       echo "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-      echo "${schedule} root ${SCRIPTS}/backup.sh run && ${SCRIPTS}/backup.sh prune"
+      echo "${schedule} root ${SCRIPTS}/backup.sh run; ${SCRIPTS}/backup.sh prune"
     } >"$CRON_FILE"
   fi
   chmod 0644 "$CRON_FILE"

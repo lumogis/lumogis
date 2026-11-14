@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Lumogis
-"""Diff two `/graph/health` JSON snapshots; exit non-zero on parity break.
+"""Diff two FalkorDB snapshot JSON files; exit non-zero on parity break.
+
+The inputs are FalkorDB snapshots produced by
+`test_graph_parity._SNAPSHOT_PY` (graph names plus node/edge counts read
+from FalkorDB itself), NOT Core `/graph/health`, which reports Postgres
+quality metrics and holds none of the compared fields (LUM-929).
 
 Used by the parity test (`test_graph_parity.py`) to compare the
 inprocess-mode and service-mode FalkorDB state after ingesting an
@@ -9,6 +14,7 @@ identical fixture corpus. The contract under test is: switching
 `GRAPH_MODE` MUST NOT change projection output.
 
 Compared fields (must all be identical):
+  * `graphs` — sorted graph names present in FalkorDB
   * `nodes` — total node count
   * `edges` — total edge count
   * `nodes_by_label` (if present) — per-label counts
@@ -23,9 +29,13 @@ Fields IGNORED (not part of the parity contract):
     different versions of `/graph/health` for now; reconciliation of
     the response shape is out of scope for the extraction plan.)
 
+Vacuity guard: when NEITHER snapshot holds any compared field, nothing
+would be compared and the diff would always pass. That is reported as
+`VACUOUS` and exits 1.
+
 Exit codes:
   0 — snapshots are identical on the compared fields.
-  1 — at least one compared field differs.
+  1 — at least one compared field differs, or no field was compared.
   2 — argument or file-read error.
 
 Output: machine-readable diff to stdout (JSON), human summary to
@@ -43,6 +53,7 @@ from pathlib import Path
 from typing import Any
 
 _COMPARED_FIELDS = (
+    "graphs",
     "nodes",
     "edges",
     "nodes_by_label",
@@ -107,6 +118,11 @@ def main(argv: list[str] | None = None) -> int:
 
     a = _load(args.inprocess)
     b = _load(args.service)
+
+    if not any(f in a or f in b for f in _COMPARED_FIELDS):
+        print("diff_snapshots: VACUOUS — no compared field in either snapshot", file=sys.stderr)
+        print(json.dumps({"status": "vacuous"}))
+        return 1
 
     mismatches, info = diff(a, b)
 

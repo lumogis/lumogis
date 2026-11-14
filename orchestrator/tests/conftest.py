@@ -21,6 +21,20 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 os.environ.setdefault("LOG_FORMAT", "console")
 os.environ.setdefault("LOG_LEVEL", "DEBUG")
 
+# No `.env` file reaches the unit lane (LUM-905). `main.py` calls a bare
+# `load_dotenv()`, which walks up from `orchestrator/` through every parent
+# folder until it finds a `.env`. In the main checkout that is the operator's
+# live file; in a worktree under `.claude/worktrees/` it is the *same* file,
+# three folders up, which the LUM-804 scrub list below does not cover (its
+# relative `FILESYSTEM_ROOT` broke `test_browse_requires_admin`). Rather than
+# chase each variable, stop the file being read at all: python-dotenv >= 1.2
+# makes every `load_dotenv()` a no-op while this is set. Assigned, not
+# `setdefault`, so an inherited `PYTHON_DOTENV_DISABLED=0` cannot re-enable it.
+# Set at import, before anything can import `main`. Production is unaffected:
+# Docker images exclude `.env` (`.dockerignore`) and get env from compose, and a
+# native `uvicorn main:app` never loads this conftest.
+os.environ["PYTHON_DOTENV_DISABLED"] = "1"
+
 # Stub out apscheduler so that plugins/graph/__init__.py can be imported
 # in unit tests without the full production dependency being installed.
 # The scheduler itself is replaced by MockScheduler in the _override_config fixture.
@@ -54,6 +68,62 @@ if "apscheduler" not in sys.modules:
     sys.modules["apscheduler"] = _aps_pkg
     sys.modules["apscheduler.schedulers"] = _aps_schedulers
     sys.modules["apscheduler.schedulers.background"] = _aps_bg
+
+# SDK packages that are real dependencies (requirements-core.txt) and that
+# some tests import for real (e.g. `openai.APIConnectionError` in
+# test_egress_guard.py). A test module that plants a stub for one of these in
+# `sys.modules` at import time poisons every test collected after it, and the
+# damage depends on collection order (LUM-944). Stub them per test with
+# `monkeypatch.setitem(sys.modules, ...)`, which undoes itself.
+_REAL_SDK_MODULES = ("openai", "anthropic")
+
+
+def _leaked_sdk_stubs() -> list[str]:
+    """Return the SDK names whose `sys.modules` entry is not a real package."""
+    leaked = []
+    for name in _REAL_SDK_MODULES:
+        if name in sys.modules and getattr(sys.modules[name], "__file__", None) is None:
+            leaked.append(name)
+    return leaked
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_make_collect_report(collector):
+    """Fail collection of the module that leaves a stub SDK in `sys.modules`.
+
+    Importing a test module happens during its collection, so this checks
+    right after each module is collected and blames that module. The stub is
+    then dropped so the rest of the run still sees the real package.
+    """
+    report = yield
+    if isinstance(collector, pytest.Module):
+        leaked = _leaked_sdk_stubs()
+        if leaked:
+            for name in leaked:
+                sys.modules.pop(name, None)
+            report.outcome = "failed"
+            report.longrepr = (
+                f"{collector.nodeid} left a stub {', '.join(leaked)} module in "
+                "sys.modules at import time. It would leak into every later test. "
+                "Install it per test with monkeypatch.setitem(sys.modules, ...) (LUM-944)."
+            )
+    return report
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _assert_real_sdk_modules():
+    """Fail a module whose tests leave a stub SDK in `sys.modules` behind."""
+    yield
+    leaked = _leaked_sdk_stubs()
+    if leaked:
+        for name in leaked:
+            sys.modules.pop(name, None)
+        pytest.fail(
+            f"a test in this module left a stub {', '.join(leaked)} module in sys.modules; "
+            "use monkeypatch.setitem(sys.modules, ...) (LUM-944)",
+            pytrace=False,
+        )
+
 
 # Point config loaders to the actual files in config/ (project root).
 # Two layouts to support:
@@ -143,6 +213,16 @@ class MockMetadataStore:
     def transaction(self):
         yield
 
+    @contextmanager
+    def isolated_transaction(self):
+        """Yield ``self`` as the bound handle (LUM-65).
+
+        Production runs this on a dedicated connection; a mock has none, so this
+        models the calling shape only. The isolation itself is proved against a
+        real Postgres in ``tests/integration/test_postgres_store_concurrency_live.py``.
+        """
+        yield self
+
 
 class MockEmbedder:
     def ping(self) -> bool:
@@ -204,6 +284,42 @@ def mock_scheduler():
     return MockScheduler()
 
 
+#: Operator/stack environment that must NOT reach the unit lane (LUM-804).
+#:
+#: `orchestrator/main.py` calls `load_dotenv()`, so running pytest from the repo
+#: root loads the real `.env` — the operator's live configuration. The suite then
+#: exercises whatever that file says rather than the product CI ships, and the
+#: verdict depends on **where it was launched from**: the same commit and command
+#: gave 296 failures from the repo root and 0 in a git worktree, where `.env` is
+#: absent because it is gitignored.
+#:
+#: `AUTH_ENABLED` is the one that surfaced it — `.env` sets it to `true`, and 296
+#: tests expecting `200` got `401`. It failed loudly, which was luck; a variable
+#: whose wrong value does not happen to break an assertion changes behaviour
+#: silently and the suite still reports green.
+#:
+#: `LUMOGIS_PUBLIC_ORIGIN` is the quieter twin. CSRF `require_same_origin` runs
+#: *before* `require_user`. A TestClient POST with no Origin header then
+#: returns **403 origin mismatch** instead of **401 unauthenticated**
+#: (`test_source_create.py::test_an_unauthenticated_caller_is_401`). Isolation
+#: still passed; the full `make test` lane did not. Tests that pin an origin
+#: already `monkeypatch.setenv` after this fixture.
+#:
+#: Listing them here rather than deleting them inline makes the policy explicit:
+#: **this is what the unit lane is allowed to ignore about your machine.** Tests
+#: that genuinely want one set it via `monkeypatch.setenv` after this autouse
+#: fixture runs (74 modules already do this for `AUTH_ENABLED`), so neutralising
+#: it here changes nothing for them. Unset, `auth.auth_enabled()` reads `false`.
+#:
+#: Add to this list when a new operator variable is found to steer the unit lane.
+_NEUTRALISED_OPERATOR_ENV = (
+    "GRAPH_MODE",
+    "CAPABILITY_SERVICE_URLS",
+    "AUTH_ENABLED",
+    "LUMOGIS_PUBLIC_ORIGIN",
+)
+
+
 @pytest.fixture(autouse=True)
 def _override_config(
     mock_vector_store, mock_metadata_store, mock_embedder, mock_scheduler, monkeypatch
@@ -224,8 +340,8 @@ def _override_config(
     # service, polluting registry-counting assertions. Tests that specifically
     # need a non-default value set it via `monkeypatch.setenv` after this
     # autouse fixture runs.
-    monkeypatch.delenv("GRAPH_MODE", raising=False)
-    monkeypatch.delenv("CAPABILITY_SERVICE_URLS", raising=False)
+    for _var in _NEUTRALISED_OPERATOR_ENV:
+        monkeypatch.delenv(_var, raising=False)
     # Bypass main._enforce_auth_consistency for tests that exercise
     # AUTH_ENABLED=true without seeding a real admin row. The variable
     # name is intentionally long and ugly so it cannot accidentally
@@ -236,6 +352,10 @@ def _override_config(
         "_LUMOGIS_TEST_SKIP_AUTH_CONSISTENCY_DO_NOT_SET_IN_PRODUCTION",
         "true",
     )
+    # LUM-885: the refresh secret no longer falls back to AUTH_SECRET, so every
+    # test that logs in with only AUTH_SECRET set needs a distinct refresh
+    # secret. Tests that need it unset call ``delenv`` after this fixture.
+    monkeypatch.setenv("LUMOGIS_JWT_REFRESH_SECRET", "unit-lane-refresh-secret-distinct-from-auth")
     _config._instances["vector_store"] = mock_vector_store
     _config._instances["metadata_store"] = mock_metadata_store
     _config._instances["embedder"] = mock_embedder
@@ -291,6 +411,29 @@ def real_filesystem_watchers(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _reset_oauth_refresh_backoff(request, monkeypatch):
+    """LUM-761: the refresh negative cache is process state keyed by mailbox+token
+    digest, and OAuth test modules reuse one mailbox and token across tests — without
+    this, one test's `network` failure turns the next test's assertion into a cached hit.
+    Global rather than per-module (unlike update_check's / email_organize's caches)
+    because any test reaching the real get_access_token, including via load_connection,
+    writes it. The jittered retry pause is a real sleep; it is no-oped unless the test
+    requests `real_oauth_retry_pause`."""
+    from services import email_oauth  # lazy: no import at collection time
+
+    email_oauth._reset_refresh_backoff()
+    if "real_oauth_retry_pause" not in request.fixturenames:
+        monkeypatch.setattr(email_oauth, "_retry_pause", lambda: None)
+    yield
+    email_oauth._reset_refresh_backoff()
+
+
+@pytest.fixture
+def real_oauth_retry_pause():
+    """Opt-in marker: keep email_oauth._retry_pause real (see the autouse fixture above)."""
+
+
+@pytest.fixture(autouse=True)
 def _mock_watcher(monkeypatch):
     """Prevent the filesystem watcher from starting during tests.
 
@@ -311,6 +454,9 @@ _BATCH_QUEUE_REAL_TEST_FILES = frozenset(
     {
         "test_batch_queue.py",
         "test_ingest_paths_watcher.py",
+        # LUM-710: the unsubscribe action's whole job is now to enqueue, so a
+        # stubbed enqueue would leave nothing to assert.
+        "test_email_unsubscribe_batch.py",
     }
 )
 
@@ -340,6 +486,33 @@ def _stub_lifespan_batch_enqueue(monkeypatch, request):
 
 
 @pytest.fixture(autouse=True)
+def _stub_lifespan_stop_entities_copy(monkeypatch, request):
+    """``main.lifespan`` copies the stop-entities list into ``WORKSPACE_PATH`` (LUM-922).
+
+    Under ``make compose-test`` that is the developer's real workspace. The copy
+    itself is covered in ``test_stop_entities_store.py``.
+    """
+    if _pytest_node_basename(request) == "test_stop_entities_store.py":
+        return
+    monkeypatch.setattr("config.ensure_stop_entities_file", lambda: False)
+
+
+@pytest.fixture(autouse=True)
 def _stub_post_bootstrap_default_user_remap(monkeypatch):
     """``main.lifespan`` calls ``db_default_user_remap.main()`` which waits on Postgres."""
-    monkeypatch.setattr("db_default_user_remap.main", lambda: 0)
+    monkeypatch.setattr("db_default_user_remap.main", lambda **_kwargs: 0)
+
+
+@pytest.fixture(autouse=True)
+def _lenient_tv_claim_for_synthetic_tokens(monkeypatch):
+    """Accept test bearers that carry no ``tv`` claim.
+
+    ``LUMOGIS_REQUIRE_TV_CLAIM`` defaults on since LUM-918, but most route tests
+    mint bearers for synthetic users with ``mint_access_token(uid, role)`` or a
+    hand-built payload, both without ``tv``. Those tests are about the route,
+    not the gate, so the suite keeps the old lenient setting. A stale ``tv`` is
+    still rejected. The default itself, and the production login and refresh
+    tokens passing it, are covered in ``test_auth_token_defaults_lum918.py``,
+    which removes this variable.
+    """
+    monkeypatch.setenv("LUMOGIS_REQUIRE_TV_CLAIM", "false")

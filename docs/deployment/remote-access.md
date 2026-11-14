@@ -49,12 +49,29 @@ cloudflared tunnel --url http://localhost:80
 
 **Named tunnel (free Cloudflare account):** For a stable hostname on a domain you control, follow Cloudflare's [Create a tunnel (dashboard)](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/get-started/create-remote-tunnel/) guide and point the tunnel service URL at **`http://localhost:80`**.
 
+### Rate limits behind Tailscale Serve or Cloudflare Tunnel
+
+Lumogis keys its per-IP login, password-reset and invite limits on the client address. Caddy decides that address and trusts no upstream proxy by default, so behind Tailscale Serve or a tunnel **every device shares one per-IP bucket** (one household member's failed logins can lock the others out for a minute). To give each device its own bucket, tell Caddy which upstream to believe with `LUMOGIS_CADDY_TRUSTED_PROXIES` in `.env`:
+
+- **Proxy on the host** (Tailscale Serve, `cloudflared` installed on the host, a host nginx): find the compose gateway with `docker compose exec caddy ip route show default` (the address after `via` on the `default` line; the second line it prints is the network, not the gateway) and set `LUMOGIS_CADDY_TRUSTED_PROXIES=<gateway>/32`. This also trusts every process on the host. The gateway belongs to the compose network, so `docker compose down` followed by `up` can recreate it with a different address: re-check it then, or the value silently stops matching.
+- **`cloudflared` as a container on the Lumogis network:** it reaches Caddy from its own, changing container IP, not the gateway. Either run it on the host instead, or trust the network's subnet (`docker network inspect <project>_default --format '{{(index .IPAM.Config 0).Subnet}}'`). The subnet trusts **every** container on that network to set the client IP, including capability containers attached to it.
+- Values are **space-separated** CIDRs, quoted, for example `LUMOGIS_CADDY_TRUSTED_PROXIES="172.18.0.1/32 100.64.0.0/10"`. **Commas break it.**
+- Check a new value **before** restarting Caddy: `docker compose run --no-deps --rm caddy caddy validate --config /etc/caddy/Caddyfile && echo ok`. A malformed value (a comma, a typo) stops Caddy, and with it the web UI.
+- Then restart Caddy: `docker compose up -d caddy`.
+- **Docker Desktop:** do not trust the gateway. Every LAN client reaches Caddy through it there, so any device on your network could choose the address its login limit keys on.
+- **`make doctor`** prints the current gateway (row `caddy-gateway`) and checks the value (row `caddy-trusted-proxies`): an error when Caddy would refuse it, a warning when it no longer includes the gateway (for example after `down` and `up`) or trusts the gateway on Docker Desktop.
+
+Core itself trusts only the Caddy container (`LUMOGIS_TRUSTED_PROXIES=caddy`, the compose default); do not widen that list for a proxy in front of Caddy.
+
 ## Option C: LAN only (mDNS)
 
 On many home networks, **Avahi** or **mDNS** advertises a friendly hostname such as **`lumogis.local`**, so you can open the UI without remembering an IP address while on Wi‑Fi. That convenience is LAN-only: it does not reach phones on cellular or laptops on other networks, and it does not provide HTTPS. Use this path for at-home browsing only; pair it with Option A or B when household members need off-LAN or mobile access.
 
 ## Security guidance
 
+- **Never forward port 8000.** It is published on `127.0.0.1` only; reach Core through Caddy (port 80 or your tunnel).
 - **Do not** expose Lumogis directly to the public internet (no raw router port forwarding to port 80 or 8000). Unauthenticated or weakly authenticated instances on the open internet are an easy target.
-- **Tailscale Serve** is the preferred path because it keeps the service off the public internet while still delivering HTTPS to trusted devices on your tailnet.
+- **Tailscale Serve** is the preferred path because it keeps the service off the public internet while still delivering HTTPS to trusted devices on your tailnet. **Tailscale Funnel** publishes the same `*.ts.net` name to the whole internet: turn sign-in on before you enable it.
+- **Sign-in off on a public hostname is flagged.** When `AUTH_ENABLED=false` and `CADDY_DOMAIN` names a public hostname, the Caddy container prints a WARNING block each time it starts (`docker compose logs caddy`). It does not refuse to start. Names under `.local`, `.lan`, `.home.arpa`, `.internal`, `.test`, `.localhost` and `.ts.net`, single-label names and private IP addresses count as private. Caddy cannot see a tunnel or a router port forward, so a public install with `CADDY_DOMAIN=:80` gets no warning.
+- **LibreChat** (the optional `librechat` profile) is published on `127.0.0.1:3080` only and is not behind Caddy. Use Lumogis Web from other devices.
 - If you run a **named Cloudflare Tunnel** on a public hostname, treat the instance as internet-adjacent: enable Lumogis auth, use strong credentials, and consider [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/self-hosted-public-app/) to restrict who can reach the URL when the stack holds sensitive personal data.

@@ -317,7 +317,10 @@ function WebPushSubscriptionList(props: {
                 }
                 aria-label={`Notify on signals for ${row.endpoint_origin}`}
               />
-              <span>Notify on signals (future signal pushes)</span>
+              <span>
+                Notify on emails that need you — sends the email sender and subject to
+                this device
+              </span>
             </label>
             <label
               style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start", minHeight: tap.minHeight }}

@@ -10,7 +10,10 @@ import pathlib
 import pytest
 
 
-class _PathWithoutHostMount(pathlib.Path):
+# Subclass the CONCRETE OS path class (PosixPath/WindowsPath), not the abstract
+# ``pathlib.Path``: on Python < 3.12 a direct ``Path`` subclass has no
+# ``_flavour`` and raises ``AttributeError`` on instantiation.
+class _PathWithoutHostMount(type(pathlib.Path())):
     """Path helper for tests where /host is not mounted in the container."""
 
     def exists(self, *args, **kwargs):
@@ -178,9 +181,17 @@ def test_put_two_host_paths_writes_ingest_paths_env_with_data_n(
 
 
 def test_put_two_paths_returns_snippet_when_env_readonly(
-    store, auth_on_env, ingest_env, monkeypatch, multi_ingest_dirs
+    store, auth_on_env, ingest_env, monkeypatch, multi_ingest_dirs, tmp_path
 ):
     primary, extra = multi_ingest_dirs
+    # Redirect the env file even though the route is supposed to leave it alone:
+    # an unredirected _PROJECT_ENV_FILE means this test edits the operator's real
+    # /project/.env under `docker compose run` (uid 0, bind-mounted). Observed —
+    # FILESYSTEM_ROOT rewritten to a pytest tmpdir that no longer existed.
+    env_file = tmp_path / ".env"
+    original = "COMPOSE_FILE=docker-compose.yml\nFILESYSTEM_ROOT=./lumogis-data\n"
+    env_file.write_text(original)
+    monkeypatch.setattr("routes.admin._PROJECT_ENV_FILE", env_file)
     monkeypatch.setenv("INGEST_PATHS_ALLOWED_PREFIX", f"/data,{primary},{extra}")
     monkeypatch.setattr("routes.admin.project_env_writable", lambda _f=None: False)
 
@@ -196,6 +207,10 @@ def test_put_two_paths_returns_snippet_when_env_readonly(
     body = resp.json()
     assert body["ingest_compose_snippet"]
     assert body["ingest_compose_override_written"] is False
+    # A read-only project tree means read-only for the env file too. Reporting
+    # "override not written" while having rewritten FILESYSTEM_ROOT and the two
+    # INGEST_PATHS keys is the response contradicting itself.
+    assert env_file.read_text() == original
 
 
 def test_auto_write_chains_compose_file(

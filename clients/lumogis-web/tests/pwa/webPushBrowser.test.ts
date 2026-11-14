@@ -5,7 +5,11 @@
 
 import { describe, expect, it } from "vitest";
 
-import { urlBase64ToUint8Array } from "../../src/pwa/webPushBrowser";
+import {
+  closeShownNotifications,
+  unsubscribeBrowserPush,
+  urlBase64ToUint8Array,
+} from "../../src/pwa/webPushBrowser";
 
 describe("webPushBrowser", () => {
   it("urlBase64ToUint8Array decodes padded base64 URL string", () => {
@@ -18,5 +22,24 @@ describe("webPushBrowser", () => {
   it("urlBase64ToUint8Array handles unpadded lengths", () => {
     const u8 = urlBase64ToUint8Array("AQI");
     expect(u8.length).toBe(2);
+  });
+});
+
+describe("unsubscribeBrowserPush / closeShownNotifications (LUM-886)", () => {
+  it("unsubscribeBrowserPush returns false for null and for a throwing unsubscribe", async () => {
+    expect(await unsubscribeBrowserPush(null)).toBe(false);
+    const sub = {
+      unsubscribe: () => Promise.reject(new Error("offline")),
+    } as unknown as PushSubscription;
+    expect(await unsubscribeBrowserPush(sub)).toBe(false);
+  });
+
+  it("unsubscribeBrowserPush returns the browser's answer", async () => {
+    const sub = { unsubscribe: () => Promise.resolve(true) } as unknown as PushSubscription;
+    expect(await unsubscribeBrowserPush(sub)).toBe(true);
+  });
+
+  it("closeShownNotifications is a no-op without a service worker registration", async () => {
+    await expect(closeShownNotifications()).resolves.toBeUndefined();
   });
 });

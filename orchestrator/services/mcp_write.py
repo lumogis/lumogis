@@ -34,6 +34,7 @@ from services.entities import store_entities
 import config
 from services import entity_edges
 from services import memories
+from services import task_models
 
 _log = logging.getLogger(__name__)
 
@@ -165,7 +166,9 @@ def extract_relations(
     try:
         from services.privacy_mode import resolve_job_model
 
-        job_model = resolve_job_model("llama", user_id)
+        job_model = resolve_job_model(
+            task_models.resolve_task_model("relation_extraction", user_id=user_id), user_id
+        )
         if not job_model:
             return []
         provider = config.get_llm_provider(job_model, user_id=user_id)

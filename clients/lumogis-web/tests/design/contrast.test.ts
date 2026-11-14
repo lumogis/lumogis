@@ -74,6 +74,18 @@ describe("design tokens (light theme) WCAG-AA", () => {
   it("muted fg on bg ≥ 4.5:1", () => {
     expect(getContrastRatio(LIGHT.fgMuted, LIGHT.bg)).toBeGreaterThanOrEqual(AA_BODY);
   });
+  // LUM-852: "Context used" strip — muted text inside the document-chat surface card.
+  it("muted fg on surface ≥ 4.5:1", () => {
+    expect(getContrastRatio(LIGHT.fgMuted, LIGHT.surface)).toBeGreaterThanOrEqual(AA_BODY);
+  });
+  // LUM-821 — the mailbox chip on an email card is the first use of muted
+  // foreground on the ALT surface. Muted text on a tinted background is the
+  // classic AA near-miss, and the chip carries the only thing distinguishing
+  // personal mail from work mail in a cross-mailbox lane, so it is body text
+  // by function even though it renders small.
+  it("mailbox chip (muted fg on surfaceAlt) ≥ 4.5:1", () => {
+    expect(getContrastRatio(LIGHT.fgMuted, LIGHT.surfaceAlt)).toBeGreaterThanOrEqual(AA_BODY);
+  });
   it("accent button (accentFg on accent) ≥ 4.5:1", () => {
     expect(getContrastRatio(LIGHT.accentFg, LIGHT.accent)).toBeGreaterThanOrEqual(AA_BODY);
   });
@@ -94,6 +106,18 @@ describe("design tokens (dark theme) WCAG-AA", () => {
   });
   it("muted fg on bg ≥ 4.5:1", () => {
     expect(getContrastRatio(DARK.fgMuted, DARK.bg)).toBeGreaterThanOrEqual(AA_BODY);
+  });
+  // LUM-852: "Context used" strip — muted text inside the document-chat surface card.
+  it("muted fg on surface ≥ 4.5:1", () => {
+    expect(getContrastRatio(DARK.fgMuted, DARK.surface)).toBeGreaterThanOrEqual(AA_BODY);
+  });
+  // LUM-821 — the mailbox chip on an email card is the first use of muted
+  // foreground on the ALT surface. Muted text on a tinted background is the
+  // classic AA near-miss, and the chip carries the only thing distinguishing
+  // personal mail from work mail in a cross-mailbox lane, so it is body text
+  // by function even though it renders small.
+  it("mailbox chip (muted fg on surfaceAlt) ≥ 4.5:1", () => {
+    expect(getContrastRatio(DARK.fgMuted, DARK.surfaceAlt)).toBeGreaterThanOrEqual(AA_BODY);
   });
   it("accent button (accentFg on accent) ≥ 3.0 (large UI)", () => {
     expect(getContrastRatio(DARK.accentFg, DARK.accent)).toBeGreaterThanOrEqual(AA_LARGE);

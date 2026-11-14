@@ -540,8 +540,8 @@ def entity_search(query: str, limit: int = 10) -> dict:
 def context_build(query: str, max_tokens: int = 2000) -> dict:
     """MCP tool: context.build — combine document + memory hits, budget-capped.
 
-    Intentionally simple — the premium context.build_pack tool (graph-aware,
-    provenance-tracked) will live in the future KG capability service.
+    Intentionally simple — the graph-aware, provenance-tracked context.build_pack
+    tool will live in the future KG capability service.
     Failures in either underlying source are swallowed so the tool always
     returns a usable shape; partial results are better than a hard error
     for downstream MCP clients.

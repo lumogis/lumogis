@@ -1,0 +1,167 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Lumogis
+#
+# Deterministic “full product slice” overlay for public RC gates:
+# FalkorDB + lumogis-graph (GRAPH_MODE=service) + lumogis-mock-capability,
+# wired into Core via CAPABILITY_SERVICE_URLS.
+#
+# Merge explicitly AFTER docker-compose.test.yml, e.g.:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.test.yml:docker-compose.public-rc-stack.yml
+#
+# Host ports (integration tests / debugging only):
+#   - 18001 → KG /health
+#   - 18080 → mock capability /health + /capabilities
+
+services:
+  falkordb:
+    image: falkordb/falkordb:v4.18.1
+    volumes:
+      - falkordb_data_rc:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6379", "PING"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  lumogis-graph:
+    build:
+      context: .
+      dockerfile: services/lumogis-graph/Dockerfile
+      target: runtime
+    image: lumogis-graph:dev
+    env_file: .env
+    ports:
+      - "18001:8001"
+    environment:
+      GRAPH_BACKEND: ${GRAPH_BACKEND:-falkordb}
+      FALKORDB_URL: ${FALKORDB_URL:-redis://falkordb:6379}
+      FALKORDB_GRAPH_NAME: ${FALKORDB_GRAPH_NAME:-lumogis}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER:-lumogis}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lumogis-dev}
+      POSTGRES_DB: ${POSTGRES_DB:-lumogis}
+      KG_SERVICE_PORT: ${KG_SERVICE_PORT:-8001}
+      KG_SCHEDULER_ENABLED: ${KG_SCHEDULER_ENABLED:-false}
+      # RC gate runs the AUTHENTICATED webhook path, matching production. The value
+      # comes from config/test.env.example (the gate's --env-file). That file is public
+      # too, so this is NOT secret-hiding — it is a fixed, publishable TEST value kept
+      # where test config belongs. An empty value fails closed (KG returns 503).
+      GRAPH_WEBHOOK_SECRET: ${GRAPH_WEBHOOK_SECRET:-}
+      KG_ALLOW_INSECURE_WEBHOOKS: ${KG_ALLOW_INSECURE_WEBHOOKS:-false}
+      KG_MANAGEMENT_URL: ${KG_MANAGEMENT_URL:-http://lumogis-graph:8001/mgm}
+      LUMOGIS_CORE_BASE_URL: ${LUMOGIS_CORE_BASE_URL:-http://orchestrator:8000}
+      GRAPH_MODE: service
+    depends_on:
+      postgres:
+        condition: service_healthy
+      falkordb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8001/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 45s
+    mem_limit: ${KG_MEM_LIMIT:-2g}
+    mem_reservation: ${KG_MEM_RESERVATION:-512m}
+    restart: unless-stopped
+    volumes:
+      # RC gate uses live tree (same pattern as orchestrator) — no image rebuild per dev change.
+      - ./services/lumogis-graph:/app
+
+  lumogis-mock-capability:
+    build:
+      context: ./services/lumogis-mock-capability
+    ports:
+      - "18080:8080"
+    environment:
+      MOCK_CAPABILITY_SHARED_SECRET: ${MOCK_CAPABILITY_SHARED_SECRET:-rc-mock-cap-deterministic-secret-do-not-use-prod}
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health').read()",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    volumes:
+      - ./services/lumogis-mock-capability:/app:ro
+
+  orchestrator:
+    env_file:
+      - config/test.env.example
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+      stack-control:
+        condition: service_started
+      falkordb:
+        condition: service_healthy
+      lumogis-graph:
+        condition: service_healthy
+      lumogis-mock-capability:
+        condition: service_healthy
+    environment:
+      GRAPH_MODE: service
+      KG_SERVICE_URL: ${KG_SERVICE_URL:-http://lumogis-graph:8001}
+      CAPABILITY_SERVICE_URLS: ${CAPABILITY_SERVICE_URLS:-http://lumogis-graph:8001,http://lumogis-mock-capability:8080}
+      LUMOGIS_CAPABILITY_BEARER_LUMOGIS_MOCK_ECHO: ${MOCK_CAPABILITY_SHARED_SECRET:-rc-mock-cap-deterministic-secret-do-not-use-prod}
+      LUMOGIS_TOOL_CATALOG_ENABLED: "true"
+      # LUM-618: lumogis-mock-capability (id lumogis.mock.echo) is the COMMUNITY test
+      # case (not in orchestrator/first_party_capabilities.txt). It now dispatches
+      # because it is CONTAINED (listed in orchestrator/contained_capabilities.txt +
+      # wired onto the isolated egress network by docker-compose.egress.yml) — NOT
+      # via the deprecated LUMOGIS_ALLOW_UNCONTAINED_COMMUNITY_CAPABILITIES flag,
+      # which is intentionally removed here. The egress overlay MUST be composed and
+      # the `community-egress` profile active (see Makefile RC-stack targets); Pass C
+      # verifies the mock is on the isolated network only.
+      LUMOGIS_RC_CHAT_STUB: ${LUMOGIS_RC_CHAT_STUB:-true}
+      LUMOGIS_RC_APPROVAL_FIXTURE_ACTIONS: ${LUMOGIS_RC_APPROVAL_FIXTURE_ACTIONS:-true}
+      # RC gate runs the AUTHENTICATED webhook path, matching production. The value
+      # comes from config/test.env.example (the gate's --env-file). That file is public
+      # too, so this is NOT secret-hiding — it is a fixed, publishable TEST value kept
+      # where test config belongs. An empty value fails closed (KG returns 503).
+      GRAPH_WEBHOOK_SECRET: ${GRAPH_WEBHOOK_SECRET:-}
+      KG_ALLOW_INSECURE_WEBHOOKS: ${KG_ALLOW_INSECURE_WEBHOOKS:-false}
+      FALKORDB_URL: ${FALKORDB_URL:-redis://falkordb:6379}
+      # Pass through the host opt-out so the restart_e2e gate can boot the orchestrator
+      # without the Ollama wait/model-pull (fast, deterministic --force-recreate). Empty by
+      # default — normal verify-public-rc keeps the standard wait-and-pull behaviour.
+      OLLAMA_SKIP_WAIT: ${OLLAMA_SKIP_WAIT:-}
+    # Bind-mount Core sources into /app so RC gates pick up new Python modules without
+    # rebuilding the orchestrator image (Dockerfile copies into /app at build time).
+    volumes:
+      - ./orchestrator:/app
+
+  # POST /settings/restart recreates the orchestrator from *inside* stack-control. Two things
+  # must be carried into this container for that recreate to work in the RC harness:
+  #   - OLLAMA_SKIP_WAIT: re-interpolated from stack-control's own env so the recreated
+  #     orchestrator also skips the Ollama wait/pull (the initial host-driven `up` skipped it).
+  #   - HOST_PROJECT_DIR + a same-path bind mount of the repo: docker compose resolves RELATIVE
+  #     bind sources (./orchestrator, ${FILESYSTEM_ROOT}, .) against its working dir and sends
+  #     them to the daemon as HOST paths. Running from /project (a container-only path) makes
+  #     them resolve to non-existent host dirs, so /app etc. mount empty and the orchestrator
+  #     crash-loops. Mounting the repo at its real host path AND running compose from there
+  #     makes relative sources resolve to real host paths. Both empty by default (no effect
+  #     outside the gate).
+  stack-control:
+    environment:
+      OLLAMA_SKIP_WAIT: ${OLLAMA_SKIP_WAIT:-}
+      HOST_PROJECT_DIR: ${HOST_PROJECT_DIR:-}
+    volumes:
+      - ${HOST_PROJECT_DIR:-/project}:${HOST_PROJECT_DIR:-/project}:ro
+
+volumes:
+  falkordb_data_rc:

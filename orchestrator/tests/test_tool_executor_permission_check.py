@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import httpx
+import pytest
 from models.tool_spec import ToolSpec
 from services.execution import PermissionCheck
 from services.execution import ToolExecutor
@@ -93,3 +94,28 @@ def test_inprocess_denied_when_permission_false() -> None:
     r = ex.execute_inprocess(spec, {}, user_id="u", request_id="r1")
     assert r.denied
     assert "Permission denied" in r.output
+
+
+def test_tool_executor_execute_has_no_single_arg_fallback() -> None:
+    """LUM-884: a one-argument handler raises; it is never retried without user_id."""
+    called: list[dict] = []
+
+    def _one_arg(input_: dict) -> str:
+        called.append(input_)
+        return "x"
+
+    spec = ToolSpec(
+        name="n",
+        connector="fs",
+        action_type="read",
+        is_write=False,
+        definition={"name": "n"},
+        handler=_one_arg,
+    )
+    ex = ToolExecutor(
+        permission=PermissionCheck(check=lambda *_: True),
+        emit_audit=lambda _e: None,
+    )
+    with pytest.raises(TypeError):
+        ex.execute_inprocess(spec, {}, user_id="u", request_id="r1")
+    assert called == []

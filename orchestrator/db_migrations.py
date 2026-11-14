@@ -80,6 +80,10 @@ for human readers cross-referencing plans/ADRs):
                      stamp; drives the typed-edge reconcile replay — LUM-580)
   051 fix-cursor-integration-email  (rewrite legacy ``@test.lumogis.local`` fixture
                      email so ``GET /api/v1/admin/users`` can hydrate rows — LUM-540)
+  080 entity-edges-reconcile-backoff  (``entity_edges.reconcile_attempts`` retry
+                     budget for the typed-edge replay — LUM-599 — plus the partial
+                     index ``idx_entity_edges_reconcile_stale`` on unstamped rows
+                     that serves its stale scan — LUM-600)
 
   Lexical ordering applies **all** files sharing an integer prefix before the
   next prefix. Three historical prefix collisions coexist (LUM-590):
@@ -92,7 +96,7 @@ for human readers cross-referencing plans/ADRs):
   application order within the prefix is irrelevant. They are **not** renumbered:
   the runner tracks applied migrations by *filename*, so renaming an applied file
   would make it re-run on every existing install. New migrations must take the
-  next free integer (currently 052) — one file per integer. The collision set is
+  next free integer (``max(prefix) + 1``) — one file per integer. The collision set is
   frozen and enforced by ``tests/test_migration_filename_hygiene.py``.
 
 The 013 chunk also wires `db_default_user_remap.py` from

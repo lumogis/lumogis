@@ -53,6 +53,24 @@ run_pr_case true scripts/backup/verify.sh
 echo "test-backup-integration-paths: docs/foo.md -> false"
 run_pr_case false docs/foo.md
 
+echo "test-backup-integration-paths: orchestrator/services/captures.py -> true (LUM-892 round-trip helper calls it)"
+run_pr_case true orchestrator/services/captures.py
+
+echo "test-backup-integration-paths: tests/integration/backup_roundtrip_files.py -> true"
+run_pr_case true tests/integration/backup_roundtrip_files.py
+
+echo "test-backup-integration-paths: scripts/update/rescue-stop-entities.sh -> true (LUM-922 round trip runs it)"
+run_pr_case true scripts/update/rescue-stop-entities.sh
+
+echo "test-backup-integration-paths: orchestrator/routes/admin.py -> true (LUM-922 round-trip helper writes the stop list)"
+run_pr_case true orchestrator/routes/admin.py
+
+echo "test-backup-integration-paths: scripts/update/update.sh -> false"
+run_pr_case false scripts/update/update.sh
+
+echo "test-backup-integration-paths: orchestrator/services/email_send.py -> false"
+run_pr_case false orchestrator/services/email_send.py
+
 echo "test-backup-integration-paths: docker-compose.falkordb.yml -> true"
 run_pr_case true docker-compose.falkordb.yml
 

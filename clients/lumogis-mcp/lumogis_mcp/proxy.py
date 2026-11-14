@@ -29,6 +29,42 @@ def _stderr(msg: str) -> None:
     print(msg, file=sys.stderr, flush=True)
 
 
+def _leaf_exception(exc: BaseException) -> BaseException:
+    """Return the first non-group exception inside ``exc``.
+
+    ``streamablehttp_client`` runs its requests in an anyio task group, so an
+    upstream 401 or refused connection arrives wrapped in an ``ExceptionGroup``.
+    Unwrap it, or every failure reports as a bare "transport error".
+    """
+    while isinstance(exc, BaseExceptionGroup) and exc.exceptions:
+        exc = exc.exceptions[0]
+    return exc
+
+
+def _report_upstream_error(config: BridgeConfig, exc: BaseException) -> None:
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        if status == 401:
+            _stderr(
+                "MCP token rejected — mint a new lmcp_… token "
+                "(see docs/private/ops/connect-and-verify.md Step 9d)"
+            )
+        elif status == 403:
+            _stderr(
+                "Unexpected Origin rejection — bridge must not send Origin; "
+                "check proxy/httpx defaults"
+            )
+        else:
+            _stderr(f"Lumogis Core HTTP error {status}")
+    elif isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout, OSError)):
+        _stderr(
+            f"Lumogis Core is not reachable at {config.url}. "
+            "Start with: docker compose up -d"
+        )
+    else:
+        _stderr(f"Lumogis Core transport error: {exc.__class__.__name__}")
+
+
 async def run_stdio_proxy(config: BridgeConfig) -> None:
     """Run the stdio MCP bridge until stdin closes or the process is interrupted."""
     server = Server("lumogis-mcp")
@@ -67,30 +103,9 @@ async def run_stdio_proxy(config: BridgeConfig) -> None:
                         await shutdown.wait()
             except asyncio.CancelledError:
                 raise
-            except httpx.HTTPStatusError as exc:
-                state["session"] = None
-                status = exc.response.status_code
-                if status == 401:
-                    _stderr(
-                        "MCP token rejected — mint a new lmcp_… token "
-                        "(see docs/private/ops/connect-and-verify.md Step 9d)"
-                    )
-                elif status == 403:
-                    _stderr(
-                        "Unexpected Origin rejection — bridge must not send Origin; "
-                        "check proxy/httpx defaults"
-                    )
-                else:
-                    _stderr(f"Lumogis Core HTTP error {status}")
-            except (httpx.ConnectError, httpx.ConnectTimeout, ConnectionRefusedError, OSError):
-                state["session"] = None
-                _stderr(
-                    f"Lumogis Core is not reachable at {config.url}. "
-                    "Start with: docker compose up -d"
-                )
             except Exception as exc:
                 state["session"] = None
-                _stderr(f"Lumogis Core transport error: {exc.__class__.__name__}")
+                _report_upstream_error(config, _leaf_exception(exc))
             if shutdown.is_set():
                 break
             await asyncio.sleep(min(backoff, 2.0))

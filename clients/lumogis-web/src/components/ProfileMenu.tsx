@@ -8,7 +8,7 @@ import { useAuth, useUser } from "../auth/AuthProvider";
 
 export function ProfileMenuButton(): JSX.Element | null {
   const user = useUser();
-  const { logout } = useAuth();
+  const { logout, singleUser } = useAuth();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
@@ -23,7 +23,8 @@ export function ProfileMenuButton(): JSX.Element | null {
 
   if (!user) return null;
 
-  const initial = (user.email?.[0] ?? "?").toUpperCase();
+  // LUM-853: the synthetic `dev@local.lan` is not an address anyone owns.
+  const initial = singleUser ? "S" : (user.email?.[0] ?? "?").toUpperCase();
 
   return (
     <div className="lumogis-profile-menu" ref={rootRef}>
@@ -42,7 +43,7 @@ export function ProfileMenuButton(): JSX.Element | null {
       {open ? (
         <div className="lumogis-profile-menu__panel" role="menu">
           <div className="lumogis-profile-menu__head">
-            <span className="lumogis-profile-menu__email">{user.email}</span>
+            <span className="lumogis-profile-menu__email">{singleUser ? "Single-user mode" : user.email}</span>
             <span className="lumogis-profile-menu__role">{user.role}</span>
           </div>
           <Link to="/me/profile" className="lumogis-profile-menu__item" role="menuitem" onClick={() => setOpen(false)}>
@@ -56,17 +57,19 @@ export function ProfileMenuButton(): JSX.Element | null {
               Admin
             </Link>
           ) : null}
-          <button
-            type="button"
-            className="lumogis-profile-menu__item lumogis-profile-menu__item--danger"
-            role="menuitem"
-            onClick={() => {
-              setOpen(false);
-              void logout();
-            }}
-          >
-            Sign out
-          </button>
+          {singleUser ? null : (
+            <button
+              type="button"
+              className="lumogis-profile-menu__item lumogis-profile-menu__item--danger"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                void logout();
+              }}
+            >
+              Sign out
+            </button>
+          )}
         </div>
       ) : null}
     </div>

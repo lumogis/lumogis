@@ -26,6 +26,12 @@ class _InvitesFakeStore(FakeUsersStore):
     def _norm(query: str) -> str:
         return " ".join(query.split()).lower()
 
+    def _creator_is_active_admin(self, row: dict) -> bool:
+        # LUM-885: the invite is valid only while its creator exists, is not
+        # disabled and is still an admin (applied against the users table).
+        creator = self.rows.get(row["created_by"])
+        return bool(creator) and creator["role"] == "admin" and not creator["disabled"]
+
     def execute(self, query: str, params: tuple | None = None) -> None:
         q = self._norm(query)
         p = params or ()
@@ -76,7 +82,7 @@ class _InvitesFakeStore(FakeUsersStore):
             if row and row["used_at"] is None and row["revoked_at"] is None:
                 return {"id": iid}
             return None
-        if q.startswith("select * from user_invites where token_prefix"):
+        if q.startswith("select i.* from user_invites i join users c on c.id = i.created_by"):
             (prefix,) = p
             now = datetime.now(timezone.utc)
             for row in self.invites.values():
@@ -85,10 +91,11 @@ class _InvitesFakeStore(FakeUsersStore):
                     and row["used_at"] is None
                     and row["revoked_at"] is None
                     and row["expires_at"] > now
+                    and self._creator_is_active_admin(row)
                 ):
                     return dict(row)
             return None
-        if q.startswith("update user_invites set used_at = now()") and "returning" in q:
+        if q.startswith("update user_invites i set used_at = now()") and "returning" in q:
             used_by, iid = p
             row = self.invites.get(iid)
             now = datetime.now(timezone.utc)
@@ -97,6 +104,7 @@ class _InvitesFakeStore(FakeUsersStore):
                 and row["used_at"] is None
                 and row["revoked_at"] is None
                 and row["expires_at"] > now
+                and self._creator_is_active_admin(row)
             ):
                 row["used_at"] = now
                 row["used_by"] = used_by
@@ -152,7 +160,13 @@ def dev_env(monkeypatch):
 
 def _mint_jwt(user_id: str, role: str) -> str:
     return jwt.encode(
-        {"sub": user_id, "role": role, "iat": int(time.time()), "exp": int(time.time()) + 600},
+        {
+            "typ": "access",
+            "sub": user_id,
+            "role": role,
+            "iat": int(time.time()),
+            "exp": int(time.time()) + 600,
+        },
         os.environ["AUTH_SECRET"],
         algorithm="HS256",
     )

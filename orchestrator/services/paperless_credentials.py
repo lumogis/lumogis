@@ -12,6 +12,7 @@ Mirrors :mod:`services.caldav_credentials` split:
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -32,12 +33,40 @@ class PaperlessConnection:
     token: str
 
 
-def load_connection(user_id: str) -> PaperlessConnection:
+def load_connection(
+    user_id: str,
+    *,
+    resolve_host: Callable[[str], list[str]] | None = None,
+) -> PaperlessConnection:
+    """Load and validate the user's paperless connection.
+
+    ``resolve_host`` is forwarded to
+    :func:`services.outbound_http_url.validate_outbound_connector_base_url`,
+    whose SSRF check resolves the host over DNS. That resolution is **untimed**
+    by default, which is why the overlap probe (LUM-741) passes a
+    deadline-bounded resolver: the probe advertises a ceiling
+    (``PAPERLESS_OVERLAP_TIMEOUT_S``) that the credential load used to sit
+    entirely outside of.
+
+    Omitting it — every caller other than the overlap probe — keeps the default
+    blocking resolver and the previous behaviour exactly.
+    """
     payload = ccs.get_payload(user_id, PAPERLESS)
 
     if payload is not None:
-        base_url, token = _validate_payload(payload)
+        base_url, token = _validate_payload(payload, resolve_host=resolve_host)
         return PaperlessConnection(base_url=base_url, token=token)
+
+    # LUM-834 chunk B — the disabled check comes BEFORE the auth split, and
+    # this is the branch that made the whole toggle a no-op without it.
+    #
+    # `get_payload` returns None for a disabled row exactly as it does for an
+    # absent one. Under AUTH_ENABLED=false — the DEFAULT — the code below
+    # would then fall through to PAPERLESS_BASE_URL / PAPERLESS_TOKEN, so a
+    # user who switched paperless off would have kept ingesting from the
+    # env-configured server with no indication why.
+    if ccs.is_disabled(user_id, PAPERLESS):
+        raise ccs.disabled_error(PAPERLESS)
 
     if auth_enabled():
         raise ccs.ConnectorNotConfigured(f"no paperless credential row for user_id={user_id!r}")
@@ -50,19 +79,28 @@ def load_connection(user_id: str) -> PaperlessConnection:
         )
     base_url = env_url
     token = os.environ.get("PAPERLESS_TOKEN", "")
-    _validate_outbound_and_token(base_url, token)
+    _validate_outbound_and_token(base_url, token, resolve_host=resolve_host)
     return PaperlessConnection(base_url=base_url, token=token)
 
 
-def _validate_outbound_and_token(base_url: str, token: str) -> None:
-    validate_outbound_connector_base_url(base_url)
+def _validate_outbound_and_token(
+    base_url: str,
+    token: str,
+    *,
+    resolve_host: Callable[[str], list[str]] | None = None,
+) -> None:
+    validate_outbound_connector_base_url(base_url, resolve_host=resolve_host)
     if not token or not token.strip():
         raise ValueError("paperless token is empty")
     if token.strip() != token:
         raise ValueError("paperless token has leading/trailing whitespace")
 
 
-def _validate_payload(payload: Any) -> tuple[str, str]:
+def _validate_payload(
+    payload: Any,
+    *,
+    resolve_host: Callable[[str], list[str]] | None = None,
+) -> tuple[str, str]:
     if not isinstance(payload, dict):
         raise ccs.CredentialUnavailable("paperless payload must be a JSON object")
 
@@ -79,5 +117,5 @@ def _validate_payload(payload: Any) -> tuple[str, str]:
             raise ValueError(f"paperless payload field {key!r} has leading/trailing whitespace")
         values[key] = value
 
-    _validate_outbound_and_token(values["base_url"], values["token"])
+    _validate_outbound_and_token(values["base_url"], values["token"], resolve_host=resolve_host)
     return values["base_url"], values["token"]

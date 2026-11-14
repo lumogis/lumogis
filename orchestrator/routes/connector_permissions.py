@@ -23,9 +23,12 @@ dashboard's ``fetch`` flows keep working unchanged. Mirrors
 Connector validation
 --------------------
 Every route that accepts a ``{connector}`` path param validates the
-value against :func:`actions.registry.list_actions`. On registry
-failure the write proceeds with a single WARN log and a
-``Warning: 199`` advisory header (degrade-allow per OQ #4). The
+value against the live registries. *Which* connectors are settable is
+decided in :mod:`services.permission_connectors` (LUM-962, ADR 220); this
+module keeps the outage policy: on an action-registry failure a plain
+connector write proceeds with a single WARN log and a ``Warning: 199``
+advisory header (degrade-allow per OQ #4), while ``capability.{id}``
+connectors fail closed. The
 length cap (``max_length=64``) lives on the FastAPI ``Path(...)``
 constraint so a long-string spam DoS is rejected with 422 BEFORE the
 SQL or registry lookup runs.
@@ -41,7 +44,6 @@ only after the ``require_admin`` gate.
 from __future__ import annotations
 
 import logging
-import re
 from typing import Any
 
 import permissions
@@ -61,6 +63,7 @@ from models.connector_permission import ConnectorPermissionPublic
 from models.connector_permission import ConnectorPermissionUpdate
 from services.capability_scopes import CAPABILITY_ID_PATTERN as _CAP_ID_PATTERN
 
+from services import permission_connectors
 from services import users as users_service
 
 _log = logging.getLogger(__name__)
@@ -104,10 +107,7 @@ _CONNECTOR_PATH = Path(
     ...,
     min_length=1,
     max_length=64,
-    description=(
-        "Connector slug (e.g. filesystem-mcp) or capability id "
-        "(capability.{id}; validated at runtime)."
-    ),
+    pattern=_CONNECTOR_PATTERN,
 )
 
 _ACTION_REGISTRY_UNAVAILABLE_HEADER = '199 - "action registry unavailable; connector unvalidated"'
@@ -116,42 +116,6 @@ _ACTION_REGISTRY_UNAVAILABLE_HEADER = '199 - "action registry unavailable; conne
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _known_connectors() -> set[str] | None:
-    """Distinct connector names from the live **action** registry (``list_actions``).
-
-    Returns ``None`` on action-registry failure so the caller can degrade-allow
-    first-party connectors with a ``Warning: 199`` advisory header (OQ #4).
-    """
-    try:
-        from actions.registry import list_actions
-
-        return {spec["connector"] for spec in list_actions() if spec.get("connector")}
-    except Exception:  # noqa: BLE001 — degrade-allow per OQ #4
-        _log.warning("action_registry_unavailable_at_permission_validation")
-        return None
-
-
-def _known_capability_connectors() -> set[str] | None:
-    """`capability.{id}` names for every registered capability service (LUM-612).
-
-    Sourced in a **separate** try from the action registry so a capability
-    -registry error never weakens plain-connector validation. Returns ``None`` on
-    failure — callers **fail closed** for `capability.*` writes (never degrade
-    -allow an unverified capability grant). The set is legitimately empty until
-    first discovery completes at startup, so real capabilities 404 briefly then.
-    """
-    try:
-        from services.capability_scopes import capability_connector
-
-        import config
-
-        reg = config.get_capability_registry()
-        return {capability_connector(svc.manifest.id) for svc in reg.all_services()}
-    except Exception:  # noqa: BLE001
-        _log.warning("capability_registry_unavailable_at_permission_validation")
-        return None
 
 
 def _validate_connector_or_warn(
@@ -172,18 +136,12 @@ def _validate_connector_or_warn(
     during an outage). ``allow_missing=True`` bypasses the existence check so an
     orphaned capability grant stays revocable via DELETE.
     """
-    if not re.fullmatch(_CONNECTOR_PATTERN, connector):
-        raise HTTPException(
-            status_code=422,
-            detail={"error": "invalid_connector", "connector": connector},
-        )
-
     from services.capability_scopes import is_capability_connector
 
     if is_capability_connector(connector):
         if allow_missing:
             return
-        known_caps = _known_capability_connectors()
+        known_caps = permission_connectors.known_capability_connectors()
         if known_caps is None or connector not in known_caps:
             _log.warning("unknown_or_unverifiable_capability_connector connector=%s", connector)
             raise HTTPException(
@@ -192,7 +150,7 @@ def _validate_connector_or_warn(
             )
         return
 
-    known = _known_connectors()
+    known = permission_connectors.known_action_connectors()
     if known is None:
         log_event = (
             "action_registry_unavailable_at_permission_write"
@@ -278,7 +236,10 @@ def _email_for(user_id: str) -> str | None:
     "",
     response_model=list[ConnectorPermissionPublic],
 )
-def list_my_permissions(request: Request) -> list[ConnectorPermissionPublic]:
+def list_my_permissions(
+    request: Request,
+    response: Response,
+) -> list[ConnectorPermissionPublic]:
     """Effective per-connector view for the caller across every known connector.
 
     Connectors without an explicit per-user row come back with
@@ -288,7 +249,7 @@ def list_my_permissions(request: Request) -> list[ConnectorPermissionPublic]:
     and attaches a ``Warning: 199`` advisory header.
     """
     caller = get_user(request)
-    known = _known_connectors()
+    known = permission_connectors.known_action_connectors()
     if known is None:
         _log.warning("action_registry_unavailable_at_permission_read")
         explicit = permissions.get_user_permissions(user_id=caller.user_id)
@@ -302,17 +263,22 @@ def list_my_permissions(request: Request) -> list[ConnectorPermissionPublic]:
             }
             for r in explicit
         ]
-        out = [_public_from_effective(r) for r in rows]
-        # Attach the advisory via the underlying Response object — FastAPI
-        # gives us request.scope but the response isn't returned-then-
-        # mutated, so we use Starlette's response builder pattern via a
-        # custom Response wrapper. Simpler: mutate via state and let the
-        # caller's middleware see it. Here we attach to the Request's
-        # response by using a sentinel header on a fresh Response is
-        # impractical without rewriting the return type; instead we log
-        # and accept that the list endpoint's degrade is observable in
-        # logs. The single-connector GET below DOES return the header.
-        return out
+        # LUM-849: the degrade is now SAYABLE on the wire, not only in logs.
+        #
+        # A prior comment here claimed attaching this header was "impractical
+        # without rewriting the return type". It is not: ``get_my_permission``
+        # below (:372) takes the same injected ``Response`` alongside a
+        # ``response_model`` and sets this exact header. Injection is orthogonal
+        # to ``response_model``, list or scalar.
+        #
+        # Why it matters more here than there: this branch returns explicit rows
+        # ONLY, so a connector the caller has never configured has no row and
+        # silently disappears from the list. Without the header the page cannot
+        # tell "you have not set this" from "we could not read it", and a
+        # security surface that under-reports what may act on your behalf is
+        # worse than one that errors.
+        response.headers["Warning"] = _ACTION_REGISTRY_UNAVAILABLE_HEADER
+        return [_public_from_effective(r) for r in rows]
     effective = permissions.get_user_effective_permissions(
         user_id=caller.user_id,
         known_connectors=sorted(known),
@@ -320,25 +286,20 @@ def list_my_permissions(request: Request) -> list[ConnectorPermissionPublic]:
     return [_public_from_effective(r) for r in effective]
 
 
-@router.get(
-    "/capabilities",
-    response_model=list[CapabilityGrantView],
-)
-def list_my_capability_grants(request: Request) -> list[CapabilityGrantView]:
-    """Consent surface (LUM-612): per registered capability, what it **requires**
-    vs what the caller has **granted**, and what's still **missing**.
+def _capability_grants_for(user_id: str) -> list[CapabilityGrantView]:
+    """Build the consent surface (LUM-612) for ``user_id``.
 
-    This is the data an install/consent UI renders. Required scopes come from the
-    instance-global capability registry (same visibility as ``/me/tools``); granted
-    scopes are resolved strictly for the caller. Defined before ``/{connector}`` so
-    the literal path is not swallowed by the path param.
+    Shared by the caller-self route and the admin on-behalf route (LUM-616) so
+    the two can never drift on shape or on the registry-unavailable degrade.
+    Required scopes come from the instance-global capability registry (same
+    visibility as ``/me/tools``); granted scopes are resolved strictly for
+    ``user_id``.
     """
     from services.capability_scopes import capability_connector
     from services.capability_scopes import required_scopes_for
 
     import config
 
-    caller = get_user(request)
     try:
         reg = config.get_capability_registry()
         services = list(reg.all_services())
@@ -351,7 +312,7 @@ def list_my_capability_grants(request: Request) -> list[CapabilityGrantView]:
         cap_id = svc.manifest.id
         connector = capability_connector(cap_id)
         required = required_scopes_for(svc.manifest)
-        granted = permissions.get_granted_scopes(user_id=caller.user_id, connector=connector)
+        granted = permissions.get_granted_scopes(user_id=user_id, connector=connector)
         missing = sorted(set(required) - set(granted))
         out.append(
             CapabilityGrantView(
@@ -363,6 +324,21 @@ def list_my_capability_grants(request: Request) -> list[CapabilityGrantView]:
             )
         )
     return out
+
+
+@router.get(
+    "/capabilities",
+    response_model=list[CapabilityGrantView],
+)
+def list_my_capability_grants(request: Request) -> list[CapabilityGrantView]:
+    """Consent surface (LUM-612): per registered capability, what it **requires**
+    vs what the caller has **granted**, and what's still **missing**.
+
+    This is the data an install/consent UI renders. Defined before ``/{connector}``
+    so the literal path is not swallowed by the path param.
+    """
+    caller = get_user(request)
+    return _capability_grants_for(caller.user_id)
 
 
 @router.get(
@@ -477,12 +453,37 @@ def admin_list_user_permissions(user_id: str) -> list[ConnectorPermissionAdminVi
     """
     _require_user_exists(user_id)
     email = _email_for(user_id)
-    known = _known_connectors() or set()
+    known = permission_connectors.known_action_connectors() or set()
     effective = permissions.get_user_effective_permissions(
         user_id=user_id,
         known_connectors=sorted(known),
     )
     return [_admin_view_from_effective(r, user_id=user_id, email=email) for r in effective]
+
+
+@admin_router.get(
+    "/capabilities",
+    response_model=list[CapabilityGrantView],
+)
+def admin_list_user_capability_grants(user_id: str) -> list[CapabilityGrantView]:
+    """Admin parity for the LUM-612 consent surface (LUM-616).
+
+    Same ``{capability_id, connector, required, granted, missing}`` rows as
+    ``GET /api/v1/me/permissions/capabilities``, resolved for the path
+    ``{user_id}`` rather than the caller, so an admin doing on-behalf support
+    can see required-vs-granted in one place instead of inferring it from raw
+    per-connector granted scopes.
+
+    ``404`` when ``user_id`` does not exist, matching the sibling admin routes —
+    an empty list would otherwise read as "this user granted nothing" when the
+    truth is "no such user".
+
+    MUST stay declared before ``/{connector}``: ``_CONNECTOR_PATTERN`` matches
+    the literal string ``capabilities``, so a later registration is swallowed by
+    the path param and answers 200 with the wrong body shape rather than 404.
+    """
+    _require_user_exists(user_id)
+    return _capability_grants_for(user_id)
 
 
 @admin_router.get(

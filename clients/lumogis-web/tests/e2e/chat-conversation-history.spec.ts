@@ -186,13 +186,6 @@ test.describe("LUM-414 chat conversation history (desktop)", () => {
     await loginWithSmokeCredentials(page);
     const created = await createEndedSession(page);
     await page.reload();
-    // Re-register mocks after navigation (Playwright routes can drop on full reload).
-    await mockKeptConversationRoutes(page, {
-      continueSeedMessages: [
-        { role: "user", content: restoredUser },
-        { role: "assistant", content: restoredAssistant },
-      ],
-    });
 
     const sidebar = page.getByTestId("conversation-sidebar");
     const row = historyRow(sidebar, created.conversation_id);
@@ -200,20 +193,18 @@ test.describe("LUM-414 chat conversation history (desktop)", () => {
 
     // Selecting a history row triggers continueConversation() -> the verbatim
     // slice-2 transcript loads into the active thread.
-    const continueResponse = page.waitForResponse(
-      (res) =>
-        res.request().method() === "POST" &&
-        res.url().includes("/continue") &&
-        res.status() === 200,
-      { timeout: 30_000 },
-    );
-    await row.locator(".lumogis-chat__history-select").click();
-    const res = await continueResponse;
-    const body = (await res.json()) as { seed_messages?: Array<{ content: string }> };
-    expect(body.seed_messages?.some((m) => m.content === restoredUser)).toBeTruthy();
+    // No force: the sidebar accumulates a row per run (createEndedSession writes
+    // a real session and nothing prunes it), so the target ends up far down a
+    // scrolling list. force skips the "receives pointer events" check, which
+    // meant the click was dispatched at a point another element occupied —
+    // onSelectContinue never ran, and the failure surfaced as an empty
+    // transcript with no error alert.
+    const select = row.locator(".lumogis-chat__history-select");
+    await select.scrollIntoViewIfNeeded();
+    await select.click();
 
     const transcript = page.getByRole("log", { name: /conversation transcript/i });
-    await expect(transcript.getByText(restoredUser)).toBeVisible({ timeout: 30_000 });
+    await expect(transcript.getByText(restoredUser)).toBeVisible();
     await expect(transcript.getByText(restoredAssistant)).toBeVisible();
   });
 

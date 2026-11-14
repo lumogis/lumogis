@@ -12,11 +12,16 @@ export function humanizeStoredName(
   storedName: string | null | undefined,
   filePath?: string | null,
 ): string {
-  const raw = (storedName?.trim() || filePath?.trim() || "").replace(/\\/g, "/");
+  const stored = storedName?.trim() || "";
+  const raw = (stored || filePath?.trim() || "").replace(/\\/g, "/");
   if (!raw) return "Untitled document";
 
   let name = raw;
-  if (name.includes("/")) {
+  // Slice to the basename ONLY when we fell back to a path. A stored name is
+  // already a name — and since LUM-724 the server supplies one for every
+  // external document, where a paperless title like "Bills / Electricity 2026"
+  // would otherwise be silently truncated to "Electricity 2026".
+  if (!stored && name.includes("/")) {
     name = name.slice(name.lastIndexOf("/") + 1);
   }
 

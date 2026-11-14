@@ -19,6 +19,14 @@ Resolution order for the target user (first non-empty wins):
 4. Otherwise → log a remediation ``WARN`` line and exit non-zero. The
    entrypoint catches non-zero and continues boot in degraded mode.
 
+The WARN is only for real leftovers (LUM-916). No target is not a problem
+when no ``user_id='default'`` row is left, which is every boot after the
+switch once the bootstrap env is unset. Nor is it one in the pre-uvicorn
+pass of the switch itself: ``LUMOGIS_BOOTSTRAP_ADMIN_EMAIL`` is set but the
+``users`` table is still empty because the orchestrator creates the admin
+later, then runs this script again (``post_bootstrap=True``). Both cases
+log INFO and exit 0.
+
 This script is **idempotent** — a second run is a no-op (no rows match
 ``user_id='default'`` after the first remap). The entrypoint invokes it
 on every boot, so the AUTH_ENABLED-flip transition (dev → family-LAN)
@@ -75,6 +83,7 @@ _SCOPED_TABLES: tuple[str, ...] = (
     "sources",
     "external_documents",
     "signals",
+    "signal_triage",  # LUM-643: per-(user, signal) triage state
     "relevance_profiles",
     "edge_scores",
     "known_distinct_entity_pairs",
@@ -91,12 +100,49 @@ _SCOPED_TABLES: tuple[str, ...] = (
     "routines",
     "user_batch_jobs",
     "action_proposals",
+    # Email taxonomy + rules (user-editable classification config, LUM-629)
+    "email_category_taxonomy",
+    "email_classification_rule",
+    # Email operational logs/jobs (migrations 060-062)
+    "email_organize_log",
+    "email_cleanup_job",
+    "email_sent_log",
+    # LUM-819 — stored message text for search. Carries user_id, so omitting it
+    # would strand legacy 'default'-attributed body rows on the AUTH_ENABLED
+    # false->true flip and silently empty a user's body search.
+    "email_body_text",
+    # LUM-820 — bounce records follow their sends. Without this a default
+    # install that becomes multi-user would strand them on the old id, and
+    # the user's sends would silently look delivered again.
+    "email_bounce",
+    # LUM-697 — both are user-scoped; omitting them here silently orphans
+    # rows on the AUTH_ENABLED false->true remap (the bug fixed in d235447).
+    "email_unsubscribe_target",
+    "email_sender_rule",
+    # LUM-695 — inbound attachment metadata + the outbound staging index. Both
+    # carry user_id and both must be remapped, or a staged file becomes
+    # unresolvable and an attachment list silently empties after the flip.
+    "email_attachment",
+    "email_attachment_staged",
+    # LUM-702 — the auto-ingest provenance/reversal ledger. Without the remap a
+    # filed document survives the flip while its undo path does not, leaving the
+    # user a library row they cannot take back.
+    "email_attachment_ingest_log",
+    # LUM-727 — the "always file this" rules. Without the remap a user's
+    # filing rules stop firing after the flip while their mail keeps arriving.
+    "email_attachment_rule",
     # Credentials + tokens (per-user rows; export may omit but remap must run)
     "user_connector_credentials",
     "mcp_tokens",
     # Auth/session bookkeeping tied to a user_id
     "auth_sessions",
     "auth_refresh_revocations",
+    # LUM-65 — forgot-password tokens. Today the email reset path requires
+    # AUTH_ENABLED, so a user_id='default' row should be unreachable; it is
+    # listed anyway because the cost of a no-op remap is nothing and the cost
+    # of the LUM-697 failure mode (silently orphaned rows after the flip) is a
+    # user holding a reset link that resolves to nobody.
+    "password_reset_tokens",
     # Notifications + privacy prefs
     "notification_preferences",
     "notification_user_settings",
@@ -194,11 +240,20 @@ def _resolve_target_user_id(conn) -> str | None:
                 row[0],
             )
             return row[0]
-        _log.warning(
-            "LUMOGIS_BOOTSTRAP_ADMIN_EMAIL='%s' is set but no enabled user with "
-            "that email was found in `users`. Falling through to dev-mode check.",
-            bootstrap_email,
-        )
+        if _users_is_empty(conn):
+            # The switch to sign-in: the orchestrator has not created the
+            # bootstrap admin yet. Not a misconfiguration (LUM-916).
+            _log.info(
+                "LUMOGIS_BOOTSTRAP_ADMIN_EMAIL='%s' is set and `users` is empty — "
+                "the bootstrap admin is not created yet.",
+                bootstrap_email,
+            )
+        else:
+            _log.warning(
+                "LUMOGIS_BOOTSTRAP_ADMIN_EMAIL='%s' is set but no enabled user with "
+                "that email was found in `users`. Falling through to dev-mode check.",
+                bootstrap_email,
+            )
 
     auth_enabled = os.environ.get("AUTH_ENABLED", "false").strip().lower() == "true"
     if not auth_enabled:
@@ -222,13 +277,7 @@ def _remap_table(conn, table: str, target: str) -> int:
         )
         if cur.fetchone() is None:
             return 0
-        cur.execute(
-            "SELECT 1 FROM information_schema.columns "
-            "WHERE table_schema = current_schema() "
-            "  AND table_name = %s AND column_name = 'user_id'",
-            (table,),
-        )
-        if cur.fetchone() is None:
+        if not _scoped_table_has_user_id(cur, table):
             return 0
         cur.execute(
             f"UPDATE {table} SET user_id = %s WHERE user_id = 'default'",
@@ -237,7 +286,38 @@ def _remap_table(conn, table: str, target: str) -> int:
         return cur.rowcount or 0
 
 
-def main() -> int:
+def _scoped_table_has_user_id(cur, table: str) -> bool:
+    cur.execute(
+        "SELECT 1 FROM information_schema.columns "
+        "WHERE table_schema = current_schema() "
+        "  AND table_name = %s AND column_name = 'user_id'",
+        (table,),
+    )
+    return cur.fetchone() is not None
+
+
+def _count_default_rows(conn) -> int:
+    """Number of ``user_id='default'`` rows left across ``_SCOPED_TABLES``."""
+    total = 0
+    with conn.cursor() as cur:
+        for table in _SCOPED_TABLES:
+            if not _scoped_table_has_user_id(cur, table):
+                continue
+            cur.execute(f"SELECT COUNT(*) FROM {table} WHERE user_id = 'default'")
+            row = cur.fetchone()
+            total += int(row[0]) if row else 0
+    return total
+
+
+def _bootstrap_admin_pending(conn) -> bool:
+    """True when the bootstrap admin email is set but no user exists yet."""
+    if not os.environ.get("LUMOGIS_BOOTSTRAP_ADMIN_EMAIL", "").strip():
+        return False
+    return _users_table_exists(conn) and _users_is_empty(conn)
+
+
+def main(post_bootstrap: bool = False) -> int:
+    """Run the remap. ``post_bootstrap`` is True for the orchestrator's second pass."""
     _wait_for_postgres()
     with _conn() as conn:
         conn.autocommit = False
@@ -245,14 +325,28 @@ def main() -> int:
         conn.commit()
 
         if target is None:
+            leftover = _count_default_rows(conn)
+            conn.commit()
+            if leftover == 0:
+                _log.info("No legacy user_id='default' rows remain. Nothing to remap.")
+                return 0
+            if not post_bootstrap and _bootstrap_admin_pending(conn):
+                conn.commit()
+                _log.info(
+                    "%d legacy user_id='default' rows wait for the bootstrap admin. "
+                    "The orchestrator remaps them after it creates the admin.",
+                    leftover,
+                )
+                return 0
             _log.warning(
-                "db_default_user_remap.py exited non-zero — legacy 'default'-user "
+                "db_default_user_remap.py exited non-zero — %d legacy 'default'-user "
                 "rows remain unattributed. Symptom: ALL users will see the "
                 "inbox/sessions/notes/etc. of the legacy single-user period appear "
                 "under nobody's account (their own retrieval surfaces will be "
                 "missing those rows). Remediation: set "
                 "INBOX_OWNER_USER_ID=<real-user-id> in .env and restart, OR set "
-                "LUMOGIS_BOOTSTRAP_ADMIN_EMAIL=<existing-admin-email>."
+                "LUMOGIS_BOOTSTRAP_ADMIN_EMAIL=<existing-admin-email>.",
+                leftover,
             )
             return 2
 

@@ -50,30 +50,6 @@ class FakeProposalQueueStore:
                 "run_after": r["run_after"],
             }
 
-        if "with next_eligible as" in q and "for update skip locked" in q:
-            (worker_id,) = p
-            now = datetime.now(timezone.utc)
-            candidates = sorted(
-                (
-                    r
-                    for r in self.rows.values()
-                    if r["status"] == "approved" and r["claimed_at"] is None
-                ),
-                key=lambda r: r["id"],
-            )
-            for row in candidates:
-                ra = row["run_after"]
-                if hasattr(ra, "tzinfo") and ra.tzinfo is None:
-                    ra = ra.replace(tzinfo=timezone.utc)
-                if ra > now:
-                    continue
-                row["status"] = "executing"
-                row["claimed_at"] = now
-                row["claimed_by"] = worker_id
-                return dict(self._claimed_row_sql_shape(row))
-
-            return None
-
         if (
             q.startswith("update action_proposals set")
             and "claimed_by = %s" in q
@@ -88,18 +64,20 @@ class FakeProposalQueueStore:
                 or row["claimed_at"] is not None
             ):
                 return None
+            # LUM-762: production `_CLAIM_BY_ID_SQL` now filters `run_after <= NOW()`.
+            # Mirrored here so the fake does not diverge — but note this assertion
+            # proves the FAKE, not the statement. The predicate itself is proven in
+            # `test_proposal_queue_migration.py` against real Postgres.
             now = datetime.now(timezone.utc)
+            ra = row["run_after"]
+            if hasattr(ra, "tzinfo") and ra.tzinfo is None:
+                ra = ra.replace(tzinfo=timezone.utc)
+            if ra > now:
+                return None
             row["status"] = "executing"
             row["claimed_at"] = now
             row["claimed_by"] = worker_id
             return dict(self._claimed_row_sql_shape(row))
-
-        if q.startswith("select attempt from action_proposals"):
-            (jid,) = p
-            r = self.rows.get(int(jid))
-            if not r or r["status"] != "executing":
-                return None
-            return {"attempt": r["attempt"]}
 
         return None
 
@@ -131,32 +109,32 @@ class FakeProposalQueueStore:
                 r["executed_at"] = r["finished_at"]
             return
 
+        # LUM-762: `_DEAD_LETTER_SQL` — the SOLE failure disposal. This branch did not
+        # exist before, which made `dead_letter()` a silent no-op against this fake:
+        # the row simply stayed `executing` and any test asserting `dead` would have
+        # failed for a reason that looked like a production bug. Found by two
+        # independent critics on the LUM-762 plan.
+        #
+        # `run_after` is deliberately NOT touched here, mirroring production. Do not
+        # add a string-sniff for that fragment to "prove" it — that would prove this
+        # fake. It is proven in the real-Postgres lane.
         if (
-            "status = case when attempt + 1" in q
-            and "status = 'executing'" in q
-            and q.startswith("update action_proposals set")
+            q.startswith("update action_proposals set")
+            and "status = 'dead'" in q
+            and "where id = %s and status = 'executing'" in q
         ):
-            err, ma, ma2, ma3, backoff_min, jid = p
-            ma = int(ma)
-            jid = int(jid)
-            r = self.rows.get(jid)
+            err, jid = p
+            r = self.rows.get(int(jid))
             if not r or r["status"] != "executing":
                 return
             r["attempt"] = int(r["attempt"]) + 1
             r["error"] = (err or "")[:1000]
-            if r["attempt"] < ma:
-                r["status"] = "approved"
-                r["finished_at"] = None
-                r["executed_at"] = None
-                r["claimed_at"] = None
-                r["claimed_by"] = None
-                r["run_after"] = datetime.now(timezone.utc) + timedelta(minutes=int(backoff_min))
-            else:
-                r["status"] = "dead"
-                r["finished_at"] = datetime.now(timezone.utc)
-                r["claimed_at"] = None
-                r["claimed_by"] = None
-                r["executed_at"] = None
+            r["status"] = "dead"
+            r["finished_at"] = datetime.now(timezone.utc)
+            r["claimed_at"] = None
+            r["claimed_by"] = None
+            r["executed_at"] = None
+            return
 
     def fetch_all(self, query: str, params: tuple | None = None) -> list[dict]:
         q = _norm(query)

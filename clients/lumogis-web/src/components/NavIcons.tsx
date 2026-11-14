@@ -9,6 +9,7 @@ export type NavIconKey =
   | "documents"
   | "capture"
   | "approvals"
+  | "email"
   | "me"
   | "admin";
 
@@ -18,6 +19,7 @@ const PATHS: Record<NavIconKey, string> = {
   documents: "M6 4h8l4 4v13H6zm2 2v13h10V9h-4V6zm2 0h2v3h-2",
   capture: "M12 3v3m-4 2v2m8-2v2M5 10h14v9H5zm3 3h8",
   approvals: "M9 11l2 2 4-4M7 4h10v16H7z",
+  email: "M4 6h16v12H4zM4 7l8 6 8-6",
   me: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm-6 9a6 6 0 0 1 12 0",
   admin: "M12 8v4m0 4h.01M4 6h16v12H4z",
 };
@@ -48,7 +50,7 @@ export function NavIcon({ name, size = 19, className }: NavIconProps): JSX.Eleme
 }
 
 export function navIconKeyForItem(key: string): NavIconKey | null {
-  if (key === "chat" || key === "search" || key === "documents" || key === "capture" || key === "approvals" || key === "me" || key === "admin") {
+  if (key === "chat" || key === "search" || key === "documents" || key === "capture" || key === "approvals" || key === "email" || key === "me" || key === "admin") {
     return key;
   }
   return null;

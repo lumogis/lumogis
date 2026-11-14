@@ -1,0 +1,12 @@
+INVOICE 2026-0184
+
+Northgate Plumbing and Heating
+17 Fenwick Road, Leeds LS8 2QR
+
+Description                              Amount
+Annual boiler service                    88.00
+Replacement pressure relief valve        42.50
+Labour, 1.5 hours                        67.50
+
+Total due                               198.00
+Payment terms: 30 days from issue.

@@ -9,7 +9,7 @@ Lumogis maps **product behaviours** to automated tests (or manual smoke) in four
 | **Core** | [TEST-COVERAGE-MATRIX-core.md](TEST-COVERAGE-MATRIX-core.md) | Public AGPL tree |
 | **Web** | [TEST-COVERAGE-MATRIX-web.md](TEST-COVERAGE-MATRIX-web.md) | Public AGPL tree |
 | **KG** | `docs/private/testing/TEST-COVERAGE-MATRIX-kg.md` | Private checkout only (not in public AGPL export) |
-| **Private appliance** | `docs/private/testing/TEST-COVERAGE-MATRIX-hub.md` | Private checkout only (not in public AGPL export) |
+| **Appliance** | `docs/private/testing/TEST-COVERAGE-MATRIX-hub.md` | Private checkout only (not in public AGPL export) |
 
 **Legend:** ✅ tested with cited assertion · 🟡 partial · ❌ gap · 🚫 manual ([RELEASE-MANUAL-CHECKLIST.md](../RELEASE-MANUAL-CHECKLIST.md) — `MS-###` IDs).
 
@@ -25,4 +25,5 @@ Lumogis maps **product behaviours** to automated tests (or manual smoke) in four
 
 ## Other testing docs
 
-- [automated-test-strategy.md](automated-test-strategy.md) — layered commands, CI, release gates
+- [automated-test-strategy.md](automated-test-strategy.md) — layered commands, CI, release gates; **`orchestrator/tests/integration/`** membership rule (**ADR 194**, **LUM-753**)
+- [paperless-live-fixture.md](paperless-live-fixture.md) — live paperless-ngx fixture lane (**LUM-309**); **`make compose-test-paperless`**

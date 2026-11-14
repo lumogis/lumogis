@@ -1,0 +1,120 @@
+# LUM-309 — the live paperless-ngx fixture lane.
+#
+# A SEPARATE workflow file rather than a job inside ci.yml, and that is a
+# constraint rather than a preference. GitHub triggers are workflow-level:
+# ci.yml has one `on:` covering pull_request + push, so adding `schedule` there
+# would fire *every* job in ci.yml weekly, and a workflow-level `paths:` filter
+# would gate every job in it. This lane needs its own trigger set, so it needs
+# its own file.
+#
+# Because native `paths:` filters cover both pull_request and push, there is no
+# gate script here. The `doctor-integration-paths.sh` precedent exists because
+# that job also runs unconditionally on push; this one does not.
+#
+# ACTIONS MINUTES ARE A HARD BUDGET, AND THE BRANCH FILTERS BELOW ARE THE POINT.
+# CI in this repo runs on the `dev` -> private `main` RC promotion, NOT on `dev`
+# pushes — `ci.yml` restricts to `branches: [main, master]` for exactly this
+# reason ("saves Actions minutes"). This workflow originally shipped with paths
+# but NO branch filter, so it fired on every `dev` push touching the paperless
+# tree: two runs, ~11 minutes, before anyone noticed. Do not remove the branch
+# filters to "get earlier signal" — the earlier signal is
+# `make compose-test-paperless`, which is free and runs in ~75s.
+name: Paperless live fixture (LUM-309)
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    branches: [main, master]
+    paths:
+      - "orchestrator/adapters/paperless_source.py"
+      - "orchestrator/services/paperless_credentials.py"
+      - "orchestrator/signals/feed_monitor.py"
+      - "orchestrator/services/ingest.py"
+      - "orchestrator/services/point_ids.py"
+      - "orchestrator/tests/integration/_paperless_*.py"
+      - "orchestrator/tests/integration/test_paperless_live_*.py"
+      # The guard's own test lives outside the integration tree (LUM-753):
+      # it needs no backend, so it cannot live under a directory whose rule
+      # is "requires one". Listed here so changes to it still trigger this lane.
+      - "orchestrator/tests/test_paperless_guard.py"
+      - "orchestrator/tests/fixtures/paperless/**"
+      - "docker-compose.paperless-test.yml"
+      - ".github/workflows/paperless-integration.yml"
+      - "postgres/migrations/**"
+  push:
+    branches: [main, master, dev]
+    paths:
+      - "orchestrator/adapters/paperless_source.py"
+      - "orchestrator/services/paperless_credentials.py"
+      - "orchestrator/signals/feed_monitor.py"
+      - "orchestrator/services/ingest.py"
+      - "orchestrator/services/point_ids.py"
+      - "orchestrator/tests/integration/_paperless_*.py"
+      - "orchestrator/tests/integration/test_paperless_live_*.py"
+      # The guard's own test lives outside the integration tree (LUM-753):
+      # it needs no backend, so it cannot live under a directory whose rule
+      # is "requires one". Listed here so changes to it still trigger this lane.
+      - "orchestrator/tests/test_paperless_guard.py"
+      - "orchestrator/tests/fixtures/paperless/**"
+      - "docker-compose.paperless-test.yml"
+      - ".github/workflows/paperless-integration.yml"
+      - "postgres/migrations/**"
+  # The weekly `schedule:` that shipped here has been REMOVED, deliberately.
+  # Its purpose was real — a path-gated run only ever reports on our own
+  # changes, never on paperless drifting underneath us — but it was the one
+  # trigger that spent Actions minutes without being tied to a release, which
+  # an exhausted budget cannot justify. Recover the same signal for free by
+  # running `make compose-test-paperless` locally when bumping the pinned
+  # digest, and restore the cron below if budget allows:
+  #   schedule:
+  #     - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+# ONE group for every ref, not one per ref — deliberate. The lane runs on the
+# self-hosted runners (one Docker daemon) with a fixed compose project name
+# (lumogis-paperless-test) and fixed loopback ports 5434 / 6337 / 8010, so two
+# runs at once would tear down each other's fixture. Queue instead of cancel:
+# a path-gated run is rare and each one is a real signal.
+concurrency:
+  group: paperless-integration
+  cancel-in-progress: false
+
+jobs:
+  paperless-integration:
+    # Self-hosted like ci.yml (LUM-788): free, so it can run on `dev` pushes, not
+    # only at release. The public export rewrites this to ubuntu-latest.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install orchestrator dependencies
+        # LUM-874: install into the runner's on-disk temp dir, not the VM's
+        # 3.9 GB RAM-backed /tmp ("No space left on device").
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          pip install -r orchestrator/requirements.txt
+          pip install -r orchestrator/requirements-dev.txt
+
+      - name: Run the live paperless gate
+        # LUMOGIS_REQUIRE_PAPERLESS_FIXTURE=1 is set by the make target itself.
+        # It is the whole point of the lane in CI: an unreachable fixture must
+        # be a hard failure here, never a skip, or this job goes green while
+        # validating nothing (LUM-718).
+        run: make compose-test-paperless PYTHON=python
+
+      - name: Dump fixture state on failure
+        if: failure()
+        run: |
+          docker ps -a || true
+          docker volume ls || true

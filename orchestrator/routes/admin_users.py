@@ -92,6 +92,9 @@ def _to_admin_view(internal) -> UserAdminView:
 )
 def create_user(body: UserCreateRequest) -> UserAdminView:
     """Create a new account. Returns 409 on duplicate email."""
+    # LUM-853: with auth off ``require_admin`` is a no-op and this still writes a real ``users``
+    # row (the next restart then refuses to boot, or the bootstrap admin is never created). The
+    # Web hides this surface in single-user mode; the API itself is unchanged.
     try:
         user = users_service.create_user(
             email=str(body.email),
@@ -173,8 +176,13 @@ def reset_user_password(
 
     Revokes browser refresh sessions via ``services.users`` password path (LUM-29).
     """
+    # LUM-885: the same path also revokes the target's MCP tokens, and the audits
+    # name the acting admin. (Kept out of the docstring: it is the OpenAPI text.)
+    caller = get_user(request)
     try:
-        users_service.admin_reset_user_password(user_id, body.new_password)
+        users_service.admin_reset_user_password(
+            user_id, body.new_password, by_admin_user_id=caller.user_id
+        )
     except users_service.PasswordPolicyViolationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except LookupError:
@@ -236,7 +244,7 @@ def patch_user(user_id: str, body: UserPatchRequest, request: Request) -> UserAd
         )
 
     if body.role is not None and body.role != target.role:
-        users_service.update_role(user_id, body.role)
+        users_service.update_role(user_id, body.role, by_admin_user_id=caller.user_id)
     if body.disabled is not None and body.disabled != target.disabled:
         # Thread ``by_admin_user_id`` so the cascade-revoke audit emitted
         # by ``set_disabled`` (per plan ``mcp_token_user_map`` D7/D14)
@@ -345,7 +353,9 @@ def delete_user(user_id: str, request: Request) -> dict:
             detail="refusing to self-delete; ask another admin",
         )
 
-    users_service.delete_user(user_id)
+    if not users_service.delete_user(user_id, by_admin_user_id=caller.user_id):
+        # A concurrent delete won between the pre-check and the call.
+        raise HTTPException(status_code=404, detail="user not found")
     _log.info("admin: deleted user_id=%s by=%s", user_id, caller.user_id)
     return {"ok": True}
 

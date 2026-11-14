@@ -18,12 +18,14 @@ def start_all() -> None:
     from signals.feed_monitor import start as start_feeds
     from signals.page_monitor import start as start_pages
     from signals.system_monitor import start as start_system
+    from signals.triage_reminders import start as start_triage_reminders
 
     start_feeds()
     start_pages()
     start_calendar()
     start_system()
     start_digest()
+    start_triage_reminders()
     _log.info("Signal monitors started")
 
 
@@ -34,10 +36,12 @@ def stop_all() -> None:
     from signals.feed_monitor import stop as stop_feeds
     from signals.page_monitor import stop as stop_pages
     from signals.system_monitor import stop as stop_system
+    from signals.triage_reminders import stop as stop_triage_reminders
 
     stop_feeds()
     stop_pages()
     stop_calendar()
     stop_system()
     stop_digest()
+    stop_triage_reminders()
     _log.info("Signal monitors stopped")

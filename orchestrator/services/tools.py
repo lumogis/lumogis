@@ -147,7 +147,7 @@ def _search_files(
         )
     except Exception:
         _log.exception("Semantic search failed, falling back to filename search")
-        return _fallback_search(query)
+        return _fallback_search(query, user_id=user_id)
 
 
 def _query_entity(input_: dict, *, user_id: str) -> str:
@@ -285,28 +285,41 @@ def _query_entity(input_: dict, *, user_id: str) -> str:
         return json.dumps({"error": "entity lookup failed", "name": name})
 
 
-def _fallback_search(query: str) -> str:
+def _fallback_search(query: str, *, user_id: str) -> str:
+    """Filename fallback under the caller's visibility (LUM-884).
+
+    Runs inside ``_search_files``'s ``except`` block, so the metadata store may
+    be what failed; degrade to an empty result instead of raising from there.
+    """
     from services.search import fuzzy_filename_search
 
-    hits = fuzzy_filename_search(query)
+    try:
+        hits = fuzzy_filename_search(query, user_id=user_id)
+    except Exception:
+        _log.exception("filename fallback search failed")
+        return json.dumps({"results": [], "count": 0, "error": "search unavailable"})
     return json.dumps({"results": hits, "count": len(hits)})
 
 
 def _read_file(input_: dict, *, user_id: str) -> str:
-    # `user_id` is accepted for signature uniformity (run_tool always passes it)
-    # so the ingest-root-scoped tool participates in the same audit /
-    # propagation contract as its peers; per-user filesystem roots would hook here.
-    del user_id
+    """Read a library file the caller could also find through search.
+
+    A file is readable only when a ``file_index`` row for its resolved path
+    passes ``visible_filter`` for the caller (LUM-884). No admin exception and
+    no access to unindexed files.
+    """
     from pathlib import Path
 
     from services.path_containment import _resolved_path_under_any_root
+    from services.search import _caller_context
+    from visibility import visible_filter
 
     import config
 
     path = input_.get("path", "")
     roots = config.get_effective_ingest_paths()
+    resolved = Path(path).resolve()
     if roots:
-        resolved = Path(path).resolve()
         if not _resolved_path_under_any_root(resolved, roots):
             return json.dumps(
                 {
@@ -315,8 +328,25 @@ def _read_file(input_: dict, *, user_id: str) -> str:
                 }
             )
 
+    # Ingest stores the resolved path and shared projections copy it, so the
+    # resolved form is the only one matched (a literal-path match would let a
+    # symlink borrow another file's row).
     try:
-        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        clause, params = visible_filter(_caller_context(user_id))
+        row = config.get_metadata_store().fetch_one(
+            f"SELECT 1 AS ok FROM file_index WHERE file_path = %s AND {clause} LIMIT 1",
+            (str(resolved), *params),
+        )
+    except Exception:
+        _log.exception("read_file ownership lookup failed")
+        return json.dumps({"error": "File lookup failed", "path": path})
+    if not row:
+        # Same message for missing and hidden files: no existence oracle.
+        _log.debug("read_file denied for user_id=%s", user_id)
+        return json.dumps({"error": "Access denied: file is not in your library", "path": path})
+
+    try:
+        with open(resolved, "r", encoding="utf-8", errors="ignore") as f:
             content = f.read(3000)
         truncated = len(content) >= 3000
         return json.dumps({"content": content, "truncated": truncated, "path": path})
@@ -425,10 +455,9 @@ def run_tool(
     boundary instead of silently degrading to the legacy ``"default"``
     bucket.
 
-    Plugin-supplied handlers may have been authored against the legacy
-    one-arg signature; for those we transparently fall back to
-    ``handler(input_)`` so existing plugins keep working until they opt
-    into the multi-user contract.
+    Every handler must accept keyword-only ``user_id`` (LUM-884); one that
+    does not raises :class:`TypeError`. There is no single-argument fallback,
+    because a handler that cannot see the caller cannot isolate their data.
     """
     if not isinstance(user_id, str) or not user_id:
         raise TypeError("run_tool: user_id (keyword-only) is required")
@@ -452,22 +481,10 @@ def run_tool(
             }
         )
 
-    try:
-        if spec.name == "search_files" and auto_rag_point_ids is not None:
-            raw = spec.handler(input_, user_id=user_id, auto_rag_point_ids=auto_rag_point_ids)
-        else:
-            raw = spec.handler(input_, user_id=user_id)
-    except TypeError as exc:
-        if "user_id" in str(exc):
-            _log.warning(
-                "Tool %r handler does not accept user_id kwarg — falling back "
-                "to legacy single-arg signature; update the plugin to "
-                "accept ``user_id`` keyword to participate in user isolation.",
-                spec.name,
-            )
-            raw = spec.handler(input_)
-        else:
-            raise
+    if spec.name == "search_files" and auto_rag_point_ids is not None:
+        raw = spec.handler(input_, user_id=user_id, auto_rag_point_ids=auto_rag_point_ids)
+    else:
+        raw = spec.handler(input_, user_id=user_id)
 
     return guard_tool_result(raw, user_id=user_id, tool_name=name)
 

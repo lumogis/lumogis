@@ -95,6 +95,7 @@ def _mint_jwt(user_id: str, role: str) -> str:
     return jwt.encode(
         {
             "sub": user_id,
+            "typ": "access",
             "role": role,
             "iat": int(time.time()),
             "exp": int(time.time()) + 600,
@@ -181,3 +182,44 @@ def test_onboarding_get_401_without_token(store, auth_env):
     with _client() as client:
         r = client.get("/api/v1/me/onboarding")
     assert r.status_code == 401
+
+
+def test_default_install_first_run_inputs_with_auth_enabled_unset(monkeypatch):
+    """LUM-853 characterisation: the server inputs of a default install's first run, with
+    ``AUTH_ENABLED`` **unset** (not ``"false"``, which every other test here sets).
+
+    The conftest mock store returns ``[]`` for every query, so this proves plumbing, not the
+    list's contents. The join (auth unset -> Lumogis Web boots single-user -> the empty-library
+    offer shows) is Vitest ``ChatPage`` test 14 and ``tests/auth/singleUserBoot.test.tsx``.
+    """
+    monkeypatch.delenv("AUTH_ENABLED", raising=False)
+    monkeypatch.delenv("LUMOGIS_PUBLIC_ORIGIN", raising=False)
+    monkeypatch.delenv("MCP_AUTH_TOKEN", raising=False)
+    assert "AUTH_ENABLED" not in os.environ
+
+    from unittest.mock import patch
+
+    import main
+
+    with TestClient(main.app) as client:
+        # The server half of Lumogis Web's single-user probe, on an unset variable.
+        me = client.get("/api/v1/auth/me")
+        assert me.status_code == 200, me.text
+        assert me.json()["id"] == "default"
+        assert me.json()["role"] == "admin"
+
+        onboarding = client.get("/api/v1/me/onboarding")
+        assert onboarding.status_code == 200, onboarding.text
+        assert onboarding.json()["completed_at"] is not None
+
+        import services.documents as documents_svc
+
+        with patch("services.documents.list_documents", wraps=documents_svc.list_documents) as spy:
+            docs = client.get("/api/v1/documents")
+        assert docs.status_code == 200, docs.text
+        assert docs.json()["documents"] == []
+        assert spy.call_args.args[0].user_id == "default"
+
+        wow = client.get("/api/v1/me/wow-state")
+        assert wow.status_code == 200, wow.text
+        assert wow.json()["entities_ready"] is False

@@ -114,3 +114,25 @@ describe("normalizePushPayloadFromJson", () => {
     );
   });
 });
+
+describe("LUM-648 needs-you / morning-brief push — serializer↔SW wire contract", () => {
+  it("routes the exact backend-serialized payload {title,body,url:'/email'} to /email", () => {
+    // This is the EXACT JSON services/webpush.build_safe_push_json_from_dict emits
+    // for SIGNAL_NEEDS_YOU / SIGNAL_MORNING_BRIEF (no tag, no targetPath key).
+    const backendJson = {title: "Landlord needs you", body: "Rent due", url: "/email"};
+    const o = normalizePushPayloadFromJson(backendJson);
+    expect(o.title).toBe("Landlord needs you");
+    expect(o.body).toBe("Rent due");
+    expect(o.targetPath).toBe("/email");
+  });
+
+  it("clicking a needs-you push resolves to /email", () => {
+    expect(sanitizeNotificationClickUrl("/email")).toBe("/email");
+    expect(NOTIFICATION_ALLOWED_PATHS).toContain("/email");
+  });
+
+  it("a non-allowlisted deep link is still rejected", () => {
+    expect(sanitizeNotificationClickUrl("/email/secret")).toBe("/");
+    expect(sanitizeNotificationClickUrl("/inbox")).toBe("/");
+  });
+});

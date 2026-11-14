@@ -63,10 +63,11 @@ class _RoutesFakeStore(FakeUsersStore):
 
     def __init__(self) -> None:
         super().__init__()
-        # Keyed by (user_id, connector). Each value is a dict mirroring
-        # the `user_connector_credentials` row columns the service reads.
-        self.creds: dict[tuple[str, str], dict] = {}
+        # Keyed by (user_id, connector, instance) — LUM-170 multi-instance.
+        self.creds: dict[tuple[str, str, str], dict] = {}
         self.audit: list[dict] = []
+        # LUM-773 — imap credential PUT validates against sources.url
+        self.sources: dict[str, dict] = {}
 
     @staticmethod
     def _norm(query: str) -> str:
@@ -85,8 +86,8 @@ class _RoutesFakeStore(FakeUsersStore):
         q = self._norm(query)
         p = params or ()
         if q.startswith("update user_connector_credentials set delivery_paused = true,"):
-            reason, detail, actor, user_id, connector = p
-            row = self.creds.get((user_id, connector))
+            reason, detail, actor, user_id, connector, instance = p
+            row = self.creds.get((user_id, connector, instance))
             if row is not None:
                 row["delivery_paused"] = True
                 row["delivery_paused_reason"] = reason
@@ -96,8 +97,8 @@ class _RoutesFakeStore(FakeUsersStore):
                 row["updated_at"] = datetime.now(timezone.utc)
             return
         if q.startswith("update user_connector_credentials set delivery_paused = false,"):
-            actor, user_id, connector = p
-            row = self.creds.get((user_id, connector))
+            actor, user_id, connector, instance = p
+            row = self.creds.get((user_id, connector, instance))
             if row is not None:
                 row["delivery_paused"] = False
                 row["delivery_paused_reason"] = None
@@ -116,32 +117,73 @@ class _RoutesFakeStore(FakeUsersStore):
 
         # Metadata read (get_record).
         if q.startswith(
-            "select user_id, connector, created_at, updated_at, "
+            "select user_id, connector, instance, created_at, updated_at, "
             "created_by, updated_by, key_version, delivery_paused, "
-            "delivery_paused_reason, delivery_paused_detail, delivery_paused_at "
+            "delivery_paused_reason, delivery_paused_detail, delivery_paused_at, "
+            "enabled, configured_keys "
             "from user_connector_credentials"
         ):
-            uid, conn = p
-            row = self.creds.get((uid, conn))
+            uid, conn, inst = p
+            row = self.creds.get((uid, conn, inst))
             return dict(row) if row else None
+
+        # LUM-834 chunk B — is_disabled(). Absent row => False (not
+        # disabled): a connector nobody configured is not one somebody
+        # switched off, and answering otherwise would stop the tier walk
+        # for every user without a row.
+        # LUM-834 chunk B — set_enabled(). Never touches ciphertext, and
+        # deliberately does not reset delivery_paused: the two flags are
+        # independent (user-set vs system-set).
+        if q.startswith("update user_connector_credentials set enabled = %s"):
+            enabled, actor, uid, conn, inst = p
+            row = self.creds.get((uid, conn, inst))
+            if row is None:
+                return None
+            row["enabled"] = bool(enabled)
+            row["updated_by"] = actor
+            row["updated_at"] = datetime.now(timezone.utc)
+            return dict(row)
+
+        if q.startswith("select enabled from user_connector_credentials"):
+            uid, conn, inst = p
+            row = self.creds.get((uid, conn, inst))
+            if row is None:
+                return None
+            return {"enabled": bool(row.get("enabled", True))}
 
         # Plaintext read (get_payload — service layer; not exercised by
         # the route tests directly, but the stale `get_payload` path
         # may still be hit by a future test, so we model it).
         if q.startswith("select ciphertext from user_connector_credentials"):
-            uid, conn = p
-            row = self.creds.get((uid, conn))
-            return {"ciphertext": row["ciphertext"]} if row else None
+            # LUM-834 chunk B: the real query carries `AND enabled`, so a
+            # disabled row yields no ciphertext and is indistinguishable from an
+            # absent one.
+            #
+            # The filter is applied ONLY when the statement actually contains
+            # `and enabled`. Applying it unconditionally would move the gate
+            # INTO THE FAKE: delete `AND enabled` from `get_payload` or
+            # `resolve` and every gate test would still pass, because the fake
+            # would keep enforcing what production had stopped enforcing. §5a —
+            # the fake must fail the way the real collaborator fails, and real
+            # Postgres has no opinion about a predicate that is not there.
+            uid, conn, inst = p
+            row = self.creds.get((uid, conn, inst))
+            if row is None:
+                return None
+            if "and enabled" in q and not row.get("enabled", True):
+                return None
+            return {"ciphertext": row["ciphertext"]}
 
         # UPSERT (put_payload).
         if q.startswith("insert into user_connector_credentials"):
-            uid, conn, ciphertext, key_version, created_by, updated_by = p
+            uid, conn, inst, ciphertext, key_version, created_by, updated_by, configured_keys = p
             now = datetime.now(timezone.utc)
-            existing = self.creds.get((uid, conn))
+            existing = self.creds.get((uid, conn, inst))
             if existing is None:
                 row = {
                     "user_id": uid,
                     "connector": conn,
+                    "instance": inst,
                     "ciphertext": ciphertext,
                     "key_version": key_version,
                     "created_at": now,
@@ -152,6 +194,8 @@ class _RoutesFakeStore(FakeUsersStore):
                     "delivery_paused_reason": None,
                     "delivery_paused_detail": None,
                     "delivery_paused_at": None,
+                    "enabled": True,
+                    "configured_keys": configured_keys,
                 }
             else:
                 row = dict(existing)
@@ -163,10 +207,14 @@ class _RoutesFakeStore(FakeUsersStore):
                 row["delivery_paused_reason"] = None
                 row["delivery_paused_detail"] = None
                 row["delivery_paused_at"] = None
-            self.creds[(uid, conn)] = row
+                # Replaced, not merged. `enabled` is deliberately NOT
+                # reset here, mirroring the real DO UPDATE SET.
+                row["configured_keys"] = configured_keys
+            self.creds[(uid, conn, inst)] = row
             return {
                 "user_id": row["user_id"],
                 "connector": row["connector"],
+                "instance": row["instance"],
                 "created_at": row["created_at"],
                 "updated_at": row["updated_at"],
                 "created_by": row["created_by"],
@@ -176,12 +224,15 @@ class _RoutesFakeStore(FakeUsersStore):
                 "delivery_paused_reason": row["delivery_paused_reason"],
                 "delivery_paused_detail": row["delivery_paused_detail"],
                 "delivery_paused_at": row["delivery_paused_at"],
+                "enabled": row.get("enabled", True),
+                # NULL is a real state; do not coerce to [].
+                "configured_keys": row.get("configured_keys"),
             }
 
         # DELETE … RETURNING key_version.
         if q.startswith("delete from user_connector_credentials"):
-            uid, conn = p
-            row = self.creds.pop((uid, conn), None)
+            uid, conn, inst = p
+            row = self.creds.pop((uid, conn, inst), None)
             if row is None:
                 return None
             return {"key_version": row["key_version"]}
@@ -202,6 +253,16 @@ class _RoutesFakeStore(FakeUsersStore):
             )
             return {"id": row_id}
 
+        # LUM-773 — source url lookup for IMAP instance validation
+        if q.startswith(
+            "select url from sources where id = %s and user_id = %s and source_type = 'imap'"
+        ):
+            source_id, user_id = p
+            row = self.sources.get(source_id)
+            if row and row.get("user_id") == user_id and row.get("source_type") == "imap":
+                return {"url": row["url"]}
+            return None
+
         return super().fetch_one(query, params)
 
     # --- fetch_all ------------------------------------------------------
@@ -212,15 +273,16 @@ class _RoutesFakeStore(FakeUsersStore):
 
         # list_records — per-user enumeration ordered by connector ASC.
         if q.startswith(
-            "select user_id, connector, created_at, updated_at, "
+            "select user_id, connector, instance, created_at, updated_at, "
             "created_by, updated_by, key_version, delivery_paused, "
-            "delivery_paused_reason, delivery_paused_detail, delivery_paused_at "
+            "delivery_paused_reason, delivery_paused_detail, delivery_paused_at, "
+            "enabled, configured_keys "
             "from user_connector_credentials where user_id"
         ):
             (uid,) = p
             return sorted(
-                (dict(r) for (u, _c), r in self.creds.items() if u == uid),
-                key=lambda r: r["connector"],
+                (dict(r) for (u, _c, _i), r in self.creds.items() if u == uid),
+                key=lambda r: (r["connector"], r.get("instance", "")),
             )
 
         return super().fetch_all(query, params)
@@ -299,6 +361,7 @@ def _mint_jwt(user_id: str, role: str) -> str:
     return jwt.encode(
         {
             "sub": user_id,
+            "typ": "access",
             "role": role,
             "iat": int(time.time()),
             "exp": int(time.time()) + 600,
@@ -306,6 +369,23 @@ def _mint_jwt(user_id: str, role: str) -> str:
         os.environ["AUTH_SECRET"],
         algorithm="HS256",
     )
+
+
+def _seed_imap_source(
+    store: _RoutesFakeStore,
+    source_id: str,
+    *,
+    user_id: str = "default",
+    host: str,
+    port: int = 993,
+    label: str = "personal",
+) -> None:
+    store.sources[source_id] = {
+        "id": source_id,
+        "user_id": user_id,
+        "source_type": "imap",
+        "url": f"imap://{host}:{port}/{label}",
+    }
 
 
 @contextmanager
@@ -461,7 +541,7 @@ def test_user_delete_stale_unregistered_connector(store, dev_env):
     # Pre-seed a row directly through the store — bypassing put_payload's
     # registry-strict check, which is the only way to land a row whose
     # connector id is not in the canonical CONNECTORS mapping.
-    store.creds[("default", "historic_connector")] = {
+    store.creds[("default", "historic_connector", "")] = {
         "user_id": "default",
         "connector": "historic_connector",
         "ciphertext": b"\x00",
@@ -479,7 +559,7 @@ def test_user_delete_stale_unregistered_connector(store, dev_env):
 
 def test_user_get_stale_unregistered_connector_returns_metadata(store, dev_env):
     """GET-single on a stale-but-stored row → 200 (not 422)."""
-    store.creds[("default", "historic_connector")] = {
+    store.creds[("default", "historic_connector", "")] = {
         "user_id": "default",
         "connector": "historic_connector",
         "ciphertext": b"\x00",
@@ -642,7 +722,7 @@ def test_admin_get_for_unregistered_stale_row(store, auth_env):
     admin = _seed(store, email="admin@home.lan", role="admin")
     bob = _seed(store, email="bob@home.lan", role="user")
     admin_hdr = {"Authorization": f"Bearer {_mint_jwt(admin, 'admin')}"}
-    store.creds[(bob, "historic_connector")] = {
+    store.creds[(bob, "historic_connector", "")] = {
         "user_id": bob,
         "connector": "historic_connector",
         "ciphertext": b"\x00",
@@ -667,7 +747,7 @@ def test_admin_delete_for_unregistered_stale_row(store, auth_env):
     admin = _seed(store, email="admin@home.lan", role="admin")
     bob = _seed(store, email="bob@home.lan", role="user")
     admin_hdr = {"Authorization": f"Bearer {_mint_jwt(admin, 'admin')}"}
-    store.creds[(bob, "historic_connector")] = {
+    store.creds[(bob, "historic_connector", "")] = {
         "user_id": bob,
         "connector": "historic_connector",
         "ciphertext": b"\x00",
@@ -789,12 +869,40 @@ def test_user_registry_returns_items_with_id_and_description(store, dev_env):
     assert "items" in body
     items = body["items"]
 
-    # One item per registered connector, each with both keys.
-    assert len(items) == len(connectors_registry.REGISTERED_CONNECTORS)
+    # One item per registered connector, each with both keys — except the
+    # operator-managed ids, which every write surface here refuses (LUM-65).
+    assert len(items) == len(connectors_registry.REGISTERED_CONNECTORS) - len(
+        connectors_registry.OPERATOR_MANAGED_CONNECTORS
+    )
+    assert {item["id"] for item in items}.isdisjoint(
+        connectors_registry.OPERATOR_MANAGED_CONNECTORS
+    )
     for item in items:
-        assert set(item.keys()) == {"id", "description"}
+        # LUM-834 chunk B — `fields` is the G4 payload: {name, label,
+        # is_secret} per declared field, so the card can say WHICH fields a
+        # connector has before one is configured. Equality, not superset:
+        # this is the "no accidental leak from ConnectorSpec" guard.
+        assert set(item.keys()) == {"id", "description", "fields"}
         assert isinstance(item["id"], str) and item["id"]
         assert isinstance(item["description"], str) and item["description"]
+        assert isinstance(item["fields"], list)
+
+    # The nine in-scope connectors declare a schema. Named rather than
+    # counted: "the five llm_*" was wrong (there are six) and shipping five of
+    # six would leave one vendor's card reading "shape not described".
+    by_id = {item["id"]: item for item in items}
+    for cid in (
+        "caldav",
+        "ntfy",
+        "paperless",
+        "llm_anthropic",
+        "llm_openai",
+        "llm_xai",
+        "llm_perplexity",
+        "llm_gemini",
+        "llm_mistral",
+    ):
+        assert by_id[cid]["fields"], f"{cid} declares no field schema"
 
     # Sorted by id ASC — useful for snapshot diffs and the UI dropdown order.
     ids = [item["id"] for item in items]
@@ -976,3 +1084,623 @@ def test_admin_put_llm_invalid_payload_returns_invalid_llm_payload(store, auth_e
         )
     assert resp.status_code == 422, resp.text
     assert resp.json()["detail"]["code"] == "invalid_llm_payload"
+
+
+# ---------------------------------------------------------------------------
+# LUM-170 — multi-instance (imap) instance query param on the credential routes
+# ---------------------------------------------------------------------------
+
+
+def test_imap_put_with_instance_roundtrips(store, dev_env):
+    """Two-step contract step 2: PUT /me/connector-credentials/imap?instance=… works."""
+    _seed_imap_source(store, "src-work", host="imap.example.com")
+    payload = {"host": "imap.example.com", "port": 993, "username": "a@b.com", "password": "pw"}
+    with _client() as client:
+        resp = client.put(
+            "/api/v1/me/connector-credentials/imap?instance=src-work",
+            json={"payload": payload},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["instance"] == "src-work"
+        got = client.get("/api/v1/me/connector-credentials/imap?instance=src-work")
+    assert got.status_code == 200
+    assert got.json()["instance"] == "src-work"
+
+
+def test_imap_put_without_instance_returns_422_instance_required(store, dev_env):
+    with _client() as client:
+        resp = client.put(
+            "/api/v1/me/connector-credentials/imap",
+            json={"payload": {"host": "h", "username": "u", "password": "p"}},
+        )
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"]["code"] == "instance_required"
+
+
+def test_single_instance_connector_rejects_instance_422(store, dev_env):
+    with _client() as client:
+        resp = client.put(
+            "/api/v1/me/connector-credentials/testconnector?instance=nope",
+            json={"payload": {"api_key": "x"}},
+        )
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"]["code"] == "instance_not_allowed"
+
+
+def test_two_imap_instances_coexist_on_the_wire(store, dev_env):
+    _seed_imap_source(store, "src-a", host="a")
+    _seed_imap_source(store, "src-b", host="b")
+    with _client() as client:
+        client.put(
+            "/api/v1/me/connector-credentials/imap?instance=src-a",
+            json={"payload": {"host": "a", "username": "u", "password": "p"}},
+        )
+        client.put(
+            "/api/v1/me/connector-credentials/imap?instance=src-b",
+            json={"payload": {"host": "b", "username": "u", "password": "p"}},
+        )
+        listing = client.get("/api/v1/me/connector-credentials").json()["items"]
+    imap_instances = sorted(i["instance"] for i in listing if i["connector"] == "imap")
+    assert imap_instances == ["src-a", "src-b"]
+
+
+def test_admin_put_imap_requires_instance_422(store, auth_env):
+    """Admin PUT for a multi-instance connector without instance -> 422 (not 400)."""
+    admin = _seed(store, email="admin@home.lan", role="admin")
+    bob = _seed(store, email="bob@home.lan", role="user")
+    admin_hdr = {"Authorization": f"Bearer {_mint_jwt(admin, 'admin')}"}
+    with _client() as client:
+        resp = client.put(
+            f"/api/v1/admin/users/{bob}/connector-credentials/imap",
+            headers=admin_hdr,
+            json={"payload": {"host": "h", "username": "u", "password": "p"}},
+        )
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"]["code"] == "instance_required"
+
+
+def test_admin_put_get_imap_with_instance(store, auth_env):
+    admin = _seed(store, email="admin@home.lan", role="admin")
+    bob = _seed(store, email="bob@home.lan", role="user")
+    _seed_imap_source(store, "src-1", user_id=bob, host="h")
+    admin_hdr = {"Authorization": f"Bearer {_mint_jwt(admin, 'admin')}"}
+    with _client() as client:
+        put = client.put(
+            f"/api/v1/admin/users/{bob}/connector-credentials/imap?instance=src-1",
+            headers=admin_hdr,
+            json={"payload": {"host": "h", "username": "u", "password": "p"}},
+        )
+        assert put.status_code == 200, put.text
+        assert put.json()["instance"] == "src-1"
+        got = client.get(
+            f"/api/v1/admin/users/{bob}/connector-credentials/imap?instance=src-1",
+            headers=admin_hdr,
+        )
+    assert got.status_code == 200
+    assert got.json()["instance"] == "src-1"
+
+
+# ---------------------------------------------------------------------------
+# LUM-773 — IMAP credential host/port must match sources.url
+# ---------------------------------------------------------------------------
+
+
+def test_imap_credential_put_rejects_host_mismatch_422(store, dev_env):
+    _seed_imap_source(store, "src-gmail", host="imap.gmail.com")
+    with _client() as client:
+        resp = client.put(
+            "/api/v1/me/connector-credentials/imap?instance=src-gmail",
+            json={
+                "payload": {
+                    "host": "mail.other.com",
+                    "port": 993,
+                    "username": "u",
+                    "password": "p",
+                }
+            },
+        )
+        got = client.get("/api/v1/me/connector-credentials/imap?instance=src-gmail")
+    assert resp.status_code == 422
+    assert resp.json()["detail"]["code"] == "imap_host_mismatch"
+    assert got.status_code == 404
+    assert got.json()["detail"]["code"] == "connector_not_configured"
+
+
+def test_imap_credential_put_rejects_port_mismatch_422(store, dev_env):
+    _seed_imap_source(store, "src-gmail", host="imap.gmail.com")
+    with _client() as client:
+        resp = client.put(
+            "/api/v1/me/connector-credentials/imap?instance=src-gmail",
+            json={
+                "payload": {
+                    "host": "imap.gmail.com",
+                    "port": 143,
+                    "username": "u",
+                    "password": "p",
+                }
+            },
+        )
+    assert resp.status_code == 422
+    assert resp.json()["detail"]["code"] == "imap_host_mismatch"
+
+
+def test_imap_credential_put_accepts_matching_host_port_200(store, dev_env):
+    _seed_imap_source(store, "src-gmail", host="imap.gmail.com")
+    with _client() as client:
+        resp = client.put(
+            "/api/v1/me/connector-credentials/imap?instance=src-gmail",
+            json={
+                "payload": {
+                    "host": "imap.gmail.com",
+                    "port": 993,
+                    "username": "u",
+                    "password": "p",
+                }
+            },
+        )
+    assert resp.status_code == 200, resp.text
+
+
+def test_admin_imap_credential_put_accepts_matching_host_for_target_user_200(store, auth_env):
+    admin = _seed(store, email="admin@home.lan", role="admin")
+    bob = _seed(store, email="bob@home.lan", role="user")
+    _seed_imap_source(store, "src-gmail", user_id=bob, host="imap.gmail.com")
+    admin_hdr = {"Authorization": f"Bearer {_mint_jwt(admin, 'admin')}"}
+    with _client() as client:
+        resp = client.put(
+            f"/api/v1/admin/users/{bob}/connector-credentials/imap?instance=src-gmail",
+            headers=admin_hdr,
+            json={
+                "payload": {
+                    "host": "imap.gmail.com",
+                    "port": 993,
+                    "username": "u",
+                    "password": "p",
+                }
+            },
+        )
+    assert resp.status_code == 200, resp.text
+
+
+def test_admin_imap_credential_put_rejects_host_mismatch_422(store, auth_env):
+    admin = _seed(store, email="admin@home.lan", role="admin")
+    bob = _seed(store, email="bob@home.lan", role="user")
+    _seed_imap_source(store, "src-gmail", user_id=bob, host="imap.gmail.com")
+    admin_hdr = {"Authorization": f"Bearer {_mint_jwt(admin, 'admin')}"}
+    with _client() as client:
+        resp = client.put(
+            f"/api/v1/admin/users/{bob}/connector-credentials/imap?instance=src-gmail",
+            headers=admin_hdr,
+            json={
+                "payload": {
+                    "host": "evil.example.com",
+                    "port": 993,
+                    "username": "u",
+                    "password": "p",
+                }
+            },
+        )
+    assert resp.status_code == 422
+    assert resp.json()["detail"]["code"] == "imap_host_mismatch"
+
+
+def test_imap_credential_put_rejects_host_mismatch_on_update_leaves_row_unchanged(store, dev_env):
+    from services import connector_credentials as ccs
+
+    _seed_imap_source(store, "src-gmail", host="imap.gmail.com")
+    good = {
+        "host": "imap.gmail.com",
+        "port": 993,
+        "username": "u",
+        "password": "p",
+    }
+    with _client() as client:
+        client.put(
+            "/api/v1/me/connector-credentials/imap?instance=src-gmail",
+            json={"payload": good},
+        )
+        resp = client.put(
+            "/api/v1/me/connector-credentials/imap?instance=src-gmail",
+            json={
+                "payload": {
+                    "host": "evil.example.com",
+                    "port": 993,
+                    "username": "u",
+                    "password": "p2",
+                }
+            },
+        )
+        assert resp.status_code == 422
+        stored = ccs.get_payload("default", "imap", instance="src-gmail")
+    assert stored is not None
+    assert stored["host"] == "imap.gmail.com"
+
+
+def test_mismatch_put_prevents_stored_divergence(store, dev_env):
+    _seed_imap_source(store, "src-gmail", host="imap.gmail.com")
+    with _client() as client:
+        resp = client.put(
+            "/api/v1/me/connector-credentials/imap?instance=src-gmail",
+            json={
+                "payload": {
+                    "host": "evil.example.com",
+                    "port": 993,
+                    "username": "u",
+                    "password": "p",
+                }
+            },
+        )
+        got = client.get("/api/v1/me/connector-credentials/imap?instance=src-gmail")
+    assert resp.status_code == 422
+    assert resp.json()["detail"]["code"] == "imap_host_mismatch"
+    assert got.status_code == 404
+
+
+def test_invariant_guard_blocks_storing_mismatch(store, dev_env, monkeypatch):
+    import routes.connector_credentials as route_mod
+    from services.email_credentials import (
+        validate_imap_instance_payload_against_source as real_validate,
+    )
+
+    from services import connector_credentials as ccs
+
+    _seed_imap_source(store, "src-gmail", host="imap.gmail.com")
+    mismatch = {
+        "host": "evil.example.com",
+        "port": 993,
+        "username": "u",
+        "password": "p",
+    }
+    monkeypatch.setattr(
+        route_mod,
+        "validate_imap_instance_payload_against_source",
+        lambda *_a, **_k: None,
+    )
+    with _client() as client:
+        bypass = client.put(
+            "/api/v1/me/connector-credentials/imap?instance=src-gmail",
+            json={"payload": mismatch},
+        )
+        assert bypass.status_code == 200
+        stored = ccs.get_payload("default", "imap", instance="src-gmail")
+        assert stored is not None
+        assert stored["host"] == "evil.example.com"
+
+        monkeypatch.setattr(
+            route_mod,
+            "validate_imap_instance_payload_against_source",
+            real_validate,
+        )
+        blocked = client.put(
+            "/api/v1/me/connector-credentials/imap?instance=src-gmail",
+            json={"payload": mismatch},
+        )
+    assert blocked.status_code == 422
+    assert blocked.json()["detail"]["code"] == "imap_host_mismatch"
+
+
+def test_imap_credential_put_rejects_unknown_instance_422(store, dev_env):
+    with _client() as client:
+        resp = client.put(
+            "/api/v1/me/connector-credentials/imap?instance=missing-src",
+            json={
+                "payload": {
+                    "host": "imap.gmail.com",
+                    "port": 993,
+                    "username": "u",
+                    "password": "p",
+                }
+            },
+        )
+    assert resp.status_code == 422
+    assert resp.json()["detail"]["code"] == "imap_source_not_found"
+
+
+def test_imap_credential_put_rejects_non_imap_source_instance_422(store, dev_env):
+    store.sources["rss-1"] = {
+        "id": "rss-1",
+        "user_id": "default",
+        "source_type": "rss",
+        "url": "https://example.com/feed",
+    }
+    with _client() as client:
+        resp = client.put(
+            "/api/v1/me/connector-credentials/imap?instance=rss-1",
+            json={
+                "payload": {
+                    "host": "imap.gmail.com",
+                    "port": 993,
+                    "username": "u",
+                    "password": "p",
+                }
+            },
+        )
+    assert resp.status_code == 422
+    assert resp.json()["detail"]["code"] == "imap_source_not_found"
+
+
+def test_imap_credential_put_rejects_malformed_source_url_422(store, dev_env):
+    store.sources["src-bad"] = {
+        "id": "src-bad",
+        "user_id": "default",
+        "source_type": "imap",
+        "url": "imap://host:notaport/personal",
+    }
+    with _client() as client:
+        resp = client.put(
+            "/api/v1/me/connector-credentials/imap?instance=src-bad",
+            json={
+                "payload": {
+                    "host": "host",
+                    "port": 993,
+                    "username": "u",
+                    "password": "p",
+                }
+            },
+        )
+    assert resp.status_code == 422
+    assert resp.json()["detail"]["code"] == "imap_source_url_invalid"
+
+
+# ---------------------------------------------------------------------------
+# LUM-834 chunk B — PATCH /{connector} (enable / disable)
+# ---------------------------------------------------------------------------
+
+
+def test_patch_toggles_enabled_and_returns_the_record(store, dev_env):
+    with _client() as client:
+        client.put(
+            "/api/v1/me/connector-credentials/testconnector",
+            json={"payload": {"api_key": "sk-test-123"}},
+        )
+        resp = client.patch(
+            "/api/v1/me/connector-credentials/testconnector", json={"enabled": False}
+        )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["enabled"] is False
+    # The response is the full record projection, so the card can re-render
+    # from it rather than issuing a second GET.
+    assert body["connector"] == "testconnector"
+    assert "payload" not in body and "ciphertext" not in body
+
+
+def test_patch_does_not_delete_the_credential(store, dev_env):
+    """G3's promise at the wire: off, then on, and the payload is still there.
+
+    "Disable" used to be `client.delete`, which destroyed the credential and
+    made turning a connector back on mean re-entering the secret.
+    """
+    with _client() as client:
+        client.put(
+            "/api/v1/me/connector-credentials/testconnector",
+            json={"payload": {"api_key": "sk-test-123"}},
+        )
+        client.patch("/api/v1/me/connector-credentials/testconnector", json={"enabled": False})
+        resp = client.patch(
+            "/api/v1/me/connector-credentials/testconnector", json={"enabled": True}
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["enabled"] is True
+
+    import config as _config
+    from services import connector_credentials as ccs
+
+    # The app's lifespan shutdown clears `config._instances`, so this direct
+    # service call needs the fake store re-installed.
+    _config._instances["metadata_store"] = store
+    assert ccs.get_payload("default", "testconnector") == {"api_key": "sk-test-123"}
+
+
+def test_patch_on_a_missing_row_is_404(store, dev_env):
+    """Nothing saved yet to enable or disable."""
+    with _client() as client:
+        resp = client.patch(
+            "/api/v1/me/connector-credentials/testconnector", json={"enabled": False}
+        )
+
+    assert resp.status_code == 404, resp.text
+    assert resp.json()["detail"]["code"] == "connector_not_configured"
+
+
+def test_patch_on_system_smtp_is_422_use_system_mail_admin(store, dev_env):
+    """Same refusal as every sibling verb on this surface.
+
+    `system_smtp` is hidden from GET /registry so no card renders for it, but
+    it passes registry membership and is reachable by a direct request. A verb
+    that ANSWERED where its siblings refuse would be the odd one out.
+    """
+    with _client() as client:
+        resp = client.patch("/api/v1/me/connector-credentials/system_smtp", json={"enabled": False})
+
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"]["code"] == "use_system_mail_admin"
+
+
+def test_patch_refuses_a_multi_instance_connector(store, dev_env):
+    """`imap`/`smtp` are per-mailbox and this route carries no instance.
+
+    Legacy pre-LUM-170 rows live at `instance=""` and would be reachable here,
+    so a PATCH could silently disable one — and mail polling would then raise
+    with nothing on any screen to explain it. Refused explicitly rather than
+    half-supported.
+    """
+    with _client() as client:
+        resp = client.patch("/api/v1/me/connector-credentials/imap", json={"enabled": False})
+
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"]["code"] == "instance_required"
+
+
+def test_patch_with_a_non_bool_enabled_is_422(store, dev_env):
+    with _client() as client:
+        resp = client.patch(
+            "/api/v1/me/connector-credentials/testconnector", json={"enabled": "yes please"}
+        )
+    assert resp.status_code == 422, resp.text
+
+
+def test_patch_rejects_unknown_body_fields(store, dev_env):
+    """`extra="forbid"`, matching `PutConnectorCredentialRequest`.
+
+    Without it, `{"enabledd": false}` would be a silent no-op returning 200 —
+    the user toggles, the screen says saved, nothing changed.
+    """
+    with _client() as client:
+        client.put(
+            "/api/v1/me/connector-credentials/testconnector",
+            json={"payload": {"api_key": "sk-test-123"}},
+        )
+        resp = client.patch(
+            "/api/v1/me/connector-credentials/testconnector",
+            json={"enabled": False, "surprise": 1},
+        )
+    assert resp.status_code == 422, resp.text
+
+
+def test_patch_is_same_origin_guarded_like_its_siblings(store, monkeypatch):
+    """Every mutating verb on this router carries `require_same_origin`.
+
+    Asserted the way the PUT bypass test is: a Bearer-authenticated call with a
+    mismatched Origin is allowed through by design (curl / MCP clients), and the
+    point here is that the dependency is WIRED — a PATCH that had been declared
+    without it would be indistinguishable at this level, so the assertion is on
+    the route object rather than on a response code.
+    """
+    from routes.connector_credentials import router
+
+    monkeypatch.setenv("AUTH_ENABLED", "false")
+    patch_routes = [
+        r
+        for r in router.routes
+        if getattr(r, "path", "").endswith("/{connector}")
+        and "PATCH" in getattr(r, "methods", set())
+    ]
+    assert patch_routes, "the PATCH route is not declared on the router"
+    # `.call`, not `.dependency` — FastAPI stores the resolved callable there
+    # on a Dependant.
+    names = [d.call.__name__ for d in patch_routes[0].dependant.dependencies if d.call]
+    assert "require_same_origin" in names, (
+        f"PATCH is not same-origin guarded; dependencies were {names!r}"
+    )
+
+
+def test_patch_cannot_touch_another_users_row(store, auth_env):
+    """The path carries no user_id, so the caller's own row is the only one
+    reachable. Asserted rather than assumed, because "there is no parameter to
+    abuse" is a claim about the route's shape that a future refactor could
+    quietly falsify.
+    """
+    alice = _seed(store, email="alice-patch@example.com", role="user")
+    bob = _seed(store, email="bob-patch@example.com", role="user")
+
+    from services import connector_credentials as ccs
+
+    ccs.put_payload(alice, "testconnector", {"api_key": "alice-key"}, actor="self")
+    ccs.put_payload(bob, "testconnector", {"api_key": "bob-key"}, actor="self")
+
+    with _client() as client:
+        resp = client.patch(
+            "/api/v1/me/connector-credentials/testconnector",
+            json={"enabled": False},
+            headers={"Authorization": f"Bearer {_mint_jwt(bob, 'user')}"},
+        )
+    assert resp.status_code == 200, resp.text
+
+    import config as _config
+
+    # Lifespan shutdown cleared the store singleton; re-install for the direct
+    # service reads below.
+    _config._instances["metadata_store"] = store
+    assert ccs.is_disabled(bob, "testconnector") is True
+    assert ccs.is_disabled(alice, "testconnector") is False, (
+        "disabling bob's connector also disabled alice's"
+    )
+
+
+# ---------------------------------------------------------------------------
+# LUM-834 chunk B — the wire contract for field presence
+# ---------------------------------------------------------------------------
+
+
+def test_the_public_model_carries_no_payload_values(store, dev_env):
+    """`configured_fields` names KEYS. A value crossing here would be the
+    whole design failing at the last step.
+    """
+    with _client() as client:
+        client.put(
+            "/api/v1/me/connector-credentials/caldav",
+            json={
+                "payload": {
+                    "base_url": "https://dav.example/",
+                    "username": "u",
+                    "password": "hunter2",
+                }
+            },
+        )
+        body = client.get("/api/v1/me/connector-credentials/caldav").json()
+
+    import json as _json
+
+    assert body["configured_fields"] == ["base_url", "password", "username"]
+    assert "hunter2" not in _json.dumps(body)
+
+
+def test_secret_fields_comes_from_the_registry_not_the_row(store, dev_env):
+    """The QUIET half of the `_to_public` bridge.
+
+    `secret_fields` is not on the record, so it has to be injected from the
+    registry. Its wire default is `[]` — so forgetting the injection passes
+    validation and every response silently claims the connector has no secret
+    fields, and the card renders values that should be masked as ordinary
+    rows. Nothing else would catch that.
+    """
+    with _client() as client:
+        client.put(
+            "/api/v1/me/connector-credentials/caldav",
+            json={
+                "payload": {"base_url": "https://dav.example/", "username": "u", "password": "p"}
+            },
+        )
+        body = client.get("/api/v1/me/connector-credentials/caldav").json()
+
+        assert body["secret_fields"] == ["password"]
+
+        # And it does NOT come from the row: extra keys in the payload do not
+        # become secret, and the registry's answer does not change with them.
+        client.put(
+            "/api/v1/me/connector-credentials/caldav",
+            json={
+                "payload": {
+                    "base_url": "https://dav.example/",
+                    "username": "u",
+                    "password": "p",
+                    "nickname": "home",
+                }
+            },
+        )
+        body = client.get("/api/v1/me/connector-credentials/caldav").json()
+
+    assert body["secret_fields"] == ["password"]
+    assert "nickname" in body["configured_fields"]
+
+
+def test_a_pre_migration_row_reports_configured_fields_as_null(store, dev_env):
+    """NULL survives all the way to the wire.
+
+    `list[str]` would have coerced it — either a 500 under `extra="forbid"` or
+    an empty list — and an empty list on the card reads as "nothing set" about
+    a credential that is fully configured and working.
+    """
+    with _client() as client:
+        client.put(
+            "/api/v1/me/connector-credentials/testconnector",
+            json={"payload": {"api_key": "k"}},
+        )
+        # Simulate the row written before migration 079.
+        store.creds[("default", "testconnector", "")]["configured_keys"] = None
+        body = client.get("/api/v1/me/connector-credentials/testconnector").json()
+
+    assert body["configured_fields"] is None
+    assert body["configured_fields"] != []

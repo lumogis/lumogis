@@ -53,6 +53,7 @@ def fake_models(monkeypatch):
         "is_model_enabled",
         lambda model, *, user_id=None, _privacy_blocks_remote=False: True,
     )
+    monkeypatch.setattr(_config, "model_disabled_reason", lambda model, **_: None)
     monkeypatch.setattr(
         _config,
         "is_local_model",
@@ -70,6 +71,136 @@ def test_models_lists_descriptors(client, fake_models):
     assert by_id["claude"]["provider"] == "anthropic"
     assert by_id["ollama-mistral"]["provider"] == "ollama"
     assert by_id["ollama-mistral"]["is_local"] is True
+
+
+def test_models_include_disabled_reason_field(client, fake_models):
+    """LUM-881: every descriptor carries ``disabled_reason`` (``None`` when enabled)."""
+    body = client.get("/api/v1/models").json()
+    assert body["models"], "fixture must list models"
+    for m in body["models"]:
+        assert m["enabled"] is True
+        assert "disabled_reason" in m and m["disabled_reason"] is None
+
+
+def test_models_report_privacy_mode_reason(client, fake_models, monkeypatch):
+    """Plumbing only: the route copies the reason into the DTO and sorts.
+
+    Whether the reason is *computed* correctly is proved by the unpatched
+    ``test_models_route_end_to_end_reasons`` in ``test_privacy_mode.py``.
+    """
+    import config as _config
+
+    monkeypatch.setattr(
+        _config,
+        "model_disabled_reason",
+        lambda model, **_: "privacy_mode" if model == "claude" else None,
+    )
+    body = client.get("/api/v1/models").json()
+    by_id = {m["id"]: m for m in body["models"]}
+    assert by_id["claude"]["enabled"] is False
+    assert by_id["claude"]["disabled_reason"] == "privacy_mode"
+    assert by_id["ollama-mistral"]["enabled"] is True
+    assert [m["id"] for m in body["models"]] == ["ollama-mistral", "claude"]
+
+
+def test_models_compute_privacy_once_per_request(client, monkeypatch):
+    """Both models are keyless, so the privacy check is reached for each — the
+    policy lookup must still happen exactly once per request."""
+    import services.privacy_mode as privacy_mode
+
+    import config as _config
+
+    cfgs = {
+        "ollama-local": {"label": "Local", "base_url": "http://ollama:11434"},
+        "remote-llm": {"label": "Remote", "base_url": "http://remote-llm:8080"},
+    }
+    calls: list[str | None] = []
+
+    def counting(user_id):
+        calls.append(user_id)
+        return True
+
+    monkeypatch.setenv("AUTH_ENABLED", "false")
+    monkeypatch.setattr(privacy_mode, "blocks_remote_models", counting)
+    monkeypatch.setattr(_config, "get_all_models_config", lambda: dict(cfgs))
+    monkeypatch.setattr(_config, "get_model_config", lambda m: dict(cfgs[m]))
+
+    body = client.get("/api/v1/models").json()
+    by_id = {m["id"]: m for m in body["models"]}
+    assert by_id["ollama-local"]["disabled_reason"] is None
+    assert by_id["remote-llm"]["disabled_reason"] == "privacy_mode"
+    assert len(calls) == 1
+
+
+def test_models_two_users_get_their_own_reason(client, monkeypatch):
+    import services.llm_connector_map as llm_connector_map
+    import services.privacy_mode as privacy_mode
+
+    import config as _config
+
+    cfgs = {
+        "claude": {"adapter": "anthropic", "api_key_env": "ANTHROPIC_API_KEY", "label": "Claude"},
+        "ollama-mistral": {"base_url": "http://ollama:11434", "label": "Mistral"},
+    }
+    snapshot_calls: list[str] = []
+
+    def snapshot(user_id):
+        snapshot_calls.append(user_id)
+        return {"llm_anthropic"} if user_id == "alice-models" else set()
+
+    monkeypatch.setenv("AUTH_SECRET", "test-models-reason-secret-do-not-use")
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    monkeypatch.setattr(_config, "get_all_models_config", lambda: dict(cfgs))
+    monkeypatch.setattr(_config, "get_model_config", lambda m: dict(cfgs[m]))
+    monkeypatch.setattr(llm_connector_map, "get_user_credentials_snapshot", snapshot)
+    monkeypatch.setattr(privacy_mode, "blocks_remote_models", lambda user_id: True)
+    from auth import mint_access_token
+
+    def reasons(user_id: str) -> dict:
+        hdr = {"Authorization": f"Bearer {mint_access_token(user_id, 'user')}"}
+        resp = client.get("/api/v1/models", headers=hdr)
+        assert resp.status_code == 200
+        return {m["id"]: m["disabled_reason"] for m in resp.json()["models"]}
+
+    assert reasons("alice-models") == {"claude": "privacy_mode", "ollama-mistral": None}
+    assert snapshot_calls == ["alice-models"]
+    assert reasons("bob-models") == {"claude": "no_credentials", "ollama-mistral": None}
+    assert snapshot_calls == ["alice-models", "bob-models"]
+
+
+def test_models_drop_model_that_vanishes_mid_request(client, fake_models, monkeypatch):
+    """A dynamic Ollama model deleted between listing and lookup is dropped, not a 500."""
+    import config as _config
+
+    monkeypatch.setattr(
+        _config,
+        "get_all_models_config",
+        lambda: {"claude": {"label": "Claude", "provider": "anthropic"}, "ghost": {"label": "G"}},
+    )
+
+    def reason(model, **_):
+        if model == "ghost":
+            raise _config.UnknownModelError("Unknown model 'ghost'")
+        return None
+
+    monkeypatch.setattr(_config, "model_disabled_reason", reason)
+    resp = client.get("/api/v1/models")
+    assert resp.status_code == 200
+    assert [m["id"] for m in resp.json()["models"]] == ["claude"]
+
+
+def test_models_other_value_error_is_not_swallowed(fake_models, monkeypatch):
+    """Only ``UnknownModelError`` is caught; any other ``ValueError`` still errors."""
+    import main
+
+    import config as _config
+
+    def reason(model, **_):
+        raise ValueError("boom")
+
+    monkeypatch.setattr(_config, "model_disabled_reason", reason)
+    with TestClient(main.app, raise_server_exceptions=False) as c:
+        assert c.get("/api/v1/models").status_code == 500
 
 
 def test_chat_rejects_assistant_last_message(client, fake_models):

@@ -1,7 +1,7 @@
 # Automated testing strategy
 
-Last reviewed: 2026-07-12
-Verified against commit: f75554a
+Last reviewed: 2026-08-07
+Verified against commit: 7d9ca7d2
 
 Lumogis ships a **permanent, layered** automated test setup. **Where** you run the **full** stack matters: see **Dev vs `main` (comprehensive testing)** below.
 
@@ -11,6 +11,8 @@ Lumogis ships a **permanent, layered** automated test setup. **Where** you run t
 | --- | --- |
 | **`origin/dev`** | **Targeted** layers only: run the commands that exercise **your** change (e.g. orchestrator unit tests for a Core fix; `make web-test` for a web-only change). Fast feedback wins. You **do not** treat `dev` as the place to prove the entire product slice before every push. |
 | **`origin/main`** (and branches about to fast-forward `main`, e.g. `promote/clean-main` when it carries the same `Makefile` / scripts as `main`) | **Comprehensive** testing: the **full release gate** — on a **clean checkout of the release line**, run **`make verify-public-rc-full`** when that target exists in `Makefile`. That umbrella chains hygiene, multi-tree unit coverage, web install/lint/test/build, the **public RC Compose stack** (`docker-compose.yml` + `docker-compose.test.yml` + `docker-compose.public-rc-stack.yml` via `scripts/integration-public-rc.sh`), Playwright gate + full signed-in flows, export-tree checks, migrations, and optional heavier Docker targets. **Publishing** (`docs/release/public-agpl-release-workflow.md`) assumes this bar has been met on the **private `main` SHA** you export — not on a stray `dev` working copy whose `Makefile` may omit RC targets. |
+
+> **CI on `dev` (LUM-788).** As of 2026-08-04, `.github/workflows/ci.yml` also triggers on **`push` to `dev`**, because the maintainer's **self-hosted** runner bills no GitHub Actions minutes for the heaviest job. **`scripts/release-preflight.sh`** remains the fast first net (seconds, local, no Docker) before an RC branch exists; CI is the slower second net. On `dev` you still run **targeted** local layers for your change (`make test`, `make web-test`, …); a green `dev` push does **not** replace **`make verify-public-rc-full`** on the release line.
 
 **Why:** `dev` and `main` **diverge** on purpose. The extended RC `Makefile` targets and `scripts/integration-public-rc.sh` are maintained on the **release candidate** line; running the **full** matrix only there avoids false “target missing” errors and keeps signal aligned with what you ship and publish.
 
@@ -23,6 +25,8 @@ Lumogis ships a **permanent, layered** automated test setup. **Where** you run t
 
 ## Coverage matrices (feature → test)
 
+> **Two directories are named `tests/integration`, and they are different lanes.** The repo-root **`tests/integration/`** (22 modules) drives **HTTP against a running Core**. **`orchestrator/tests/integration/`** (26 modules) runs **in-process against real backends**. Both rows appear in the table below. They are told apart by **path**, not by the `integration` marker, which both carry and which means only "requires real external services". LUM-753 records why the directory was not renamed: the name is accurate once membership is enforced, and if either is misnamed it is the repo-root one, which is really an API/e2e lane.
+
 **Companion to this doc:** [docs/testing/README.md](README.md) indexes **TEST-COVERAGE-MATRIX-*** files for core, web, and related surfaces. They answer *which product behaviours have test evidence*, while `scripts/debug/inventory.tsv` (LUM-377) answers *which commands to run*.
 
 - **Statuses** (✅/🟡/❌/🚫) come from code/plan audit, not from capabilities prose alone.
@@ -34,7 +38,8 @@ Lumogis ships a **permanent, layered** automated test setup. **Where** you run t
 | --- | --- | --- | --- |
 | **Orchestrator unit tests** | `make test` (venv) or `make compose-test` (Docker) | Optional venv with `orchestrator/requirements-dev.txt`, or Docker only | Core FastAPI routes, services, plugins, auth/session logic, MCP tools, most business rules using **TestClient** and mocks — **no** requirement for Postgres/Qdrant/Ollama to be up on the host. |
 | **Stack-control unit tests** | Included in `make test`; alone: `make compose-test-stack-control` | Docker | `stack-control` process supervision helpers and small Python surface. |
-| **Integration (HTTP against live Core)** | `make test-integration` (venv) or `make compose-test-integration` (Docker; includes FalkorDB overlay) | Full stack up; FalkorDB merge for graph tests | **Real** HTTP to Core against a **live** stack: ingest/search, entities, sessions, connectors, graph APIs when FalkorDB is in the compose file — validates wiring and persistence paths unit tests skip. |
+| **Integration (HTTP against live Core)** — repo-root **`tests/integration/`** | `make test-integration` (venv) or `make compose-test-integration` (Docker; includes FalkorDB overlay) | Full stack up; FalkorDB merge for graph tests | **Real** HTTP to Core against a **live** stack: ingest/search, entities, sessions, connectors, graph APIs when FalkorDB is in the compose file — validates wiring and persistence paths unit tests skip. |
+| **Integration (in-process against real backends)** — **`orchestrator/tests/integration/`** | Collected by `make test`; the membership check is `make check-integration-hermeticity` | Real Postgres / Qdrant / FalkorDB / paperless, depending on the module | **In-process** calls against **real** stores — no HTTP layer. **Membership rule (LUM-753): a test here requires a real external backend.** On a laptop with none reachable these skip, and the LUM-718 terminal summary reports how many "validated nothing". Two checks hold the rule: nothing here may *pass* without a backend, and nothing here may be *unconditionally skipped* (a bare `@pytest.mark.skip` satisfies the first vacuously). Tests needing no backend belong in `orchestrator/tests/`. |
 | **RC integration subset (`public_rc`)** | Invoked from **`make verify-public-rc`** on `main` via `scripts/integration-public-rc.sh` | RC compose triple (`docker-compose.yml` + `docker-compose.test.yml` + `docker-compose.public-rc-stack.yml`), `config/test.env.example` | Deterministic integration slice (graph service mode, mock capability, etc.) used in **release gates** — see `Makefile` on **`main`**. |
 | **lumogis-graph service tests** | `make compose-test-kg` | Docker (KG test image) | KG service unit tests in an isolated image — webhook parity, scheduler off, no accidental hits to your dev volumes. |
 | **Mock capability contract tests** | `make mock-capability-test` | Python venv with `services/lumogis-mock-capability/requirements-dev.txt` | Second-party capability HTTP contract and manifest behaviour. |
@@ -44,16 +49,18 @@ Lumogis ships a **permanent, layered** automated test setup. **Where** you run t
 | **Web e2e (Playwright)** | `make web-e2e` or `make web-e2e-prove` | Stack + env creds (see `clients/lumogis-web/README.md`) | **Real browser**: gate UI flows, workflows, mobile viewports; **`verify-public-rc`** uses a **narrow** Playwright gate; **`verify-public-rc-full`** adds **full** signed-in navigation after seeding a smoke user. |
 | **Overlay GUI e2e (WDIO + tauri-driver)** | `make overlay-e2e` (mock) / `make overlay-e2e-smoke` (live) | **Linux + xvfb**; `webkit2gtk-driver` + Rust + Node 20 (LUM-402, [ADR 114](../decisions/114-lum-402-overlay-gui-e2e.md)) | **Real WebKitGTK webview** for the Lumogis Search Tauri overlay (login, search, admin `ingest_paths`, upload, restart banner). Mock leg mocks the Tauri `invoke` IPC (no Docker); smoke leg does one live login+search round-trip against the RC Core. WDIO is a **second e2e idiom** alongside web Playwright; **macOS has no WebDriver** (Linux-only v1). |
 | **Caddy security headers** | `make web-caddy-headers` / `make web-caddy-headers-prove` | Caddy + web + orchestrator | Same-origin / security header contracts at the edge. |
-| **Graph inprocess vs service parity** | `make test-graph-parity` | Docker; **destructive** to dev volumes — see `Makefile` | Core behaviour against **in-process** graph plugin vs **lumogis-graph** HTTP path — optional tail of **`verify-public-rc-full`**. |
+| **Graph service Rescan proof (+ in-process parity)** | `make test-graph-parity` | Docker; its own compose project `lumogis-parity` on its own loopback ports, so it never touches another stack's volumes; the checkout's `.env` must be the test template | Service-mode Rescan of `tests/fixtures` projected into FalkorDB (Document + entities, `graph_projected_at` stamped), measured on FalkorDB itself; fails on any skip. The in-process vs service comparison is marked `manual` (LLM extraction makes the two phases non-deterministic) — run it with `-m manual`. Optional tail of **`verify-public-rc-full`**. |
+| **Live ingest-ownership lane** | `make e2e-ingest-live` | Docker; the seeded release-candidate stack (`lumogis-test`), sign-in on, `GRAPH_MODE=service`, the extraction model pulled; run from a worktree whose `.env` is the test template | `tests/integration/test_graph.py` + `test_integration_flow.py` with a real inbox owner: the inbox file is filed under that owner, Rescan refuses a body field (422) and a missing token (401). Fails on any skip (`scripts/junit_skip_guard.py`). Evidence in `.cache/lum929/`. Opt-in, not part of `verify-public-rc`. |
 | **DB migrations gate** | `scripts/check-migrations-fresh-db.sh` (via **`verify-public-rc-full`** on `main`) | Docker / tooling per script | Fresh DB bootstrap + migration continuity — part of the **full** RC gate on `main`. |
 | **Export shape** | `scripts/create-upstream-export-tree.sh` + `scripts/check-public-export.sh` on the export dir | None beyond bash/git | Ensures the tree that could ship to **`lumogis/lumogis`** has correct licence posture and **no** forbidden paths — chained inside **`verify-public-rc`** / publish workflow. |
 
 ## CI vs local
 
 - **CI today:** `ruff check` / `ruff format --check` on `orchestrator/`, `pytest` on `orchestrator/tests/`, `pytest` on `stack-control/test_main.py`.
+- **Real-Postgres lane (LUM-718):** the `lint-and-test` job runs a **`postgres:16` service container**, applies `postgres/init.sql` plus every migration, and exports `LUMOGIS_REQUIRE_INTEGRATION_DB=1`. Under that flag an **unreachable database is a failure, not a skip** — `orchestrator/tests/integration/` previously skipped in full and reported green while validating nothing, which is how LUM-648's snooze flip and `email_organize`'s ledger write both shipped. The job also sets `LUMOGIS_INTEGRATION_POSTGRES_DSN`, which three modules read instead of the `POSTGRES_*` pair. Locally the flag is unset, so an absent database still skips — but the run now prints how many integration tests skipped and why.
 - **Optional path/label-gated Playwright:** **`.github/workflows/web-e2e.yml`** (LUM-60) runs **`make web-e2e-prove`** against a slim Compose stack when a maintainer adds **`ci:run-web-e2e`** on same-repo PRs that touch the gated paths, or on **`workflow_dispatch`** (see [CONTRIBUTING.md](../../CONTRIBUTING.md) § *Optional CI — web Playwright*). It does **not** replace **`make verify-public-rc`** / **`verify-public-rc-full`**.
 - **Private overlay GUI e2e:** **`.github/workflows/overlay-e2e.yml`** (LUM-402, [ADR 114](../decisions/114-lum-402-overlay-gui-e2e.md)) runs the WDIO + `tauri-driver` mock leg on PRs that touch **`clients/lumogis-search/**`** (path-gated, no label — mock uses no secrets), and a live-compose smoke leg on **`workflow_dispatch`** only. The workflow + `.github/scripts/overlay-e2e-paths.sh` are **strip-listed** from the public export (heavy maintainer runner; smoke uses secrets); the harness **source** under `clients/lumogis-search/e2e/**` exports with the AGPL tree. Distinct from LUM-433's public `search-overlay-build.yml` (release builds).
-- **Not in default CI:** Docker integration, Playwright (except the optional LUM-60 workflow above), KG image tests, and parity — not because they are optional forever, but because they need heavier runners; contributors on **`dev`** still run the **relevant** subset when touching those surfaces. **Maintainers** run the **full** `make verify-public-rc-full` on the **release line** before treating `main` as publish-ready.
+- **Not in default CI:** Docker integration (the **Compose-backed** stack — the Postgres-only lane above *does* run), Playwright (except the optional LUM-60 workflow above), KG image tests, and parity — not because they are optional forever, but because they need heavier runners; contributors on **`dev`** still run the **relevant** subset when touching those surfaces. **Maintainers** run the **full** `make verify-public-rc-full` on the **release line** before treating `main` as publish-ready.
 
 ## Release gates (LUM-225)
 
@@ -91,6 +98,7 @@ Machine-readable source: **`scripts/debug/inventory.tsv`**. Human view: **`make 
 | test-integration | `make test-integration` | integration | local-dev | yes | no |
 | rc-integration | `scripts/integration-public-rc.sh full-cycle` | integration | release-rc | yes | no |
 | e2e-ingest-restart | `make e2e-ingest-restart` | integration | opt-in-heavy | yes | no |
+| e2e-ingest-live | `make e2e-ingest-live` | integration | opt-in-heavy | yes | no |
 | graph-parity | `make test-graph-parity` | integration | opt-in-heavy | yes | no |
 | web-unit | `make web-test` | web | local-dev | no | no |
 | search-vitest | `cd clients/lumogis-search && npm test` | none | local-dev | no | no |
@@ -110,8 +118,8 @@ See **`scripts/debug/inventory.tsv`** for the full ~26-row inventory (prereqs co
 | Stage | What runs | Automation | Gap / notes |
 | --- | --- | --- | --- |
 | **Local `dev` (per change)** | Targeted subset (`make test`, `make web-test`, …) | Manual / agent choice | **`make debug`** + **`make test-list`** (LUM-377) — no path→suite helper yet |
-| **CI on PR/push to `main`/`master`** | ci.yml unit + lint + compose-policy; optional web-e2e label | GitHub Actions | Default PR gate is Core + stack-control unit tests; search overlay: `clients/lumogis-search` Vitest + `cargo test` locally or in extended gates |
-| **`dev` → private `main`** | hygiene, `make test`, export checks, `verify-public-rc(-full)` for release-scale | `prepare-private-release-from-dev` skill | Judgement manual; use **`verify-public-rc-full`** on release line |
+| **CI on PR/push to `main`/`master`/`dev`** | ci.yml unit + lint + compose-policy (+ release-preflight contract tests); optional web-e2e label | GitHub Actions (self-hosted `lint-and-test` on maintainer laptop — LUM-788) | Default PR gate is Core + stack-control unit tests; **`dev` push** is a second net after **`scripts/release-preflight.sh`** |
+| **`dev` → private `main`** | **`scripts/release-preflight.sh`**, **`pre_main_gate.mjs --check`** ([ADR 204](../decisions/204-lum-802-pre-main-promotion-gate.md)), hygiene, `make test`, export checks, `verify-public-rc(-full)` | `prepare-private-release-from-dev` skill | Post-promotion: **`make main-dev-drift-check`** ratchet (**LUM-789**); use **`verify-public-rc-full`** on release line |
 | **private `main` → public `main`** | `verify-public-rc-full` on exact SHA, then export | `publish-private-main-to-public` skill | Run Make targets directly; debug wrappers optional for logs |
 
 ## Debug runners (`scripts/debug/`)
@@ -123,6 +131,17 @@ See **`scripts/debug/inventory.tsv`** for the full ~26-row inventory (prereqs co
 - **Python summaries** — dev-only **`pytest-agent-digest`** via **`PYTEST_ADDOPTS`** in `unit.sh` only (CI `make test` unchanged).
 
 Operator doc: [scripts/debug/README.md](../../scripts/debug/README.md).
+
+## Recall latency benchmark (`make bench-recall`)
+
+How fast MCP `recall` is on a large memory bank. This is a performance benchmark, separate from the 50-memory correctness gate (`make test-cursor-integration`), and **not** part of `make test`.
+
+- **Run:** `make bench-recall`. It needs Docker only: the benchmark runs inside `scripts/test-env.sh` tier 2 (throwaway Postgres and Qdrant on an internal network, removed afterwards). It downloads no model and makes no network call.
+- **What it does:** generates seeded synthetic banks of 1,000, 5,000 and 10,000 memories (varied lengths and topics, entities and edges, about 4% archived, 768-dim clustered vectors). It loads each one fresh and times `services.recall.recall` with all four legs, RRF fusion, hydration and the tool's JSON output: 30 warm-up queries, then 200 timed queries from a seeded mix (keyword, entity, identifier, conceptual, long).
+- **Modes:** `fusion` stubs the query embedding (a precomputed vector) and skips rerank. `rerank` adds the top-20 cross-encoder rerank on a model with the shape of `ms-marco-MiniLM-L-6-v2` and random weights: the same compute, no download. `full` also runs a BERT-base-shape query embedding on CPU, as a rough estimate for an embedder without a GPU.
+- **Output:** p50, p95, p99 and max per size and mode, a per-stage profile (each leg, hydrate, rerank, embedding) and host details. A JSON copy goes to `target/bench-recall/latest.json`.
+- **Options:** `BENCH_RECALL_MAX_P95_MS=200` makes the run exit 1 when a measured p95 is above 200 ms. `BENCH_RECALL_SIZES=10000` changes the bank sizes. `BENCH_RECALL_ARGS="--modes fusion --gate-modes fusion"` picks the modes to run and to gate.
+- **Code:** `orchestrator/benchmarks/` (the generator is `recall_bank.py`, the runner is `recall_bench.py`). Generator unit tests run in `make test`.
 
 ## References
 

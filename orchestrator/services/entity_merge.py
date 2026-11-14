@@ -9,6 +9,7 @@ Phase A — single Postgres transaction (all-or-nothing)
   2. UPDATE entity_relations: redirect loser rows to winner
   3. UPDATE sessions: replace loser UUID in entity_ids arrays via array_replace
   4. Merge aliases (union), context_tags (union), mention_count (sum) onto winner
+  4b. Repoint active entity_edges loser -> winner (LUM-598)
   5. NULL winner.graph_projected_at — triggers FalkorDB re-projection on next cycle
   6. DELETE loser entity
   7. COMMIT
@@ -27,10 +28,16 @@ merge audit trail is preserved in review_decisions (written by the caller).
 
 Transaction implementation
 --------------------------
-PostgresStore uses autocommit=True. For Phase A we temporarily disable
-autocommit on the underlying psycopg2 connection, execute the transaction,
-then restore autocommit. This is safe because PostgresStore is a singleton
-and we hold the GIL during each statement.
+Phase A runs inside ``ms.transaction()`` (LUM-816), which checks a connection
+out of the pool and binds it to this thread for the block.
+
+It used to reach for ``ms._conn`` and toggle ``autocommit`` by hand, justified
+in this docstring as *"safe because PostgresStore is a singleton and we hold the
+GIL during each statement"*. **That was wrong.** The GIL is released during the
+I/O every statement blocks on, so another thread runs precisely *between*
+statements — which is when the shared ``autocommit`` flag was observed. It was
+the same hazard as the old ``transaction()``, minus the guard that would at
+least have raised.
 """
 
 import logging
@@ -49,14 +56,162 @@ _log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+def _affected(ms, counting_sql: str, params: tuple) -> int:
+    """Read the row count from a ``WITH affected AS (...) SELECT count(*)`` query.
+
+    ``cur.rowcount`` gave this for free, but reaching it meant driving a raw
+    cursor on ``ms._conn`` — the process-wide connection this whole ticket
+    exists to stop sharing. The first replacement was
+    ``len(fetch_all(... RETURNING 1))``, which is correct but ships every
+    affected row to the client and builds a dict per row purely to count them:
+    on a merge touching 50k relations that is 50k round-trip rows and 50k dicts,
+    inside an open transaction holding their locks the whole time.
+
+    Wrapping the DML in a CTE lets Postgres do the counting it was already
+    doing. Each caller passes its **complete** statement — this helper composes
+    no SQL, because the repo's rule against building query text with f-strings
+    does not have a "but the fragment is a module constant" exception, and a
+    helper that takes a fragment is one careless caller away from taking a
+    variable.
+    """
+    row = ms.fetch_one(counting_sql, params)
+    return int((row or {}).get("n") or 0)
+
+
+def _repoint_entity_edges(ms, winner_id: str, loser_id: str, user_id: str) -> dict:
+    """Repoint active ``entity_edges`` endpoints from ``loser_id`` to ``winner_id``.
+
+    Runs inside the merge transaction (LUM-598). Four ordered statements, each a
+    complete parameterised statement (see :func:`_affected`):
+
+    1. **Self-loops are archived, not repointed.** After the merge a loser<->winner
+       edge (either direction) or an existing loser->loser edge would relate the
+       survivor to itself. The repo treats a self-loop as a defect (the
+       ``no_self_loop`` CRITICAL check in ``entity_constraints``), so the edge is
+       retired with ``valid_until = now()`` — the same soft-archive that ``forget``
+       uses (ADR 129; "never destroys", ADR 151) — rather than hard-deleted.
+    2. **Duplicates are dropped.** An active loser edge whose repointed
+       ``(user_id, bank, src, dst, relation_type)`` already exists as an ACTIVE
+       winner edge is redundant (the UNIQUE index would reject it), so it is
+       deleted and the winner's edge — its ``valid_from`` / ``created_at`` /
+       ``evidence_id`` — wins, exactly as ``entity_relations`` dedup does in
+       Step 2.
+    3. **The rest are repointed** with ``graph_projected_at = NULL`` so the LUM-580
+       reconcile pass (stale = ``graph_projected_at IS NULL``) attaches them to
+       the winner's node, and ``reconcile_attempts = 0`` so an edge that aged out
+       against the loser's missing node is retried (LUM-599). ``id``,
+       ``evidence_id``, ``valid_from``, ``valid_until`` and ``created_at`` are
+       deliberately NOT in the SET list: the temporal
+       window of a fact does not change because its subject was merged.
+    4. **Stragglers are counted, not guessed.** An active loser edge that collides
+       with an ARCHIVED winner edge (same key; archived rows still occupy the
+       UNIQUE slot) is left untouched. Reviving the archived winner edge or
+       dropping the live loser one is a temporal-validity decision (ADR 133/151
+       R1), not a merge mechanic; it is surfaced via ``edges_unmerged`` and a
+       warning instead.
+    """
+    selfloops_archived = _affected(
+        ms,
+        # SCOPE-EXEMPT: per-user merge transaction (plan §2.11); every row is user_id-bound.
+        "WITH affected AS ("
+        "  UPDATE entity_edges SET valid_until = now() "
+        "  WHERE user_id = %s AND valid_until IS NULL "
+        "    AND ((src_entity_id = %s AND dst_entity_id IN (%s, %s)) "
+        "      OR (src_entity_id = %s AND dst_entity_id = %s)) "
+        "  RETURNING 1"
+        ") SELECT count(*) AS n FROM affected",
+        (user_id, loser_id, loser_id, winner_id, winner_id, loser_id),
+    )
+
+    duplicates_dropped = _affected(
+        ms,
+        # SCOPE-EXEMPT: per-user merge transaction (plan §2.11); every row is user_id-bound.
+        "WITH affected AS ("
+        "  DELETE FROM entity_edges e "
+        "  WHERE e.user_id = %s AND e.valid_until IS NULL "
+        "    AND ((e.src_entity_id = %s AND EXISTS ("
+        "          SELECT 1 FROM entity_edges w WHERE w.user_id = e.user_id "
+        "            AND w.bank = e.bank AND w.src_entity_id = %s "
+        "            AND w.dst_entity_id = e.dst_entity_id "
+        "            AND w.relation_type = e.relation_type AND w.valid_until IS NULL)) "
+        "      OR (e.dst_entity_id = %s AND EXISTS ("
+        "          SELECT 1 FROM entity_edges w WHERE w.user_id = e.user_id "
+        "            AND w.bank = e.bank AND w.dst_entity_id = %s "
+        "            AND w.src_entity_id = e.src_entity_id "
+        "            AND w.relation_type = e.relation_type AND w.valid_until IS NULL))) "
+        "  RETURNING 1"
+        ") SELECT count(*) AS n FROM affected",
+        (user_id, loser_id, winner_id, loser_id, winner_id),
+    )
+
+    # Two literal statements (src side, dst side) rather than one built from a
+    # column name: the repo forbids composing SQL text, even from constants.
+    edges_repointed = 0
+    for sql in (
+        # SCOPE-EXEMPT: per-user merge transaction (plan §2.11); every row is user_id-bound.
+        "WITH affected AS ("
+        "  UPDATE entity_edges e SET src_entity_id = %s, graph_projected_at = NULL, "
+        "    reconcile_attempts = 0 "
+        "  WHERE e.user_id = %s AND e.valid_until IS NULL AND e.src_entity_id = %s "
+        "    AND NOT EXISTS ("
+        "      SELECT 1 FROM entity_edges w WHERE w.user_id = e.user_id "
+        "        AND w.bank = e.bank AND w.src_entity_id = %s "
+        "        AND w.dst_entity_id = e.dst_entity_id "
+        "        AND w.relation_type = e.relation_type) "
+        "  RETURNING 1"
+        ") SELECT count(*) AS n FROM affected",
+        # SCOPE-EXEMPT: per-user merge transaction (plan §2.11); every row is user_id-bound.
+        "WITH affected AS ("
+        "  UPDATE entity_edges e SET dst_entity_id = %s, graph_projected_at = NULL, "
+        "    reconcile_attempts = 0 "
+        "  WHERE e.user_id = %s AND e.valid_until IS NULL AND e.dst_entity_id = %s "
+        "    AND NOT EXISTS ("
+        "      SELECT 1 FROM entity_edges w WHERE w.user_id = e.user_id "
+        "        AND w.bank = e.bank AND w.dst_entity_id = %s "
+        "        AND w.src_entity_id = e.src_entity_id "
+        "        AND w.relation_type = e.relation_type) "
+        "  RETURNING 1"
+        ") SELECT count(*) AS n FROM affected",
+    ):
+        edges_repointed += _affected(ms, sql, (winner_id, user_id, loser_id, winner_id))
+
+    edges_unmerged = _affected(
+        ms,
+        # SCOPE-EXEMPT: per-user merge transaction (plan §2.11); every row is user_id-bound.
+        "SELECT count(*) AS n FROM entity_edges "
+        "WHERE user_id = %s AND valid_until IS NULL "
+        "  AND (src_entity_id = %s OR dst_entity_id = %s)",
+        (user_id, loser_id, loser_id),
+    )
+    if edges_unmerged:
+        _log.warning(
+            "entity_merge: %d active entity_edges still reference loser=%s (collide with an "
+            "archived winner edge); left untouched for temporal review (LUM-598)",
+            edges_unmerged,
+            loser_id,
+        )
+    return {
+        "edges_repointed": edges_repointed,
+        "edges_dropped_as_duplicate": duplicates_dropped,
+        "edges_selfloop_archived": selfloops_archived,
+        "edges_unmerged": edges_unmerged,
+    }
+
+
 def _run_phase_a(ms, winner_id: str, loser_id: str, user_id: str) -> dict:
     """Execute Phase A inside a single Postgres transaction.
 
     Returns a dict with relations_moved, sessions_updated, aliases_merged.
     Raises RuntimeError (wrapping the original exception) on any failure.
-    The caller is responsible for committing or rolling back via ms._conn.
+    Runs inside the caller's ``ms.transaction()``; commit and rollback belong
+    to the caller.
+
+    Every statement goes through the store (LUM-816). It used to take
+    ``ms._conn`` — the process-wide connection — and drive raw cursors on it,
+    which is the hazard this whole ticket exists to remove. Row counts now come
+    from :func:`_affected` rather than ``cur.rowcount``, so nothing here needs a
+    cursor and the port stays as narrow as it was.
     """
-    conn = ms._conn
 
     # Step 1: Verify both entities exist and belong to user_id
     winner_row = ms.fetch_one(
@@ -84,39 +239,47 @@ def _run_phase_a(ms, winner_id: str, loser_id: str, user_id: str) -> dict:
     #   (b) DELETE the remaining loser rows (the ones whose re-point would
     #       have collided with an existing winner row). The winner's
     #       first-observed created_at is preserved by design.
-    with conn.cursor() as cur:
-        cur.execute(
-            "UPDATE entity_relations SET source_id = %s "
-            "WHERE source_id = %s AND user_id = %s "
-            "  AND NOT EXISTS ("
-            "    SELECT 1 FROM entity_relations er2 "
-            "    WHERE er2.source_id = %s "
-            "      AND er2.evidence_id = entity_relations.evidence_id "
-            "      AND er2.relation_type = entity_relations.relation_type "
-            "      AND er2.user_id = entity_relations.user_id"
-            "  )",
-            (winner_id, loser_id, user_id, winner_id),
-        )
-        relations_moved = cur.rowcount
+    relations_moved = _affected(
+        ms,
+        "WITH affected AS ("
+        "  UPDATE entity_relations SET source_id = %s "
+        "  WHERE source_id = %s AND user_id = %s "
+        "    AND NOT EXISTS ("
+        "      SELECT 1 FROM entity_relations er2 "
+        "      WHERE er2.source_id = %s "
+        "        AND er2.evidence_id = entity_relations.evidence_id "
+        "        AND er2.relation_type = entity_relations.relation_type "
+        "        AND er2.user_id = entity_relations.user_id"
+        "    ) RETURNING 1"
+        ") SELECT count(*) AS n FROM affected",
+        (winner_id, loser_id, user_id, winner_id),
+    )
 
-    with conn.cursor() as cur:
-        cur.execute(
-            "DELETE FROM entity_relations WHERE source_id = %s AND user_id = %s",
-            (loser_id, user_id),
-        )
-        relations_dropped_as_duplicate = cur.rowcount
+    relations_dropped_as_duplicate = _affected(
+        ms,
+        "WITH affected AS ("
+        "  DELETE FROM entity_relations WHERE source_id = %s AND user_id = %s RETURNING 1"
+        ") SELECT count(*) AS n FROM affected",
+        (loser_id, user_id),
+    )
 
     # Step 3: Replace loser UUID in sessions.entity_ids arrays
-    # SCOPE-EXEMPT: per-user merge transaction (plan §2.11) — operates on the
-    # owning user's session rows only; merges never cross user boundaries.
-    with conn.cursor() as cur:
-        cur.execute(
-            "UPDATE sessions "
-            "SET entity_ids = array_replace(entity_ids, %s::uuid, %s::uuid) "
-            "WHERE user_id = %s AND %s::uuid = ANY(entity_ids)",
-            (loser_id, winner_id, user_id, loser_id),
-        )
-        sessions_updated = cur.rowcount
+    sessions_updated = _affected(
+        ms,
+        # The tag sits directly above the SQL, not above the call: the gate looks
+        # back six lines from the `WHERE`, and wrapping the DML in a counting CTE
+        # pushed it out of range — the gate working, not noise.
+        # sessions.entity_ids is TEXT[] (migration 003): compare as text. The old
+        # `::uuid` casts raised "uuid = text" on every real Postgres.
+        # SCOPE-EXEMPT: per-user merge transaction (plan §2.11) — operates on the
+        # owning user's session rows only; merges never cross user boundaries.
+        "WITH affected AS ("
+        "  UPDATE sessions "
+        "  SET entity_ids = array_replace(entity_ids, %s, %s) "
+        "  WHERE user_id = %s AND %s = ANY(entity_ids) RETURNING 1"
+        ") SELECT count(*) AS n FROM affected",
+        (loser_id, winner_id, user_id, loser_id),
+    )
 
     # Step 4: Merge aliases, context_tags, mention_count onto winner
     winner_aliases = list(winner_row.get("aliases") or [])
@@ -129,17 +292,16 @@ def _run_phase_a(ms, winner_id: str, loser_id: str, user_id: str) -> dict:
     merged_count = (winner_row.get("mention_count") or 0) + (loser_row.get("mention_count") or 0)
     aliases_merged = len(merged_aliases) - len(winner_aliases)
 
-    with conn.cursor() as cur:
-        cur.execute(
-            "UPDATE entities SET "
-            "  aliases = %s, "
-            "  context_tags = %s, "
-            "  mention_count = %s, "
-            "  graph_projected_at = NULL, "
-            "  updated_at = NOW() "
-            "WHERE entity_id = %s AND user_id = %s",
-            (merged_aliases, merged_tags, merged_count, winner_id, user_id),
-        )
+    ms.execute(
+        "UPDATE entities SET "
+        "  aliases = %s, "
+        "  context_tags = %s, "
+        "  mention_count = %s, "
+        "  graph_projected_at = NULL, "
+        "  updated_at = NOW() "
+        "WHERE entity_id = %s AND user_id = %s",
+        (merged_aliases, merged_tags, merged_count, winner_id, user_id),
+    )
 
     # Step 5: Already handled above (graph_projected_at = NULL)
 
@@ -157,15 +319,25 @@ def _run_phase_a(ms, winner_id: str, loser_id: str, user_id: str) -> dict:
     # instead of being re-pointed to the survivor.
     from services.projection import remap_published_from
 
-    remap_published_from(loser_id, winner_id)
+    # Entity ids only ever appear in `entities.published_from`; the other tables'
+    # `published_from` reference their own keys (file_index's is INTEGER, so the
+    # full sweep raised "invalid input syntax for type integer" on live Postgres).
+    remap_published_from(loser_id, winner_id, tables=("entities",))
     projections_remapped = True
 
+    # Step 5c: Repoint typed ``entity_edges`` endpoints from loser to winner
+    # (LUM-598). ``entity_edges`` has no FK to ``entities``, so the loser's
+    # DELETE below leaves its edges naming an id that no longer exists: they
+    # would match no graph node and never attach, forever. Edges are scoped to
+    # ``user_id`` (all banks) and only ACTIVE rows (``valid_until IS NULL``)
+    # move; archived rows are history and stay as written.
+    edges = _repoint_entity_edges(ms, winner_id, loser_id, user_id)
+
     # Step 6: Delete loser entity (review_queue rows CASCADE)
-    with conn.cursor() as cur:
-        cur.execute(
-            "DELETE FROM entities WHERE entity_id = %s AND user_id = %s",
-            (loser_id, user_id),
-        )
+    ms.execute(
+        "DELETE FROM entities WHERE entity_id = %s AND user_id = %s",
+        (loser_id, user_id),
+    )
 
     return {
         "relations_moved": relations_moved,
@@ -173,6 +345,7 @@ def _run_phase_a(ms, winner_id: str, loser_id: str, user_id: str) -> dict:
         "aliases_merged": max(0, aliases_merged),
         "relations_dropped_as_duplicate": relations_dropped_as_duplicate,
         "projections_remapped": projections_remapped,
+        **edges,
     }
 
 
@@ -269,33 +442,30 @@ def merge_entities(
         raise ValueError(f"winner_id and loser_id must differ (got {winner_id!r})")
 
     ms = config.get_metadata_store()
-    conn = ms._conn  # direct psycopg2 connection
-
-    # Phase A — single transaction
-    # PostgresStore uses autocommit=True; disable it for this block.
-    try:
-        conn.autocommit = False
-    except Exception as exc:
-        raise RuntimeError(f"entity_merge: failed to begin transaction: {exc}") from exc
 
     phase_a: dict = {}
     winner_row_cached: dict = {}
     try:
-        # Pre-fetch winner name before any mutations (needed for Phase B)
-        winner_pre = ms.fetch_one(
-            "SELECT name, aliases FROM entities WHERE entity_id = %s AND user_id = %s",
-            (winner_id, user_id),
-        )
+        # Phase A — one transaction, on a connection this thread owns.
+        #
+        # This used to take `ms._conn` and toggle its `autocommit` by hand,
+        # which re-implemented `transaction()` without even its guard, on the
+        # connection every other thread was also using. `transaction()` is now
+        # safe from any thread, so the hand-rolled version has no reason left.
+        with ms.transaction():
+            # Pre-fetch winner name before any mutations (needed for Phase B)
+            winner_pre = ms.fetch_one(
+                "SELECT name, aliases FROM entities WHERE entity_id = %s AND user_id = %s",
+                (winner_id, user_id),
+            )
 
-        phase_a = _run_phase_a(ms, winner_id, loser_id, user_id)
+            phase_a = _run_phase_a(ms, winner_id, loser_id, user_id)
 
-        # Fetch final merged aliases for Phase B (post-mutation state)
-        winner_post = ms.fetch_one(
-            "SELECT name, aliases FROM entities WHERE entity_id = %s AND user_id = %s",
-            (winner_id, user_id),
-        )
-
-        conn.commit()
+            # Fetch final merged aliases for Phase B (post-mutation state)
+            winner_post = ms.fetch_one(
+                "SELECT name, aliases FROM entities WHERE entity_id = %s AND user_id = %s",
+                (winner_id, user_id),
+            )
         _log.info(
             "entity_merge: Phase A committed winner=%s loser=%s relations_moved=%d "
             "sessions_updated=%d aliases_merged=%d relations_dropped_as_duplicate=%d",
@@ -308,15 +478,11 @@ def merge_entities(
         )
         winner_row_cached = winner_post or winner_pre or {}
     except ValueError:
-        conn.rollback()
         raise
     except Exception as exc:
-        conn.rollback()
         raise RuntimeError(
             f"entity_merge: Phase A failed for winner={winner_id} loser={loser_id}: {exc}"
         ) from exc
-    finally:
-        conn.autocommit = True
 
     # Fire ENTITY_MERGED hook (after commit, outside transaction)
     hooks.fire_background(

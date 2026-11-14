@@ -69,3 +69,48 @@ def test_admin_patch_rejects_unknown_channel(client, monkeypatch) -> None:
         json={"default_channels": ["not_a_real_channel"]},
     )
     assert r.status_code == 422
+
+
+def test_notification_prefs_patch_accepts_quiet_hours_through_the_route(
+    client, monkeypatch
+) -> None:
+    """LUM-700: quiet hours/timezone reach the service layer through the real route.
+
+    ``MockMetadataStore`` (tests/conftest.py) is a no-op fake — ``execute()`` doesn't
+    persist — so this only exercises route wiring + validation; the persistence and
+    field-presence semantics are covered against a stateful fake store in
+    test_notification_preferences.py.
+    """
+    hdr = _auth_header(monkeypatch, "quiet-user", "user")
+    r = client.patch(
+        "/api/v1/me/notification-preferences",
+        headers=hdr,
+        json={
+            "timezone": "Europe/Berlin",
+            "quiet_hours_start": "22:00",
+            "quiet_hours_end": "07:00",
+        },
+    )
+    assert r.status_code == 200, r.text
+
+
+def test_notification_prefs_patch_rejects_invalid_timezone(client, monkeypatch) -> None:
+    hdr = _auth_header(monkeypatch, "bad-tz-user", "user")
+    r = client.patch(
+        "/api/v1/me/notification-preferences",
+        headers=hdr,
+        json={"timezone": "Not/AZone"},
+    )
+    assert r.status_code == 422
+    assert r.json()["detail"] == "invalid_timezone"
+
+
+def test_notification_prefs_patch_rejects_empty_body(client, monkeypatch) -> None:
+    hdr = _auth_header(monkeypatch, "empty-patch-user", "user")
+    r = client.patch(
+        "/api/v1/me/notification-preferences",
+        headers=hdr,
+        json={"preferences": []},
+    )
+    assert r.status_code == 422
+    assert r.json()["detail"] == "empty_patch"

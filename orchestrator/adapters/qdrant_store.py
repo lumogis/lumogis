@@ -45,8 +45,16 @@ _SPARSE_VECTOR_NAME = "bm25"
 
 
 def _tok_hash(token: str) -> int:
-    """Stable 20-bit hash for a lowercase token (hashlib, not Python hash())."""
-    return int.from_bytes(hashlib.md5(token.encode()).digest()[:4], "big") % (2**20)
+    """Stable 20-bit hash for a lowercase token (hashlib, not Python hash()).
+
+    ``usedforsecurity=False`` is load-bearing, not decoration: this is a BM25
+    bucket index, and on a FIPS-mode host an unflagged ``hashlib.md5()`` raises
+    ValueError rather than hashing. Lumogis is installed on other people's
+    machines, some of which are hardened.
+    """
+    return int.from_bytes(
+        hashlib.md5(token.encode(), usedforsecurity=False).digest()[:4], "big"
+    ) % (2**20)
 
 
 def _tokenize_bm25(text: str) -> tuple[list[int], list[float]]:

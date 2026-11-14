@@ -14,6 +14,7 @@ import uuid
 from pathlib import Path
 
 import pytest
+from tests.integration._pgguard import require_postgres
 
 psycopg2 = pytest.importorskip("psycopg2")
 
@@ -37,7 +38,7 @@ def _pg_available() -> bool:
     try:
         conn = psycopg2.connect(**_conn_kwargs())
     except Exception as exc:  # noqa: BLE001 — diagnostic skip
-        pytest.skip(f"Postgres not reachable for migration regression test: {exc}")
+        require_postgres(exc)
     conn.close()
     return True
 

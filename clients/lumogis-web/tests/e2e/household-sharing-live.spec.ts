@@ -95,7 +95,7 @@ test.describe("household sharing live (two-user)", () => {
   }) => {
     const adminCtx: BrowserContext = await browser.newContext();
     const admin = await adminCtx.newPage();
-    let conversationId = "";
+    let conversationId: string;
     try {
       await loginAs(admin, adminCreds.email, adminCreds.password);
       const created = await createEndedSession(admin, {
@@ -155,7 +155,7 @@ test.describe("household sharing live (two-user)", () => {
   }) => {
     const adminCtx: BrowserContext = await browser.newContext();
     const admin = await adminCtx.newPage();
-    let conversationId = "";
+    let conversationId: string;
     try {
       await loginAs(admin, adminCreds.email, adminCreds.password);
       await uploadAndShareDocument(admin);

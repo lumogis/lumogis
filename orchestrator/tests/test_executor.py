@@ -181,3 +181,70 @@ class TestExecuteSuccess:
 
         execute(spec.name, user_id="test-user")
         assert routine_calls == []
+
+
+# ---------------------------------------------------------------------------
+# LUM-794 — act-tier handlers register independently of BATCH_QUEUE_ENABLED.
+#
+# The two handler imports used to live inside main.py's
+# `if scheduler and _batch_queue_enabled:` block, so turning off the batch queue
+# (or starting without a scheduler) left the action registry EMPTY and every
+# approved proposal failed with `Unknown action`. That was survivable while a
+# non-permanent failure returned the row to `approved`; since LUM-762 made failure
+# terminal it destroys the proposal outright, and until LUM-793 ships a `dead` row
+# is visible on no surface.
+# ---------------------------------------------------------------------------
+
+
+def test_act_tier_handlers_register_on_import_alone() -> None:
+    """No env var, no scheduler, no queue — importing the module is the contract.
+
+    **This test does NOT carry the regression weight for LUM-794.** It asserts a
+    property that already held before the fix and would pass identically with the
+    imports still inside the gate, because it imports the handler modules directly
+    and never touches `main.py`. Confirmed by mutation: reverting the placement
+    fails only `test_main_registers_handlers_outside_the_batch_queue_gate`.
+
+    It earns its place by pinning the precondition the fix relies on — that
+    registration needs nothing but an import, so hoisting it out of the gate is
+    safe — and by exercising the `_REGISTERED` idempotency guard via the second
+    `register_all()` call below. The structural test is the regression guard.
+    """
+    from actions import registry as _registry
+    from actions.handlers import imap_writeback
+    from actions.handlers import smtp_send
+
+    smtp_send.register_all()
+    imap_writeback.register_all()
+
+    names = set(_registry._registry)
+    assert any(n.startswith("email_") for n in names), (
+        f"no email_* action registered from module import; registry={sorted(names)[:10]}"
+    )
+
+
+def test_main_registers_handlers_outside_the_batch_queue_gate() -> None:
+    """Structural, and deliberately so.
+
+    The defect was pure placement: correct code in the wrong block. There is no
+    lifespan harness in this tree for ANY queue, so the behavioural route would mean
+    building one for a two-line import move. This reads main.py's source and asserts
+    the handler imports occur BEFORE the `_batch_queue_enabled` conditional — which
+    is exactly the property that regressed, and it fails loudly if someone tucks them
+    back inside.
+    """
+    import inspect
+
+    import main as main_mod
+
+    src = inspect.getsource(main_mod)
+    # Anchor on the STATEMENT, not the bare string: the explanatory comment above the
+    # imports quotes the gate verbatim, and matching that instead put the "gate" before
+    # the imports and failed the test against correct code. Found by running it.
+    gate = src.index("\n    if scheduler and _batch_queue_enabled:")
+    for handler in (
+        "\n    from actions.handlers import smtp_send",
+        "\n    from actions.handlers import imap_writeback",
+    ):
+        at = src.index(handler)
+        assert at < gate, f"{handler.strip()!r} must not sit inside the BATCH_QUEUE_ENABLED gate"

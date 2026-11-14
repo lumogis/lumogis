@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: AGPL-3.0-only
-# Restore DR snapshot — Postgres, Qdrant, optional FalkorDB (LUM-185).
+# Restore DR snapshot — Postgres, Qdrant, optional FalkorDB, files (LUM-185, LUM-892).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 source "${SCRIPT_DIR}/lib/common.sh"
+# shellcheck source=lib/files.sh
+source "${SCRIPT_DIR}/lib/files.sh"
 
 POSTGRES_HOST="${POSTGRES_HOST:-postgres}"
 POSTGRES_USER="${POSTGRES_USER:-lumogis}"
@@ -65,6 +67,28 @@ if [[ "${RESTORE_SKIP_QUIESCE:-}" != "1" ]]; then
   fi
 fi
 
+# Does the snapshot hold a file tree? Schema 1 snapshots and snapshots whose file
+# copy failed do not; their databases still restore.
+has_files=false
+files_damaged=false
+if [[ -n "$(read_manifest_field "$manifest" '.stores.files.dir')" ]]; then
+  has_files=true
+  # Re-read every file against files.list before touching anything. A DR restore
+  # with one bad file beats none, so a mismatch is reported and restore goes on.
+  files_errors="$(files_verify "$snapshot_dir" --deep)"
+  if [[ -n "$files_errors" ]]; then
+    while IFS= read -r line; do
+      log_error "$line"
+    done <<<"$files_errors"
+    log_error "file checksum mismatch in snapshot — restore continues; the files listed above are damaged in this snapshot"
+    files_damaged=true
+  fi
+elif [[ "$(read_manifest_field "$manifest" '.stores.files.status')" == "failed" ]]; then
+  log_warn "this snapshot holds no files (the file copy failed when it was taken)"
+else
+  log_warn "snapshot holds no files (schema 1): uploads, inbox and captures are not restored"
+fi
+
 export PGPASSWORD="${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}"
 if ! pg_restore --clean --if-exists -h "$POSTGRES_HOST" -U "$POSTGRES_USER" -d "$POSTGRES_DB" "${snapshot_dir}/postgres.dump"; then
   unset PGPASSWORD
@@ -112,6 +136,18 @@ if [[ "$falkor_skipped" != "true" ]]; then
     log_error "partial restore: postgres+qdrant ok; falkordb failed — restart falkordb after fixing dump"
     exit 1
   fi
+fi
+
+if [[ "$has_files" == "true" ]]; then
+  if ! files_restore "$snapshot_dir" "$(basename "$snapshot_dir")"; then
+    log_error "partial restore: databases restored; file restore failed — re-run restore"
+    exit 1
+  fi
+fi
+
+if [[ "$files_damaged" == "true" ]]; then
+  log_error "restore finished with damaged files (listed above)"
+  exit 1
 fi
 
 log_info "restore complete from $(basename "$snapshot_dir")"

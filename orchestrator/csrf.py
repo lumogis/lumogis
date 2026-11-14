@@ -53,6 +53,10 @@ from __future__ import annotations
 import ipaddress
 import logging
 import os
+import re
+import socket
+import threading
+import time
 from functools import lru_cache
 
 from fastapi import HTTPException
@@ -70,28 +74,165 @@ def _public_origin() -> str:
     return raw.rstrip("/")
 
 
-def _trusted_proxy_networks() -> tuple[ipaddress._BaseNetwork, ...]:
-    """Parse ``LUMOGIS_TRUSTED_PROXIES`` into a tuple of network objects.
+# RFC 1123 labels plus ``_``: compose service names may contain it and
+# Docker's embedded DNS resolves them.
+_LABEL = r"[A-Za-z0-9_](?:[A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?"
+_HOSTNAME_RE = re.compile(rf"^{_LABEL}(?:\.{_LABEL})*$")
 
-    Empty / unset → trust no proxies, so forwarded headers are ignored.
-    Malformed entries are skipped with a WARNING — silently dropping a bad
-    CIDR is safer than trusting it (which would defeat the whole point of
-    the allowlist).
+_HOST_TTL_SECONDS = 30.0
+_HOST_NEGATIVE_TTL_SECONDS = 30.0
+_now = time.monotonic  # module attribute so tests can patch the clock
+
+# host -> (expiry, networks). Guarded by _HOST_LOCK; DNS never runs under it.
+_HOST_CACHE: dict[str, tuple[float, tuple[ipaddress._BaseNetwork, ...]]] = {}
+_HOST_INFLIGHT: set[str] = set()
+_HOST_FAILING: set[str] = set()
+_HOST_LOCK = threading.Lock()
+
+_CGNAT = ipaddress.ip_network("100.64.0.0/10")
+
+
+def _is_hostname_entry(item: str) -> bool:
+    """True for a syntactically valid hostname that is not a numeric lookalike."""
+    if "/" in item or ":" in item or len(item) > 253:
+        return False
+    if not any(c.isascii() and c.isalpha() for c in item):
+        return False  # ``10.0.0.256`` stays malformed, not a "hostname"
+    return _HOSTNAME_RE.match(item) is not None
+
+
+def _classify(item: str) -> tuple[str, ipaddress._BaseNetwork | None]:
+    """Return ``("static", net)``, ``("host", None)`` or ``("malformed", None)``."""
+    try:
+        return "static", ipaddress.ip_network(item, strict=False)
+    except ValueError:
+        pass
+    if _is_hostname_entry(item):
+        return "host", None
+    return "malformed", None
+
+
+def _trusted_proxy_networks() -> tuple[ipaddress._BaseNetwork, ...]:
+    """Return the networks whose ``X-Forwarded-For`` Core believes.
+
+    ``LUMOGIS_TRUSTED_PROXIES`` is a comma-separated list of IPs, CIDRs or
+    hostnames. Empty / unset -> trust no proxies, so forwarded headers are
+    ignored. Malformed entries are skipped with a WARNING - silently dropping
+    a bad CIDR is safer than trusting it (which would defeat the whole point
+    of the allowlist).
+
+    Hostnames (the compose default is ``caddy``) are resolved with
+    ``socket.getaddrinfo`` and cached for 30 s, also after a failure. The
+    lookup is single-flight and never runs under the lock: only the one
+    thread that took the in-flight slot waits on DNS, every other request
+    gets the last known value at once. An unresolvable name trusts nothing,
+    and a failed refresh drops the previous answer. That is the fail-safe
+    direction: after a Caddy recreate, for up to 30 s the forwarded header is
+    ignored and requests key on Caddy's own address (one shared bucket).
     """
     raw = os.environ.get("LUMOGIS_TRUSTED_PROXIES", "").strip()
-    return _parse_trusted_proxies(raw)
+    if not raw:
+        return ()
+    nets = _parse_trusted_proxies(raw)
+    for host in _parse_trusted_hostnames(raw):
+        nets = nets + _resolve_trusted_host(host)
+    return nets
+
+
+def _warn_over_wide(net: ipaddress._BaseNetwork) -> None:
+    if net.is_loopback:
+        return
+    private = net.is_private or (net.version == 4 and net.subnet_of(_CGNAT))
+    limit = 24 if net.version == 4 else 64
+    if private and net.prefixlen < limit:
+        _log.warning(
+            "csrf: LUMOGIS_TRUSTED_PROXIES entry %s trusts a whole private range; "
+            "any host in it can choose its rate-limit IP. Behind the bundled Caddy "
+            "remove it and use the default (caddy).",
+            net,
+        )
 
 
 @lru_cache(maxsize=8)
 def _parse_trusted_proxies(raw: str) -> tuple[ipaddress._BaseNetwork, ...]:
-    items = [s.strip() for s in raw.split(",") if s.strip()]
+    """Static IP / CIDR entries only (hostnames are handled separately)."""
     out: list[ipaddress._BaseNetwork] = []
-    for item in items:
-        try:
-            out.append(ipaddress.ip_network(item, strict=False))
-        except ValueError:
+    for item in (s.strip() for s in raw.split(",") if s.strip()):
+        kind, net = _classify(item)
+        if kind == "static":
+            assert net is not None
+            _warn_over_wide(net)
+            out.append(net)
+        elif kind == "malformed":
             _log.warning("csrf: ignoring malformed LUMOGIS_TRUSTED_PROXIES entry %r", item)
     return tuple(out)
+
+
+@lru_cache(maxsize=8)
+def _parse_trusted_hostnames(raw: str) -> tuple[str, ...]:
+    """Hostname entries, lowercased and de-duplicated, in order."""
+    out: list[str] = []
+    for item in (s.strip() for s in raw.split(",") if s.strip()):
+        if _classify(item)[0] == "host":
+            low = item.lower()
+            if low not in out:
+                out.append(low)
+    return tuple(out)
+
+
+def _lookup(host: str) -> tuple[ipaddress._BaseNetwork, ...]:
+    nets: list[ipaddress._BaseNetwork] = []
+    for *_, sockaddr in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM):
+        addr = ipaddress.ip_address(str(sockaddr[0]).split("%", 1)[0])
+        net = ipaddress.ip_network(addr)
+        if net not in nets:
+            nets.append(net)
+    return tuple(nets)
+
+
+def _resolve_trusted_host(host: str) -> tuple[ipaddress._BaseNetwork, ...]:
+    """Resolve ``host`` with a TTL cache. Single-flight; never raises."""
+    with _HOST_LOCK:
+        expiry, nets = _HOST_CACHE.get(host, (0.0, ()))
+        if _now() < expiry or host in _HOST_INFLIGHT:
+            return nets
+        _HOST_INFLIGHT.add(host)
+    try:
+        try:
+            fresh = _lookup(host)
+            err: Exception | None = None
+        except (OSError, UnicodeError, ValueError) as exc:
+            fresh = ()
+            err = exc
+        with _HOST_LOCK:
+            if err is None:
+                _HOST_CACHE[host] = (_now() + _HOST_TTL_SECONDS, fresh)
+                if host in _HOST_FAILING:
+                    _HOST_FAILING.discard(host)
+                    _log.info("csrf: trusted proxy host %r resolves again", host)
+            else:
+                _HOST_CACHE[host] = (_now() + _HOST_NEGATIVE_TTL_SECONDS, ())
+                if host not in _HOST_FAILING:
+                    _HOST_FAILING.add(host)
+                    _log.warning(
+                        "csrf: trusted proxy host %r did not resolve (%s); forwarded "
+                        "headers from it are ignored until it does",
+                        host,
+                        err,
+                    )
+        return fresh
+    finally:
+        with _HOST_LOCK:
+            _HOST_INFLIGHT.discard(host)
+
+
+def _reset_trusted_proxy_caches_for_tests() -> None:
+    _parse_trusted_proxies.cache_clear()
+    _parse_trusted_hostnames.cache_clear()
+    with _HOST_LOCK:
+        _HOST_CACHE.clear()
+        _HOST_INFLIGHT.clear()
+        _HOST_FAILING.clear()
 
 
 def _proxied_client_ip(request: Request) -> str:

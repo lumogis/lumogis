@@ -5,6 +5,10 @@ set -euo pipefail
 
 BACKUP_LOG_PREFIX="${BACKUP_LOG_PREFIX:-[backup]}"
 
+# Manifest schema written by backup.sh. 2 = schema 1 + stores.files (LUM-892).
+# shellcheck disable=SC2034  # read by backup.sh
+BACKUP_MANIFEST_SCHEMA=2
+
 log_info() {
   echo "${BACKUP_LOG_PREFIX} $*" >&2
 }
@@ -99,6 +103,14 @@ read_manifest_field() {
   local manifest="$1"
   local field="$2"
   jq -r "$field // empty" "$manifest" 2>/dev/null || true
+}
+
+# Readers (verify, restore, status) accept every schema we have ever written.
+manifest_schema_supported() {
+  case "${1:-}" in
+    1 | 2) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 write_manifest_json() {
@@ -370,7 +382,7 @@ falkordb_redis_check_rdb_bin() {
 }
 
 falkordb_redis_check_rdb_loader() {
-  echo "${FALKORDB_REDIS_CHECK_RDB_LOADER:-/opt/falkordb-redis-check/ld-linux-x86-64.so.2}"
+  echo "${FALKORDB_REDIS_CHECK_RDB_LOADER:-/opt/falkordb-redis-check/ld.so}"
 }
 
 falkordb_redis_check_rdb_libdir() {

@@ -95,6 +95,12 @@ class ChatCompletionResponse(BaseModel):
     lumogis: LumogisChatExtensions | None = None
 
 
+# LUM-881. The only Python declaration of the vocabulary; ``config.py`` imports
+# it under ``TYPE_CHECKING`` and the Web mirrors it in ``api/models.ts``
+# (``MODEL_DISABLED_REASONS``), tied to the OpenAPI snapshot by a Vitest.
+ModelDisabledReason = Literal["privacy_mode", "optional_disabled", "no_credentials"]
+
+
 class ModelDescriptor(BaseModel):
     model_config = _RES
     id: str
@@ -102,6 +108,14 @@ class ModelDescriptor(BaseModel):
     is_local: bool
     enabled: bool
     provider: str  # "anthropic" | "openai" | "ollama" | ...
+    # LUM-881. ``None`` iff ``enabled``. ``"privacy_mode"`` only when the model
+    # would otherwise be usable — a model with no key reads ``"no_credentials"``
+    # whatever the privacy mode (see ``config.model_disabled_reason``).
+    # Consumers (LUM-877 task slots, LUM-169) should read this rather than
+    # re-derive it. ``"no_credentials"`` also covers auth-on with no user and an
+    # ``api_key_env`` with no registered ``llm_*`` connector
+    # (``connector_for_api_key_env`` -> ``None``), which no key form can fix.
+    disabled_reason: Optional[ModelDisabledReason] = None
 
 
 class ModelsResponse(BaseModel):
@@ -273,6 +287,122 @@ class ProposalExecuteWireResponse(BaseModel):
     output: str
     error: Optional[str] = None
     reverse_token: Optional[str] = None
+    # Machine failure token (e.g. "no_drafts_folder") so a client can branch on
+    # the failure kind without matching the human ``error`` string (LUM-652).
+    code: Optional[str] = None
+
+
+# ── Proposal producer (Ask/Do create + approve, LUM-623) ─────────────
+
+
+class ProposalCreateRequest(BaseModel):
+    """Create an Ask/Do proposal. ``payload`` is validated against the action's
+    own ``input_model`` server-side (per-action, ``extra="forbid"``)."""
+
+    model_config = _REQ
+    action_name: str
+    payload: dict = {}
+
+
+class ProposalCreateResponse(BaseModel):
+    model_config = _RES
+    proposal_id: int
+    status: str
+    # Display-only, non-authoritative: lets a confirm card badge a first-contact
+    # send immediately after create. The executor gate (_resolve_force_ask) is the
+    # security truth — this is only the UI hint (LUM-652).
+    first_contact: bool = False
+
+
+class ProposalApproveResponse(BaseModel):
+    model_config = _RES
+    proposal_id: int
+    status: str
+
+
+class ProposalCancelResponse(BaseModel):
+    """A user-abandoned proposal moved ``pending → rejected`` (LUM-682)."""
+
+    model_config = _RES
+    proposal_id: int
+    status: str
+
+
+class PendingProposalItem(BaseModel):
+    model_config = _RES
+    proposal_id: int
+    action_name: str
+    payload: dict = {}
+    status: str
+    created_at: Optional[datetime] = None
+    # Display-only first-contact hint (LUM-652); fails closed at the mapping layer.
+    first_contact: bool = False
+
+
+class PendingProposalsResponse(BaseModel):
+    model_config = _RES
+    proposals: list[PendingProposalItem] = []
+
+
+# ── Failed-send recovery (LUM-793) ───────────────────────────────────
+
+
+class RecoverableAttachments(BaseModel):
+    """What the recovery row may truthfully say about attachments.
+
+    ``count`` is read from ``email_attachment_staged``, **never** from the
+    payload: the payload records what was attached at compose time and never
+    changes, while the sweep deletes files behind it. ``expires_at`` is when the
+    grace period ends, so the UI can say "available until Sat" rather than
+    implying the files are permanent.
+    """
+
+    model_config = _RES
+    count: int = 0
+    available: bool = False
+    expires_at: Optional[datetime] = None
+
+
+class RecoverableSendItem(BaseModel):
+    model_config = _RES
+    proposal_id: int
+    action_name: str
+    to: list[str] = []
+    subject: str = ""
+    body: str = ""
+    failed_at: Optional[datetime] = None
+    error: Optional[str] = None
+    # 'sent' | 'partially_sent' | 'not_sent' | 'unknown'. A plain str rather than
+    # an enum to match the rest of this façade, and because the resolver is the
+    # single writer of these values.
+    outcome: str = "unknown"
+    sent_at: Optional[datetime] = None
+    delivered_to: list[str] = []
+    refused: list[str] = []
+    attachments: RecoverableAttachments = RecoverableAttachments()
+
+
+class RecoverableSendsResponse(BaseModel):
+    model_config = _RES
+    items: list[RecoverableSendItem] = []
+
+
+class RecoverySaveDraftResponse(BaseModel):
+    model_config = _RES
+    proposal_id: int
+    success: bool
+    error: Optional[str] = None
+    code: Optional[str] = None
+    # Staged ids stripped because their files were swept. A draft is recoverable
+    # by definition, so recovery writes it and SAYS what was dropped rather than
+    # refusing — the all-or-nothing rule that governs a *send* does not transfer.
+    attachments_dropped: int = 0
+
+
+class RecoveryDismissResponse(BaseModel):
+    model_config = _RES
+    proposal_id: int
+    status: str
 
 
 # ── Audit ────────────────────────────────────────────────────────────
@@ -1054,6 +1184,51 @@ class AdminDiagnosticsInbox(BaseModel):
     )
 
 
+AdminDiagnosticsTaskSkipReason = Literal[
+    "unknown",
+    "not_on_box",
+    "no_tools",
+    "no_credentials",
+    "optional_disabled",
+    "privacy_mode",
+    "error",
+]
+
+
+class AdminDiagnosticsTaskEntry(BaseModel):
+    """One configured model of a background task, with why it would be skipped (LUM-877)."""
+
+    model_config = _RES
+    model: str
+    skip_reason: Optional[AdminDiagnosticsTaskSkipReason] = Field(
+        default=None, description="``None`` means this entry is usable now."
+    )
+
+
+class AdminDiagnosticsTask(BaseModel):
+    """A background model task: its rules, its list and the model it resolves to (LUM-877)."""
+
+    model_config = _RES
+    task: str
+    description: str
+    local_only: bool
+    needs_tools: bool
+    threads_user_id: bool
+    destructive: bool = Field(description="``True`` means only the first entry is ever used.")
+    configured: List[AdminDiagnosticsTaskEntry] = Field(
+        description="Empty when the operator listed nothing."
+    )
+    default_model: str
+    resolved_model: Optional[str] = Field(
+        description="``None`` means the job skips the LLM (on-box-only task, nothing on-box)."
+    )
+    resolved_from: Literal["list", "default"]
+    default_skip_reason: Optional[AdminDiagnosticsTaskSkipReason] = Field(
+        default=None,
+        description="Why the code default will fail downstream; ``None`` means it is usable.",
+    )
+
+
 # ── Voice / transcription (public HTTP + port result types) ──────────
 
 
@@ -1169,10 +1344,33 @@ class BackupStatusStoreItem(BaseModel):
     """Per-store coverage in DR backup status (LUM-185)."""
 
     model_config = _RES
-    id: Literal["postgres", "qdrant", "falkordb"]
+    id: Literal["postgres", "qdrant", "falkordb", "files"]
     present: bool
     skipped: bool = False
     skip_reason: str | None = None
+    file_count: int | None = None  # files store only (LUM-892)
+    bytes: int | None = None  # files store only: logical size of the tree (LUM-892)
+
+
+class BackupCoverageItem(BaseModel):
+    """One line of "what the DR backup covers" (LUM-892). A fixed list built by Core."""
+
+    model_config = _RES
+    id: Literal[
+        "database",
+        "search_index",
+        "knowledge_graph",
+        "uploads",
+        "inbox",
+        "captures",
+        "library_folder",
+        "env_file",
+        "models",
+        "stop_entities",
+    ]
+    label: str
+    covered: bool
+    note: str | None = None
 
 
 class BackupStatusResponse(BaseModel):
@@ -1190,6 +1388,13 @@ class BackupStatusResponse(BaseModel):
     stores: List[BackupStatusStoreItem] = Field(default_factory=list)
     last_verify_status: Literal["ok", "failed", "unknown"] | None = None
     warnings: List[AdminDiagnosticsWarning] = Field(default_factory=list)
+    coverage: List[BackupCoverageItem] = Field(default_factory=list)
+    # Uploaded documents and capture files whose file is not on disk (aggregate,
+    # no paths or user ids). None = could not count (database unavailable).
+    files_missing: int | None = None
+    # Keys: uploads, captures, inbox, workspace_other. The inbox is informational:
+    # it is not part of ``files_missing`` (LUM-892).
+    files_missing_by_area: Dict[str, int] | None = None
 
 
 class UpdateStatusResponse(BaseModel):
@@ -1229,6 +1434,13 @@ class AdminDiagnosticsResponse(BaseModel):
     warnings: List[AdminDiagnosticsWarning]
     speech_to_text: AdminDiagnosticsSpeechToText
     inbox: AdminDiagnosticsInbox
+    tasks: List[AdminDiagnosticsTask] = Field(
+        default_factory=list,
+        description=(
+            "Background model tasks (LUM-877): configured list, per-entry skip reason, "
+            "and the model each resolves to for the calling admin."
+        ),
+    )
 
 
 # ── Admin Ollama (LUM-451) ──────────────────────────────────────────
@@ -1646,6 +1858,9 @@ __all__ = [
     "AdminDiagnosticsWarning",
     "AdminDiagnosticsSpeechToText",
     "AdminDiagnosticsInbox",
+    "AdminDiagnosticsTaskSkipReason",
+    "AdminDiagnosticsTaskEntry",
+    "AdminDiagnosticsTask",
     "TranscriptionSegment",
     "TranscriptionResult",
     "VoiceTranscribeResponse",

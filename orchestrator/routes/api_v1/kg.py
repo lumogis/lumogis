@@ -13,7 +13,7 @@ Three read-only routes backed by Postgres (entity cards, relations, search):
 :func:`_graph_mode_guard` uses :func:`config.get_graph_mode` (**effective**
 mode): returns ``502 kg_unavailable`` only when Core is genuinely wired in
 ``service`` mode so the SPA fails closed rather than masking a KG-only façade.
-Operators who intend full service-mode KG HTTP must provision the premium KG
+Operators who intend full service-mode KG HTTP must provision the KG service
 overlay; degraded wiring resolves to ``disabled`` and Postgres routes continue.
 """
 

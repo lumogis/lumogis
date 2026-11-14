@@ -16,6 +16,7 @@ import time
 
 import httpx
 import pytest
+from _smoke_auth import login_access_token, smoke_credentials
 
 pytestmark = [pytest.mark.integration]
 
@@ -23,21 +24,15 @@ KG_BASE = os.environ.get("LUMOGIS_GRAPH_HEALTH_URL", "http://127.0.0.1:18001/hea
     "/health", ""
 )
 API_BASE = os.environ.get("LUMOGIS_API_URL", "http://127.0.0.1:8000")
-SMOKE_EMAIL = os.environ.get("LUMOGIS_WEB_SMOKE_EMAIL", "").strip()
-SMOKE_PASSWORD = os.environ.get("LUMOGIS_WEB_SMOKE_PASSWORD", "")
 
 
 def _admin_bearer() -> str | None:
-    if not SMOKE_EMAIL or len(SMOKE_PASSWORD) < 12:
+    if smoke_credentials() is None:
         return None
-    with httpx.Client(base_url=API_BASE, timeout=30.0) as c:
-        r = c.post(
-            "/api/v1/auth/login",
-            json={"email": SMOKE_EMAIL, "password": SMOKE_PASSWORD},
-        )
-        if r.status_code != 200:
-            return None
-        return r.json().get("access_token")
+    try:
+        return login_access_token(API_BASE)
+    except AssertionError:
+        return None
 
 
 def _kg_available() -> bool:

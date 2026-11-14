@@ -22,7 +22,9 @@ test.describe("documents library", () => {
 
   test("library route renders empty or list state", async ({ page }) => {
     await page.goto("/documents");
-    await expect(page.getByTestId("documents-page").or(page.getByText("No documents yet"))).toBeVisible({
+    // Empty-state copy lives inside documents-page; `.or(getByText(...))` matches
+    // both and trips Playwright strict mode when the library is empty.
+    await expect(page.getByTestId("documents-page")).toBeVisible({
       timeout: 15_000,
     });
   });
@@ -221,5 +223,146 @@ test.describe("LUM-157 household document sharing (/documents)", () => {
     await expect(sharedRow()).toContainText("Personal", { timeout: 15_000 });
     await filter().check();
     await expect(page.getByTestId("documents-shared-empty")).toBeVisible();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// LUM-724 — one library over three stores.
+//
+// The plan originally deferred Playwright here on the grounds that the harness
+// did not exist. Review showed that premise was false — this file is the
+// harness — so the deferral was withdrawn and these cases written.
+//
+// What they guard is the failure the whole chunk exists to remove: a paperless
+// document or a filed attachment rendering as a BARE INTEGER, because
+// `display_name` was derived from `Path(logical_path).name`. Unit tests cover
+// the derivation; only an end-to-end pass proves the value survives the API,
+// the client cache and the renderer without something in between re-deriving it
+// — which is exactly what happened three times in review, on three surfaces.
+//
+// Same hybrid pattern as the LUM-157 block above: real smoke login, mocked
+// document routes.
+
+const PAPERLESS_DOC_ID = 4159;
+const ATTACHMENT_DOC_ID = 4160;
+const PAPERLESS_TITLE = "Electricity bill 2026";
+const ATTACHMENT_TITLE = "invoice.pdf";
+
+function externalSummary(
+  documentId: number,
+  displayName: string,
+  filePath: string,
+): Record<string, unknown> {
+  return {
+    document_id: documentId,
+    display_name: displayName,
+    file_path: filePath,
+    file_type: "pdf",
+    chunk_count: 3,
+    entity_count: 0,
+    scope: "personal",
+    status: "indexed",
+    indexed_at: "2026-07-06T12:00:00+00:00",
+    error_message: null,
+    share_status: "personal",
+    in_flight_share_job_id: null,
+    is_owner: true,
+  };
+}
+
+async function mockExternalLibrary(page: Page): Promise<void> {
+  const rows = [
+    externalSummary(
+      PAPERLESS_DOC_ID,
+      PAPERLESS_TITLE,
+      "paperless://src-uuid/documents/42",
+    ),
+    externalSummary(
+      ATTACHMENT_DOC_ID,
+      ATTACHMENT_TITLE,
+      "email-attachment://src-uuid/sig-uuid/0",
+    ),
+  ];
+
+  await page.route("**/api/v1/documents", async (route: Route) => {
+    if (route.request().method() !== "GET") {
+      await route.continue();
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ documents: rows }),
+    });
+  });
+
+  for (const row of rows) {
+    await page.route(
+      `**/api/v1/documents/${row.document_id}`,
+      async (route: Route) => {
+        if (route.request().method() !== "GET") {
+          await route.continue();
+          return;
+        }
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ ...row, source_available: false, entities: [] }),
+        });
+      },
+    );
+  }
+}
+
+test.describe("LUM-724 — external documents in the library", () => {
+  test.skip(!hasSmokeCreds, smokeCredsSkipMessage);
+
+  test.beforeEach(async ({ page }) => {
+    await loginWithSmokeCredentials(page);
+    await mockExternalLibrary(page);
+  });
+
+  test("external documents are listed by name, never as a bare number", async ({ page }) => {
+    await page.goto("/documents");
+
+    await expect(page.getByText(PAPERLESS_TITLE)).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(ATTACHMENT_TITLE)).toBeVisible();
+    // `Path('paperless://src-uuid/documents/42').name` is '42'. Asserted as an
+    // absence so any regression in the derivation is caught, not just this one.
+    await expect(page.getByRole("link", { name: /^42$/ })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: /^0$/ })).toHaveCount(0);
+  });
+
+  test("each external row says where it came from", async ({ page }) => {
+    await page.goto("/documents");
+
+    await expect(page.getByTestId("document-origin").first()).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.getByText("From paperless")).toBeVisible();
+    await expect(page.getByText("From email")).toBeVisible();
+  });
+
+  test("the DETAIL page agrees with the list", async ({ page }) => {
+    // The renderer that two review rounds missed: `get_document` derived its own
+    // name from its own SELECT. Finding a document by title and opening a page
+    // called "42" is worse than consistent breakage.
+    await page.goto(`/documents/${PAPERLESS_DOC_ID}`);
+
+    await expect(page.getByText(PAPERLESS_TITLE)).toBeVisible({ timeout: 15_000 });
+  });
+
+  test("sharing is explained rather than offered and then refused", async ({ page }) => {
+    // The server answers 409 either way; a control that fails on click is worse
+    // than one that says why first, and the reason is not guessable.
+    await page.goto(`/documents/${PAPERLESS_DOC_ID}`);
+
+    await expect(page.getByTestId("share-unavailable")).toBeVisible({ timeout: 15_000 });
+  });
+
+  test("re-ingest names the upstream system instead of failing", async ({ page }) => {
+    await page.goto(`/documents/${ATTACHMENT_DOC_ID}`);
+
+    await expect(page.getByTestId("reingest-unavailable")).toBeVisible({ timeout: 15_000 });
   });
 });

@@ -34,6 +34,8 @@ from __future__ import annotations
 import logging
 import os
 import uuid
+from dataclasses import dataclass
+from dataclasses import field
 from datetime import datetime
 from datetime import timezone
 
@@ -125,8 +127,13 @@ def touch_last_seen(user_id: str, throttle_seconds: int) -> None:
     ms = config.get_metadata_store()
     # Prefer a dedicated short-lived connection so this background write never
     # contends with request handlers on the shared connection (LUM-334 review).
-    # Stores without execute_isolated (fakes/alternates) fall back to execute.
-    run = getattr(ms, "execute_isolated", ms.execute)
+    # Plain `execute` (LUM-816): every statement now runs on its own pooled
+    # connection unless the thread is mid-transaction, and this touch runs on a
+    # dedicated single-worker executor (`auth.py`) that never opens one — so it
+    # cannot join a caller's transaction. The old `getattr(ms,
+    # "execute_isolated", ...)` fallback existed only because the shared
+    # connection made a background write dangerous.
+    run = ms.execute
     run(
         "UPDATE users SET last_seen_at = now() "
         "WHERE id = %s "
@@ -205,9 +212,45 @@ def list_users() -> list[InternalUser]:
     return [_row_to_internal(r) for r in rows]
 
 
-def update_role(user_id: str, role: Role) -> InternalUser | None:
+def update_role(
+    user_id: str,
+    role: Role,
+    *,
+    by_admin_user_id: str | None = None,
+) -> InternalUser | None:
+    """Change a user's role (LUM-885: account-state cascade).
+
+    * Unknown user → ``None``. Same role → no statement beyond the row lock.
+    * A real demotion (``admin`` → anything else) runs the full cascade
+      (MCP tokens, sessions, ``token_version``, and the invites that user
+      sent), so the demoted admin's old JWT cannot re-promote them.
+    * Any other change (promotion, ``user`` → ``guest``) bumps
+      ``token_version`` only: the next refresh re-reads the role from the
+      database, so nobody is signed out.
+    """
     ms = config.get_metadata_store()
-    ms.execute("UPDATE users SET role = %s WHERE id = %s", (role, user_id))
+    rev: CredentialRevocation | None = None
+    with ms.transaction():
+        row = ms.fetch_one("SELECT role FROM users WHERE id = %s FOR UPDATE", (user_id,))
+        if row is None:
+            return None
+        old_role = row["role"]
+        if old_role == role:
+            return get_user_by_id(user_id)
+        ms.execute("UPDATE users SET role = %s WHERE id = %s", (role, user_id))
+        if old_role == "admin" and role != "admin":
+            rev = revoke_credentials_in_transaction(
+                ms, user_id, revoke_invites=True, by_admin_user_id=by_admin_user_id
+            )
+        else:
+            rev = revoke_credentials_in_transaction(
+                ms,
+                user_id,
+                revoke_mcp=False,
+                revoke_sessions=False,
+                by_admin_user_id=by_admin_user_id,
+            )
+    finish_credential_revocation(rev)
     return get_user_by_id(user_id)
 
 
@@ -249,89 +292,204 @@ def display_label_for(user_id: str) -> str | None:
     return None
 
 
+@dataclass(frozen=True)
+class CredentialRevocation:
+    """What :func:`revoke_credentials_in_transaction` revoked, for the post-commit half."""
+
+    user_id: str
+    by_admin_user_id: str | None
+    mcp_tokens: list = field(default_factory=list)  # list[InternalMcpToken]
+    sessions: list = field(default_factory=list)  # auth_sessions rows (id, user_id, revoked_at)
+    invite_ids: list = field(default_factory=list)  # list[str]
+
+    @property
+    def actor_user_id(self) -> str:
+        return self.by_admin_user_id or self.user_id
+
+
+def revoke_credentials_in_transaction(
+    ms,
+    user_id: str,
+    *,
+    revoke_mcp: bool = True,
+    revoke_sessions: bool = True,
+    revoke_invites: bool = False,
+    by_admin_user_id: str | None = None,
+) -> CredentialRevocation:
+    """The one door for revoking what a user holds (LUM-885).
+
+    **Any account-state change that must end a user's access calls this plus**
+    :func:`finish_credential_revocation` (or :func:`revoke_all_credentials`).
+    Writing another inline "bump + revoke" copy reintroduces the drift behind
+    security audit #2 ID-001. Credential kinds covered: access JWTs (via
+    ``token_version``), refresh sessions, ``lmcp_`` MCP tokens, and (opt-in)
+    the unredeemed invites the user minted. A new kind a user can hold must be
+    added here and checked against its owner at use.
+
+    The caller MUST already hold an open transaction. ``ms`` is passed only to
+    the two ``auth_sessions`` in-transaction helpers; ``cascade_revoke_for_user``
+    and the invite revoke call ``config.get_metadata_store()`` and join the
+    caller's transaction **by thread affinity** (LUM-816,
+    ``postgres_store.py``; ``isolated_transaction()`` yields ``self``). A change
+    to that affinity (LUM-822) must re-run the live atomicity tests.
+
+    Order matters (D9): the ``token_version`` bump runs first so the ``users``
+    row lock is taken before anything else is revoked.
+    """
+    # Local imports keep ``services.users`` light at module load and avoid the
+    # ``users`` <-> ``mcp_tokens`` <-> ``auth`` import cycles. Each step is
+    # called through its module so tests can patch it.
+    from services import auth_sessions as _auth_sess
+    from services import mcp_tokens as _mcp_tokens
+    from services import user_invites as _user_invites
+
+    _auth_sess.bump_token_version_in_transaction(ms, user_id)
+    mcp_tokens: list = []
+    sessions: list = []
+    invite_ids: list = []
+    if revoke_mcp:
+        mcp_tokens = _mcp_tokens.cascade_revoke_for_user(
+            user_id, by_admin_user_id=by_admin_user_id or ""
+        )
+    if revoke_sessions:
+        sessions = _auth_sess.revoke_all_active_in_transaction_for_user(ms, user_id)
+    if revoke_invites:
+        invite_ids = _user_invites.revoke_unredeemed_for_creator_in_transaction(user_id)
+    return CredentialRevocation(
+        user_id=user_id,
+        by_admin_user_id=by_admin_user_id,
+        mcp_tokens=list(mcp_tokens),
+        sessions=list(sessions),
+        invite_ids=list(invite_ids),
+    )
+
+
+def finish_credential_revocation(
+    rev: CredentialRevocation,
+    *,
+    clear_permission_cache: bool = False,
+) -> None:
+    """Post-commit half of :func:`revoke_credentials_in_transaction`. Never raises.
+
+    Caches first, so a failing audit cannot leave a stale cache; each step is
+    isolated so one failure cannot skip the rest or turn a committed change
+    into a 500. Audits are attributed to the acting admin when there is one,
+    otherwise to the user (``set_disabled`` D14 rule, extended).
+    """
+    from auth import invalidate_sid_cache
+    from auth import invalidate_token_version_cache
+
+    from services import auth_sessions as _auth_sess
+    from services import mcp_tokens as _mcp_tokens
+    from services import user_invites as _user_invites
+
+    for r in rev.sessions:
+        try:
+            invalidate_sid_cache(r["id"])
+        except Exception:
+            _log.exception("finish_credential_revocation: sid cache invalidation failed")
+    try:
+        invalidate_token_version_cache(rev.user_id)
+    except Exception:
+        _log.exception("finish_credential_revocation: token_version cache invalidation failed")
+    if clear_permission_cache:
+        try:
+            # Per-user connector-permission cache hygiene (process-local, so it
+            # runs after the commit, never before). Local import avoids the
+            # ``users`` <-> ``permissions`` cycle.
+            from permissions import clear_cache_for_user
+
+            clear_cache_for_user(rev.user_id)
+        except Exception:
+            _log.exception("finish_credential_revocation: permission cache clear failed")
+
+    actor = rev.actor_user_id
+    for tok in rev.mcp_tokens:
+        try:
+            _mcp_tokens._emit_audit(
+                _mcp_tokens.ACTION_CASCADE_REVOKED,
+                user_id=actor,
+                input_summary={
+                    "token_id": tok.id,
+                    "owner_user_id": tok.user_id,
+                    "by_admin_user_id": rev.by_admin_user_id,
+                },
+                result_summary={"revoked_at": tok.revoked_at},
+            )
+        except Exception:
+            _log.exception("finish_credential_revocation: mcp cascade audit failed")
+    try:
+        _auth_sess.emit_session_rows_cascade_audits(acting_user_id=actor, revoked_rows=rev.sessions)
+    except Exception:
+        _log.exception("finish_credential_revocation: session cascade audit failed")
+    for invite_id in rev.invite_ids:
+        try:
+            _user_invites._emit_audit(
+                "__user_invite__.revoked",
+                user_id=actor,
+                input_summary={
+                    "invite_id": invite_id,
+                    "creator_user_id": rev.user_id,
+                    "cascade": True,
+                },
+                result_summary={"ok": True},
+            )
+        except Exception:
+            _log.exception("finish_credential_revocation: invite cascade audit failed")
+
+
+def revoke_all_credentials(
+    user_id: str,
+    *,
+    by_admin_user_id: str | None = None,
+    revoke_mcp: bool = True,
+    revoke_sessions: bool = True,
+    clear_permission_cache: bool = False,
+) -> CredentialRevocation:
+    """Revoke everything in one transaction, then run the post-commit half.
+
+    Used by "log out everywhere". Invites are left alone: they are a household
+    object, and a member's pending invites should not die on a sign-out.
+    """
+    ms = config.get_metadata_store()
+    with ms.transaction():
+        rev = revoke_credentials_in_transaction(
+            ms,
+            user_id,
+            revoke_mcp=revoke_mcp,
+            revoke_sessions=revoke_sessions,
+            by_admin_user_id=by_admin_user_id,
+        )
+    finish_credential_revocation(rev, clear_permission_cache=clear_permission_cache)
+    return rev
+
+
 def set_disabled(
     user_id: str,
     disabled: bool,
     *,
     by_admin_user_id: str | None = None,
 ) -> InternalUser | None:
-    """Disable or re-enable a user. Disabling also clears the active refresh
-    jti AND cascades to revoke all active MCP tokens (per plan
-    ``mcp_token_user_map`` D7).
+    """Disable or re-enable a user. Disabling revokes everything the user holds
+    (MCP tokens, auth sessions, ``token_version``, and the invites they sent)
+    through :func:`revoke_credentials_in_transaction`.
 
-    Atomicity contract (D7): the user-disable UPDATE and the MCP-token
-    cascade revocation happen inside a single ``ms.transaction()`` block so
-    a partial failure can never leave a disabled user with live MCP
-    bearers. The cascade audit event is emitted by
-    ``mcp_tokens.cascade_revoke_for_user`` AFTER the transaction commits.
+    Atomicity contract (D7): the revocation and the ``disabled`` flag commit in
+    one ``ms.transaction()``, so a partial failure can never leave a disabled
+    user with live MCP bearers. Audits and cache clears run after the commit.
 
-    ``by_admin_user_id`` propagates the acting admin into the cascade audit
-    so the operator can trace which admin triggered the cascade. Callers
-    in this module pass ``None`` for backward compatibility (e.g.
-    ``delete_user`` invokes ``set_disabled`` from the same admin context
-    that already audited the delete).
+    ``by_admin_user_id`` is the acting admin; the cascade audits are attributed
+    to them. ``delete_user`` does not call this function; it uses the same
+    helper. Re-enabling does not un-revoke anything (an admin re-mints invites).
     """
     ms = config.get_metadata_store()
     if disabled:
-        # Local imports — keep ``services.users`` boot light and avoid the
-        # ``services.users`` ↔ ``services.mcp_tokens`` ↔ ``auth`` import cycles
-        # at module load.
-        from auth import invalidate_sid_cache
-        from auth import invalidate_token_version_cache
-
-        from services import auth_sessions as _auth_sess
-        from services import mcp_tokens as _mcp_tokens
-
         with ms.transaction():
-            cascaded = _mcp_tokens.cascade_revoke_for_user(
-                user_id,
-                by_admin_user_id=by_admin_user_id or "",
+            rev = revoke_credentials_in_transaction(
+                ms, user_id, revoke_invites=True, by_admin_user_id=by_admin_user_id
             )
-            revoked_sess = _auth_sess.revoke_all_active_in_transaction_for_user(ms, user_id)
-            ms.execute(
-                "UPDATE users SET disabled = TRUE, token_version = token_version + 1 WHERE id = %s",
-                (user_id,),
-            )
-        # D14: emit one ``__mcp_token__.cascade_revoked`` audit row per
-        # affected token AFTER the transaction commits. Per-token audits
-        # are attributed to the *admin* who flipped the user (NOT to the
-        # disabled user themselves — that would muddy the operator
-        # forensics). If no admin id was threaded (legacy callers),
-        # attribute to the disabled user_id so the event is still
-        # reachable in the audit_log.
-        actor_id = by_admin_user_id or user_id
-        for tok in cascaded:
-            _mcp_tokens._emit_audit(
-                _mcp_tokens.ACTION_CASCADE_REVOKED,
-                user_id=actor_id,
-                input_summary={
-                    "token_id": tok.id,
-                    "owner_user_id": tok.user_id,
-                    "by_admin_user_id": by_admin_user_id,
-                },
-                result_summary={"revoked_at": tok.revoked_at},
-            )
-        _auth_sess.emit_session_rows_cascade_audits(
-            acting_user_id=actor_id,
-            revoked_rows=revoked_sess,
-        )
-        for r in revoked_sess:
-            invalidate_sid_cache(r["id"])
-        invalidate_token_version_cache(user_id)
-        # Per-user connector-permission cache hygiene
-        # (plan ``per_user_connector_permissions`` D5 / cache-clear-placement
-        # decision). Runs AFTER the with-transaction block and AFTER the
-        # cascade audit loop: a transaction rollback must NOT evict cache
-        # entries for state that didn't change, and the cache-clear is
-        # process-local in-memory so it cannot be transactionally coupled
-        # to Postgres anyway. This is hygiene, not a request gate -- the
-        # disabled-user's already-issued access JWT remains valid for
-        # ACCESS_TOKEN_TTL_SECONDS regardless of cache state. Local
-        # import to avoid the ``services.users`` ↔ ``permissions`` import
-        # cycle at module load.
-        from permissions import clear_cache_for_user
-
-        clear_cache_for_user(user_id)
+            ms.execute("UPDATE users SET disabled = TRUE WHERE id = %s", (user_id,))
+        finish_credential_revocation(rev, clear_permission_cache=True)
     else:
         ms.execute("UPDATE users SET disabled = FALSE WHERE id = %s", (user_id,))
         # Re-enabling does NOT clear the cache: per-user mode rows are
@@ -340,14 +498,14 @@ def set_disabled(
     return get_user_by_id(user_id)
 
 
-def delete_user(user_id: str) -> bool:
+def delete_user(user_id: str, *, by_admin_user_id: str | None = None) -> bool:
     """Hard-delete a user. Returns True if a row was removed.
 
-    Per-user rows in ``connector_permissions`` and ``routine_do_tracking``
-    are NOT cascaded -- they are RETAINED for forensic value (mirror
-    ``mcp_token_user_map`` D7 cascade-retain). The local cache, however,
-    must be cleared so that a same-id re-create does not see stale
-    pre-delete entries.
+    MCP tokens are revoked and **retained** (ADR 017 forensic rows);
+    unredeemed invites the user sent are revoked and kept. Per-user rows in
+    ``connector_permissions`` and ``routine_do_tracking`` are NOT cascaded --
+    they are RETAINED for forensic value. The local cache, however, must be
+    cleared so that a same-id re-create does not see stale pre-delete entries.
     """
     ms = config.get_metadata_store()
     user = get_user_by_id(user_id)
@@ -363,13 +521,25 @@ def delete_user(user_id: str) -> bool:
     from auth import invalidate_sid_cache
 
     # SCOPE-EXEMPT: auth_sessions has no memory scope — owner-scoped by user_id
-    # (sid LRU hygiene).
+    # (sid LRU hygiene). Every session id, revoked or not.
     sess_rows = ms.fetch_all("SELECT id FROM auth_sessions WHERE user_id = %s", (user_id,))
+    with ms.transaction():
+        locked = ms.fetch_one("SELECT id FROM users WHERE id = %s FOR UPDATE", (user_id,))
+        if locked is None:
+            # A concurrent delete won; the route keeps its 404.
+            return False
+        rev = revoke_credentials_in_transaction(
+            ms, user_id, revoke_invites=True, by_admin_user_id=by_admin_user_id
+        )
+        # SCOPE-EXEMPT: auth_sessions rows are keyed by user_id only (purge on user delete).
+        ms.execute("DELETE FROM auth_sessions WHERE user_id = %s", (user_id,))
+        ms.execute("DELETE FROM users WHERE id = %s", (user_id,))
+    finish_credential_revocation(rev, clear_permission_cache=True)
     for row in sess_rows:
-        invalidate_sid_cache(row["id"])
-    # SCOPE-EXEMPT: auth_sessions rows are keyed by user_id only (purge on user delete).
-    ms.execute("DELETE FROM auth_sessions WHERE user_id = %s", (user_id,))
-    ms.execute("DELETE FROM users WHERE id = %s", (user_id,))
+        try:
+            invalidate_sid_cache(row["id"])
+        except Exception:
+            _log.exception("delete_user: sid cache invalidation failed")
     return True
 
 
@@ -391,6 +561,20 @@ def count_admins() -> int:
     return int(n)
 
 
+def list_admin_ids() -> list[str]:
+    """Ids of every active admin, oldest first.
+
+    LUM-758: household-wide audit notices (e.g. the egress allowlist widening) go
+    to all admins, not just the first — ``first_admin_id`` would silently make the
+    notice depend on who happened to be created earliest.
+    """
+    ms = config.get_metadata_store()
+    rows = ms.fetch_all(
+        "SELECT id FROM users WHERE role = 'admin' AND disabled = FALSE ORDER BY created_at ASC"
+    )
+    return [row["id"] for row in rows or []]
+
+
 def first_admin_id() -> str | None:
     """Return the id of the oldest active admin, or None."""
     ms = config.get_metadata_store()
@@ -399,6 +583,35 @@ def first_admin_id() -> str | None:
         "ORDER BY created_at ASC LIMIT 1"
     )
     return row["id"] if row else None
+
+
+def spend_dummy_verify(password: str | None = None) -> None:
+    """Burn one argon2 verify against ``_DUMMY_HASH``.
+
+    The single timing pad for every unknown-subject branch, so the
+    password-reset request path pays the same CPU on its unknown-address branch
+    as the login path does on its unknown-email one.
+
+    This claimed to be "extracted from `verify_credentials`" while
+    `verify_credentials` kept its own inline copy — so the helper added a
+    *second* pad rather than removing one, which is the exact drift the
+    docstring said it prevented. `verify_credentials` now calls it.
+
+    ``password`` exists to preserve that call site exactly: login verifies
+    against the caller's real password, the reset path against a fixed string
+    (it has no password to offer). Both are argon2 verifies of the same cost;
+    the parameter keeps the difference explicit rather than quietly changing
+    the login path's behaviour while unifying the code.
+    """
+    try:
+        _ph.verify(
+            _DUMMY_HASH,
+            password
+            if password is not None
+            else "user-not-found-timing-pad-please-do-not-match-either",
+        )
+    except VerificationError:
+        pass
 
 
 def verify_credentials(email: str, password: str) -> InternalUser | None:
@@ -411,10 +624,7 @@ def verify_credentials(email: str, password: str) -> InternalUser | None:
     """
     user = get_user_by_email(email)
     if user is None or user.disabled:
-        try:
-            _ph.verify(_DUMMY_HASH, password)
-        except VerificationError:
-            pass
+        spend_dummy_verify(password)
         return None
     try:
         _ph.verify(user.password_hash, password)
@@ -429,33 +639,77 @@ def record_login(user_id: str) -> None:
     ms.execute("UPDATE users SET last_login_at = NOW() WHERE id = %s", (user_id,))
 
 
-def _apply_new_password(user_id: str, new_password: str) -> None:
-    """Replace ``password_hash``. Bumps ``token_version`` and revokes auth sessions.
+def _apply_new_password(
+    user_id: str,
+    new_password: str,
+    *,
+    by_admin_user_id: str | None = None,
+) -> None:
+    """Replace ``password_hash`` and revoke everything the user holds.
 
-    Callers must enforce authz. Post-commit: clears the in-process
-    ``token_version`` cache used by access-JWT verification.
+    Revokes MCP tokens, auth sessions and bumps ``token_version`` through
+    :func:`revoke_credentials_in_transaction` (LUM-885). Callers must enforce
+    authz. Post-commit: clears the in-process caches and writes the audits.
+
+    Also consumes any outstanding forgot-password token for the user (LUM-65).
+    This lives here rather than in each caller so every existing path inherits
+    it — admin reset, CLI ``scripts.reset_password``, self-service change, and
+    the reset redeem itself. Otherwise the realistic remediation sequence (a
+    member requests an email reset, gets impatient, an admin resets the
+    password directly) would leave a live, unexpired link in a mail archive
+    pointed at the account that was just remediated.
     """
-    from auth import invalidate_sid_cache
-    from auth import invalidate_token_version_cache
+    ms = config.get_metadata_store()
+    with ms.isolated_transaction() as tx:
+        rev = apply_new_password_in_transaction(
+            tx, user_id, new_password, by_admin_user_id=by_admin_user_id
+        )
+    finish_password_change(rev)
 
-    from services import auth_sessions as _auth_sess
+
+def apply_new_password_in_transaction(
+    tx,
+    user_id: str,
+    new_password: str,
+    *,
+    by_admin_user_id: str | None = None,
+) -> CredentialRevocation:
+    """The DB half of a password change, run inside the caller's transaction.
+
+    Split out (LUM-65) so a caller that must change the password **atomically
+    with something else** — the reset redeem, which has to consume its token in
+    the same unit of work — can do so without nesting transactions. Returns the
+    :class:`CredentialRevocation`; the caller must pass it to
+    :func:`finish_password_change` **after** the commit, because cache
+    invalidation and audit writes must not happen for a change that rolled back.
+
+    Revokes MCP tokens on every path (LUM-885), as well as the sessions, and
+    bumps ``token_version`` (the helper owns the bump; the password ``UPDATE``
+    does not).
+
+    Also consumes any outstanding forgot-password token for the user. This lives
+    here rather than in each caller so every path inherits it — admin reset, CLI
+    ``scripts.reset_password``, self-service change, and the reset redeem
+    itself. Otherwise the realistic remediation sequence (a member requests an
+    email reset, gets impatient, an admin resets the password directly) would
+    leave a live, unexpired link in a mail archive pointed at the account that
+    was just remediated.
+    """
+    from services import password_reset as _password_reset
 
     validate_password_policy(new_password)
     pw_hash = hash_password(new_password)
-    ms = config.get_metadata_store()
-    with ms.transaction():
-        ms.execute(
-            "UPDATE users SET password_hash = %s, token_version = token_version + 1 WHERE id = %s",
-            (pw_hash, user_id),
-        )
-        revoked = _auth_sess.revoke_all_active_in_transaction_for_user(ms, user_id)
-    for r in revoked:
-        invalidate_sid_cache(r["id"])
-    invalidate_token_version_cache(user_id)
-    _auth_sess.emit_session_rows_cascade_audits(
-        acting_user_id=user_id,
-        revoked_rows=revoked,
+    tx.execute(
+        "UPDATE users SET password_hash = %s WHERE id = %s",
+        (pw_hash, user_id),
     )
+    _password_reset.invalidate_for_user(tx, user_id)
+    return revoke_credentials_in_transaction(tx, user_id, by_admin_user_id=by_admin_user_id)
+
+
+def finish_password_change(rev: CredentialRevocation) -> None:
+    """Post-commit side effects of a password change: caches, then audits."""
+    finish_credential_revocation(rev)
 
 
 def change_own_password(user_id: str, current_password: str, new_password: str) -> None:
@@ -481,15 +735,20 @@ def change_own_password(user_id: str, current_password: str, new_password: str) 
     _apply_new_password(user_id, new_password)
 
 
-def admin_reset_user_password(target_user_id: str, new_password: str) -> None:
+def admin_reset_user_password(
+    target_user_id: str,
+    new_password: str,
+    *,
+    by_admin_user_id: str | None = None,
+) -> None:
     """Set password for ``target_user_id`` (admin HTTP surface enforces admin role).
 
     The target may be disabled — login remains impossible until the account
-    is re-enabled. Clears the target's refresh jti.
+    is re-enabled. Revokes the target's sessions and MCP tokens.
     """
     if get_user_by_id(target_user_id) is None:
         raise LookupError("user not found")
-    _apply_new_password(target_user_id, new_password)
+    _apply_new_password(target_user_id, new_password, by_admin_user_id=by_admin_user_id)
 
 
 def cli_reset_password(

@@ -5,13 +5,14 @@
  *
  * Requires `fake-indexeddb/auto` loaded from tests/setup.ts.
  */
-import { clear } from "idb-keyval";
+import { clear, get, keys, set } from "idb-keyval";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
+  clearAllDrafts,
   deleteDraft,
   DRAFT_MAX_CHARS,
   getDraft,
@@ -77,5 +78,28 @@ describe("pwa drafts (idb-keyval)", () => {
     const draftsSource = readFileSync(draftsPath, "utf8");
     expect(draftsSource).not.toMatch(/tokens|Authorization|credential|refresh|serviceWorker/i);
     expect(draftsSource).not.toMatch(/ApiClient|"\.\.\/api\//);
+  });
+});
+
+describe("clearAllDrafts (LUM-886)", () => {
+  beforeEach(async () => {
+    await clear();
+  });
+
+  it("deletes chat and capture drafts and leaves outbox and unrelated keys", async () => {
+    await setDraft(makeChatDraftKey("t1"), "chat text");
+    await setDraft(makeCaptureDraftKey("__quickcapture__"), "capture text");
+    await set("lumogis:capture-outbox:index", ["x"]);
+    await set("other:key", "v");
+    expect(await clearAllDrafts()).toBe(true);
+    expect(await getDraft(makeChatDraftKey("t1"))).toBeUndefined();
+    expect(await getDraft(makeCaptureDraftKey("__quickcapture__"))).toBeUndefined();
+    expect(await get("lumogis:capture-outbox:index")).toEqual(["x"]);
+    expect(await get("other:key")).toBe("v");
+    expect((await keys()).length).toBe(2);
+  });
+
+  it("is a no-op on an empty store and never rejects", async () => {
+    await expect(clearAllDrafts()).resolves.toBe(true);
   });
 });

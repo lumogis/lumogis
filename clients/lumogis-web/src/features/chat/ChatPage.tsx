@@ -36,9 +36,15 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { patchMeWowDismissed } from "../../api/meWow";
 import { useAuth } from "../../auth/AuthProvider";
 import { ChatComposer } from "../../components/ChatComposer";
+import { transcribeVoice } from "../../api/voice";
 import { Button } from "../../components/Button";
+import { EmptyState } from "../_shared/EmptyState";
+import { PrivacyBlockedHint } from "../_shared/PrivacyBlockedHint";
+import { catalogHasPrivacyBlock } from "../_shared/privacyBlockCopy";
 import { ServiceDegradationBanner } from "../_shared/ServiceDegradationBanner";
 import { useServiceHealth } from "../_shared/useServiceHealth";
+import { useDocuments } from "../documents/useDocuments";
+import { useDocumentsSseInvalidation } from "../documents/useDocumentsSseInvalidation";
 import type { ChatPrefillState } from "../wow/askAboutEntity";
 import { WowGate } from "../wow/WowGate";
 import type { ChatMessageDTO } from "../../api/chat";
@@ -68,35 +74,74 @@ import {
 
 const DEFAULT_MODEL = "claude";
 
+function ChatLibraryEmptyState(): JSX.Element {
+  return (
+    <EmptyState
+      className="lumogis-chat__empty"
+      title="No documents in your library yet"
+      helperText="Chat answers from the documents in your library. Connect a document archive, feed or watched page, or upload a file, and Lumogis can answer from it."
+      actions={[
+        { label: "Connect a source", href: "/me/sources", primary: true },
+        { label: "Upload a file", href: "/documents" },
+      ]}
+    />
+  );
+}
+
 export function ChatPage(): JSX.Element {
-  const { client } = useAuth();
+  const { client, tokens } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const online = useOnlineStatus();
   const serviceHealth = useServiceHealth(client);
   const refreshHealth = serviceHealth.refresh;
   const { models, modelError, refreshModels } = useModelCatalog(client);
-  const initialModel = models[0]?.id ?? DEFAULT_MODEL;
+  // LUM-310: start on a model that can answer. The server lists enabled models
+  // first, but do not rely on the order.
+  const initialModel = (models.find((m) => m.enabled) ?? models[0])?.id ?? DEFAULT_MODEL;
+
+  // LUM-853: first run on a default install. The onboarding modal is dark when
+  // auth is off (ADR 059 as amended), so an empty library is announced here,
+  // on the first screen. "Empty" means the list LOADED with zero rows — never
+  // while loading, never on error (no flash, no false claim).
+  // (A Postgres outage reads as an empty library here, because services/documents.py
+  // list_documents returns [] on a DB error — accepted, P2. A failed background
+  // refetch keeps the last data, so the state persists while the server fails.)
+  const documentsQuery = useDocuments(client, { pollWhileBusy: false });
+  const libraryEmpty = documentsQuery.isSuccess && documentsQuery.data.documents.length === 0;
+  useDocumentsSseInvalidation(tokens, { enabled: libraryEmpty });
 
   const threads = useChatThreads({ defaultModel: initialModel });
   const { state, dispatch, active, newThread, selectThread, deleteThread, setModel } = threads;
 
   // Set the model on the seed thread once the catalog resolves so the user
-  // doesn't have to hand-pick on first load.
+  // doesn't have to hand-pick on first load. A model that is listed but off
+  // (no API key, not turned on, privacy mode) is replaced too, when one is on:
+  // on a fresh install Lumogis Web often opens before the orchestrator answers,
+  // the seed thread falls back to DEFAULT_MODEL, and "claude — no API key" stuck
+  // although the local model was ready (LUM-310). The picker disables off
+  // models, so this never overrides a choice the user could have made.
   useEffect(() => {
     if (active === null) return;
     if (models.length === 0) return;
-    if (models.some((m) => m.id === active.model)) return;
-    setModel(active.id, models[0]!.id);
+    const current = models.find((m) => m.id === active.model);
+    if (current?.enabled) return;
+    const next = models.find((m) => m.enabled) ?? (current ? undefined : models[0]);
+    if (next && next.id !== active.model) setModel(active.id, next.id);
   }, [active, models, setModel]);
 
   /** Tracks the `?session=<id>` we have already hydrated so it fires once. */
   const hydratedSessionRef = useRef<string | null>(null);
 
+  const threadEmpty = active === null || active.messages.length === 0;
+
   const [input, setInput] = useState("");
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const [streaming, setStreaming] = useState(false);
+  // Transient stream status (LUM-876), e.g. "Loading model on your machine…".
+  // Shown in the empty assistant bubble only; never stored with the answer.
+  const [streamStatus, setStreamStatus] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [historyRefresh, setHistoryRefresh] = useState(0);
   const [pendingSummaries, setPendingSummaries] = useState<PendingSummary[]>([]);
@@ -387,6 +432,7 @@ export function ChatPage(): JSX.Element {
       setInput("");
       setSubmitError(null);
       setStreaming(true);
+      setStreamStatus(null);
 
       const controller = new AbortController();
       abortRef.current = controller;
@@ -428,9 +474,13 @@ export function ChatPage(): JSX.Element {
         let assistantContent = "";
         let streamError: string | null = null;
         await consumeChatStream(res.body, {
+          onStatus: (status) => {
+            setStreamStatus(status.message);
+          },
           onDelta: (delta: string) => {
             sawDelta = true;
             assistantContent += delta;
+            setStreamStatus(null);
             dispatch({
               type: "APPEND_ASSISTANT_DELTA",
               threadId: active.id,
@@ -527,6 +577,7 @@ export function ChatPage(): JSX.Element {
       } finally {
         if (abortRef.current === controller) abortRef.current = null;
         setStreaming(false);
+        setStreamStatus(null);
       }
     },
     [active, client, dispatch, input, online, streaming, scheduleTurnSync, refreshHealth],
@@ -584,6 +635,7 @@ export function ChatPage(): JSX.Element {
             error={modelError}
             onRetry={() => void refreshModels()}
           />
+          {catalogHasPrivacyBlock(models) ? <PrivacyBlockedHint surface="picker" /> : null}
         </header>
 
         <ServiceDegradationBanner health={serviceHealth} />
@@ -596,15 +648,26 @@ export function ChatPage(): JSX.Element {
           aria-busy={streaming}
           aria-label="Conversation transcript"
         >
-          {active === null || active.messages.length === 0 ? (
+          {threadEmpty ? (
             <p className="lumogis-chat__empty">
               Lumogis chats are ephemeral and live only in this browser tab. Closing the tab
               discards them — use Capture or Search when you want durable notes.
             </p>
           ) : (
-            active.messages.map((m) => <MessageBubble key={m.id} message={m} />)
+            active.messages.map((m) => (
+              <MessageBubble
+                key={m.id}
+                message={m}
+                statusNote={m.status === "streaming" ? streamStatus : null}
+              />
+            ))
           )}
         </div>
+
+        {/* LUM-853: keep this the sibling right after the log. The grid rows (auto 1fr auto auto)
+            are assigned by child order; ServiceDegradationBanner, when shown, already takes the
+            1fr row (pre-existing, P2). */}
+        {threadEmpty && libraryEmpty ? <ChatLibraryEmptyState /> : null}
 
         {submitError !== null && (
           <p role="alert" className="lumogis-chat__error">
@@ -628,6 +691,7 @@ export function ChatPage(): JSX.Element {
           placeholder="Ask Lumogis…"
           describedBy="lumogis-chat-ephemeral-note"
           textareaRef={composerRef}
+          voiceTranscribe={(blob) => transcribeVoice(client, blob).then((r) => r.text)}
           minRows={3}
           maxRows={8}
         />
@@ -725,7 +789,7 @@ function ModelPicker({
           <option key={m.id} value={m.id} disabled={!m.enabled}>
             {m.label}
             {m.is_local ? " (local)" : ""}
-            {m.enabled ? "" : " — unavailable"}
+            {disabledSuffix(m)}
           </option>
         ))}
       </select>
@@ -733,7 +797,29 @@ function ModelPicker({
   );
 }
 
-function MessageBubble({ message }: { message: ChatMessage }): JSX.Element {
+/** Picker option suffix for a disabled model (LUM-881); an unknown or missing reason reads "unavailable". */
+function disabledSuffix(m: ModelDescriptor): string {
+  if (m.enabled) return "";
+  switch (m.disabled_reason) {
+    case "privacy_mode":
+      return " — off (privacy mode)";
+    case "no_credentials":
+      return " — no API key";
+    case "optional_disabled":
+      return " — not turned on";
+    default:
+      return " — unavailable";
+  }
+}
+
+function MessageBubble({
+  message,
+  statusNote = null,
+}: {
+  message: ChatMessage;
+  /** Transient status shown while the assistant bubble is still empty (LUM-876). */
+  statusNote?: string | null;
+}): JSX.Element {
   const isAssistant = message.role === "assistant";
   const status = message.status ?? "complete";
   const className = [
@@ -755,16 +841,27 @@ function MessageBubble({ message }: { message: ChatMessage }): JSX.Element {
       </header>
       <div className="lumogis-chat__bubble-content">
         {isAssistant && status === "streaming" && message.content.length === 0 ? (
-          <span
-            className="lumogis-chat__typing"
-            role="status"
-            aria-label="Lumogis is typing"
-            data-testid="chat-typing-indicator"
-          >
-            <span className="lumogis-chat__typing-dot" aria-hidden="true" />
-            <span className="lumogis-chat__typing-dot" aria-hidden="true" />
-            <span className="lumogis-chat__typing-dot" aria-hidden="true" />
-          </span>
+          <>
+            <span
+              className="lumogis-chat__typing"
+              role="status"
+              aria-label="Lumogis is typing"
+              data-testid="chat-typing-indicator"
+            >
+              <span className="lumogis-chat__typing-dot" aria-hidden="true" />
+              <span className="lumogis-chat__typing-dot" aria-hidden="true" />
+              <span className="lumogis-chat__typing-dot" aria-hidden="true" />
+            </span>
+            {statusNote !== null ? (
+              <span
+                className="lumogis-chat__stream-status"
+                role="status"
+                data-testid="chat-stream-status"
+              >
+                {statusNote}
+              </span>
+            ) : null}
+          </>
         ) : (
           <>
             {message.content}

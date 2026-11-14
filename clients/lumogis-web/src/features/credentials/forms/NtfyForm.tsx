@@ -7,7 +7,7 @@ const topicRe = /^[a-zA-Z0-9_-]+$/;
 export function NtfyForm({
   value,
   onChange,
-  isEdit: _isEdit = false,
+  isEdit = false,
 }: {
   value: Record<string, unknown>;
   onChange: (v: Record<string, unknown>) => void;
@@ -31,9 +31,20 @@ export function NtfyForm({
       setErr("topic: 1–64 chars, [a-zA-Z0-9_-]");
       return;
     }
-    const p: Record<string, unknown> = { url, topic };
-    if (token.length > 0) p.token = token;
-    onChange(p);
+    // LUM-846 — the key is ALWAYS sent, and blank means "no token".
+    //
+    // ntfy's token is genuinely optional, so unlike CalDAV and IMAP this form
+    // cannot simply require it. But the old `if (token.length > 0) p.token =
+    // token` was the same silent destroy: `put_payload` replaces the whole
+    // payload, so a user opening this to fix the URL — with the token field
+    // blank, as it always renders — deleted their stored token on save.
+    //
+    // There is no "keep existing" to offer here even in principle:
+    // `ntfy_runtime.py:116` reads `(payload.get("token") or "").strip()`, so an
+    // absent token and an empty one are **identical** to the runtime. Two states,
+    // not three. So the honest fix is to always carry the key and say out loud
+    // what blank means — the harm was the silence, not the semantics.
+    onChange({ url, topic, token: token.trim() });
   };
 
   return (
@@ -49,6 +60,11 @@ export function NtfyForm({
       <label>
         Token (optional)
         <input value={token} onChange={(e) => setToken(e.target.value)} type="password" maxLength={512} />
+        <span style={{ fontSize: "0.8rem" }}>
+          {isEdit
+            ? "Saving replaces the whole credential: re-enter your token to keep it, or leave this blank to remove it."
+            : "Leave blank for a topic that needs no token."}
+        </span>
       </label>
       {err && (
         <p role="alert" style={{ color: "salmon" }}>

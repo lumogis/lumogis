@@ -22,7 +22,7 @@ Constraints: local-first, single-process default, no new Docker services or pip 
 
 4. Transient DB errors on the **`sid`** lookup path **fail closed** (**`return "invalid token"`**) and **must not** **`put`** into the LRU; log WARNING with **`sid[-4:]`** and exception type only.
 
-Multi-worker coherence remains **LUM-30** (same class of problem as **`_TOKEN_VER_CACHE`**).
+Multi-worker coherence was **LUM-30** (same class of problem as **`_TOKEN_VER_CACHE`**). **Superseded 2026-08-15 (LUM-832):** LUM-30 is cancelled and the orchestrator refuses to boot above one worker, so there is no second process to be incoherent with.
 
 ## Alternatives Considered
 
@@ -32,10 +32,11 @@ See draft history and `.cursor/explorations/archived/LUM-243-sid-revocation-look
 
 **Positive:** Per-device revoke takes effect within cache TTL (default 30 s), immediately on the worker that performed the revoke via **`invalidate_sid_cache`**.
 
-**Trade-offs:** Cross-process staleness up to LRU TTL until **LUM-30** ships a shared invalidation story.
+**Trade-offs:** Cross-process staleness up to LRU TTL — **moot since 2026-08-15 (LUM-832)**, which refuses a multi-worker boot rather than leaving the staleness to a shared invalidation story LUM-30 never shipped.
 
 ## Status history
 
+- **2026-08-15:** Cross-worker staleness caveat retired (LUM-832) — LUM-30 was cancelled 2026-08-11 and multi-worker is now a boot refusal, so the `sid` LRU has no second process to diverge from.
 - **2026-05-17:** Finalised by **`/verify-plan`** — implementation confirmed; canonical copy under **`docs/decisions/`**.
 - **2026-05-17:** Draft revised during **`/review-plan --arbitrate` R1** — **`users.py`** / **`delete_user`** invalidation, **`_TTLSidLRU`**, exception-no-**`put`** rule; dropped **`invalidate_sid_cache_for_user`** from Decision text.
 - **2026-05-16:** Draft created by **`/explore --headless`** — Option 2 (TTL LRU mirroring **`_TTLVersionLRU`**).

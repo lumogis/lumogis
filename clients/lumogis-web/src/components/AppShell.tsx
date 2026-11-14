@@ -7,8 +7,10 @@ import type { ReactNode } from "react";
 
 import { BottomNav, NAV_ITEMS, type NavItem } from "./BottomNav";
 import { OfflineBanner } from "./OfflineBanner";
+import { SingleUserBanner } from "./SingleUserBanner";
 import { ProfileMenuButton } from "./ProfileMenu";
 import { SidebarNav } from "./SidebarNav";
+import { useAuth } from "../auth/AuthProvider";
 import { useOnlineStatus } from "../pwa/useOnlineStatus";
 
 export interface AppShellProps {
@@ -25,6 +27,7 @@ export function AppShell({
   onNavigate,
 }: AppShellProps): JSX.Element {
   const online = useOnlineStatus();
+  const { singleUser } = useAuth();
 
   return (
     <div className="lumogis-shell" data-testid="lumogis-shell">
@@ -35,6 +38,7 @@ export function AppShell({
             <ProfileMenuButton />
           </span>
         </header>
+        <SingleUserBanner visible={singleUser} />
         <OfflineBanner visible={!online} />
       </div>
 

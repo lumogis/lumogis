@@ -13,19 +13,33 @@
 // pinned: streaming tokens render incrementally, `[DONE]` finalises the
 // bubble, the wire-literal 503 `llm_provider_key_missing` becomes a
 // human-readable error in the UI.
+//
+// LUM-853: the empty-library state is client logic (thread empty AND the caller's document list
+// loaded with zero rows), so Vitest is its layer; the auth-unset -> offer join is test 14
+// (single-user boot + empty library); the server inputs are pinned by test 13 in
+// orchestrator/tests/test_me_onboarding_routes.py. There is no auth-off browser lane
+// (LUM-894 Later).
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { clear } from "idb-keyval";
 
 import { ApiClient } from "../../../src/api/client";
 import { AccessTokenStore } from "../../../src/api/tokens";
-import { AuthProvider } from "../../../src/auth/AuthProvider";
+import type { DocumentSummary } from "../../../src/api/documents";
+import { AuthProvider, useAuth } from "../../../src/auth/AuthProvider";
 import { ChatPage, humaniseChatError } from "../../../src/features/chat/ChatPage";
 import * as drafts from "../../../src/pwa/drafts";
 import { getDraft, makeChatDraftKey } from "../../../src/pwa/drafts";
 import { renderWithRouter } from "../../helpers/renderWithRouter";
+import { seedSignedInDevice } from "../../helpers/signedInDevice";
+
+// LUM-886: this suite mounts a real AuthProvider; mark the device as already reconciled so the
+// first-sign-in wipe does not remove the view's own queries.
+beforeEach(() => {
+  seedSignedInDevice("u1");
+});
 
 const origGetDraft = drafts.getDraft;
 
@@ -97,30 +111,71 @@ function sseResponse(stream: ReadableStream<Uint8Array>): Response {
   });
 }
 
+const oneDoc: DocumentSummary = {
+  document_id: 1,
+  in_flight_job_id: null,
+  display_name: "notes.md",
+  file_path: "/library/notes.md",
+  file_type: ".md",
+  chunk_count: 3,
+  entity_count: 0,
+  scope: "personal",
+  status: "indexed",
+  indexed_at: "2026-11-01T00:00:00Z",
+  error_message: null,
+};
+
+function documentsResponse(docs: DocumentSummary[]): Response {
+  return jsonResponse(200, { documents: docs });
+}
+
 interface RouterCfg {
   refresh?: () => Response;
-  me?: () => Response;
+  me?: (init?: RequestInit) => Response;
+  documents?: () => Response | Promise<Response>;
+  wow?: () => Response;
   models?: () => Response;
+  privacy?: () => Response;
   chat?: (init?: RequestInit) => Response | Promise<Response>;
 }
 
-function buildClient(cfg: RouterCfg = {}): ApiClient {
+function buildClientWithSpy(cfg: RouterCfg = {}): {
+  client: ApiClient;
+  fetchImpl: MockInstance<(input: RequestInfo, init?: RequestInit) => Promise<Response>>;
+} {
   const tokens = new AccessTokenStore();
   const fetchImpl = vi.fn(async (input: RequestInfo, init?: RequestInit) => {
     const url = String(input);
     if (url.includes("/auth/refresh")) return (cfg.refresh ?? loginResponse)();
     if (url.includes("/auth/me"))
-      return (cfg.me ?? (() => jsonResponse(200, { id: "u1", email: "alice@home.lan", role: "user" })))();
+      return (cfg.me ?? (() => jsonResponse(200, { id: "u1", email: "alice@home.lan", role: "user" })))(init);
+    if (new URL(url, "http://x").pathname === "/api/v1/documents")
+      return (cfg.documents ?? (() => documentsResponse([oneDoc])))();
     if (url.endsWith("/api/v1/models")) return (cfg.models ?? modelsResponse)();
+    if (url.includes("/api/v1/me/privacy-mode"))
+      return (
+        cfg.privacy ??
+        (() =>
+          jsonResponse(200, {
+            instance: { privacy_mode: "local_only", privacy_mode_locked: false, privacy_effective: "local_only" },
+            user_restriction: "inherit",
+            privacy_effective: "local_only",
+            can_allow_cloud: false,
+          }))
+      )();
     // ConversationSidebar lists history on mount; empty list keeps the sidebar
     // out of its error state (no stray role="alert").
     if (url.endsWith("/api/v1/conversations")) return jsonResponse(200, { conversations: [] });
-    if (url.includes("/api/v1/me/wow-state")) return wowStateResponse();
+    if (url.includes("/api/v1/me/wow-state")) return (cfg.wow ?? wowStateResponse)();
     if (url.endsWith("/api/v1/chat/completions"))
       return (cfg.chat ?? (() => sseResponse(sseStreamFrom([sseChunk("ok", "stop"), "data: [DONE]\n\n"]))))(init);
     throw new Error(`unexpected fetch: ${url}`);
   });
-  return new ApiClient({ tokens, fetchImpl: fetchImpl as unknown as typeof fetch });
+  return { client: new ApiClient({ tokens, fetchImpl: fetchImpl as unknown as typeof fetch }), fetchImpl };
+}
+
+function buildClient(cfg: RouterCfg = {}): ApiClient {
+  return buildClientWithSpy(cfg).client;
 }
 
 function renderChat(client: ApiClient, tokens = new AccessTokenStore()) {
@@ -210,6 +265,51 @@ describe("ChatPage — render + send", () => {
 
     expect(screen.getByLabelText(/user message/i)).toHaveTextContent("Hi");
     expect(screen.queryByRole("button", { name: /stop/i })).not.toBeInTheDocument();
+  });
+
+  it("LUM-876: shows the loading status while waiting, then drops it from the answer", async () => {
+    const user = userEvent.setup();
+    const encoder = new TextEncoder();
+    let push: (part: string) => void = () => undefined;
+    let close: () => void = () => undefined;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        push = (part) => controller.enqueue(encoder.encode(part));
+        close = () => controller.close();
+      },
+    });
+    const statusChunk = JSON.parse(sseChunk("").slice("data: ".length)) as Record<string, unknown>;
+    statusChunk.lumogis = {
+      status: { code: "local_model_loading", message: "Loading model on your machine…" },
+    };
+    const client = buildClient({ chat: () => sseResponse(body) });
+
+    renderChat(client);
+    await waitFor(() => {
+      expect(screen.getByLabelText(/model$/i)).toBeInTheDocument();
+    });
+    await user.type(screen.getByLabelText(/^message$/i), "Hi");
+    await user.click(screen.getByRole("button", { name: /send/i }));
+
+    act(() => {
+      push(sseChunk(""));
+      push(`data: ${JSON.stringify(statusChunk)}\n\n`);
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-stream-status")).toHaveTextContent(/Loading model/);
+    });
+
+    act(() => {
+      push(sseChunk("Hello!", "stop"));
+      push("data: [DONE]\n\n");
+      close();
+    });
+    await waitFor(() => {
+      expect(screen.getAllByLabelText(/assistant message/i)[0]).toHaveTextContent("Hello!");
+    });
+    expect(screen.queryByTestId("chat-stream-status")).not.toBeInTheDocument();
+    expect(screen.getAllByLabelText(/assistant message/i)[0]).not.toHaveTextContent(/Loading model/);
+    expect(globalThis.sessionStorage.getItem("lumogis-chat-threads") ?? "").not.toMatch(/Loading model/);
   });
 
   it("renders a humanised error when the server returns 503 llm_provider_key_missing", async () => {
@@ -457,5 +557,321 @@ describe("ChatPage — sessionStorage isolation per tab", () => {
     renderChat(buildClient());
     await waitFor(() => screen.getByLabelText(/model$/i));
     expect(screen.queryByText(/tab one message/)).not.toBeInTheDocument();
+  });
+});
+
+describe("ChatPage — model picker explains why a model is off (LUM-881)", () => {
+  const catalog = (claude: Record<string, unknown>) => () =>
+    jsonResponse(200, {
+      models: [
+        { id: "ollama-mistral", label: "Ollama (mistral)", is_local: true, enabled: true, provider: "ollama" },
+        { id: "claude", label: "Claude", is_local: false, enabled: false, provider: "anthropic", ...claude },
+      ],
+    });
+  const claudeOption = async () => {
+    await screen.findByLabelText(/model$/i);
+    return screen.findByRole("option", { name: /^Claude/ });
+  };
+
+  it("(a) privacy_mode: suffix says so and the hint is shown", async () => {
+    renderChat(buildClient({ models: catalog({ disabled_reason: "privacy_mode" }) }));
+    expect(await claudeOption()).toHaveTextContent("Claude — off (privacy mode)");
+    expect(await screen.findByTestId("privacy-blocked-hint")).toBeInTheDocument();
+  });
+
+  it("(b) no_credentials: 'no API key' and no hint", async () => {
+    renderChat(buildClient({ models: catalog({ disabled_reason: "no_credentials" }) }));
+    expect(await claudeOption()).toHaveTextContent("Claude — no API key");
+    expect(screen.queryByTestId("privacy-blocked-hint")).not.toBeInTheDocument();
+  });
+
+  it("(c) optional_disabled: 'not turned on' and no hint", async () => {
+    renderChat(buildClient({ models: catalog({ disabled_reason: "optional_disabled" }) }));
+    expect(await claudeOption()).toHaveTextContent("Claude — not turned on");
+    expect(screen.queryByTestId("privacy-blocked-hint")).not.toBeInTheDocument();
+  });
+
+  it("(d) old server without the field: 'unavailable' and no hint", async () => {
+    renderChat(buildClient({ models: catalog({}) }));
+    expect(await claudeOption()).toHaveTextContent("Claude — unavailable");
+    expect(screen.queryByTestId("privacy-blocked-hint")).not.toBeInTheDocument();
+  });
+
+  it("an unknown future reason reads like an omitted one", async () => {
+    renderChat(buildClient({ models: catalog({ disabled_reason: "breaker_open" }) }));
+    expect(await claudeOption()).toHaveTextContent("Claude — unavailable");
+    expect(screen.queryByTestId("privacy-blocked-hint")).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// LUM-853 — chat empty-library state
+// ---------------------------------------------------------------------------
+
+const EMPTY_TITLE = "No documents in your library yet";
+
+function wowReadyResponse(): Response {
+  return jsonResponse(200, {
+    entities_ready: true,
+    top_entities: [],
+    wow_dismissed_at: null,
+    onboarding_completed_at: "2026-01-01T00:00:00Z",
+  });
+}
+
+interface StubbedStreams {
+  spy: MockInstance;
+  controllers: ReadableStreamDefaultController<Uint8Array>[];
+}
+
+/** `/api/v1/events` -> a never-closing event stream; every other global fetch rejects. */
+function stubEventStreams(): StubbedStreams {
+  const controllers: ReadableStreamDefaultController<Uint8Array>[] = [];
+  const spy = vi.spyOn(globalThis, "fetch").mockImplementation((async (
+    input: RequestInfo | URL,
+    init?: RequestInit,
+  ) => {
+    const path = new URL(String(input), "http://x").pathname;
+    if (path !== "/api/v1/events") throw new TypeError(`unexpected global fetch: ${path}`);
+    let ctl!: ReadableStreamDefaultController<Uint8Array>;
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        ctl = c;
+      },
+    });
+    controllers.push(ctl);
+    init?.signal?.addEventListener("abort", () => {
+      try {
+        ctl.close();
+      } catch {
+        /* already closed */
+      }
+    });
+    return new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+  }) as typeof fetch);
+  return { spy, controllers };
+}
+
+/** Streams to /api/v1/events that have not been aborted. */
+function openEventStreams(spy: MockInstance): number {
+  return spy.mock.calls.filter((c) => {
+    const path = new URL(String(c[0]), "http://x").pathname;
+    return path === "/api/v1/events" && (c[1] as RequestInit | undefined)?.signal?.aborted === false;
+  }).length;
+}
+
+function documentsCalls(fetchImpl: MockInstance): number {
+  return fetchImpl.mock.calls.filter(
+    (c) => new URL(String(c[0]), "http://x").pathname === "/api/v1/documents",
+  ).length;
+}
+
+describe("ChatPage — first chat starts on a usable model (LUM-310)", () => {
+  const llama = { id: "llama", label: "llama", is_local: true, enabled: true, provider: "ollama" };
+  const claudeNoKey = {
+    id: "claude",
+    label: "Claude",
+    is_local: false,
+    enabled: false,
+    provider: "anthropic",
+    disabled_reason: "no_credentials",
+  };
+  const picker = async () => (await screen.findByLabelText(/model$/i)) as HTMLSelectElement;
+
+  it("a catalog that failed during boot and then loads moves the chat off the hard-coded default", async () => {
+    // A fresh install: Lumogis Web opens before the orchestrator answers, so the
+    // first /api/v1/models fails and the seed thread gets DEFAULT_MODEL ("claude").
+    // Claude is in the catalog (no key) once it loads, but it cannot be used.
+    const user = userEvent.setup();
+    let calls = 0;
+    const client = buildClient({
+      models: () =>
+        ++calls === 1
+          ? jsonResponse(503, { detail: "models_unavailable" })
+          : jsonResponse(200, { models: [llama, claudeNoKey] }),
+    });
+    renderChat(client);
+    await user.click(await screen.findByRole("button", { name: /retry/i }));
+    await waitFor(async () => expect((await picker()).value).toBe("llama"));
+  });
+
+  it("a disabled model listed first is never the starting model", async () => {
+    renderChat(buildClient({ models: () => jsonResponse(200, { models: [claudeNoKey, llama] }) }));
+    await waitFor(async () => expect((await picker()).value).toBe("llama"));
+  });
+
+  it("a restored thread on a model that is now off moves to a usable one", async () => {
+    // Same tab, after a reload: the thread kept "claude" from the boot fallback.
+    let calls = 0;
+    const client = buildClient({
+      models: () =>
+        ++calls === 1
+          ? jsonResponse(503, { detail: "models_unavailable" })
+          : jsonResponse(200, { models: [llama, claudeNoKey] }),
+    });
+    const first = renderChat(client);
+    await screen.findByText(/Unable to load models/i);
+    first.unmount();
+    renderChat(client);
+    await waitFor(async () => expect((await picker()).value).toBe("llama"));
+  });
+
+  it("with no usable model it keeps the current one rather than guessing", async () => {
+    renderChat(buildClient({ models: () => jsonResponse(200, { models: [claudeNoKey] }) }));
+    await waitFor(async () => expect((await picker()).value).toBe("claude"));
+  });
+});
+
+describe("ChatPage — empty library (LUM-853)", () => {
+  let streams: StubbedStreams;
+  beforeEach(() => {
+    streams = stubEventStreams();
+  });
+
+  it("1 offers source setup when the thread and the library are both empty", async () => {
+    const { client } = buildClientWithSpy({
+      documents: () => documentsResponse([]),
+      wow: wowReadyResponse,
+    });
+    renderChat(client);
+    const heading = await screen.findByRole("heading", { name: EMPTY_TITLE });
+    expect(screen.getByRole("link", { name: "Connect a source" })).toHaveAttribute("href", "/me/sources");
+    expect(screen.getByRole("link", { name: "Upload a file" })).toHaveAttribute("href", "/documents");
+
+    const log = screen.getByRole("log", { name: /conversation transcript/i });
+    expect(within(log).queryByRole("heading", { name: EMPTY_TITLE })).toBeNull();
+    // After the transcript in document order.
+    expect(log.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The ephemeral-chat sentence stays inside the transcript, once.
+    const sentence = screen.getAllByText(/Lumogis chats are ephemeral and live only in this browser tab/);
+    expect(sentence).toHaveLength(1);
+    expect(log.contains(sentence[0]!)).toBe(true);
+
+    // The guided cards are not gated on the library, and only the documents stream is open.
+    await screen.findByTestId("wow-gate");
+    await waitFor(() => expect(openEventStreams(streams.spy)).toBe(1));
+  });
+
+  it("2 keeps today's chat when the library has documents", async () => {
+    renderChat(buildClient({ documents: () => documentsResponse([oneDoc]), wow: wowReadyResponse }));
+    await screen.findByRole("combobox", { name: "Model" });
+    await screen.findByTestId("wow-gate");
+    expect(screen.queryByRole("heading", { name: EMPTY_TITLE })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Connect a source" })).toBeNull();
+    expect(screen.getByText(/Lumogis chats are ephemeral and live only in this browser tab/)).toBeInTheDocument();
+  });
+
+  it("3 shows nothing new while the documents list is loading", async () => {
+    renderChat(buildClient({ documents: () => new Promise<Response>(() => undefined) }));
+    await screen.findByRole("combobox", { name: "Model" });
+    expect(screen.queryByRole("heading", { name: EMPTY_TITLE })).toBeNull();
+    expect(screen.getByText(/Lumogis chats are ephemeral and live only in this browser tab/)).toBeInTheDocument();
+  });
+
+  it("4 shows nothing new when the documents list fails", async () => {
+    const { client, fetchImpl } = buildClientWithSpy({ documents: () => jsonResponse(500, { detail: "boom" }) });
+    renderChat(client);
+    await screen.findByRole("combobox", { name: "Model" });
+    await waitFor(() => expect(documentsCalls(fetchImpl)).toBeGreaterThan(0));
+    expect(screen.queryByRole("heading", { name: EMPTY_TITLE })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Connect a source" })).toBeNull();
+  });
+
+  it("5 flips to normal chat when a document lands (SSE path)", async () => {
+    let calls = 0;
+    const { client, fetchImpl } = buildClientWithSpy({
+      documents: () => {
+        calls += 1;
+        return documentsResponse(calls === 1 ? [] : [oneDoc]);
+      },
+      wow: wowReadyResponse,
+    });
+    renderChat(client);
+    await screen.findByRole("heading", { name: EMPTY_TITLE });
+    await waitFor(() => expect(openEventStreams(streams.spy)).toBe(1));
+    expect(documentsCalls(fetchImpl)).toBe(1);
+
+    const enc = new TextEncoder();
+    await act(async () => {
+      for (const c of streams.controllers) {
+        try {
+          c.enqueue(enc.encode("event: document_status_changed\ndata: {}\n\n"));
+        } catch {
+          /* aborted stream */
+        }
+      }
+    });
+    await waitFor(() => expect(screen.queryByRole("heading", { name: EMPTY_TITLE })).toBeNull());
+    expect(documentsCalls(fetchImpl)).toBe(2);
+  });
+
+  it("6 does not show the empty-library state on a non-empty thread", async () => {
+    const user = userEvent.setup();
+    renderChat(buildClient({ documents: () => documentsResponse([]), wow: wowReadyResponse }));
+    await screen.findByRole("heading", { name: EMPTY_TITLE });
+    await user.type(screen.getByLabelText(/^message$/i), "Hi");
+    await user.click(screen.getByRole("button", { name: /send/i }));
+    await waitFor(() => expect(screen.getAllByLabelText(/assistant message/i)[0]).toHaveTextContent("ok"));
+    expect(screen.queryByRole("heading", { name: EMPTY_TITLE })).toBeNull();
+  });
+
+  it("7 copy names documents and avoids member-facing scope words", async () => {
+    renderChat(buildClient({ documents: () => documentsResponse([]), wow: wowReadyResponse }));
+    const heading = await screen.findByRole("heading", { name: EMPTY_TITLE });
+    const block = heading.parentElement!;
+    const text = block.textContent ?? "";
+    expect(text).toMatch(/documents/i);
+    expect(text).not.toMatch(/\b(personal|shared|system)\b/i);
+    // Never claim the account (or Lumogis) is empty: it names the missing category only.
+    expect(text).not.toMatch(/account is empty|nothing here|lumogis is empty|no data/i);
+  });
+
+  it("8 an in-flight upload counts as a document", async () => {
+    renderChat(
+      buildClient({
+        documents: () => documentsResponse([{ ...oneDoc, status: "indexing", in_flight_job_id: 7 }]),
+      }),
+    );
+    await screen.findByRole("combobox", { name: "Model" });
+    expect(screen.queryByRole("heading", { name: EMPTY_TITLE })).toBeNull();
+  });
+
+  it("9 does not open the documents stream on a populated library", async () => {
+    renderChat(buildClient({ documents: () => documentsResponse([oneDoc]), wow: wowReadyResponse }));
+    await screen.findByTestId("wow-gate");
+    expect(openEventStreams(streams.spy)).toBe(0);
+  });
+
+  it("14 auth unset end to end: single-user boot reaches chat and offers sources", async () => {
+    seedSignedInDevice("default");
+    const { client } = buildClientWithSpy({
+      refresh: () => jsonResponse(503, { detail: "refresh is disabled in single-user dev mode" }),
+      me: (init) =>
+        new Headers(init?.headers).get("Authorization") === null
+          ? jsonResponse(200, { id: "default", email: "dev@local.lan", role: "admin" })
+          : jsonResponse(401, { error: "unexpected credential" }),
+      documents: () => documentsResponse([]),
+      wow: () =>
+        jsonResponse(200, {
+          entities_ready: false,
+          top_entities: [],
+          wow_dismissed_at: null,
+          onboarding_completed_at: "2026-01-01T00:00:00Z",
+        }),
+    });
+    function SingleUserProbe(): JSX.Element {
+      return <span data-testid="single-user">{String(useAuth().singleUser)}</span>;
+    }
+    renderWithRouter(
+      <AuthProvider client={client} tokens={new AccessTokenStore()}>
+        <SingleUserProbe />
+        <ChatPage />
+      </AuthProvider>,
+      { route: "/chat" },
+    );
+    await screen.findByRole("heading", { name: EMPTY_TITLE });
+    expect(screen.getByRole("link", { name: "Connect a source" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Sign in" })).toBeNull();
+    expect(screen.getByTestId("single-user")).toHaveTextContent("true");
   });
 });

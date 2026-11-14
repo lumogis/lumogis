@@ -9,7 +9,7 @@ auth is on: that value is the **highest-precedence** resolver and would make the
 remap a silent no-op, permanently stranding the admin's pre-sharing library.
 
 These tests pin that precedence contract so the fix in
-``apps/lumogis-server/.../env.rs`` (omit the ``default`` owner vars when
+the appliance's ``env.rs`` (omit the ``default`` owner vars when
 ``auth_on``) cannot regress unnoticed.
 """
 
@@ -103,14 +103,16 @@ def test_post_bootstrap_remap_helper_invokes_script(monkeypatch):
     """``main._run_post_bootstrap_default_user_remap`` delegates to db_default_user_remap."""
     import db_default_user_remap
 
-    calls: list[int] = []
+    calls: list[dict] = []
 
-    def fake_main():
-        calls.append(1)
+    def fake_main(**kwargs):
+        calls.append(kwargs)
         return 0
 
     monkeypatch.setattr(db_default_user_remap, "main", fake_main)
     import main
 
     main._run_post_bootstrap_default_user_remap()
-    assert calls == [1]
+    # LUM-916: the second pass identifies itself so it, not the pre-uvicorn
+    # pass, is the one that warns when the bootstrap admin never appeared.
+    assert calls == [{"post_bootstrap": True}]

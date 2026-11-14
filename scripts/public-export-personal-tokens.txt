@@ -1,0 +1,30 @@
+# Personal-data denylist for the public export gate.
+#
+# One lowercase token per line. check-public-export.sh matches these case-insensitively
+# on WORD BOUNDARIES in the CONTENT of .jsonl / .json / .md / .html / .py / .yml files in
+# the export tree, and fails closed on a hit. An empty list makes the gate a no-op.
+#
+# THE LIST IS CURRENTLY EMPTY, AND THAT IS CORRECT.
+# ------------------------------------------------
+# This gate was added during the KG AGPL relicence review after a plan critique reported
+# that orchestrator/tests/premium/temporal_eval/pairs.jsonl contained a real household
+# narrative. THAT REPORT WAS WRONG: the maintainer confirmed the fixture is synthetic test
+# data that happens to use the maintainer's own first name. The fixtures were reverted to
+# their original content and no token from them belongs here.
+#
+# The MECHANISM is kept because the reason for adding it holds independently of that false
+# alarm: the secret scan in check-public-export.sh matches credential-shaped strings and
+# does NOT read the content of .jsonl / .md / .html files at all. If real personal data
+# ever does need scrubbing from a fixture, scrub it and add its distinctive tokens here so
+# it cannot return through a merge or a revert.
+#
+# Rules if you ever add tokens
+# ----------------------------
+# 1. DISTINCTIVE TOKENS ONLY. Common given names are used legitimately as generic test
+#    fixtures across the tree (e.g. "Alex" as a display_name in
+#    orchestrator/tests/test_admin_users_display_name.py), and `thomas` appears in the
+#    MAINTAINER'S OWN COPYRIGHT NOTICE ("Copyright (C) 2026 Thomas Kohlborn, trading as
+#    Lumogis") and in ADR decision attributions. Blocking those would suppress authorship
+#    evidence and break the build on legitimate content.
+# 2. A gate that fails on legitimate content gets disabled, which is worse than no gate.
+# 3. Never remove a token to make the gate pass — scrub the content instead.

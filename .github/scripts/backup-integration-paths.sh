@@ -6,6 +6,12 @@
 #   - scripts/integration-backup-roundtrip.sh
 #   - tests/integration/seed_backup_roundtrip_data.sh
 #   - tests/integration/test_backup_restore_roundtrip.sh
+#   - tests/integration/backup_roundtrip_files.py   (LUM-892 file half of the round trip)
+#   - tests/unit/test_backup_files.sh
+#   - orchestrator/services/{media_storage,backup_status,documents,captures}.py,
+#     orchestrator/routes/admin.py and orchestrator/config.py (the round-trip
+#     helper calls them; admin.py writes the stop-entities list, LUM-922)
+#   - scripts/update/rescue-*.sh (the round trip runs the container rescues)
 #   - docker/backup/**
 #   - docker-compose.yml
 #   - docker-compose.falkordb.yml
@@ -51,6 +57,15 @@ while IFS= read -r file || [[ -n "${file:-}" ]]; do
     || [[ "$file" == "tests/integration/seed_backup_roundtrip_data.sh" ]] \
     || [[ "$file" == "tests/integration/test_backup_restore_roundtrip.sh" ]] \
     || [[ "$file" == "tests/unit/test_backup_retention.sh" ]] \
+    || [[ "$file" == "tests/integration/backup_roundtrip_files.py" ]] \
+    || [[ "$file" == "tests/unit/test_backup_files.sh" ]] \
+    || [[ "$file" == "orchestrator/services/media_storage.py" ]] \
+    || [[ "$file" == "orchestrator/services/backup_status.py" ]] \
+    || [[ "$file" == "orchestrator/services/documents.py" ]] \
+    || [[ "$file" == "orchestrator/services/captures.py" ]] \
+    || [[ "$file" == "orchestrator/config.py" ]] \
+    || [[ "$file" == "orchestrator/routes/admin.py" ]] \
+    || [[ "$file" == scripts/update/rescue-*.sh ]] \
     || [[ "$file" == docker/backup/* ]] \
     || [[ "$file" == "docker-compose.yml" ]] \
     || [[ "$file" == "docker-compose.falkordb.yml" ]] \

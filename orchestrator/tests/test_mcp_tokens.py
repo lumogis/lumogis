@@ -8,7 +8,7 @@ writes-go-to-audit_log-not-action_log assertion. Pinned by the test
 matrix in plan ``mcp_token_user_map`` §"Unit tests".
 
 The tests use a small in-memory :class:`_FakeStore` (mirrors the
-``_IsolationStore`` in ``tests/integration/test_two_user_isolation.py``
+``_IsolationStore`` in ``tests/test_two_user_isolation.py``
 but scoped to ``mcp_tokens`` only, plus the ``audit_log`` writes the
 service emits via :func:`actions.audit.write_audit`).
 """
@@ -49,6 +49,10 @@ class _FakeStore:
 
     def __init__(self) -> None:
         self.tokens: dict[str, dict] = {}
+        # LUM-885: ``verify()`` LEFT JOINs ``users``. Minting a token seeds its
+        # owner as an active user here, so existing tests keep their meaning;
+        # owner-check tests delete or disable the entry.
+        self.users: dict[str, dict] = {}
         self.audit: list[dict] = []
         self.action_log: list[dict] = []
         self.exec_log: list[tuple[str, tuple]] = []
@@ -83,6 +87,7 @@ class _FakeStore:
             if self._fail_on_insert:
                 raise RuntimeError("simulated mcp_tokens insert failure")
             token_id, user_id, token_prefix, token_hash, label, scopes = p
+            self.users.setdefault(user_id, {"id": user_id, "disabled": False})
             # Active-prefix uniqueness guard mirroring the partial unique index.
             for row in self.tokens.values():
                 if row["revoked_at"] is None and row["token_prefix"] == token_prefix:
@@ -133,11 +138,20 @@ class _FakeStore:
             row = self.tokens.get(tid)
             return dict(row) if row else None
 
-        if q.startswith("select * from mcp_tokens where token_prefix = %s and revoked_at is null"):
+        if q.startswith(
+            "select t.*, u.id as owner_id, u.disabled as owner_disabled "
+            "from mcp_tokens t left join users u on u.id = t.user_id "
+            "where t.token_prefix = %s and t.revoked_at is null"
+        ):
             (prefix,) = p
             for row in self.tokens.values():
                 if row["token_prefix"] == prefix and row["revoked_at"] is None:
-                    return dict(row)
+                    owner = self.users.get(row["user_id"])
+                    return {
+                        **row,
+                        "owner_id": owner["id"] if owner else None,
+                        "owner_disabled": owner["disabled"] if owner else None,
+                    }
             return None
 
         return None
@@ -410,6 +424,96 @@ def test_verify_returns_none_for_revoked_token(store):
     row, plaintext = mint("alice", "lbl")
     revoke(row.id, by_user_id="alice", by_role="user")
     assert verify(plaintext) is None
+
+
+# --- LUM-885: owner check on verify() ---------------------------------------
+
+
+def test_verify_rejects_token_of_deleted_owner(store, monkeypatch, caplog):
+    """Backstop: a delete that skipped the cascade must not leave a live token."""
+    from services.mcp_tokens import mint
+    from services.mcp_tokens import verify
+
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    row, plaintext = mint("alice", "lbl")
+    assert verify(plaintext) is not None  # negative control: owner present
+    del store.users["alice"]
+
+    caplog.set_level(logging.INFO, logger="services.mcp_tokens")
+    assert verify(plaintext) is None
+    msgs = " ".join(rec.getMessage() for rec in caplog.records)
+    assert row.id in msgs
+    assert plaintext not in msgs
+
+
+def test_verify_rejects_token_of_disabled_owner(store, monkeypatch):
+    """A disabled owner is rejected even though the token row is not revoked."""
+    from services.mcp_tokens import mint
+    from services.mcp_tokens import verify
+
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    _, plaintext = mint("alice", "lbl")
+    assert verify(plaintext) is not None
+    store.users["alice"]["disabled"] = True
+    assert verify(plaintext) is None
+
+
+def test_verify_accepts_default_owner_in_single_user_mode(store, monkeypatch):
+    """Single-user tokens belong to the synthetic ``default`` user, which has no
+    ``users`` row. The LEFT JOIN yields ``owner_id=None`` AND
+    ``owner_disabled=None``; the second must read as "not disabled" and neither
+    may reach the returned object."""
+    from services.mcp_tokens import mint
+    from services.mcp_tokens import verify
+
+    monkeypatch.delenv("AUTH_ENABLED", raising=False)
+    _, plaintext = mint("default", "lbl")
+    del store.users["default"]
+
+    got = verify(plaintext)
+    assert got is not None
+    assert got.user_id == "default"
+    assert not hasattr(got, "owner_id") and not hasattr(got, "owner_disabled")
+
+
+def test_verify_rejects_default_owner_when_auth_enabled(store, monkeypatch):
+    """Multi-user mode must never resolve a token to ``default``."""
+    from services.mcp_tokens import mint
+    from services.mcp_tokens import verify
+
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    _, plaintext = mint("default", "lbl")
+    del store.users["default"]
+    assert verify(plaintext) is None
+
+
+def test_verify_rejects_missing_non_default_owner_in_single_user_mode(store, monkeypatch):
+    """The ``default`` exception is exact: any other missing owner is rejected."""
+    from services.mcp_tokens import mint
+    from services.mcp_tokens import verify
+
+    monkeypatch.delenv("AUTH_ENABLED", raising=False)
+    _, plaintext = mint("alice", "lbl")
+    del store.users["alice"]
+    assert verify(plaintext) is None
+
+
+def test_verify_hash_mismatch_still_warns_before_owner_check(store, monkeypatch, caplog):
+    """The probe signal survives: a wrong hash on a known prefix still warns
+    even when the owner is gone."""
+    from services.mcp_tokens import mint
+    from services.mcp_tokens import verify
+
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    _, plaintext = mint("alice", "lbl")
+    del store.users["alice"]
+    body = plaintext[len("lmcp_") :]
+    head, tail = body[:16], body[16:]
+    bogus = "lmcp_" + head + ("3" if tail[0] != "3" else "4") + tail[1:]
+
+    caplog.set_level(logging.WARNING, logger="services.mcp_tokens")
+    assert verify(bogus) is None
+    assert "hash mismatch" in " ".join(r.getMessage() for r in caplog.records)
 
 
 def test_verify_does_not_leak_plaintext_in_warning(store, caplog):

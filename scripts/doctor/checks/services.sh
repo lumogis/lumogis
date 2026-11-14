@@ -106,21 +106,30 @@ def parse_compose_ps(raw: str) -> list[dict]:
     return out
 
 
-def orchestrator_host_port(cfg_raw: str) -> int:
-    override = os.environ.get("ORCHESTRATOR_HOST_PORT", "").strip()
+def host_port(cfg_raw: str, service: str, container_port: int, default: int, env_var: str) -> int:
+    """Published host port for one service, however it was overridden.
+
+    Env var first, then the published port in `docker compose config`, then the
+    stock default. Generalised from the orchestrator-only version because caddy
+    needs exactly the same resolution: any hardcoded host port collides on a
+    self-hosted runner that is also somebody's daily driver, and a probe that
+    does not follow the override reports a false failure for a stack that is
+    actually healthy — swapping one wrong red for another.
+    """
+    override = os.environ.get(env_var, "").strip()
     if override.isdigit():
         return int(override)
     if not cfg_raw.strip():
-        return 8000
+        return default
     try:
         cfg = json.loads(cfg_raw)
     except json.JSONDecodeError:
-        return 8000
+        return default
     try:
-        orch = (cfg.get("services") or {}).get("orchestrator") or {}
-        ports = orch.get("ports")
+        svc = (cfg.get("services") or {}).get(service) or {}
+        ports = svc.get("ports")
         if not ports:
-            return 8000
+            return default
         for p in ports:
             if isinstance(p, dict):
                 pub = p.get("published")
@@ -131,7 +140,7 @@ def orchestrator_host_port(cfg_raw: str) -> int:
                     t = int(str(tgt).split("/")[0])
                 except ValueError:
                     continue
-                if t != 8000:
+                if t != container_port:
                     continue
                 s = str(pub).split("/")[0]
                 if s.isdigit():
@@ -143,7 +152,15 @@ def orchestrator_host_port(cfg_raw: str) -> int:
                     return int(s)
     except (TypeError, ValueError, KeyError, AttributeError):
         pass
-    return 8000
+    return default
+
+
+def orchestrator_host_port(cfg_raw: str) -> int:
+    return host_port(cfg_raw, "orchestrator", 8000, 8000, "ORCHESTRATOR_HOST_PORT")
+
+
+def caddy_host_port(cfg_raw: str) -> int:
+    return host_port(cfg_raw, "caddy", 80, 80, "CADDY_HTTP_HOST_PORT")
 
 
 def curl_healthz(port: int) -> tuple[str, str]:
@@ -159,16 +176,17 @@ def curl_healthz(port: int) -> tuple[str, str]:
         return "warn", f"curl /healthz failed (exit {exc.returncode}) for {url}"
 
 
-def curl_caddy_healthz() -> tuple[str, str]:
+def curl_caddy_healthz(port: int) -> tuple[str, str]:
+    url = f"http://127.0.0.1:{port}/healthz"
     try:
         subprocess.run(
-            ["curl", "-sf", "--max-time", "5", "http://127.0.0.1/healthz"],
+            ["curl", "-sf", "--max-time", "5", url],
             check=True,
             capture_output=True,
         )
-        return "ok", "Caddy edge /healthz responded"
+        return "ok", f"Caddy edge /healthz responded on {url}"
     except subprocess.CalledProcessError as exc:
-        return "warn", f"Caddy edge /healthz probe failed (exit {exc.returncode})"
+        return "warn", f"Caddy edge /healthz probe failed (exit {exc.returncode}) for {url}"
 
 
 def main() -> int:
@@ -294,7 +312,7 @@ def main() -> int:
         ch = str(caddy.get("Health") or "").lower()
         wh = str(web.get("Health") or "").lower()
         if c_st == "running" and w_st == "running" and ch == "healthy" and wh == "healthy":
-            st, msg = curl_caddy_healthz()
+            st, msg = curl_caddy_healthz(caddy_host_port(cfg_raw))
             if st != "ok":
                 od, _om = curl_healthz(port)
                 if od != "ok":

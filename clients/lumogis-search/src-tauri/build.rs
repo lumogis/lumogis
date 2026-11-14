@@ -116,8 +116,8 @@ fn main() {
         fs::remove_file(&cap_dest).ok();
     }
 
-    // Path-dep'd from lumogis-server: TAURI_CONFIG points at Server bundled conf (externalBin
-    // paths under apps/lumogis-server/src-tauri/binaries). Only run tauri_build for Search.
+    // Path-dep'd from lumogis-server: TAURI_CONFIG points at the Server's bundled conf (its
+    // own externalBin paths). Only run tauri_build for Search.
     // Path-dep'd from lumogis-hub: hub's TAURI_CONFIG must win; skip tauri_build here.
     // Standalone `cargo build` in this crate sets CARGO_PKG_NAME=lumogis-search but leaves
     // CARGO_PRIMARY_PACKAGE empty — the old `== Ok("lumogis-search")` guard never matched,

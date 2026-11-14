@@ -30,7 +30,7 @@ Exploration: `.cursor/explorations/archived/LUM-463-persona-aware-search-setting
 
 **Client-only (A/B) settings:** unchanged layout from LUM-397 (server URL, library roots, admin ingest paths, push upload).
 
-**Implementation:** `clients/lumogis-search/ui/settingsPanel.ts` (module-level compose/save helpers) + `apps/lumogis-server/ui/bundled/hubSettingsMarkup.ts`.
+**Implementation:** `clients/lumogis-search/ui/settingsPanel.ts` (module-level compose/save helpers) + the appliance's Hub settings markup (`hubSettingsMarkup.ts`).
 
 **Documentation:** Persona matrix / Hub README state **C admin on laptop** uses **client-only Search (Persona B layout)** when pointing at Hub URL — not bundled settings (`profile !== "bundled"`).
 
@@ -49,7 +49,7 @@ Exploration: `.cursor/explorations/archived/LUM-463-persona-aware-search-setting
 
 - Persona C operators see one indexing story aligned with the setup wizard.
 - A/B remote-client model stays intact without regression (golden HTML + `defaultClientSettingsDescriptor` Vitest).
-- Hub-specific UX can evolve in private `apps/lumogis-server/` tree.
+- Hub-specific UX can evolve in the appliance without touching the Search client.
 
 **Harder:**
 
@@ -73,3 +73,4 @@ Exploration: `.cursor/explorations/archived/LUM-463-persona-aware-search-setting
 - 2026-06-10: Draft created by /explore LUM-463
 - 2026-06-10: Operator locked Q1–Q3 (hide bundled push upload; docs for C-on-laptop; LUM-464 gates LUM-446)
 - 2026-06-10: Finalised by /verify-plan LUM-464 — implementation confirmed decision
+- 2026-11-10: public-boundary wording (LUM-898).

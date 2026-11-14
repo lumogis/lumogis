@@ -28,15 +28,18 @@ import { useAuth } from "../../auth/AuthProvider";
 import type { ApiClient } from "../../api/client";
 import {
   getPendingApprovals,
+  listPendingProposals,
   setConnectorMode,
   elevateActionType,
   type DeniedActionItem,
   type ElevationCandidateItem,
   type PendingApprovalItem,
+  type PendingProposalItem,
 } from "../../api/approvals";
 import { openReconnectingSse } from "../../api/sse";
 import { Button } from "../../components/Button";
 import { RiskBadge } from "./RiskBadge";
+import { RecoverableSends } from "./RecoverableSends";
 
 // ── Fetch hook ────────────────────────────────────────────────────────────
 
@@ -222,6 +225,14 @@ export function ApprovalsPage(): JSX.Element {
         </p>
       )}
 
+      <PendingSendProposals client={client} />
+
+      {/* LUM-793: failed sends. Distinct from the section above — those are
+          proposals the user abandoned, these are ones that were sent and did
+          not arrive. */}
+      <RecoverableSends client={client} />
+
+
       {!loading && items.length === 0 && !error && (
         <p className="lumogis-approvals__empty" role="status">
           No pending approvals. Lumogis is operating normally.
@@ -272,7 +283,9 @@ interface DeniedActionRowProps {
 function DeniedActionRow({ item, onSetMode, onElevate }: DeniedActionRowProps): JSX.Element {
   const isHardLimited = item.risk_tier === "hard_limit";
   const canElevate = item.elevation_eligible && !isHardLimited;
-  const canSetMode = !isHardLimited;
+  // The server decides which rows can be switched (`suggested_action`, LUM-962):
+  // do not re-derive connector rules in the client.
+  const canSetMode = !isHardLimited && item.suggested_action !== "explain_only";
 
   return (
     <li className="lumogis-approvals__item lumogis-approvals__item--denied" aria-label={`Denied: ${item.connector} ${item.action_type}`}>
@@ -318,6 +331,11 @@ function DeniedActionRow({ item, onSetMode, onElevate }: DeniedActionRowProps): 
               >
                 Always allow this action type
               </Button>
+            )}
+            {!canSetMode && !canElevate && (
+              <span className="lumogis-approvals__not-switchable">
+                This can&apos;t be switched from here.
+              </span>
             )}
           </>
         )}
@@ -496,9 +514,97 @@ function humanizeApprovalError(msg: string): string {
   if (msg.includes("hard_limited_action"))
     return "This action type is hard-limited and cannot be elevated.";
   if (msg.includes("unknown_connector"))
-    return "Connector not found in the action registry.";
+    return "This connector can't be switched to DO mode right now.";
   if (msg.includes("unknown_action"))
-    return "Action type not found in the action registry.";
+    return "This action type can't be elevated right now.";
   if (msg.includes("429")) return "Too many approval changes. Try again in a minute.";
   return `Action failed: ${msg}`;
+}
+
+// ── LUM-652: send/save-draft proposal recovery listing ─────────────────────
+// The primary send-confirm path is the composer's SendConfirmCard. This is a
+// safety net: a send proposal the user created then abandoned (chose Save, or
+// closed the card) stays `pending` and would otherwise be invisible. It is
+// read-only here — surfacing, not re-driving, the abandoned proposal.
+const _SEND_ACTION_NAMES = new Set([
+  "email_reply",
+  "email_compose",
+  "email_forward",
+  "email_save_draft",
+  "email_unsubscribe",
+]);
+
+function _actionLabel(actionName: string): string {
+  if (actionName === "email_save_draft") return "Draft";
+  if (actionName === "email_unsubscribe") return "Unsubscribe";
+  if (actionName === "email_forward") return "Forward";
+  return "Reply/compose";
+}
+
+interface UnsubscribeTarget {
+  from_addr?: string;
+  mailto_addr?: string;
+}
+
+/** The sender list + resolved recipients of a pending unsubscribe batch. */
+function UnsubscribeTargets({ payload }: { payload?: Record<string, unknown> }): JSX.Element | null {
+  const targets = (payload?.targets as UnsubscribeTarget[] | undefined) ?? [];
+  if (targets.length === 0) return null;
+  return (
+    <ul className="lumogis-approvals__unsubscribe-targets" data-testid="unsubscribe-targets">
+      {targets.map((t, i) => (
+        <li key={`${t.from_addr ?? i}`}>
+          <span className="lumogis-approvals__unsubscribe-sender">{t.from_addr}</span>
+          {" → "}
+          <span className="lumogis-approvals__unsubscribe-recipient">{t.mailto_addr}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+export function PendingSendProposals({ client }: { client: ApiClient }): JSX.Element | null {
+  const [items, setItems] = useState<PendingProposalItem[]>([]);
+
+  useEffect(() => {
+    const ctrl = new AbortController();
+    listPendingProposals(client, ctrl.signal)
+      .then((res) => setItems(res.proposals.filter((p) => _SEND_ACTION_NAMES.has(p.action_name))))
+      .catch(() => {
+        /* recovery listing is best-effort; never block the page */
+      });
+    return () => ctrl.abort();
+  }, [client]);
+
+  if (items.length === 0) return null;
+
+  return (
+    <section className="lumogis-approvals__pending-sends" aria-label="Unsent drafts">
+      <h2 className="lumogis-approvals__subtitle">Unsent messages</h2>
+      <ul className="lumogis-approvals__list" role="list">
+        {items.map((p) => (
+          <li key={p.proposal_id} className="lumogis-approvals__pending-send">
+            <span className="lumogis-approvals__pending-send-action">
+              {_actionLabel(p.action_name)}
+            </span>
+            {/* LUM-697: an unsubscribe batch is approved as ONE proposal, so the
+                approver must be able to see every sender AND the exact address
+                each will be mailed. The recipient was resolved server-side at
+                propose time and stored in the payload, which is returned
+                verbatim — so this reads what will actually be sent, not a
+                client-side reconstruction of it. */}
+            {p.action_name === "email_unsubscribe" ? (
+              <UnsubscribeTargets payload={p.payload} />
+            ) : null}
+            {p.first_contact ? (
+              <span className="lumogis-approvals__first-contact" role="note">
+                first contact
+              </span>
+            ) : null}
+            <span className="lumogis-approvals__pending-send-status">{p.status}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
 }

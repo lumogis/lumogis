@@ -11,18 +11,51 @@ die() { echo "check-public-export: FAIL: $*" >&2; exit 1; }
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-assert_strip_list_paths_absent() {
-  local root="$1"
-  local listf="$SCRIPT_DIR/public-export-strip-list.txt"
-  [[ -f "$listf" ]] || die "missing public strip list: $listf"
+# --- Strip lists (LUM-898) ---
+# The main list ships in the public tree. The local list, when present, holds the
+# maintainer-only entries; it is on the main list, so it never ships itself. Both are
+# read once, main first, into STRIP_ENTRIES; LOCAL_STRIP_ENTRIES keeps the local part.
+# Fail closed: a missing main list dies, and so does a missing local list when the
+# source checkout holds a tree the local list exists to strip. That tree's names are
+# assembled from parts, as in gate 3, so this script never carries the literals.
+STRIP_LIST="$SCRIPT_DIR/public-export-strip-list.txt"
+STRIP_LIST_LOCAL="$SCRIPT_DIR/public-export-strip-list.local.txt"
+STRIP_ENTRIES=()
+LOCAL_STRIP_ENTRIES=()
+
+_strip_list_lines() { # <file>: print each entry, comments and blank lines dropped
+  local raw_line line
   while IFS= read -r raw_line || [[ -n "${raw_line}" ]]; do
-    local line="${raw_line%%#*}"
+    line="${raw_line%%#*}"
     line="$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
     [[ -z "$line" ]] && continue
-    if [[ -e "$root/$line" ]]; then
-      die "forbidden path in export candidate: ${line} (see scripts/public-export-strip-list.txt)"
+    printf '%s\n' "$line"
+  done <"$1"
+}
+
+load_strip_lists() {
+  local src_root srv line
+  [[ -f "$STRIP_LIST" ]] || die "missing public strip list: $STRIP_LIST"
+  while IFS= read -r line; do STRIP_ENTRIES+=("$line"); done < <(_strip_list_lines "$STRIP_LIST")
+  src_root="$(cd "$SCRIPT_DIR/.." && pwd)"
+  srv="lumogis-""server"
+  if [[ -f "$STRIP_LIST_LOCAL" ]]; then
+    while IFS= read -r line; do LOCAL_STRIP_ENTRIES+=("$line"); done < <(_strip_list_lines "$STRIP_LIST_LOCAL")
+    STRIP_ENTRIES+=(${LOCAL_STRIP_ENTRIES[@]+"${LOCAL_STRIP_ENTRIES[@]}"})
+  elif [[ -e "$src_root/apps/$srv" || -e "$src_root/Makefile.""server"".mk" ]]; then
+    die "source checkout has maintainer-only paths but no local strip list: $STRIP_LIST_LOCAL (refusing to check with the main list alone)"
+  fi
+}
+
+load_strip_lists
+
+assert_strip_list_paths_absent() {
+  local root="$1" line
+  for line in ${STRIP_ENTRIES[@]+"${STRIP_ENTRIES[@]}"}; do
+    if [[ -e "$root/$line" || -L "$root/$line" ]]; then
+      die "forbidden path in export candidate: ${line} (see the export strip lists in scripts/)"
     fi
-  done <"$listf"
+  done
 }
 dotenv_basename_forbidden() {
   local base
@@ -50,7 +83,7 @@ assert_export_has_no_apps_subtree() {
   local apps_dir="$root/apps"
   if [[ -d "$apps_dir" ]]; then
   if find "$apps_dir" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null | grep -q .; then
-      die "export tree must not contain apps/ subtree (private Server tree leak risk): $apps_dir"
+      die "export tree must not contain an apps/ subtree: $apps_dir"
     fi
   fi
 }
@@ -106,6 +139,196 @@ if grep -rInE '^[[:space:]]*license[[:space:]]*=[[:space:]]*"?(AGPL|GPL)-3\.0-or
     --include='*.toml' --exclude-dir=.git 2>/dev/null || true
   die "export tree TOML licence field uses *-or-later — use AGPL-3.0-only"
 fi
+
+# --- Personal-data denylist + runner allowlist (both in Python: see note) ---
+# These two gates were hand-rolled in bash/grep twice and failed open twice:
+#   1. `grep | head -5` returned 141 (SIGPIPE) under pipefail, silently skipping tokens.
+#   2. A hand-rolled YAML walk missed a same-indentation block sequence
+#      (`runs-on:` then `- "self-hosted"` at the SAME indent) — valid YAML, full bypass.
+# Both now run in Python: tokens are matched with re.escape (so regex metacharacters in a
+# token are literal), and workflows are parsed with a real YAML parser and walked
+# recursively, so every spelling — flow, block at any indent, anchors/aliases, multi-doc,
+# nested — reaches the same check. Missing PyYAML is a hard failure, not a skip.
+python3 - "$TARGET" "$SCRIPT_DIR/public-export-personal-tokens.txt" <<'PYGATES' || die "export gate failed (personal tokens, runs-on or appliance path) — see output above"
+import re, sys, pathlib
+
+target = pathlib.Path(sys.argv[1])
+token_list = pathlib.Path(sys.argv[2])
+failures = []
+
+# ---------- gate 1: personal-token content scan ----------
+SCAN_SUFFIXES = {".jsonl", ".json", ".md", ".html", ".py", ".yml", ".yaml"}
+SKIP_DIRS = {".git", "node_modules", "__pycache__", ".pytest_cache", "venv", ".venv"}
+
+tokens = []
+if token_list.is_file():
+    for raw in token_list.read_text(encoding="utf-8-sig").splitlines():
+        tok = raw.split("#", 1)[0].strip()
+        if tok:
+            tokens.append(tok)
+
+if tokens:
+    # re.escape makes metacharacters literal: a token like "project (aurora)" matches text,
+    # not a regex group. Word boundaries are applied only where the token edge is a word
+    # character, so a token ending in ")" still matches.
+    pats = []
+    for t in tokens:
+        esc = re.escape(t)
+        left = r"\b" if t[:1].isalnum() or t[:1] == "_" else ""
+        right = r"\b" if t[-1:].isalnum() or t[-1:] == "_" else ""
+        pats.append((t, re.compile(left + esc + right, re.IGNORECASE)))
+    for f in target.rglob("*"):
+        if not f.is_file() or f.is_symlink():
+            continue
+        if any(part in SKIP_DIRS for part in f.parts):
+            continue
+        if f.suffix.lower() not in SCAN_SUFFIXES:
+            continue
+        try:
+            text = f.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        for tok, pat in pats:
+            m = pat.search(text)
+            if m:
+                line = text[: m.start()].count("\n") + 1
+                failures.append(f"personal token {tok!r} in {f}:{line}")
+
+# ---------- gate 2: runs-on allowlist ----------
+ALLOWED = {
+    "ubuntu-latest", "ubuntu-24.04", "ubuntu-22.04", "ubuntu-20.04",
+    "windows-latest", "windows-2025", "windows-2022", "windows-2019",
+    "macos-latest", "macos-15", "macos-14", "macos-13",
+}
+gh = target / ".github"
+if gh.is_dir():
+    try:
+        import yaml
+    except ImportError:
+        failures.append("PyYAML unavailable — cannot verify runs-on labels; refusing to pass")
+        yaml = None
+    if yaml is not None:
+        def labels_of(node):
+            """Yield every scalar label under a runs-on value, any shape."""
+            if isinstance(node, str):
+                yield node
+            elif isinstance(node, list):
+                for v in node:
+                    yield from labels_of(v)
+            elif isinstance(node, dict):
+                for k, v in node.items():
+                    if k == "labels":
+                        yield from labels_of(v)
+                    elif k == "group":
+                        # A runner group implies a self-hosted or larger-runner pool,
+                        # never a plain GitHub-hosted label. Surface it as a failure.
+                        yield "__runner_group__"
+
+        def walk(node, scope, path):
+            # `scope` is the nearest enclosing mapping that carries the runs-on — the job.
+            # Matrix resolution is scoped to it, never the whole document: round 5
+            # reproduced a bypass where an unrelated job's static `os:` list masked a
+            # `fromJSON` matrix in the job actually being checked.
+            if isinstance(node, dict):
+                if "runs-on" in node:
+                    scope = node
+                for k, v in node.items():
+                    if k == "runs-on":
+                        for lab in labels_of(v):
+                            lab = str(lab).strip()
+                            if lab.startswith("${{"):
+                                mk = re.match(r"\$\{\{\s*matrix\.([\w-]+)\s*\}\}$", lab)
+                                vals = resolve_matrix(scope, mk.group(1)) if mk else None
+                                if not vals:
+                                    failures.append(f"{path}: runs-on {lab!r} is not statically resolvable")
+                                else:
+                                    for v2 in vals:
+                                        if str(v2).strip().lower() not in ALLOWED:
+                                            failures.append(f"{path}: runs-on matrix value {v2!r} is not a known GitHub-hosted runner")
+                            elif lab == "__runner_group__":
+                                failures.append(f"{path}: runs-on names a runner `group:` — runner groups are self-hosted or larger-runner pools, never GitHub-hosted")
+                            elif lab.lower() not in ALLOWED:
+                                failures.append(f"{path}: runs-on label {lab!r} is not a known GitHub-hosted runner")
+                    else:
+                        walk(v, scope, path)
+            elif isinstance(node, list):
+                for v in node:
+                    walk(v, scope, path)
+
+        def resolve_matrix(doc, key):
+            """Collect static values assigned to `key` under any strategy.matrix in the doc."""
+            found = []
+            def rec(n):
+                if isinstance(n, dict):
+                    mx = n.get("strategy", {}).get("matrix") if isinstance(n.get("strategy"), dict) else None
+                    if isinstance(mx, dict):
+                        if key in mx and isinstance(mx[key], list):
+                            found.extend(mx[key])
+                        inc = mx.get("include")
+                        if isinstance(inc, list):
+                            for item in inc:
+                                if isinstance(item, dict) and key in item:
+                                    found.append(item[key])
+                    for v in n.values():
+                        rec(v)
+                elif isinstance(n, list):
+                    for v in n:
+                        rec(v)
+            rec(doc)
+            return [f for f in found if isinstance(f, (str, int, float))]
+
+        for f in sorted(list(gh.rglob("*.yml")) + list(gh.rglob("*.yaml"))):
+            try:
+                docs = list(yaml.safe_load_all(f.read_text(encoding="utf-8")))
+            except Exception as exc:
+                failures.append(f"{f}: could not parse as YAML ({exc.__class__.__name__}) — refusing to pass")
+                continue
+            for doc in docs:
+                walk(doc, doc, f)
+
+# ---------- gate 3: appliance path scan, names and content (LUM-898) ----------
+# Public-shipping files must never name the appliance source tree or its make include,
+# in their relative path or in their content. No file is exempt: the main strip list
+# names nothing maintainer-only, and the local list is stripped from every export.
+# The needles are assembled from parts so this script and its tests, which ship in the
+# public tree, never carry the literals themselves. Every file is scanned as bytes, any
+# suffix, so a comment, a fixture or a built artefact counts the same as prose.
+SRV = "lumogis-" + "server"
+NEEDLES = (("apps/" + SRV).encode(), ("Makefile." + "server" + ".mk").encode())
+named_paths = []
+for f in sorted(target.rglob("*")):
+    parts = f.relative_to(target).parts
+    if any(part in SKIP_DIRS for part in parts):
+        continue
+    rel = f.relative_to(target).as_posix()
+    # Path check: files, directories and symlinks alike. Report the top-most match only,
+    # so one leaked tree is one failure rather than one per file inside it.
+    if any(n in rel.encode() for n in NEEDLES):
+        if not any(rel.startswith(p + "/") for p in named_paths):
+            named_paths.append(rel)
+            failures.append(f"appliance path in file name {rel} (LUM-898: public files must not name it)")
+        continue
+    if not f.is_file() or f.is_symlink():
+        continue
+    try:
+        data = f.read_bytes()
+    except OSError:
+        continue
+    for needle in NEEDLES:
+        at = data.find(needle)
+        if at != -1:
+            line = data.count(b"\n", 0, at) + 1
+            failures.append(f"appliance path named in {rel}:{line} (LUM-898: public files must not name it)")
+            break
+
+if failures:
+    print("check-public-export: export gate failures:", file=sys.stderr)
+    for x in failures[:40]:
+        print("  " + x, file=sys.stderr)
+    if len(failures) > 40:
+        print(f"  … and {len(failures) - 40} more", file=sys.stderr)
+    sys.exit(1)
+PYGATES
 
 # --- Forbidden paths inside the export (files and directories)
 bad=0
@@ -224,7 +447,6 @@ fi
 #   12. scripts/fixtures/openapi-breaking-check/after-breaking.json
 assert_openapi_ci_export_contract() {
   local root="$1"
-  local listf="$SCRIPT_DIR/public-export-strip-list.txt"
   local -a lum303_paths=(
     ".github/workflows/ci.yml"
     ".github/scripts/openapi-check-paths.sh"
@@ -240,19 +462,15 @@ assert_openapi_ci_export_contract() {
     "scripts/fixtures/openapi-breaking-check/after-breaking.json"
   )
 
-  [[ -f "$listf" ]] || die "openapi-ci-export-contract (LUM-303): missing strip list: $listf"
-  while IFS= read -r raw_line || [[ -n "${raw_line}" ]]; do
-    local line="${raw_line%%#*}"
-    line="$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-    [[ -z "$line" ]] && continue
-    local p
+  local line p
+  for line in ${STRIP_ENTRIES[@]+"${STRIP_ENTRIES[@]}"}; do
     for p in "${lum303_paths[@]}"; do
       if [[ "$line" == "$p" ]]; then
         echo "openapi-ci-export-contract LUM-303: strip list entry intersects required OpenAPI CI path: $line" >&2
         die "openapi-ci-export-contract (LUM-303): strip list intersects openapi-ci export contract paths"
       fi
     done
-  done <"$listf"
+  done
 
   for p in "${lum303_paths[@]}"; do
     if [[ ! -f "$root/$p" ]]; then
@@ -274,72 +492,53 @@ assert_openapi_ci_export_contract() {
 #   1.  .github/workflows/search-overlay-build.yml
 assert_search_overlay_ci_export_contract() {
   local root="$1"
-  local listf="$SCRIPT_DIR/public-export-strip-list.txt"
   local workflow_path=".github/workflows/search-overlay-build.yml"
-
-  [[ -f "$listf" ]] || die "search-overlay-ci-export-contract (LUM-433): missing strip list: $listf"
 
   if [[ ! -f "$root/$workflow_path" ]]; then
     echo "search-overlay-ci-export-contract LUM-433: missing required path in export tree: $workflow_path" >&2
     die "search-overlay-ci-export-contract (LUM-433): missing file $workflow_path"
   fi
 
-  while IFS= read -r raw_line || [[ -n "${raw_line}" ]]; do
-    local line="${raw_line%%#*}"
-    line="$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-    [[ -z "$line" ]] && continue
+  local line
+  for line in ${STRIP_ENTRIES[@]+"${STRIP_ENTRIES[@]}"}; do
     if [[ "$line" == "$workflow_path" ]]; then
       echo "search-overlay-ci-export-contract LUM-433: strip list entry intersects required Search overlay CI path: $line" >&2
       die "search-overlay-ci-export-contract (LUM-433): strip list intersects search-overlay export contract path"
     fi
-  done <"$listf"
+  done
 
-  local -a forbidden=(apps/lumogis-hub apps/lumogis-server hub-build.yml lumogis-hub lumogis-server)
+  # The appliance name is assembled from parts so this script, which ships in the public
+  # tree, never carries the literal that the LUM-898 content gate rejects.
+  local srv="lumogis-""server"
+  local -a forbidden=(apps/lumogis-hub "apps/${srv}" hub-build.yml lumogis-hub "${srv}")
   local pat
   for pat in "${forbidden[@]}"; do
     if grep -q "$pat" "$root/$workflow_path"; then
       echo "search-overlay-ci-export-contract LUM-433: forbidden reference in $workflow_path: $pat" >&2
-      die "search-overlay-ci-export-contract (LUM-433): workflow must not reference private Hub paths"
+      die "search-overlay-ci-export-contract (LUM-433): workflow must not reference maintainer-only paths"
     fi
   done
 }
 
-# --- Required absence (LUM-492) ---
-# Inverse of the Search overlay contract: the private Lumogis Server deb build CI
-# (.github/workflows/server-build.yml) is proprietary and must NEVER ship on
-# lumogis/lumogis. It must be listed on the strip list and absent from the export
-# tree. Keep in sync with orchestrator/tests/test_check_public_export_script.py.
-assert_server_build_ci_private_contract() {
-  local root="$1"
-  local listf="$SCRIPT_DIR/public-export-strip-list.txt"
-  local workflow_path=".github/workflows/server-build.yml"
-
-  [[ -f "$listf" ]] || die "server-build-ci-private-contract (LUM-492): missing strip list: $listf"
-
-  local listed=0
-  while IFS= read -r raw_line || [[ -n "${raw_line}" ]]; do
-    local line="${raw_line%%#*}"
-    line="$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-    [[ -z "$line" ]] && continue
-    if [[ "$line" == "$workflow_path" ]]; then
-      listed=1
+# --- Required absence: local strip list (LUM-492, LUM-898) ---
+# When the local strip list is present, every path on it must be absent from the export
+# tree, dangling symlinks included. assert_strip_list_paths_absent covers the same paths
+# first; this contract keeps the local list's guarantee explicit and on its own. Keep in
+# sync with orchestrator/tests/test_check_public_export_script.py.
+assert_local_strip_list_contract() {
+  local root="$1" p
+  [[ -f "$STRIP_LIST_LOCAL" ]] || return 0
+  for p in ${LOCAL_STRIP_ENTRIES[@]+"${LOCAL_STRIP_ENTRIES[@]}"}; do
+    if [[ -e "$root/$p" || -L "$root/$p" ]]; then
+      echo "local-strip-list-contract LUM-898: listed path present in export tree: $p" >&2
+      die "local-strip-list-contract (LUM-898): a local strip-list path is in the export tree"
     fi
-  done <"$listf"
-
-  if [[ "$listed" -ne 1 ]]; then
-    echo "server-build-ci-private-contract LUM-492: $workflow_path must be on the strip list" >&2
-    die "server-build-ci-private-contract (LUM-492): private Server CI missing from strip list"
-  fi
-
-  if [[ -e "$root/$workflow_path" ]]; then
-    echo "server-build-ci-private-contract LUM-492: forbidden private Server CI in export tree: $workflow_path" >&2
-    die "server-build-ci-private-contract (LUM-492): private Server CI leaked into export"
-  fi
+  done
 }
 
 assert_openapi_ci_export_contract "$TARGET"
 assert_search_overlay_ci_export_contract "$TARGET"
-assert_server_build_ci_private_contract "$TARGET"
+assert_local_strip_list_contract "$TARGET"
 
 # --- Public export doc hygiene (LUM-376 / LUM-378) ---
 PUBLIC_EXPORT_FORBIDDEN_PATTERNS=(

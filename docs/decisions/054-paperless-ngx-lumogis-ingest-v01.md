@@ -43,3 +43,4 @@ See **`.cursor/explorations/LUM-281-paperless-ngx-ingest.md`** (exploration) and
 ## Status history
 
 - **2026-05-21:** Finalised by **`/verify-plan --headless` LUM-281** — implementation confirmed against plan; canonical copy under **`docs/decisions/`**.
+- **2026-09-14:** **LUM-282** (Web onboarding offer on **`/me/sources`**) shipped — see **[ADR 221](221-lum-282-paperless-onboarding-offer.md)**. Context §Out-of-scope note for **LUM-282** is historical only.

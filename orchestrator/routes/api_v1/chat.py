@@ -339,20 +339,53 @@ def _utcnow():
     return datetime.now(timezone.utc)
 
 
+# NOTE (LUM-881): if LUM-877 ships its own "skipped because of privacy mode"
+# wording first, reuse it in ``clients/lumogis-web/src/features/_shared/
+# privacyBlockCopy.ts`` rather than adding a second phrasing.
 @router.get("/models", response_model=ModelsResponse)
 def list_models(request: Request) -> ModelsResponse:
+    # Function-local imports on purpose: they read the module attribute at call
+    # time, so tests patch the source modules (as ``routes/chat.py`` does).
+    from services.llm_connector_map import get_user_credentials_snapshot
+    from services.privacy_mode import blocks_remote_models
+
     user_id = get_user(request).user_id
+    # One policy lookup and one credential lookup per request, not per model.
+    # Auth-off needs the snapshot too (LUM-889): a key saved in Lumogis Web sits
+    # in the credential tiers under the single "default" user.
+    blocks_remote = blocks_remote_models(user_id)
+    present = get_user_credentials_snapshot(user_id)
     raw = config.get_all_models_config()
     descriptors: list[ModelDescriptor] = []
+    # Each dynamic Ollama model still costs up to three uncached Ollama
+    # listings per request (``is_local_model``, ``get_model_config`` and
+    # ``is_local_model`` again in the privacy check); caching is out of scope.
     for name, cfg in raw.items():
+        try:
+            reason = config.model_disabled_reason(
+                name,
+                user_id=user_id,
+                _credentials_present=present,
+                _privacy_blocks_remote=blocks_remote,
+            )
+        except config.UnknownModelError:
+            # A dynamic Ollama model deleted (or Ollama stopped answering)
+            # between ``get_all_models_config()`` and the lookup. Only the
+            # subclass is caught: any other error still surfaces as a 500.
+            if name in config._load_models_yaml():
+                _log.warning("model %r vanished from the YAML catalog mid-request", name)
+            else:
+                _log.debug("dynamic model %r vanished mid-request; not listed", name)
+            continue
         provider = (cfg.get("provider") or _provider_from_base_url(cfg)).lower()
         descriptors.append(
             ModelDescriptor(
                 id=name,
                 label=cfg.get("label") or name,
                 is_local=config.is_local_model(name),
-                enabled=config.is_model_enabled(name, user_id=user_id),
+                enabled=reason is None,
                 provider=provider,
+                disabled_reason=reason,
             )
         )
     descriptors.sort(key=lambda m: (not m.enabled, m.label.lower()))

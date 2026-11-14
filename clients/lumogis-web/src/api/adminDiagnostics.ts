@@ -85,6 +85,41 @@ export interface AdminDiagnosticsWarning {
   message: string;
 }
 
+/** Why a configured model of a background task would be skipped (LUM-877). */
+export type AdminDiagnosticsTaskSkipReason =
+  | "unknown"
+  | "not_on_box"
+  | "no_tools"
+  | "no_credentials"
+  | "optional_disabled"
+  | "privacy_mode"
+  | "error";
+
+export interface AdminDiagnosticsTaskEntry {
+  model: string;
+  /** null means this entry is usable now. */
+  skip_reason: AdminDiagnosticsTaskSkipReason | null;
+}
+
+/** A background model task (LUM-877): its rules, its list, the model it resolves to for you. */
+export interface AdminDiagnosticsTask {
+  task: string;
+  description: string;
+  local_only: boolean;
+  needs_tools: boolean;
+  /** false means some runs of this task have no user. */
+  threads_user_id: boolean;
+  /** true means only the first entry is ever used. */
+  destructive: boolean;
+  configured: AdminDiagnosticsTaskEntry[];
+  default_model: string;
+  /** null means the job skips the LLM (on-box-only task, nothing on-box). */
+  resolved_model: string | null;
+  resolved_from: "list" | "default";
+  /** Why the code default will fail downstream; null/absent means it is usable. */
+  default_skip_reason?: AdminDiagnosticsTaskSkipReason | null;
+}
+
 export interface AdminDiagnosticsResponse {
   status: AdminDiagnosticsOverallStatus;
   generated_at: string;
@@ -96,6 +131,8 @@ export interface AdminDiagnosticsResponse {
   foundation_signals?: AdminDiagnosticsFoundationSignals;
   warnings: AdminDiagnosticsWarning[];
   speech_to_text: AdminDiagnosticsSpeechToText;
+  /** Background model tasks (LUM-877). Absent on older Core builds. */
+  tasks?: AdminDiagnosticsTask[];
 }
 
 /** Curated Core / store / capability / tool diagnostics (admin-only). */

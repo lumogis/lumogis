@@ -2,11 +2,14 @@
 # Copyright (C) 2026 Lumogis
 """Data endpoints: /ingest, /search, /session/end, /entities/extract, /entities."""
 
+import logging
+from pathlib import Path
 from typing import List
 from typing import Optional
 
 from auth import UserContext
 from auth import get_user
+from authz import require_admin
 from authz import require_user
 from fastapi import APIRouter
 from fastapi import Depends
@@ -15,9 +18,11 @@ from fastapi import Query
 from fastapi import Request
 from models.sessions import SessionMessage
 from pydantic import BaseModel
+from pydantic import ConfigDict
 from pydantic import ValidationError
 from pydantic import field_validator
 from services.batch_queue import enqueue
+from services.ingest import enqueue_library_rescan
 from services.search import semantic_search
 from visibility import visible_filter
 
@@ -44,42 +49,40 @@ def _coerce_scope_filter(value: Optional[str]) -> Optional[str]:
     return value
 
 
+_log = logging.getLogger(__name__)
+
 router = APIRouter()
 
 
-class IngestRequest(BaseModel):
-    path: str = "/data"
-    # Admins may attribute the ingest to another user (e.g. populating
-    # a family member's collection on their behalf). Standard users
-    # cannot set this — it is silently ignored if they try.
-    user_id: str | None = None
+class RescanRequest(BaseModel):
+    """Rescan takes no arguments; any body field is a 422 (LUM-884)."""
+
+    model_config = ConfigDict(extra="forbid")
 
 
 @router.post("/ingest")
-def ingest_endpoint(
-    body: IngestRequest,
-    user: UserContext = Depends(require_user),
+def rescan_endpoint(
+    body: RescanRequest | None = None,
+    user: UserContext = Depends(require_admin),
 ):
-    """Kick off a folder ingest attributed to the calling user.
+    """Admin-only Rescan of the configured library folders.
 
-    Phase 3: every chunk and metadata row is tagged with the resolved
-    ``user_id``. Standard users always ingest as themselves; only
-    admins may pass an explicit ``user_id`` override in the body.
+    Takes no folder argument (LUM-884): folders come from ``INGEST_PATHS`` /
+    ``FILESYSTEM_ROOT`` only, and documents are filed under the configured
+    library owner, otherwise under the calling admin.
     """
-    target_user = user.user_id
-    if body.user_id and body.user_id != user.user_id:
-        if user.role != "admin":
-            raise HTTPException(
-                status_code=403,
-                detail="Only admins can ingest on behalf of another user.",
-            )
-        target_user = body.user_id
-
-    try:
-        enqueue(user_id=target_user, kind="ingest_folder", payload={"path": body.path})
-    except ValidationError as exc:
-        raise HTTPException(status_code=422, detail=exc.errors()) from exc
-    return {"status": "ingest queued", "path": body.path, "user_id": target_user}
+    owner = config.get_ingest_paths_owner_user_id() or user.user_id
+    configured = config.get_configured_ingest_paths()
+    if not any(Path(p).is_dir() for p in configured):
+        _log.warning("Rescan refused: no library folder exists (%d configured)", len(configured))
+        raise HTTPException(status_code=409, detail="no_library_folders")
+    result = enqueue_library_rescan(owner_user_id=owner)
+    return {
+        "status": "rescan queued",
+        "roots": result.queued,
+        "already_queued": result.already_queued,
+        "user_id": owner,
+    }
 
 
 @router.get("/search")

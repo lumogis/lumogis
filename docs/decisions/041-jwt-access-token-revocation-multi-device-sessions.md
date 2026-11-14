@@ -71,7 +71,7 @@ See `.cursor/explorations/LUM-29-jwt-revocation-multi-device-sessions.md` for fu
 
 **Harder:**
 
-- One additional per-request DB read for `users.token_version` unless cached. Mitigation: in-process `TTLCache` (default 30 s); cache invalidated in-process on `_apply_new_password` / `set_disabled`. Single-uvicorn-worker today → safe; multi-worker is LUM-30's scope (Postgres LISTEN/NOTIFY is the natural extension, but **not** required by this ADR).
+- One additional per-request DB read for `users.token_version` unless cached. Mitigation: in-process `TTLCache` (default 30 s); cache invalidated in-process on `_apply_new_password` / `set_disabled`. Single-uvicorn-worker today → safe; multi-worker was LUM-30's scope (Postgres LISTEN/NOTIFY is the natural extension, but **not** required by this ADR). **Superseded 2026-08-15 (LUM-832):** LUM-30 is cancelled and multi-worker is now refused at boot, so the cache is coherent by construction rather than by assumption.
 - Per-device immediate access-token kick is **not** in scope: revoking a single session leaves that device's access token alive ≤15 min until TTL. Documented as a limitation; follow-up issue tracks the `sid` lookup option.
 - Migration touches a load-bearing column. Dual-write window for one release while `users.refresh_token_jti` is retained for downgrade safety. **Closed (LUM-244):** the column was dropped in `postgres/migrations/037-drop-users-refresh-token-jti.sql` after six releases (0.5.0 → 0.8.0); the CI grep gate (`scripts/check_refresh_token_jti_guard.py`) remains to prevent reintroduction.
 - Personal data export (LUM-188) must explicitly exclude session metadata (operational, not user data) — coordinate at plan time.
@@ -82,12 +82,12 @@ See `.cursor/explorations/LUM-29-jwt-revocation-multi-device-sessions.md` for fu
 - `auth_middleware` consults `users.token_version`; downstream handlers must not assume a verified JWT means "still valid" without going through `auth_middleware`.
 - `services/auth_sessions.py` is the canonical surface for refresh-side state. Do not read or write `users.refresh_token_jti` in new code (CI grep gate).
 - `set_disabled` and `_apply_new_password` are the canonical revocation primitives at the user level. Always go through them — direct DB updates bypass the cascade and audit trail.
-- Multi-worker rollout (LUM-30) must extend the `token_version` cache to a coherent cross-worker mechanism (Postgres LISTEN/NOTIFY or short TTL polling); this ADR documents the extension point but does not implement it.
+- Multi-worker rollout would have to extend the `token_version` cache to a coherent cross-worker mechanism (Postgres LISTEN/NOTIFY or short TTL polling); this ADR documents the extension point but does not implement it. **That rollout is no longer planned (LUM-832):** LUM-30 is cancelled and the orchestrator refuses to boot above one worker, so the extension point stays unbuilt on purpose — anyone reopening multi-worker must land it first.
 
 ## Revisit conditions
 
 - **Per-device immediate access-token revocation** becomes a household requirement (e.g. lost-device threat model demands kick within seconds, not 15 minutes) → revisit `sid` lookup on every access verify with caching.
-- **Multi-uvicorn rollout (LUM-30)** ships → revisit `token_version` cache invalidation strategy across workers.
+- **Multi-uvicorn rollout is reopened** (LUM-30 cancelled; the boot refusal in LUM-832 would have to be lifted) → revisit `token_version` cache invalidation strategy across workers *before* lifting it.
 - **External IdP (OIDC) adoption** for households with operator-managed identity → revisit refresh path entirely; **`auth_sessions`** likely becomes a session-mirror, not the source of truth.
 - **Postgres LISTEN/NOTIFY adoption elsewhere** in the codebase → consolidate cache invalidation onto the same mechanism.
 - **MCP token model changes** (e.g. mcp_tokens gain refresh semantics) → re-evaluate whether **`auth_sessions`** and mcp_tokens should converge to a single `credentials` table.
@@ -98,4 +98,5 @@ See `.cursor/explorations/LUM-29-jwt-revocation-multi-device-sessions.md` for fu
 - 2026-05-15: Draft created by `/explore --headless` (claude-opus-4-7-thinking-medium) for LUM-29.
 - 2026-05-15: Revised during `/review-plan --arbitrate` R1 — table renamed **`auth_sessions`** (avoid collision with **`003` `sessions`**); **`token_version` → BIGINT**; explicit **`tv`** enforcement on **`_check_mcp_bearer`** after decode and before opaque MCP token compare; rotation semantics = **insert-new + revoke-prior** (OAuth 2.1 reuse path).
 - 2026-05-15: Finalised by `/verify-plan --headless` — implementation confirmed against plan; canonical copy at this path.
+- 2026-08-15: Multi-worker extension point retired (LUM-832) — LUM-30 was cancelled 2026-08-11 and the orchestrator now refuses to boot above one worker, so the `token_version` cache is coherent by construction. The three references that routed cross-worker coherence to LUM-30 were pointing at a guarantee that never landed.
 - 2026-06-23: Dual-write downgrade window closed (LUM-244) — `users.refresh_token_jti` dropped in migration 037 after six releases with zero production references; CI grep gate retained.

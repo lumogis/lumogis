@@ -48,8 +48,8 @@ from connectors.registry import LLM_XAI
 from services.connector_credentials import ConnectorNotConfigured  # re-exported for callers
 from services.connector_credentials import CredentialUnavailable  # re-exported for callers
 
-import config
 from services import connector_credentials as ccs
+from services import credential_tiers as ct
 
 _log = logging.getLogger(__name__)
 
@@ -109,17 +109,31 @@ def vendor_label_for_connector(connector_id: str) -> str:
 
 
 def has_credential(user_id: str | None, api_key_env: str) -> bool:
-    """Registry-strict existence check for a user's credential row.
+    """Registry-strict availability check across the credential tiers.
 
-    Uses :func:`connector_credentials.get_record` (no decrypt). Returns
-    ``False`` for unmapped envs, ``user_id is None``, and missing rows.
-    Used by :func:`config.is_model_enabled`.
+    Uses the ``*_get_record`` readers (no decrypt) at ``user →
+    household → system``. Returns ``False`` for unmapped envs,
+    ``user_id is None``, rows missing at every tier, and a **disabled**
+    user row. Used by :func:`config.is_model_enabled`.
+
+    LUM-24: this is the *availability* half of the tier fix. Wiring only
+    :func:`effective_api_key` to the resolver would let a household LLM
+    key decrypt correctly at chat time while ``is_model_enabled`` still
+    reported the model off — resolvable but unreachable.
+
+    LUM-850: the walk is :func:`credential_tiers.runtime_tier_from_records`,
+    the resolver's own order on metadata, so a disabled user row stops it
+    exactly where the resolver raises — a household or system key does not
+    bring the model back. The shared tiers are read only when the user tier
+    is absent, as before.
     """
     connector = connector_for_api_key_env(api_key_env)
     if connector is None or not user_id:
         return False
     try:
-        return ccs.get_record(user_id, connector) is not None
+        user_rec = ccs.get_record(user_id, connector)
+        household = user_rec is None and ct.household_get_record(connector) is not None
+        system = user_rec is None and not household and ct.system_get_record(connector) is not None
     except Exception:
         # get_record raises ValueError on bad-format connector ids; the
         # registered llm_* ids cannot fail the format check, but defence-
@@ -131,40 +145,87 @@ def has_credential(user_id: str | None, api_key_env: str) -> bool:
             connector,
         )
         return False
+    tier = ct.runtime_tier_from_records(
+        user_rec, household_present=household, system_present=system
+    )
+    return tier in ct.SERVING_TIERS
 
 
 def get_user_credentials_snapshot(user_id: str | None) -> set[str]:
-    """Single-query snapshot of the user's ``llm_*`` connector ids.
+    """Snapshot of the ``llm_*`` connector ids available to ``user_id``.
 
     Used by ``routes/chat.py::list_models`` to avoid N point queries per
     ``/v1/models`` call. Returns the empty set for ``user_id is None``.
-    Issues exactly one parameterised SELECT against
-    ``user_connector_credentials`` — pinned by
-    ``tests/test_chat_route_llm_credential_errors.py::test_v1_models_uses_single_query_per_call``.
 
-    Backslash-escapes the ``_`` literal in the LIKE pattern so a future
-    connector id like ``llmbroker`` (no underscore) cannot accidentally
-    match the ``llm_*`` namespace.
+    **Cost contract (LUM-24).** Three constant-cost queries per call —
+    one per tier — pinned by
+    ``tests/test_llm_connector_map.py::test_snapshot_uses_single_query``.
+    The property that matters is that the count does NOT scale with the
+    number of models or connectors; it was one query when only the
+    per-user tier was consulted, and adding household + system keeps it
+    O(1). It must never become a point query per model.
+
+    Household and system rows are keyed by ``(connector)`` alone, so they
+    are identical for every member — which is exactly why they belong in
+    this snapshot: without them a household LLM key resolves at chat time
+    (see :func:`effective_api_key`) but its model is filtered out of
+    ``/v1/models`` and never offered.
+
+    **A disabled user row hides the model (LUM-850)**, household or system
+    key notwithstanding: each connector goes through
+    :func:`credential_tiers.runtime_tier_from_records`, the resolver's walk on
+    metadata. That is why the per-user tier is read with
+    :func:`connector_credentials.list_records` (whole records, ``enabled``
+    included) rather than a ``WHERE enabled`` filter — filtering would turn a
+    disabled row into an absent one and let the shared key through. It also
+    keeps the SQL over ``user_connector_credentials`` inside the credential
+    service. ``list_records`` returns every connector for the user (a handful
+    of rows) and the ``llm_`` prefix is matched here, exactly, in Python.
     """
     if not user_id:
         return set()
-    ms = config.get_metadata_store()
-    # SCOPE-EXEMPT: user_connector_credentials has no `scope` column — it is
-    # a per-user secrets table by construction. Caller (`/v1/models`) reads
-    # only the calling user's own rows; visible_filter() does not apply.
     try:
-        rows = ms.fetch_all(
-            "SELECT connector FROM user_connector_credentials "
-            "WHERE user_id = %s AND connector LIKE 'llm\\_%%' ESCAPE '\\'",
-            (user_id,),
-        )
+        user_recs = {
+            rec.connector: rec
+            for rec in ccs.list_records(user_id)
+            if rec.connector.startswith("llm_") and not rec.instance
+        }
     except Exception:
         _log.exception(
             "get_user_credentials_snapshot: unexpected error for user_id=%s",
             user_id,
         )
         return set()
-    return {r["connector"] for r in rows}
+
+    # Household + system tiers. Each reader is one unparameterised list
+    # query; failures degrade to "per-user only" rather than hiding the
+    # user's own models behind a tier outage.
+    shared: dict[str, set[str]] = {}
+    for name, reader in (
+        ("household", ct.household_list_records),
+        ("system", ct.system_list_records),
+    ):
+        try:
+            shared[name] = {rec.connector for rec in reader() if rec.connector.startswith("llm_")}
+        except Exception:
+            _log.exception(
+                "get_user_credentials_snapshot: unexpected error reading %s for user_id=%s",
+                reader.__name__,
+                user_id,
+            )
+            shared[name] = set()
+
+    candidates = set(user_recs) | shared["household"] | shared["system"]
+    return {
+        connector
+        for connector in candidates
+        if ct.runtime_tier_from_records(
+            user_recs.get(connector),
+            household_present=connector in shared["household"],
+            system_present=connector in shared["system"],
+        )
+        in ct.SERVING_TIERS
+    }
 
 
 def effective_api_key(user_id: str | None, api_key_env: str) -> str:
@@ -217,7 +278,44 @@ def effective_api_key(user_id: str | None, api_key_env: str) -> str:
             )
         return env_val
 
-    payload = ccs.resolve(user_id or "", connector, fallback_env=api_key_env)
+    # LUM-24: user → household → system → env. The env tier keeps the
+    # `{"value": ...}` shape documented above, so this is a drop-in for
+    # the former `ccs.resolve(...)` (per-user + env only).
+    #
+    # LUM-834 chunk B — there is deliberately NO `is_disabled` guard in this
+    # function, and the absence is the design rather than an oversight.
+    #
+    # The other five env-fallback branches in this codebase read `get_payload`
+    # and fall through to an env var themselves, so each needs its own check.
+    # This one does not: for a real user it delegates to
+    # `resolve_runtime_credential`, whose tier-1 second read raises before its
+    # tier-4 env fallback is ever consulted. The two env reads that DO live
+    # here are unguardable by construction — the `connector is None` branch
+    # above has no registered connector to ask about, and the `else` branch
+    # below has no user, so a per-user flag has no meaning.
+    #
+    # llm's protection is therefore the tier-1 check. Adding a redundant guard
+    # here would also break the mutation-check pair, which relies on "remove
+    # one loader guard" and "remove the tier-1 check" being distinct edits.
+    if user_id:
+        payload = ct.resolve_runtime_credential(
+            user_id, connector, fallback_env=api_key_env
+        ).payload
+    else:
+        # No user context — the auth-off global slot
+        # (``config.get_llm_provider(..., user_id=None)``). The resolver
+        # rejects an empty ``caller_user_id`` outright rather than
+        # quietly querying for one, so the shared tiers are walked
+        # explicitly here. Household and system rows are keyed by
+        # ``(connector)`` alone and so are perfectly well-defined
+        # without a caller; only the per-user tier is meaningless.
+        payload = ct.household_get_payload(connector)
+        if payload is None:
+            payload = ct.system_get_payload(connector)
+        if payload is None:
+            # Raises ConnectorNotConfigured when the env is unusable too,
+            # which is the terminal behaviour callers already expect.
+            payload = ccs.resolve("", connector, fallback_env=api_key_env)
     # Substrate guarantees dict; defence-in-depth in case of programming error.
     if not isinstance(payload, dict):
         raise CredentialUnavailable(

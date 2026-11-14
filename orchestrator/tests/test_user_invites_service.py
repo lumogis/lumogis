@@ -21,6 +21,10 @@ class _FakeStore:
     def __init__(self) -> None:
         self.invites: dict[str, dict] = {}
         self.users: dict[str, dict] = {}
+        # LUM-885: invite creators live apart from ``users`` (the redeemed
+        # accounts) so existing user-count assertions keep their meaning. The
+        # creator predicate (exists, active, admin) is applied against this.
+        self.creators: dict[str, dict] = {"admin1": {"role": "admin", "disabled": False}}
         self._fail_user_insert_unique = False
         self._in_txn = False
 
@@ -41,6 +45,10 @@ class _FakeStore:
     @staticmethod
     def _norm(query: str) -> str:
         return " ".join(query.split()).lower()
+
+    def _creator_is_active_admin(self, row: dict) -> bool:
+        creator = self.creators.get(row["created_by"])
+        return bool(creator) and creator["role"] == "admin" and not creator["disabled"]
 
     def execute(self, query: str, params: tuple | None = None) -> None:
         q = self._norm(query)
@@ -121,7 +129,7 @@ class _FakeStore:
                 return {"id": iid}
             return None
 
-        if q.startswith("select * from user_invites where token_prefix"):
+        if q.startswith("select i.* from user_invites i join users c on c.id = i.created_by"):
             (prefix,) = p
             now = datetime.now(timezone.utc)
             for row in self.invites.values():
@@ -130,6 +138,7 @@ class _FakeStore:
                     and row["used_at"] is None
                     and row["revoked_at"] is None
                     and row["expires_at"] > now
+                    and self._creator_is_active_admin(row)
                 ):
                     return dict(row)
             return None
@@ -153,7 +162,7 @@ class _FakeStore:
                 return None
             return {"allows_shared": row.get("allows_shared", True)}
 
-        if q.startswith("update user_invites set used_at = now()") and "returning" in q:
+        if q.startswith("update user_invites i set used_at = now()") and "returning" in q:
             used_by, iid = p
             row = self.invites.get(iid)
             now = datetime.now(timezone.utc)
@@ -162,6 +171,7 @@ class _FakeStore:
                 and row["used_at"] is None
                 and row["revoked_at"] is None
                 and row["expires_at"] > now
+                and self._creator_is_active_admin(row)
             ):
                 row["used_at"] = now
                 row["used_by"] = used_by
@@ -288,3 +298,58 @@ def test_redeem_duplicate_email_before_consume(invite_store):
         svc.redeem_invite(plaintext, "member@example.com", "securepass1234")
     invite_row = next(iter(invite_store.invites.values()))
     assert invite_row["used_at"] is None
+
+
+# --- LUM-885: an invite redeems only while its creator is an active admin -----
+
+
+def test_redeem_rejects_invite_of_demoted_creator(invite_store):
+    _, plaintext = svc.mint_invite(role="admin", allows_shared=True, created_by="admin1")
+
+    # Negative control: while the creator is still an admin the invite is live.
+    assert svc.peek_invite(plaintext) is not None
+
+    invite_store.creators["admin1"]["role"] = "user"
+    with pytest.raises(InviteInvalidError):
+        svc.redeem_invite(plaintext, "intruder@example.com", "securepass1234")
+    assert invite_store.users == {}
+    assert next(iter(invite_store.invites.values()))["used_at"] is None
+
+
+def test_redeem_of_live_invite_still_works_with_active_admin_creator(invite_store):
+    _, plaintext = svc.mint_invite(role="admin", allows_shared=True, created_by="admin1")
+    result = svc.redeem_invite(plaintext, "second-admin@example.com", "securepass1234")
+    assert result.role == "admin"
+
+
+@pytest.mark.parametrize("how", ["disabled", "deleted"])
+def test_peek_and_redeem_reject_invite_of_disabled_or_deleted_creator(invite_store, how):
+    _, plaintext = svc.mint_invite(role="user", allows_shared=True, created_by="admin1")
+    if how == "disabled":
+        invite_store.creators["admin1"]["disabled"] = True
+    else:
+        del invite_store.creators["admin1"]
+
+    assert svc.peek_invite(plaintext) is None
+    with pytest.raises(InviteInvalidError):
+        svc.redeem_invite(plaintext, "member@example.com", "securepass1234")
+
+
+def test_consume_update_rechecks_the_creator_after_the_lookup(invite_store):
+    """A demotion that commits between the lookup and the consume still wins:
+    the lookup passes, the creator then loses admin, the consume matches no row."""
+    _, plaintext = svc.mint_invite(role="admin", allows_shared=True, created_by="admin1")
+    real_lookup = svc._lookup_active_by_prefix
+
+    def lookup_then_demote(prefix):
+        row = real_lookup(prefix)
+        invite_store.creators["admin1"]["role"] = "user"
+        return row
+
+    svc._lookup_active_by_prefix = lookup_then_demote
+    try:
+        with pytest.raises(InviteInvalidError):
+            svc.redeem_invite(plaintext, "intruder@example.com", "securepass1234")
+    finally:
+        svc._lookup_active_by_prefix = real_lookup
+    assert invite_store.users == {}

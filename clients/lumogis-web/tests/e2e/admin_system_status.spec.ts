@@ -69,6 +69,13 @@ test.describe("LUM-178 admin system status", () => {
     ).toBeVisible({ timeout: 15_000 });
 
     await expect(section.getByText(/^enabled:/i)).toBeVisible();
+
+    // LUM-892: the card lists what the backup covers and what it does not. Which
+    // items sit in which list is computed by Core (vacuous to assert here, see the
+    // Vitest cases and test_backup_status_service.py), so only the headings are
+    // checked. The DR card is not in the mobile Playwright project's matrix today.
+    await expect(section.getByRole("heading", { name: /^covered$/i, level: 4 })).toBeVisible();
+    await expect(section.getByRole("heading", { name: /^not covered$/i, level: 4 })).toBeVisible();
   });
 
   test("admin nav links to system status", async ({ page }) => {

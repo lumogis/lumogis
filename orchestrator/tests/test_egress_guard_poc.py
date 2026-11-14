@@ -12,21 +12,23 @@ from http.server import ThreadingHTTPServer
 from typing import Generator
 from unittest.mock import patch
 
-import main
 import pytest
-from auth import UserContext
-from fastapi.testclient import TestClient
-from openai import OpenAI
 
-import config
-from services import egress_guard as eg
+# Heavy runtime deps (openai, tethered) are requirements-core, not
+# requirements-test — skip the whole module cleanly when either is absent
+# rather than breaking collection for the entire suite. Runs normally where the
+# full core stack is installed (CI / Docker runtime).
+pytest.importorskip("openai")
+pytest.importorskip("tethered")
 
-try:
-    import tethered  # noqa: F401
-except ImportError:
-    pytest.fail("tethered==0.5.1 required — install orchestrator/requirements-core.txt")
+import main  # noqa: E402
+from auth import UserContext  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+from openai import OpenAI  # noqa: E402
+from tests.test_egress_guard import _PrivacyFakeStore  # noqa: E402
 
-from tests.test_egress_guard import _PrivacyFakeStore
+import config  # noqa: E402
+from services import egress_guard as eg  # noqa: E402
 
 _OFF_ALLOWLIST_HOST = "93.184.216.34"
 _ALICE = UserContext(user_id="alice", role="user", is_authenticated=True)

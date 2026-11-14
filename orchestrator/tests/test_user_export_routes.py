@@ -23,7 +23,7 @@ documents, including:
 
 Service-level behaviour (manifest parsing, redaction, pruning) lives
 in :mod:`tests.test_user_export`; integration round-trip lives in
-:mod:`tests.integration.test_per_user_export_roundtrip`. This module
+:mod:`tests.test_per_user_export_roundtrip`. This module
 focuses strictly on the wire boundary.
 """
 
@@ -127,6 +127,7 @@ def _mint(user_id: str, role: str) -> str:
     return jwt.encode(
         {
             "sub": user_id,
+            "typ": "access",
             "role": role,
             "iat": int(time.time()),
             "exp": int(time.time()) + 600,

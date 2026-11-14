@@ -460,6 +460,20 @@ def publish_file(
                 "message": f"files/{file_id} not found or not owned by caller",
             },
         )
+    # LUM-724 D1/D7b: BEFORE the size branch, so it covers both doors this route
+    # has. Below the threshold the request projects inline via `_publish_one` and
+    # never reaches `share_document`, and external documents are typically small
+    # — so the uncovered path was the common one.
+    from services import external_document_index as ext_index
+
+    try:
+        ext_index.refuse_share_if_external(str(src.get("file_path") or ""))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "external_document", "message": str(exc)},
+        ) from None
+
     if int(src.get("chunk_count") or 0) > config.get_share_inline_max_chunks():
         from services import documents as doc_svc
 

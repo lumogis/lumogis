@@ -166,6 +166,37 @@ def test_admin_diagnostics_safe_json_no_secret_like_keys(client, monkeypatch) ->
     assert "BEGIN RSA" not in raw
     assert "sk-" not in raw  # common key prefix pattern
 
+    # LUM-877 (T-D5): the tasks block carries aliases and reasons only.
+    from models.api_v1 import AdminDiagnosticsTask
+
+    import config
+
+    assert body["tasks"], "tasks block missing"
+    expected_keys = set(AdminDiagnosticsTask.model_fields)
+    for row in body["tasks"]:
+        assert set(row) == expected_keys
+        assert not {"base_url", "proxy_url", "api_key_env"} & set(row)
+    secret_values = {
+        v
+        for cfg in config.get_all_models_config().values()
+        for k, v in cfg.items()
+        if k in ("base_url", "api_key_env", "proxy_url") and v
+    }
+    strings: list[str] = []
+
+    def collect(obj: object) -> None:
+        if isinstance(obj, dict):
+            for v in obj.values():
+                collect(v)
+        elif isinstance(obj, list):
+            for i in obj:
+                collect(i)
+        elif isinstance(obj, str):
+            strings.append(obj)
+
+    collect(body["tasks"])
+    assert not (set(strings) & secret_values)
+
 
 def test_admin_diagnostics_capability_summary_counts(client, monkeypatch) -> None:
     fixed = datetime(2026, 4, 26, 12, 0, 0, tzinfo=timezone.utc)
@@ -299,3 +330,136 @@ def test_admin_diagnostics_foundation_warns_connector_permission_unknown_row(
     assert fs["permissions"]["catalog_rows_with_connector_but_unknown_permission_mode"] == 1
     codes = [w["code"] for w in r.json()["warnings"]]
     assert "tool_catalog_permission_mode_unknown" in codes
+
+
+# --- LUM-877: background model tasks ---------------------------------------
+
+
+def _tasks_get(client, monkeypatch, user="admin-t"):
+    hdr = _auth_header(monkeypatch, user, "admin")
+    r = client.get("/api/v1/admin/diagnostics", headers=hdr)
+    assert r.status_code == 200
+    return r.json()
+
+
+def _task_setup(monkeypatch, *, models=None, tasks=None, dynamic=None, policy="allow_cloud"):
+    from tests._task_models_support import install
+    from tests._task_models_support import set_policy
+
+    install(monkeypatch, models=models, tasks=tasks, dynamic=dynamic)
+    set_policy(monkeypatch, policy)
+
+
+def test_admin_diagnostics_tasks_default_config(client, monkeypatch) -> None:
+    from services import task_models
+
+    _task_setup(monkeypatch)
+    monkeypatch.setattr(task_models, "is_on_box_local", lambda name, **kw: True)
+    body = _tasks_get(client, monkeypatch)
+    rows = body["tasks"]
+    assert [r["task"] for r in rows] == list(task_models.TASKS)
+    for r in rows:
+        assert r["configured"] == []
+        assert r["resolved_from"] == "default"
+        # LUM-927: the temporal judge default resolves too.
+        assert r["resolved_model"] == "llama"
+        assert r["default_skip_reason"] is None
+
+
+def test_admin_diagnostics_tasks_reasons(client, monkeypatch) -> None:
+    from tests._task_models_support import CLOUD
+
+    _task_setup(
+        monkeypatch, models={"claude": dict(CLOUD)}, tasks={"email_classify": ["claude", "llama"]}
+    )
+    body = _tasks_get(client, monkeypatch)
+    row = next(r for r in body["tasks"] if r["task"] == "email_classify")
+    assert row["configured"] == [
+        {"model": "claude", "skip_reason": "not_on_box"},
+        {"model": "llama", "skip_reason": None},
+    ]
+    assert row["resolved_model"] == "llama" and row["resolved_from"] == "list"
+
+
+def test_admin_diagnostics_local_only_offbox_default_reads_null(client, monkeypatch) -> None:
+    from services import task_models
+
+    _task_setup(monkeypatch)
+    monkeypatch.setattr(task_models, "is_on_box_local", lambda name, **kw: False)
+    by_task = {r["task"]: r for r in _tasks_get(client, monkeypatch)["tasks"]}
+    for name in ("email_classify", "email_reply_draft", "email_compose_refine"):
+        assert by_task[name]["resolved_model"] is None
+        assert by_task[name]["resolved_from"] == "default"
+    for name in ("entity_extraction", "routine_weekly_review"):
+        assert by_task[name]["resolved_model"] == "llama"
+
+
+def test_admin_diagnostics_tasks_failure_degrades(client, monkeypatch) -> None:
+    from services import task_models
+
+    _task_setup(monkeypatch)
+
+    def boom(*a, **k):
+        raise RuntimeError("explain failed")
+
+    monkeypatch.setattr(task_models, "explain_task", boom)
+    body = _tasks_get(client, monkeypatch)
+    assert body["tasks"] == []
+    assert "task_models_unavailable" in [w["code"] for w in body["warnings"]]
+
+
+@pytest.mark.parametrize(
+    "tasks,on_box",
+    [
+        ({}, True),
+        ({"email_classify": ["lan"]}, True),
+        ({"email_classify": ["claude"]}, True),
+        ({"email_classify": ["lan"]}, False),
+        ({"entity_extraction": ["claude", "llama"]}, True),
+    ],
+)
+def test_admin_diagnostics_email_rows_match_resolve_on_box_model(
+    client, monkeypatch, tasks, on_box
+) -> None:
+    from tests._task_models_support import CLOUD
+    from tests._task_models_support import LLAMA
+
+    from services import task_models
+
+    lan = dict(LLAMA, base_url="http://gpu.lan:11434/ollama/v1")
+    _task_setup(monkeypatch, models={"claude": dict(CLOUD), "lan": lan}, tasks=tasks)
+    monkeypatch.setattr(task_models, "is_on_box_local", lambda name, **kw: on_box)
+    by_task = {r["task"]: r for r in _tasks_get(client, monkeypatch, "admin-m")["tasks"]}
+    for name, spec in task_models.TASKS.items():
+        if spec.email_boundary:
+            want = task_models.resolve_on_box_model(name, user_id="admin-m")
+        elif spec.local_only:
+            want = task_models.resolve_task_model(name, user_id="admin-m")
+        else:
+            continue
+        assert by_task[name]["resolved_model"] == want, name
+
+
+def test_admin_diagnostics_lists_ollama_once(client, monkeypatch) -> None:
+    import ollama_client
+    from tests._task_models_support import install
+    from tests._task_models_support import set_policy
+
+    install(
+        monkeypatch,
+        tasks={"session_summary": ["qwen"], "relation_extraction": ["phi"]},
+        real_dynamic=True,
+    )
+    set_policy(monkeypatch, "allow_cloud")
+    calls: list[int] = []
+    monkeypatch.setattr(
+        ollama_client,
+        "list_local_models",
+        lambda *a, **k: calls.append(1) or [{"name": "qwen:7b"}, {"name": "phi:3b"}],
+    )
+    before = len(calls)
+    from services import admin_diagnostics
+
+    rows, warns = admin_diagnostics._tasks_block("admin-o")
+    assert warns == [] and len(rows) == 10
+    assert len(calls) - before == 1

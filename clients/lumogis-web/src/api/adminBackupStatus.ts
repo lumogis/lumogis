@@ -6,10 +6,21 @@
 import type { ApiClient } from "./client";
 
 export interface BackupStatusStoreItem {
-  id: "postgres" | "qdrant" | "falkordb";
+  id: "postgres" | "qdrant" | "falkordb" | "files";
   present: boolean;
   skipped: boolean;
   skip_reason: string | null;
+  /** files store only (LUM-892) */
+  file_count?: number | null;
+  bytes?: number | null;
+}
+
+/** One line of "what the DR backup covers" (LUM-892). */
+export interface BackupCoverageItem {
+  id: string;
+  label: string;
+  covered: boolean;
+  note?: string | null;
 }
 
 export interface BackupStatusWarning {
@@ -29,6 +40,14 @@ export interface BackupStatusResponse {
   stores: BackupStatusStoreItem[];
   last_verify_status: "ok" | "failed" | "unknown" | null;
   warnings: BackupStatusWarning[];
+  /**
+   * LUM-892. Optional: a Core without file backup omits all three keys, so the
+   * view must read `coverage ?? []`, never `coverage.length`.
+   */
+  coverage?: BackupCoverageItem[];
+  /** Uploaded documents and capture files not on disk; null = could not count. */
+  files_missing?: number | null;
+  files_missing_by_area?: Record<string, number> | null;
 }
 
 export function fetchAdminBackupStatus(client: ApiClient): Promise<BackupStatusResponse> {

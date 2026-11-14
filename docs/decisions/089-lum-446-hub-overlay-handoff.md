@@ -16,7 +16,7 @@
 **Option 1 — single window, runtime rechrome via Hub-only `enter_overlay_mode`:**
 
 1. **Shared AGPL helpers** in `clients/lumogis-search/src-tauri/src/overlay_window.rs`: `apply_overlay_chrome`, `attach_overlay_dismiss`, `enter_overlay_mode_inner`, `is_wayland_session` (pure-fn unit tests).
-2. **Hub-only Tauri command** `enter_overlay_mode` in `apps/lumogis-server/src-tauri/src/lib.rs` — **not** exported on standalone Search (`enter_overlay_mode_not_in_shared_command_names` guard).
+2. **Hub-only Tauri command** `enter_overlay_mode` in the appliance's Tauri host (`lib.rs`) — **not** exported on standalone Search (`enter_overlay_mode_not_in_shared_command_names` guard).
 3. **Bundled config merge:** `tauri.bundled.conf.json` sets `transparent: true`, `visible: false` at create; wizard branch `show()` + `set_focus()`; onboarded cold-start calls `enter_overlay_mode_inner` with hide-until-hotkey.
 4. **Cold-start gate:** branch on `onboarding_complete` **alone** (Thomas R2 — no `library_roots` conjunct).
 5. **Wayland:** when `WAYLAND_DISPLAY` is set, cold-start uses `show_focused_once: true` (show-visible fallback) because hide-until-hotkey summonability is unproven on Wayland without manual PoC.
@@ -42,3 +42,4 @@
 - 2026-06-08: Draft — /explore LUM-446 Option 1
 - 2026-06-08: Plan ready — arbitration R1 + Thomas R2 amendments
 - 2026-06-08: Finalised by /verify-plan — implementation confirmed; manual PoC P1 gaps documented
+- 2026-11-10: public-boundary wording (LUM-898).

@@ -26,7 +26,7 @@ ADR-124 (LUM-468 slice 1) lifted the `python-build-standalone` interpreter selec
 
 ## Decision
 
-The bundled Core (`apps/lumogis-server/`) supports **Linux x64/arm64 + Apple-Silicon macOS (`aarch64-apple-darwin`) + Windows x64 (`x86_64-pc-windows-msvc`)**. On each, `stage-core-venv.sh` extracts the pinned CPython, installs the per-OS hash-pinned lock (CPU torch), pre-stages the BGE reranker, and verifies an **offline `.rerank()` ordering gate on CPU** — capability parity by construction.
+The bundled Core (Lumogis Server appliance) supports **Linux x64/arm64 + Apple-Silicon macOS (`aarch64-apple-darwin`) + Windows x64 (`x86_64-pc-windows-msvc`)**. On each, `stage-core-venv.sh` extracts the pinned CPython, installs the per-OS hash-pinned lock (CPU torch), pre-stages the BGE reranker, and verifies an **offline `.rerank()` ordering gate on CPU** — capability parity by construction.
 
 **Intel macOS (`x86_64-apple-darwin`) is unsupported (decision A):** PyTorch publishes no `x86_64`-macOS wheel past 2.2.2 (a NumPy-1-era build) while Core pins NumPy 2, so torch cannot import there (proven on a `macos-15-intel` runner: `Failed to initialize NumPy: _ARRAY_API not found`). It is rejected with a clear message in `stage-core-venv.sh` and `compile-bundled-core-lock.sh` and absent from the CI matrix.
 
@@ -63,14 +63,14 @@ Key cross-platform properties established:
 
 ## As-implemented surface
 
-- Scripts: `apps/lumogis-server/scripts/{stage-core-venv,compile-bundled-core-lock,compute-bundled-lock-inputs-sha256,stage-reranker-model,check-core-venv-size}.sh`.
+- Scripts (appliance build): `{stage-core-venv,compile-bundled-core-lock,compute-bundled-lock-inputs-sha256,stage-reranker-model,check-core-venv-size}.sh`.
 - Locks: `orchestrator/locks-bundled/<triple>.lock.txt` + `<triple>.pbs-sha256` (Linux committed; Windows/macOS-arm64 minted in CI, commit pending).
 - CI: `.github/workflows/server-build.yml` — `workflow_dispatch` `triples` input over `windows-x64`,`macos-arm64`; hard gates on lock-mint + venv-stage.
-- Seam: `apps/lumogis-server/src-tauri/src/bundled/paths.rs::core_venv_python()` remains the single venv-resolution point (ADR-093).
+- Seam: the appliance's `bundled/paths.rs::core_venv_python()` remains the single venv-resolution point (ADR-093).
 
 ## Testing retrospective
 
-- Verified by the `server-build.yml` per-OS CI spike (private repo): windows-x64 PASS (2.6 GB), macos-arm64 PASS (relocatable venv + offline BGE `.rerank` on CPU); macos-x64 FAIL → upstream (dropped). Linux validated locally to the sandbox network boundary.
+- Verified by the `server-build.yml` per-OS CI spike (maintainer CI): windows-x64 PASS (2.6 GB), macos-arm64 PASS (relocatable venv + offline BGE `.rerank` on CPU); macos-x64 FAIL → upstream (dropped). Linux validated locally to the sandbox network boundary.
 - Follow-ups shipped on `dev` (`9c878c88c`, `9a321c32b`): `prove-core-venv-relocation.sh` hard gate; runtime reranker CPU-pin on macOS (`adapters/bge_reranker.py`); Qdrant Windows `.zip` archive selection (LUM-396 facet).
 - Remaining gap: commit per-OS lock artifacts from CI uploads to `orchestrator/locks-bundled/` (operator/CI download).
 
@@ -78,3 +78,4 @@ Key cross-platform properties established:
 
 - 2026-07-01: Finalised by /record-retro (retrospective).
 - 2026-07-02: Follow-up batch merged (`9c878c88c` relocation proof + CPU-pin; `9a321c32b` LUM-474 npm ci / macOS `prctl` gate).
+- 2026-11-10: public-boundary wording (LUM-898).

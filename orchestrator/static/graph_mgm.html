@@ -6,35 +6,14 @@
 <title>Lumogis · KG Management</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48' fill='none'%3E%3Ccircle cx='24' cy='24' r='11' fill='%23E8632A' opacity='0.12'/%3E%3Ccircle cx='24' cy='24' r='8.5' fill='%23FDE8D8' opacity='0.55'/%3E%3Ccircle cx='24' cy='24' r='5.5' fill='%23E8632A'/%3E%3Ccircle cx='24' cy='24' r='2.6' fill='%23FDE8D8'/%3E%3C/svg%3E">
 
-<!-- Cytoscape.js 3.28.1 — same pinned version as graph_viz.html -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"
-        integrity="sha512-1qhH9fxNjz0GvRb/aTxdxmH3ysqMD+Jl8E1SBWDQ7PjZPWJEGHFpVJGu3xpFO5/eaOagQrLFGDFZ0rByPlhg=="
-        crossorigin="anonymous"
-        referrerpolicy="no-referrer"
-        onerror="loadCytoscapeLocal()">
-</script>
-<script>
-function loadCytoscapeLocal() {
-  var s = document.createElement('script');
-  s.src = '/static/cytoscape.min.js';
-  document.head.appendChild(s);
-}
-</script>
-
-<!-- Alpine.js 3.14.8 from CDN with local fallback -->
-<script src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.8/dist/cdn.min.js"
-        crossorigin="anonymous"
-        defer
-        onerror="loadAlpineLocal()">
-</script>
-<script>
-function loadAlpineLocal() {
-  var s = document.createElement('script');
-  s.src = '/static/alpine.min.js';
-  s.defer = true;
-  document.head.appendChild(s);
-}
-</script>
+<!-- Cytoscape.js 3.28.1 and Alpine.js 3.14.8 (MIT), vendored in static/vendor/
+     (notices: static/vendor/LICENSES.md). Served same-origin by
+     GET /graph/assets/{name}; the page makes no third-party request (LUM-941). -->
+<script src="/graph/assets/cytoscape-3.28.1.min.js"
+        integrity="sha384-J7Q85oZE4GJ/e7+n2aOQsLXfDwwfnA8S2nZAL5BpFsfpCF84zQD7LroZ/dMnLgex"></script>
+<script src="/graph/assets/alpine-3.14.8.min.js"
+        integrity="sha384-X9kJyAubVxnP0hcA+AMMs21U445qsnqhnUF8EBlEpP3a42Kh/JwWjlv2ZcvGfphb"
+        defer></script>
 
 <style>
 /* ── CSS variables — identical to dashboard/index.html ─────────────── */
@@ -621,8 +600,8 @@ input:focus, select:focus { border-color: var(--accent); }
 </style>
 </head>
 
-<body x-cloak>
-<div id="shell" x-data="mgmApp()" x-init="init()">
+<body>
+<div id="shell" x-data="mgmApp()" x-init="init()" x-cloak>
 
 <!-- ── Header ────────────────────────────────────────────────────────── -->
 <header class="header">

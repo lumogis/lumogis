@@ -1,0 +1,29 @@
+# Known historical duplicate ADR numbers in docs/decisions/.
+#
+# Recorded 2026-08-02 while adding scripts/check-adr-numbering.sh. These
+# collisions predate the check; renumbering them would churn inbound links
+# across ADR bodies, the reference manual, and public export docs for no
+# behavioural gain.
+#
+# This file is a ratchet, not a permission slip: the check fails on any
+# duplicate number NOT listed here, and also fails if a listed number stops
+# duplicating (so the list only ever shrinks). Do not add entries to silence a
+# new collision — renumber the ADR that merged later instead.
+#
+# One number per line.
+
+034
+046
+053
+059
+060
+061
+063
+064
+072
+074
+098
+101
+147
+154
+156

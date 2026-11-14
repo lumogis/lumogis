@@ -97,6 +97,11 @@ class FailureRateLimiter:
 class RequestRateLimiter:
     """Single-key request counter (every attempt counts, not just failures)."""
 
+    #: Only sweep once the dict is big enough for the walk to be worth it. Well
+    #: above any plausible number of concurrently-active household keys, so the
+    #: normal path never pays for it.
+    _IDLE_SWEEP_THRESHOLD = 512
+
     def __init__(self, *, max_requests: int, window_seconds: float) -> None:
         self._lock = Lock()
         self._store: dict[str, Deque[float]] = defaultdict(deque)
@@ -113,7 +118,35 @@ class RequestRateLimiter:
             if len(bucket) >= self._max:
                 return False
             bucket.append(now)
+            self._evict_idle(cutoff)
             return True
+
+    def _evict_idle(self, cutoff: float) -> None:
+        """Drop buckets whose every timestamp has aged out.
+
+        Trimming timestamps *inside* a bucket was never enough: the bucket
+        itself stayed in the dict forever, so the key count grew without bound
+        even though the counts did not.
+
+        That is harmless for an IP key on an authenticated route and not
+        harmless for `routes/password_reset.py`'s per-address limiter, whose
+        keys are SHA-256 hashes of **attacker-supplied** email addresses on an
+        unauthenticated endpoint. Every distinct address minted a permanent
+        64-char entry, so a caller staying politely inside the 10/min per-IP
+        ceiling still added ~14k entries a day for the life of the process. The
+        route's own comment bounded key *length* and said nothing about key
+        *count*.
+
+        Amortised rather than swept on a timer: this runs only on an admitted
+        request, and only over the entries a live bucket already forced us to
+        touch. `list(...)` because the dict is mutated during iteration.
+        """
+        if len(self._store) <= self._IDLE_SWEEP_THRESHOLD:
+            return
+        for k in list(self._store):
+            b = self._store[k]
+            if not b or b[-1] < cutoff:
+                del self._store[k]
 
     def clear(self) -> None:
         with self._lock:

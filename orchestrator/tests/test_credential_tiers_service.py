@@ -63,7 +63,7 @@ class _TiersFakeStore:
     def __init__(self) -> None:
         self.household: dict[str, dict[str, Any]] = {}
         self.system: dict[str, dict[str, Any]] = {}
-        self.user: dict[tuple[str, str], dict[str, Any]] = {}
+        self.user: dict[tuple[str, str, str], dict[str, Any]] = {}
         self.audit_log_rows: list[dict[str, Any]] = []
         self.exec_log: list[tuple[str, tuple]] = []
 
@@ -103,7 +103,8 @@ class _TiersFakeStore:
         kwargs.setdefault("updated_at", now)
         kwargs.setdefault("created_by", "self")
         kwargs.setdefault("updated_by", "self")
-        self.user[(kwargs["user_id"], kwargs["connector"])] = kwargs
+        kwargs.setdefault("instance", "")
+        self.user[(kwargs["user_id"], kwargs["connector"], kwargs["instance"])] = kwargs
 
     @staticmethod
     def _project_household(row: dict) -> dict:
@@ -123,11 +124,17 @@ class _TiersFakeStore:
         return {
             "user_id": row["user_id"],
             "connector": row["connector"],
+            "instance": row.get("instance", ""),
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
             "created_by": row["created_by"],
             "updated_by": row["updated_by"],
             "key_version": row["key_version"],
+            # LUM-834 chunk B. `configured_keys` is `.get(...)` with no default
+            # on purpose: NULL is a real state (pre-migration row) and coercing
+            # it to [] would make a working credential report no fields.
+            "enabled": row.get("enabled", True),
+            "configured_keys": row.get("configured_keys"),
         }
 
     def execute(self, query: str, params: tuple | None = None) -> int:
@@ -156,8 +163,8 @@ class _TiersFakeStore:
             return 1 if row else 0
 
         if q.startswith("update user_connector_credentials set ciphertext"):
-            ciphertext, key_version, updated_by, user_id, connector = p
-            row = self.user.get((user_id, connector))
+            ciphertext, key_version, updated_by, user_id, connector, instance = p
+            row = self.user.get((user_id, connector, instance))
             if row is not None:
                 row["ciphertext"] = ciphertext
                 row["key_version"] = key_version
@@ -259,33 +266,81 @@ class _TiersFakeStore:
 
         # User table (delegate path used by the resolver / per-user audit
         # no-drift tests).
+        # LUM-834 chunk B — is_disabled(). Absent row => False (not
+        # disabled): a connector nobody configured is not one somebody
+        # switched off, and answering otherwise would stop the tier walk
+        # for every user without a row.
+        # LUM-834 chunk B — set_enabled(). Never touches ciphertext.
+        if q.startswith("update user_connector_credentials set enabled = %s"):
+            enabled, actor, user_id, connector, instance = p
+            row = self.user.get((user_id, connector, instance))
+            if row is None:
+                return None
+            row["enabled"] = bool(enabled)
+            row["updated_by"] = actor
+            return self._project_user(row)
+
+        if q.startswith("select enabled from user_connector_credentials"):
+            user_id, connector, instance = p
+            row = self.user.get((user_id, connector, instance))
+            if row is None:
+                return None
+            return {"enabled": bool(row.get("enabled", True))}
+
         if q.startswith("select ciphertext from user_connector_credentials"):
-            user_id, connector = p
-            row = self.user.get((user_id, connector))
-            return {"ciphertext": row["ciphertext"]} if row else None
+            # LUM-834 chunk B: the real query carries `AND enabled`, so a
+            # disabled row yields no ciphertext and is indistinguishable from an
+            # absent one.
+            #
+            # The filter is applied ONLY when the statement actually contains
+            # `and enabled`. Applying it unconditionally would move the gate
+            # INTO THE FAKE: delete `AND enabled` from `get_payload` or
+            # `resolve` and every gate test would still pass, because the fake
+            # would keep enforcing what production had stopped enforcing. §5a —
+            # the fake must fail the way the real collaborator fails, and real
+            # Postgres has no opinion about a predicate that is not there.
+            user_id, connector, instance = p
+            row = self.user.get((user_id, connector, instance))
+            if row is None:
+                return None
+            if "and enabled" in q and not row.get("enabled", True):
+                return None
+            return {"ciphertext": row["ciphertext"]}
 
         if (
-            q.startswith("select user_id, connector, created_at, updated_at,")
-            and "where user_id = %s and connector = %s" in q
+            q.startswith("select user_id, connector, instance, created_at, updated_at,")
+            and "where user_id = %s and connector = %s and instance = %s" in q
         ):
-            user_id, connector = p
-            row = self.user.get((user_id, connector))
+            user_id, connector, instance = p
+            row = self.user.get((user_id, connector, instance))
             return self._project_user(row) if row else None
 
         if q.startswith("insert into user_connector_credentials"):
-            user_id, connector, ciphertext, key_version, created_by, updated_by = p
+            (
+                user_id,
+                connector,
+                instance,
+                ciphertext,
+                key_version,
+                created_by,
+                updated_by,
+                configured_keys,
+            ) = p
             now = datetime.now(timezone.utc)
-            existing = self.user.get((user_id, connector))
+            existing = self.user.get((user_id, connector, instance))
             if existing is None:
                 row = {
                     "user_id": user_id,
                     "connector": connector,
+                    "instance": instance,
                     "ciphertext": ciphertext,
                     "key_version": key_version,
                     "created_at": now,
                     "updated_at": now,
                     "created_by": created_by,
                     "updated_by": updated_by,
+                    "enabled": True,
+                    "configured_keys": configured_keys,
                 }
             else:
                 row = dict(existing)
@@ -293,12 +348,15 @@ class _TiersFakeStore:
                 row["key_version"] = key_version
                 row["updated_at"] = now
                 row["updated_by"] = updated_by
-            self.user[(user_id, connector)] = row
+                # Replaced, not merged — and `enabled` is deliberately
+                # NOT touched, mirroring the real DO UPDATE SET.
+                row["configured_keys"] = configured_keys
+            self.user[(user_id, connector, instance)] = row
             return self._project_user(row)
 
         if q.startswith("delete from user_connector_credentials"):
-            user_id, connector = p
-            row = self.user.pop((user_id, connector), None)
+            user_id, connector, instance = p
+            row = self.user.pop((user_id, connector, instance), None)
             return {"key_version": row["key_version"]} if row else None
 
         # Audit insert (canonical path through actions.audit.write_audit).
@@ -376,30 +434,31 @@ class _TiersFakeStore:
                 key=lambda r: r["connector"],
             )
 
-        if q.startswith("select user_id, connector, ciphertext, key_version"):
+        if q.startswith("select user_id, connector, instance, ciphertext, key_version"):
             return sorted(
                 (
                     {
                         "user_id": r["user_id"],
                         "connector": r["connector"],
+                        "instance": r.get("instance", ""),
                         "ciphertext": r["ciphertext"],
                         "key_version": r["key_version"],
                     }
                     for r in self.user.values()
                 ),
-                key=lambda r: (r["user_id"], r["connector"]),
+                key=lambda r: (r["user_id"], r["connector"], r.get("instance", "")),
             )
 
-        # Per-user listing route: ORDER BY connector for one user.
+        # Per-user listing route: ORDER BY connector, instance for one user.
         if (
-            q.startswith("select user_id, connector, created_at, updated_at,")
+            q.startswith("select user_id, connector, instance, created_at, updated_at,")
             and "from user_connector_credentials" in q
             and "where user_id = %s" in q
         ):
             (user_id,) = p
             return sorted(
                 (self._project_user(r) for r in self.user.values() if r["user_id"] == user_id),
-                key=lambda r: r["connector"],
+                key=lambda r: (r["connector"], r.get("instance", "")),
             )
 
         if q.startswith("select key_version, count") and (
@@ -971,3 +1030,57 @@ def test_audit_rotation_actor_system_uses_default_user_id_per_tier(
     )
     for a in tier_rotations:
         assert a["user_id"] == "default"
+
+
+# ---------------------------------------------------------------------------
+# LUM-834 chunk B — the disabled/absent pair at tier 1
+#
+# These two are the reason `resolve_runtime_credential` needs a SECOND READ.
+# Once `get_payload` carries `AND enabled`, a disabled user row and an absent
+# one both arrive at tier 1 as `None` — one bit — and they must produce
+# OPPOSITE outcomes. Written adjacent because neither is meaningful alone:
+# either one passes against an implementation that gets the other wrong.
+# ---------------------------------------------------------------------------
+
+
+def test_a_disabled_user_row_does_NOT_fall_through_to_household(store):
+    """A user who switched their own credential off has not asked to start
+    using the household one instead.
+
+    Silently substituting the household credential would be the worst kind of
+    "it still works": the connector keeps running, on someone else's account,
+    and nothing on the screen says so.
+    """
+    from connectors.registry import TESTCONNECTOR
+    from services.credential_tiers import household_put_payload
+    from services.credential_tiers import resolve_runtime_credential
+
+    from services import connector_credentials as ccs
+
+    ccs.put_payload("alice", TESTCONNECTOR, {"k": "user"}, actor="self")
+    household_put_payload(TESTCONNECTOR, {"k": "household"}, actor="admin:root")
+    assert resolve_runtime_credential("alice", TESTCONNECTOR).tier == "user"
+
+    ccs.set_enabled("alice", TESTCONNECTOR, enabled=False, actor="self")
+
+    with pytest.raises(ccs.ConnectorNotConfigured):
+        resolve_runtime_credential("alice", TESTCONNECTOR)
+
+
+def test_an_absent_user_row_still_falls_through_to_household(store):
+    """The twin, and the half that keeps every existing deployment working.
+
+    Most users have no row of their own; if `is_disabled` answered True for an
+    absent row — or if the gate simply stopped the walk on any tier-1 miss —
+    household credentials would become unreachable for all of them.
+    """
+    from connectors.registry import TESTCONNECTOR
+    from services.credential_tiers import household_put_payload
+    from services.credential_tiers import resolve_runtime_credential
+
+    household_put_payload(TESTCONNECTOR, {"k": "household"}, actor="admin:root")
+
+    resolved = resolve_runtime_credential("alice", TESTCONNECTOR)
+
+    assert resolved.tier == "household"
+    assert resolved.payload == {"k": "household"}

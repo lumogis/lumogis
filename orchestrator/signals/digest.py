@@ -76,17 +76,43 @@ def stop() -> None:
 
 def _send_digest() -> None:
     ms = config.get_metadata_store()
-    try:
-        got = ms.fetch_one(
-            "SELECT pg_try_advisory_lock(%s::integer, %s::integer) AS ok",
-            (ADVISORY_LOCK_KEY1, ADVISORY_LOCK_KEY2),
-        )
-    except Exception as exc:
-        _log.warning("signal_digest: advisory lock try failed: %s", exc)
-        return
-    if not got or not got.get("ok"):
-        _log.debug("signal_digest: skipped, advisory lock not acquired")
-        return
+    # The lock and its release must ride ONE connection (LUM-816).
+    #
+    # This used to take the lock with a bare `ms.fetch_one` and release it with
+    # another. `pg_advisory_lock` is session-scoped, so under the connection
+    # pool those are two different sessions: the lock is taken on connection A,
+    # the unlock runs on connection B and silently no-ops ("session mismatch"),
+    # and A returns to the pool still holding it. From then on the lock is held
+    # by an idle pooled connection, every later digest run finds it taken and
+    # skips itself, and the digest silently stops until the process restarts.
+    # `checkout_connection` is outside the pool and closes on exit, which
+    # releases the lock even if the explicit unlock is lost.
+    with ms.checkout_connection() as conn:
+        # Only the lock acquisition is best-effort. The digest body is NOT:
+        # widening this `try` to cover `_run_digest_under_lock` reported every
+        # failure in it — a bad score type in `_format_digest`, an import error
+        # in the dispatcher — as "advisory lock try failed", with no traceback
+        # and with the job recorded as having succeeded. That points an operator
+        # investigating missing digests at an entirely healthy Postgres lock.
+        # Body failures belong to APScheduler, which logs them with a traceback.
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT pg_try_advisory_lock(%s::integer, %s::integer)",
+                    (ADVISORY_LOCK_KEY1, ADVISORY_LOCK_KEY2),
+                )
+                got_lock = bool(cur.fetchone()[0])
+        except Exception as exc:  # noqa: BLE001 - lock acquisition is best-effort
+            _log.warning("signal_digest: advisory lock try failed: %s", exc)
+            return
+        if not got_lock:
+            _log.debug("signal_digest: skipped, advisory lock not acquired")
+            return
+        _run_digest_under_lock(conn)
+
+
+def _run_digest_under_lock(conn) -> None:
+    """The digest body, with the advisory lock held on ``conn``."""
 
     try:
         since = datetime.now(timezone.utc) - timedelta(seconds=_INTERVAL)
@@ -138,14 +164,19 @@ def _send_digest() -> None:
                     exc,
                 )
     finally:
+        # Released on the SAME connection that took it. Closing the connection
+        # on context exit would release it anyway; this is the explicit path.
         try:
-            un = ms.fetch_one(
-                "SELECT pg_advisory_unlock(%s::integer, %s::integer) AS ok",
-                (ADVISORY_LOCK_KEY1, ADVISORY_LOCK_KEY2),
-            )
-            if un is not None and un.get("ok") is False:
-                _log.warning("signal_digest: pg_advisory_unlock returned false (session mismatch)")
-        except Exception as exc:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT pg_advisory_unlock(%s::integer, %s::integer)",
+                    (ADVISORY_LOCK_KEY1, ADVISORY_LOCK_KEY2),
+                )
+                if cur.fetchone()[0] is False:
+                    _log.warning(
+                        "signal_digest: pg_advisory_unlock returned false (session mismatch)"
+                    )
+        except Exception as exc:  # noqa: BLE001
             _log.error("signal_digest: advisory unlock failed: %s", exc)
 
 

@@ -2,6 +2,7 @@
 # Copyright (C) 2026 Lumogis
 """Tests for route endpoints using a test client."""
 
+import json
 from unittest.mock import patch
 
 import main
@@ -96,6 +97,23 @@ def test_local_stream_includes_loading_note_only_first_time(
         assert second.status_code == 200
         assert "first time may take" in first.text
         assert "first time may take" not in second.text
+
+        # LUM-876: the hint is a transient status, never part of the answer text.
+        chunks = [
+            json.loads(line[len("data: ") :])
+            for line in first.text.splitlines()
+            if line.startswith("data: ") and line != "data: [DONE]"
+        ]
+        statuses = [c["lumogis"]["status"] for c in chunks if "status" in c.get("lumogis", {})]
+        assert statuses == [
+            {
+                "code": chat_routes.LOCAL_MODEL_LOADING_STATUS,
+                "message": chat_routes.LOCAL_MODEL_LOADING_NOTE,
+            }
+        ]
+        answer = "".join(c["choices"][0]["delta"].get("content", "") for c in chunks)
+        assert "first time may take" not in answer
+        assert "*" not in chat_routes.LOCAL_MODEL_LOADING_NOTE
     finally:
         chat_routes._local_model_loading_note_shown.clear()
 

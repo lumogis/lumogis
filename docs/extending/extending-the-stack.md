@@ -160,7 +160,34 @@ value as before.
 docker compose up -d litellm
 ```
 
-LiteLLM dashboard: [http://localhost:4000](http://localhost:4000)
+LiteLLM dashboard: [http://localhost:4000](http://localhost:4000), on the Lumogis host only.
+
+**Security: keep LiteLLM off the network.** The overlay sets no master key, and
+the models in `config/litellm.yaml` call Anthropic with the `ANTHROPIC_API_KEY`
+from `.env`. Anyone who can reach port 4000 can therefore send requests on that
+key without logging in, and every such request is billed to it.
+
+- **What the overlay does.** It publishes port 4000 on `127.0.0.1` only. Core
+  does not use the published port: it reaches the proxy as `http://litellm:4000`
+  on the compose network.
+- **What not to do.** Do not change the binding to `0.0.0.0` or a LAN address,
+  and do not forward port 4000 on your router. On a host with the firewall off,
+  that exposes the key to the whole local network.
+- **Why there is no master key.** With `proxy_url` set, Core sends the provider
+  key from `models.yaml` as the request key: the member's saved key, or the
+  environment value when auth is off. LiteLLM with a master key would reject
+  that key, so every proxied model call would fail. Supporting a master key
+  needs a change in Core, not just an environment variable.
+- **Other containers.** Any container on the Lumogis compose network can still
+  reach `http://litellm:4000`. Only add overlays you trust alongside it.
+
+To open the dashboard from another machine, use an SSH tunnel instead of
+widening the binding:
+
+```bash
+ssh -L 4000:127.0.0.1:4000 you@lumogis-host
+# then browse to http://localhost:4000 on your own machine
+```
 
 ---
 
@@ -340,7 +367,7 @@ Core publishes its own `CapabilityManifest` at `GET /capabilities` (no auth, nev
 
 ### Shipped examples in this repository
 
-- **Out-of-process graph capability (`GRAPH_MODE=service`)** — When premium HTTP graph wiring ships on an operator checkout, Core treats the KG service like any capability service: manifests at `GET /capabilities`, webhook/context bridges, optional `CAPABILITY_SERVICE_URLS` discovery. Compose layout and env live with the premium bundle; **[`docs/decisions/002-graph-store-falkordb.md`](../decisions/002-graph-store-falkordb.md)** captures the architectural boundary.
+- **Out-of-process graph capability (`GRAPH_MODE=service`)** — [`services/lumogis-graph/`](../../services/lumogis-graph/README.md) (AGPL-3.0-only, [ADR 229](../decisions/229-lum-855-kg-agpl-relicence.md)). Core treats the KG service like any capability service: manifests at `GET /capabilities`, webhook/context bridges, optional `CAPABILITY_SERVICE_URLS` discovery. Compose layout and env: `docker-compose.falkordb.yml` + `docker-compose.premium.yml` (see the overlay header). `service` is the only mode that works on the standard Core image; `inprocess` needs a Core build that includes the graph tree; **[`docs/decisions/002-graph-store-falkordb.md`](../decisions/002-graph-store-falkordb.md)** captures the architectural boundary.
 - **`lumogis-mock-capability`** — Tiny **non-production** second service for contract / discovery smoke tests. Overlay: `docker-compose.mock-capability.yml`. See [`services/lumogis-mock-capability/README.md`](../../services/lumogis-mock-capability/README.md).
 
 ---

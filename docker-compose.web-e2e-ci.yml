@@ -20,8 +20,25 @@ services:
     environment:
       COMPOSE_FILE: docker-compose.yml:docker-compose.web-e2e-ci.yml
       GRAPH_MODE: disabled
+      # `config/test.env.example` above points POSTGRES_HOST/PORT at 127.0.0.1:5433 for
+      # HOST-side pytest (the published port). In-container that address is nothing, and
+      # the entrypoint does not fail fast on it: migrations wait 120s, the default-user
+      # remap waits another 120s, then the Ollama block below burns a third. Core never
+      # binds :8000 inside the 300s start_period and compose reports it unhealthy — the
+      # healthcheck is a bystander. `docker-compose.test.yml:16-18` carries exactly this
+      # override for exactly this reason ("otherwise Core/lumogis-graph crash-loop on
+      # boot"); this overlay pins the same env_file but is deliberately NOT allowed to
+      # import that file (GHA Compose: "services.orchestrator conflicts with imported
+      # resource"), so the override has to be repeated here. Never pin that env_file
+      # without these two lines.
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
       # Slim stack has no Ollama (ADR-064). LUM-414 Playwright needs session_end -> sessions row.
       LUMOGIS_RC_SESSION_END_STUB: "true"
+      # ...and because there is no Ollama, the entrypoint's readiness wait (60x2s) plus
+      # its embedding/chat model pulls are 120s of guaranteed-futile startup on every
+      # run. docker-compose.test-doctor.yml sets this for the same reason.
+      OLLAMA_SKIP_WAIT: "true"
       LUMOGIS_BOOTSTRAP_ADMIN_EMAIL: ${LUMOGIS_BOOTSTRAP_ADMIN_EMAIL}
       LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD: ${LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD}
       LUMOGIS_WEB_SMOKE_EMAIL: ${LUMOGIS_WEB_SMOKE_EMAIL}

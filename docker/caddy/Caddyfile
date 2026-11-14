@@ -20,7 +20,38 @@
 # commented block at the bottom.
 {
 	servers {
-		trusted_proxies static private_ranges
+		# Caddy trusts no upstream by default, so {client_ip} is the TCP peer
+		# and a client-sent X-Forwarded-For is never believed. Behind Tailscale
+		# Serve, Cloudflare Tunnel or a host proxy, set
+		# LUMOGIS_CADDY_TRUSTED_PROXIES to the compose gateway /32 (space-
+		# separated CIDRs); see docs/deployment/remote-access.md (LUM-887).
+		trusted_proxies static {$LUMOGIS_CADDY_TRUSTED_PROXIES:127.0.0.1/32}
+		trusted_proxies_strict
+	}
+}
+
+# Every route to Core goes through this snippet. A new route to the
+# orchestrator must `import to_orchestrator`.
+#
+# Client IP (LUM-887): Caddy hands Core exactly one X-Forwarded-For value (the
+# resolved client IP) and drops any client-supplied X-Real-IP.
+#
+# Upstream keep-alive (LUM-875): Caddy pools upstream connections and, by
+# default, keeps an idle one for 2 minutes. The orchestrator's uvicorn closes an
+# idle connection after its --timeout-keep-alive (75 s, orchestrator/Dockerfile).
+# If uvicorn closes first, Caddy can reuse a connection that is already closing:
+# the request gets EOF or connection reset, and because Caddy does not retry a
+# POST, the client gets 502. Keeping Caddy's idle timeout below uvicorn's makes
+# Caddy the side that closes idle connections, so that race cannot happen.
+# orchestrator/tests/test_uvicorn_keepalive_vs_caddy.py fails on any
+# `reverse_proxy orchestrator:8000` without a keepalive below uvicorn's.
+(to_orchestrator) {
+	reverse_proxy orchestrator:8000 {
+		header_up X-Forwarded-For {client_ip}
+		header_up -X-Real-IP
+		transport http {
+			keepalive 60s
+		}
 	}
 }
 
@@ -41,8 +72,8 @@
 		-Server
 	}
 
-	# Global `servers { trusted_proxies ... }` above preserves X-Forwarded-For
-	# from Caddy. The orchestrator validates against LUMOGIS_TRUSTED_PROXIES.
+	# Core trusts only this container (LUMOGIS_TRUSTED_PROXIES=caddy) and reads
+	# the single X-Forwarded-For value set by `header_up` in to_orchestrator.
 
 	# HSTS: only for HTTPS. With CADDY_DOMAIN=:80 this matcher never matches.
 	@https {
@@ -54,31 +85,35 @@
 
 	# Orchestrator root health (not served by the SPA).
 	handle /health {
-		reverse_proxy orchestrator:8000
+		import to_orchestrator
 	}
 
 	# Server-Sent Events: long-lived, no buffering.
 	handle /events* {
 		reverse_proxy orchestrator:8000 {
+			header_up X-Forwarded-For {client_ip}
+			header_up -X-Real-IP
 			flush_interval -1
 			transport http {
 				read_buffer 4KB
 				write_buffer 4KB
 				response_header_timeout 0s
+				# Same idle cap as (to_orchestrator), LUM-875.
+				keepalive 60s
 			}
 		}
 	}
 
 	handle /api/* {
-		reverse_proxy orchestrator:8000
+		import to_orchestrator
 	}
 
 	handle /v1/* {
-		reverse_proxy orchestrator:8000
+		import to_orchestrator
 	}
 
 	handle /mcp/* {
-		reverse_proxy orchestrator:8000
+		import to_orchestrator
 	}
 
 	# Legacy root JSON routes still served by the orchestrator. Keep these
@@ -89,77 +124,85 @@
 		not header Accept *text/html*
 	}
 	handle @legacy_search_api {
-		reverse_proxy orchestrator:8000
+		import to_orchestrator
 	}
 	@legacy_audit_api {
 		path /audit*
 		not header Accept *text/html*
 	}
 	handle @legacy_audit_api {
-		reverse_proxy orchestrator:8000
+		import to_orchestrator
 	}
 	handle /ingest {
-		reverse_proxy orchestrator:8000
+		import to_orchestrator
 	}
 	handle /session* {
-		reverse_proxy orchestrator:8000
+		import to_orchestrator
 	}
 	handle /actions* {
-		reverse_proxy orchestrator:8000
+		import to_orchestrator
 	}
 	handle /routines* {
-		reverse_proxy orchestrator:8000
+		import to_orchestrator
 	}
 	handle /signals* {
-		reverse_proxy orchestrator:8000
+		import to_orchestrator
 	}
 	handle /sources* {
-		reverse_proxy orchestrator:8000
+		import to_orchestrator
+	}
+	handle /me/email-sources {
+		import to_orchestrator
 	}
 	handle /feedback {
-		reverse_proxy orchestrator:8000
+		import to_orchestrator
 	}
 	handle /capabilities {
-		reverse_proxy orchestrator:8000
+		import to_orchestrator
 	}
 
 	# Root-mounted FastAPI admin routes (orchestrator/routes/admin.py) must reach
 	# the orchestrator before the SPA’s nginx try_files (which would return
 	# index.html and mask legacy dashboard/settings/KG pages).
 	handle /dashboard* {
-		reverse_proxy orchestrator:8000
+		import to_orchestrator
 	}
 	handle /settings* {
-		reverse_proxy orchestrator:8000
+		import to_orchestrator
 	}
 	handle /graph* {
-		reverse_proxy orchestrator:8000
+		import to_orchestrator
 	}
 	handle /kg* {
-		reverse_proxy orchestrator:8000
+		import to_orchestrator
 	}
 	handle /review-queue* {
-		reverse_proxy orchestrator:8000
+		import to_orchestrator
 	}
 	handle /backup* {
-		reverse_proxy orchestrator:8000
+		import to_orchestrator
 	}
 	handle /restore* {
-		reverse_proxy orchestrator:8000
+		import to_orchestrator
 	}
 	handle /permissions* {
-		reverse_proxy orchestrator:8000
+		import to_orchestrator
 	}
 	handle /browse* {
-		reverse_proxy orchestrator:8000
+		import to_orchestrator
 	}
 	handle /export {
-		reverse_proxy orchestrator:8000
+		import to_orchestrator
 	}
 	handle /entities* {
-		reverse_proxy orchestrator:8000
+		import to_orchestrator
 	}
 
+	# The SPA upstream keeps Caddy's default idle timeout (2 min) against
+	# nginx's keepalive_timeout (75 s). The LUM-875 race can happen here too,
+	# but this upstream only serves static GETs, and Caddy's transport retries
+	# an idempotent request that fails on a reused connection. Cap it as well
+	# if lumogis-web ever serves non-idempotent routes.
 	handle {
 		reverse_proxy lumogis-web:80
 	}

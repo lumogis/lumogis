@@ -140,15 +140,45 @@ def stamp_edge_projected(edge_id: str, *, ms=None) -> None:
     reconcile replay pass re-projects only rows the live path missed. Best-effort
     — a stamp failure just means reconcile will re-attempt an already-attached
     (idempotent) MERGE next pass. Parameterised SQL; keys on the row ``id``.
+
+    Also resets ``reconcile_attempts`` (LUM-599): the counter measures misses
+    since the last attach, so a later un-stamp (an entity merge) starts the edge
+    on a full retry budget.
     """
     ms = ms or config.get_metadata_store()
     try:
         ms.execute(
-            "UPDATE entity_edges SET graph_projected_at = now() WHERE id = %s",
+            "UPDATE entity_edges SET graph_projected_at = now(), reconcile_attempts = 0 "
+            "WHERE id = %s",
             (edge_id,),
         )
     except Exception as exc:  # noqa: BLE001
         _log.warning("entity_edges: graph_projected_at stamp failed for %s: %s", edge_id, exc)
+
+
+def reset_edge_reconcile_attempts_for_entity(entity_id: str, *, user_id: str, ms=None) -> None:
+    """Give an entity's unattached edges a fresh reconcile budget (LUM-599).
+
+    Called when a staged entity is promoted. A staged entity has no graph node,
+    so edges to it miss on every reconcile pass and can use up their attempts
+    (``reconcile_attempts``) before the promotion. Promotion queues the node for
+    projection, so its edges deserve new retries. Touches only unstamped edges
+    whose counter is above 0. Best-effort: on failure the edges stay aged out,
+    which the operator reset in ``graph/reconcile.py`` can fix.
+    """
+    ms = ms or config.get_metadata_store()
+    try:
+        ms.execute(
+            # SCOPE-EXEMPT: entity_edges is scope-less (user_id-only); per-user write.
+            "UPDATE entity_edges SET reconcile_attempts = 0 "
+            "WHERE user_id = %s AND (src_entity_id = %s OR dst_entity_id = %s) "
+            "AND graph_projected_at IS NULL AND reconcile_attempts > 0",
+            (user_id, entity_id, entity_id),
+        )
+    except Exception as exc:  # noqa: BLE001
+        _log.warning(
+            "entity_edges: reconcile_attempts reset failed for entity %s: %s", entity_id, exc
+        )
 
 
 def archive_edges_for_memory(memory_id: str, *, user_id: str, ms=None) -> None:

@@ -197,7 +197,32 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Compare expected endpoints to the existing allow file (no write).",
     )
+    parser.add_argument(
+        "--email-imap",
+        action="store_true",
+        help="LUM-625: regenerate the email-IMAP household allow file "
+        "(lumogis-email-imap.txt) from the credential store. Requires DB access.",
+    )
     args = parser.parse_args(argv)
+
+    # LUM-625 email-IMAP mode — household-union regen from the store, not a
+    # single manifest. Mutually exclusive with the capability-id modes.
+    if args.email_imap:
+        if args.manifest is not None or args.cap_id is not None or args.endpoints is not None:
+            parser.error("--email-imap takes no --manifest / --id / --endpoints")
+        if args.check:
+            # --email-imap is write-only; do NOT silently overwrite the operator's
+            # applied file when a read-only check was requested (LUM-625 review).
+            parser.error("--email-imap does not support --check (it regenerates, never reads)")
+        from services.email_egress_acl import regenerate
+
+        try:
+            out = regenerate(allow_dir=args.allow_dir)
+        except Exception as exc:  # noqa: BLE001 - operator tool: report and fail non-zero
+            print(f"gen_capability_egress_acl (--email-imap): {exc}", file=sys.stderr)
+            return 2
+        print(str(out))
+        return 0
 
     manifest_mode = args.manifest is not None
     inline_mode = args.cap_id is not None or args.endpoints is not None

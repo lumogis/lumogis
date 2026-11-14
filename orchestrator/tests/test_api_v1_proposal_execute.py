@@ -300,3 +300,47 @@ def test_proposals_execute_as_user_forbidden(client, monkeypatch):
 
     resp = client.post("/api/v1/approvals/proposals/1/execute?as_user=alice", json={})
     assert resp.status_code == 403
+
+
+def test_proposals_execute_409_deferred(client, monkeypatch):
+    """LUM-762 — a row deferred to a future `run_after` is a 409, not a 400.
+
+    Route-level companion to `test_deferred_row_returns_409_not_400`, which drives
+    `claim_and_execute_proposal` directly. This one proves the status code and body
+    survive the route: without the dispatcher branch the request falls through to
+    `400 invalid_proposal_state` whose detail names `approved` — the one state that
+    is supposed to be claimable.
+
+    Distinct from `test_proposals_execute_409_lost_claim`: that one is `claimed_at
+    IS NOT NULL` (another worker holds it), this one is `claimed_at IS NULL` with a
+    future `run_after`. The two branches are mutually exclusive by design.
+    """
+    import routes.api_v1.approvals as apv_mod
+
+    from services import proposal_queue
+
+    monkeypatch.setattr(apv_mod, "_approvals_rate_check", lambda _: None)
+
+    deferred_until = datetime.now(timezone.utc) + timedelta(minutes=5)
+    monkeypatch.setattr(proposal_queue, "claim_by_id", lambda _pid, _uid, _wid: None)
+    monkeypatch.setattr(
+        proposal_queue,
+        "select_proposal_for_user",
+        lambda _pid, _uid: {
+            "id": _pid,
+            "status": "approved",
+            "claimed_at": None,
+            "claimed_by": None,
+            "payload": {},
+            "run_after": deferred_until,
+            "action_name": "x",
+        },
+    )
+
+    resp = client.post("/api/v1/approvals/proposals/41/execute", json={})
+
+    assert resp.status_code == 409
+    detail = resp.json()["detail"]
+    assert detail["error"] == "proposal_deferred"
+    assert detail["proposal_id"] == 41
+    assert detail["retry_after"] == deferred_until.isoformat()

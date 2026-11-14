@@ -24,20 +24,28 @@ def row(category: str, name: str, status: str, message: str, remediation: str) -
 
 
 def main() -> int:
+    # Follows CADDY_HTTP_HOST_PORT for the same reason the services check does:
+    # CI publishes caddy off 80 to avoid colliding with whatever already holds
+    # it on a self-hosted runner, and a probe pinned to 80 would report a
+    # healthy stack as unreachable. No compose config is read here, so this is
+    # the env var or the stock default — nothing else to consult.
+    _p = (os.environ.get("CADDY_HTTP_HOST_PORT") or "").strip()
+    caddy_port = int(_p) if _p.isdigit() else 80
+    url = f"http://127.0.0.1:{caddy_port}/"
     try:
         subprocess.run(
-            ["curl", "-sf", "--max-time", "8", "-o", "/dev/null", "http://127.0.0.1/"],
+            ["curl", "-sf", "--max-time", "8", "-o", "/dev/null", url],
             check=True,
             capture_output=True,
         )
-        row("network", "caddy-http", "ok", "http://127.0.0.1/ reachable (Caddy front door)", "")
+        row("network", "caddy-http", "ok", f"{url} reachable (Caddy front door)", "")
     except subprocess.CalledProcessError as exc:
         row(
             "network",
             "caddy-http",
             "warn",
-            f"http://127.0.0.1/ probe failed (exit {exc.returncode})",
-            "Ensure Caddy is published on port 80 and the stack is up.",
+            f"{url} probe failed (exit {exc.returncode})",
+            f"Ensure Caddy is published on port {caddy_port} and the stack is up.",
         )
 
     ts = shutil.which("tailscale")

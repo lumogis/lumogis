@@ -5,17 +5,21 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 source "${SCRIPT_DIR}/lib/common.sh"
+# shellcheck source=lib/files.sh
+source "${SCRIPT_DIR}/lib/files.sh"
 
 usage() {
-  echo "Usage: verify.sh <snapshot-dir> [--rewrite-manifest]" >&2
+  echo "Usage: verify.sh <snapshot-dir> [--rewrite-manifest] [--deep]" >&2
   exit 2
 }
 
 rewrite=false
+deep=false
 snapshot_dir=""
 for arg in "$@"; do
   case "$arg" in
     --rewrite-manifest) rewrite=true ;;
+    --deep) deep=true ;;
     -h | --help) usage ;;
     *)
       if [[ -z "$snapshot_dir" ]]; then
@@ -37,8 +41,22 @@ if [[ ! -f "$manifest" ]]; then
   errors+=("manifest.json missing")
 else
   schema="$(read_manifest_field "$manifest" '.schema_version')"
-  if [[ "$schema" != "1" ]]; then
+  if ! manifest_schema_supported "$schema"; then
     errors+=("unsupported schema_version: ${schema:-null}")
+  fi
+fi
+
+# File tree (schema 2). A store that records status "failed" has no dir and is
+# skipped here: backup status reports it.
+if [[ -f "$manifest" ]]; then
+  if [[ -n "$(read_manifest_field "$manifest" '.stores.files.dir')" ]]; then
+    files_args=("${snapshot_dir%/}")
+    [[ "$deep" == "true" ]] && files_args+=(--deep)
+    while IFS= read -r line; do
+      [[ -n "$line" ]] && errors+=("files: ${line}")
+    done < <(files_verify "${files_args[@]}")
+  elif [[ "$(read_manifest_field "$manifest" '.schema_version')" == "1" ]]; then
+    log_info "snapshot has no file tree (schema 1)"
   fi
 fi
 
@@ -98,6 +116,9 @@ if [[ "$rewrite" == "true" && -f "$manifest" ]]; then
     --argjson errs "$(printf '%s\n' "${errors[@]}" | jq -R . | jq -s .)" \
     '.verify_status = $st | .verified_at = $at | .verify_errors = $errs' \
     "$manifest" >"$tmp"
+  # mktemp creates 0600; the orchestrator reads manifest.json for the backup status
+  # card and runs as a non-root user (LUM-887), so keep it world-readable.
+  chmod 644 "$tmp"
   mv "$tmp" "$manifest"
 fi
 

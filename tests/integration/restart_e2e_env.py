@@ -10,6 +10,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
+
 FORBIDDEN_TEST_ENV_KEYS = frozenset(
     {
         "FILESYSTEM_ROOT_HOST",
@@ -114,25 +116,35 @@ def reset_ingest_settings(*, compose_project: str = "lumogis-test") -> None:
     prior run's) ``PUT /settings`` leaves an override that masks the env-fallback path
     under test (e.g. the malformed-JSON fallback case). Best-effort: a non-zero return or
     missing container is ignored so the test still runs (and fails loudly on the real
-    assertion) if the DB cannot be reached.
+    assertion) if the DB cannot be reached. ``docker`` itself missing (orchestrator
+    image, host without the CLI) is the same class of miss — not an ERROR.
     """
     sql = (
         "DELETE FROM app_settings WHERE key IN "
         "('ingest_paths','pending_ingest_paths','pending_prune');"
     )
-    subprocess.run(
-        [
-            "docker",
-            "exec",
-            f"{compose_project}-postgres-1",
-            "sh",
-            "-c",
-            f'psql -U "${{POSTGRES_USER:-lumogis}}" -d "${{POSTGRES_DB:-lumogis}}" -c "{sql}"',
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        subprocess.run(
+            [
+                "docker",
+                "exec",
+                f"{compose_project}-postgres-1",
+                "sh",
+                "-c",
+                f'psql -U "${{POSTGRES_USER:-lumogis}}" -d "${{POSTGRES_DB:-lumogis}}" -c "{sql}"',
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return
+
+
+def skip_unless_docker() -> None:
+    """Restart e2e recreates the orchestrator from the host CLI (LUM-400)."""
+    if shutil.which("docker") is None:
+        pytest.skip("docker CLI not available — restart e2e is host-only (make e2e-ingest-restart)")
 
 
 def orchestrator_container_marker(
@@ -141,6 +153,7 @@ def orchestrator_container_marker(
     compose_project: str = "lumogis-test",
 ) -> str:
     """Return ``container_id:started_at`` for recreate proof."""
+    skip_unless_docker()
     q = subprocess.run(
         ["docker", "compose", "-p", compose_project, "ps", "-q", "orchestrator"],
         cwd=repo_root,

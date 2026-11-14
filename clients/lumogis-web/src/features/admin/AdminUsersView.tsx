@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { useAuth } from "../../auth/AuthProvider";
 import { ApiError } from "../../api/client";
+import type { McpTokenAdminRow } from "../../api/mcpTokens";
 import {
   archivePathForInventoryEntry,
   downloadAdminUserExportZip,
@@ -22,7 +23,10 @@ import {
 } from "../../api/invites";
 import { RowActionsMenu } from "../../components/RowActionsMenu";
 import { Button } from "../../components/Button";
+import { TURN_ON_SIGN_IN_DOC_URL } from "../../components/SingleUserBanner";
+import { EmptyState } from "../_shared/EmptyState";
 import type { UserRow } from "../_shared/UserPicker";
+import { adminResetConsequence } from "../me/mcpTokenDisplay";
 import { formatLastActive, roleLabel } from "./adminUsersDisplay";
 
 interface UserAdminView extends UserRow {
@@ -53,7 +57,7 @@ function pluralCount(n: number, noun: string): string {
   return `${n} ${noun}${n === 1 ? "" : "s"}`;
 }
 
-export function AdminUsersView(): JSX.Element {
+function AdminUsersMembersView(): JSX.Element {
   const { client, user } = useAuth();
   const qc = useQueryClient();
   const [msg, setMsg] = useState<string | null>(null);
@@ -100,6 +104,20 @@ export function AdminUsersView(): JSX.Element {
     queryKey: ["admin", "invites"],
     queryFn: () => listAdminInvites(client),
   });
+
+  // LUM-885: resetting a password revokes the target's MCP tokens. Same key and URL as
+  // AdminMcpTokensView (it lists revoked rows too), so count only the unrevoked ones.
+  const resetTokensQ = useQuery({
+    queryKey: ["mcp", "admin", resetFor?.id ?? ""],
+    queryFn: () =>
+      client.getJson<McpTokenAdminRow[]>(
+        `/api/v1/admin/users/${encodeURIComponent(resetFor?.id ?? "")}/mcp-tokens`,
+      ),
+    enabled: Boolean(resetFor),
+  });
+  const resetActiveTokens = resetTokensQ.isSuccess
+    ? resetTokensQ.data.filter((t) => t.revoked_at == null).length
+    : null;
 
   const activeAdmins = useMemo(
     () => listQ.data?.filter((u) => u.role === "admin" && !u.disabled) ?? [],
@@ -148,9 +166,14 @@ export function AdminUsersView(): JSX.Element {
       body: { role?: "admin" | "user"; disabled?: boolean; display_name?: string | null };
     }) =>
       client.patchJson<typeof body, UserAdminView>(`/api/v1/admin/users/${encodeURIComponent(id)}`, body),
-    onSuccess: () => {
+    onSuccess: (_data, vars) => {
       setMsg("Saved.");
       void qc.invalidateQueries({ queryKey: ["admin", "users"] });
+      if (vars.body.role !== undefined) {
+        // A demotion revokes the user's MCP tokens and cancels the invites they sent (LUM-885).
+        void qc.invalidateQueries({ queryKey: ["mcp", "admin", vars.id] });
+        void qc.invalidateQueries({ queryKey: ["admin", "invites"] });
+      }
     },
     onError: (e) => {
       setMsg(errMsg(e));
@@ -169,6 +192,7 @@ export function AdminUsersView(): JSX.Element {
       return adminSetUserPassword(client, resetFor.id, { newPassword: resetPass });
     },
     onSuccess: () => {
+      if (resetFor) void qc.invalidateQueries({ queryKey: ["mcp", "admin", resetFor.id] });
       setResetFor(null);
       setResetPass("");
       setResetConfirm("");
@@ -182,9 +206,12 @@ export function AdminUsersView(): JSX.Element {
 
   const delM = useMutation({
     mutationFn: (id: string) => client.delete(`/api/v1/admin/users/${encodeURIComponent(id)}`),
-    onSuccess: () => {
+    onSuccess: (_data, id) => {
       setMsg("User deleted.");
       void qc.invalidateQueries({ queryKey: ["admin", "users"] });
+      // Deleting revokes the user's MCP tokens and cancels the invites they sent (LUM-885).
+      void qc.invalidateQueries({ queryKey: ["mcp", "admin", id] });
+      void qc.invalidateQueries({ queryKey: ["admin", "invites"] });
     },
     onError: (e) => {
       setMsg(errMsg(e));
@@ -560,6 +587,9 @@ export function AdminUsersView(): JSX.Element {
                 onChange={(e) => setResetConfirm(e.target.value)}
               />
             </label>
+            <p className="lumogis-field__hint" data-testid="admin-reset-consequence">
+              {adminResetConsequence(resetFor.email, resetActiveTokens)}
+            </p>
             <div className="lumogis-form-actions lumogis-form-actions--stack">
               <Button type="submit" variant="primary">
                 Save
@@ -863,7 +893,7 @@ export function AdminUsersView(): JSX.Element {
                           onClick={() => {
                             const message = willPromoteToAdmin
                               ? `Make ${u.email} an Admin? Admins can manage every household member, including other admins.`
-                              : `Change ${u.email} to Member? They will lose admin access to household management.`;
+                              : `Change ${u.email} to Member? They will lose admin access to household management. They will be signed out on every device, their MCP tokens revoked and any invites they sent cancelled.`;
                             if (!window.confirm(message)) return;
                             setMsg(null);
                             patchM.mutate({
@@ -942,7 +972,9 @@ export function AdminUsersView(): JSX.Element {
                             title={deleteTitle}
                             disabled={lastAdmin || self}
                             onClick={() => {
-                              if (window.confirm(`Delete ${u.email}?`)) {
+                              if (window.confirm(
+                                  `Delete ${u.email}? They will be signed out on every device, their MCP tokens revoked and any invites they sent cancelled.`,
+                                )) {
                                 setMsg(null);
                                 delM.mutate(u.id);
                               }
@@ -962,4 +994,24 @@ export function AdminUsersView(): JSX.Element {
       </div>
     </section>
   );
+}
+
+/**
+ * LUM-853: creating `users` rows with sign-in off makes the next restart refuse to boot (two
+ * rows, `main.py` `_enforce_auth_consistency`) or stops the bootstrap admin from being created
+ * when sign-in is turned on (one row), which strands the single user's data. So in single-user
+ * mode no user, invite or import query or control is mounted.
+ */
+export function AdminUsersView(): JSX.Element {
+  const { singleUser } = useAuth();
+  if (singleUser) {
+    return (
+      <EmptyState
+        title="Sign-in is off"
+        helperText="With sign-in off this Lumogis has one user, so there is nobody to add or invite. Turn on sign-in first; then add people here."
+        actions={[{ label: "How to turn on sign-in", href: TURN_ON_SIGN_IN_DOC_URL }]}
+      />
+    );
+  }
+  return <AdminUsersMembersView />;
 }

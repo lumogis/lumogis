@@ -8,9 +8,12 @@ test-integration	make test-integration	integration	live stack up	local-dev	1	0
 test-integration-full	make test-integration-full	integration	live stack	local-dev	1	0
 rc-integration	scripts/integration-public-rc.sh full-cycle	integration	RC compose triple	release-rc	1	0
 e2e-ingest-restart	make e2e-ingest-restart	integration	RC stack 3-5 min	opt-in-heavy	1	0
-graph-parity	make test-graph-parity	integration	Docker; destructive volumes	opt-in-heavy	1	0
+e2e-ingest-live	make e2e-ingest-live	integration	RC stack 15-40 min + LLM	opt-in-heavy	1	0
+graph-parity	make test-graph-parity	integration	Docker; isolated project lumogis-parity	opt-in-heavy	1	0
 m1-compat	make m1-compat-with-retry	integration	live FalkorDB	opt-in-heavy	1	0
 web-caddy-headers	make web-caddy-headers	none	stack + Caddy	opt-in-heavy	1	0
+caddy-client-ip	make caddy-client-ip-prove	none	stack + Caddy	opt-in-heavy	1	0
+caddy-config	make caddy-config-check	none	Docker only	local-dev	0	0
 web-unit	make web-test	web	Node >=20 in lumogis-web	local-dev	0	0
 search-vitest	cd clients/lumogis-search && npm test	none	Node >=20	local-dev	0	0
 web-e2e	make web-e2e	web	stack + Caddy + smoke creds	opt-in-heavy	1	0

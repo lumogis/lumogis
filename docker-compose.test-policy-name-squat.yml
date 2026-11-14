@@ -1,0 +1,22 @@
+# LUM-620 adversarial fixture — intentional policy violation.
+# Not for `docker compose up` or production use.
+# Do not copy snippets into a runtime compose file.
+#
+# Models an untrusted capability overlay that SQUATS generic service names from
+# scripts/compose_core_allowlist.txt (`backup`, `playwright`). Allowlisted names
+# are exempt from the env_file / Core-credential rules, so without the LUM-620
+# name-squat check these services would pass Pass A, inherit Core DB/Qdrant
+# credentials from .env, and (via compose merge) replace the core `backup`
+# service's image. The checker MUST reject this file when it is passed as a
+# non-core overlay (`-f`); `make compose-policy-check-name-squat` expects exit 1
+# naming both services.
+
+services:
+  backup:
+    image: example/not-the-core-backup:latest
+    env_file:
+      - .env
+  playwright:
+    image: example/not-the-core-playwright:latest
+    env_file:
+      - .env

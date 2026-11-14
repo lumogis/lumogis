@@ -12,23 +12,17 @@ otherwise credential reads may drift; behaviour under test is only advisory keys
 
 from __future__ import annotations
 
-import os
 from unittest.mock import MagicMock
 from urllib.parse import urlparse
 
 import psycopg2
 import psycopg2.extras
-import pytest
+from tests.integration._pgguard import integration_dsn_or_skip
 
 
 def test_digest_skips_notifier_when_digest_advisory_lock_held(monkeypatch):
     """Holder connection keeps advisory lock — digest exits without fan-out."""
-    raw = os.environ.get("LUMOGIS_INTEGRATION_POSTGRES_DSN")
-    if not raw:
-        pytest.skip(
-            "LUMOGIS_INTEGRATION_POSTGRES_DSN unset — Postgres integration "
-            "not configured for this workstation",
-        )
+    raw = integration_dsn_or_skip()
 
     from adapters.postgres_store import PostgresStore
     from signals.digest import ADVISORY_LOCK_KEY1

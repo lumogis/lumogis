@@ -30,6 +30,7 @@ class NotificationPrefsFakeStore:
         self.prefs: dict[tuple[str, str, str], bool] = {}
         self.webpush_rows: dict[str, list[dict]] = {}
         self.app_settings: dict[str, str] = {}
+        self.user_settings: dict[str, dict] = {}
 
     def ping(self) -> bool:
         return True
@@ -45,6 +46,13 @@ class NotificationPrefsFakeStore:
             self.tier_policy[tier] = (bool(bypass), list(channels))
         elif "insert into app_settings" in q:
             self.app_settings[params[0]] = params[1]
+        elif "insert into notification_user_settings" in q:
+            uid, tz, start, end = params[:4]
+            self.user_settings[uid] = {
+                "timezone": tz,
+                "quiet_hours_start": start,
+                "quiet_hours_end": end,
+            }
 
     def fetch_one(self, query: str, params: tuple | None = None) -> dict | None:
         q = " ".join(query.lower().split())
@@ -56,7 +64,8 @@ class NotificationPrefsFakeStore:
             key = (params[0], params[1], params[2])
             return {"ok": 1} if key in self.prefs else None
         if "from notification_user_settings" in q:
-            return None
+            row = self.user_settings.get(params[0])
+            return dict(row) if row else None
         return None
 
     def fetch_all(self, query: str, params: tuple | None = None) -> list[dict]:
@@ -183,6 +192,80 @@ def test_patch_duplicate_items_last_wins(prefs_store):
     row = next(t for t in resp.types if t.notification_type == NotificationType.SIGNAL_RECEIVED)
     ntfy = next(c for c in row.channels if c.channel == ChannelId.NTFY)
     assert ntfy.enabled is True
+
+
+def test_patch_sets_timezone_and_quiet_hours(prefs_store):
+    patch = NotificationPreferencesPatch(
+        timezone="Europe/Berlin",
+        quiet_hours_start="22:00",
+        quiet_hours_end="07:00",
+    )
+    resp = prefs_svc.patch_preferences("u1", patch)
+    assert resp.timezone == "Europe/Berlin"
+    assert resp.quiet_hours_start == "22:00:00"
+    assert resp.quiet_hours_end == "07:00:00"
+
+
+def test_patch_settings_partial_update_preserves_other_fields(prefs_store):
+    prefs_svc.patch_preferences(
+        "u1",
+        NotificationPreferencesPatch(
+            timezone="Europe/Berlin", quiet_hours_start="22:00", quiet_hours_end="07:00"
+        ),
+    )
+    # Only touch quiet_hours_end this time — timezone and start must survive.
+    resp = prefs_svc.patch_preferences("u1", NotificationPreferencesPatch(quiet_hours_end="06:30"))
+    assert resp.timezone == "Europe/Berlin"
+    assert resp.quiet_hours_start == "22:00:00"
+    assert resp.quiet_hours_end == "06:30:00"
+
+
+def test_patch_clears_quiet_hours_with_explicit_null_but_keeps_omitted_timezone(prefs_store):
+    prefs_svc.patch_preferences(
+        "u1",
+        NotificationPreferencesPatch(
+            timezone="Europe/Berlin", quiet_hours_start="22:00", quiet_hours_end="07:00"
+        ),
+    )
+    # quiet_hours_* explicitly null (present in model_fields_set) → cleared;
+    # timezone omitted entirely → left untouched.
+    clear_patch = NotificationPreferencesPatch.model_validate(
+        {"quiet_hours_start": None, "quiet_hours_end": None}
+    )
+    assert {"quiet_hours_start", "quiet_hours_end"} <= clear_patch.model_fields_set
+    assert "timezone" not in clear_patch.model_fields_set
+    resp = prefs_svc.patch_preferences("u1", clear_patch)
+    assert resp.quiet_hours_start is None
+    assert resp.quiet_hours_end is None
+    assert resp.timezone == "Europe/Berlin"
+
+
+def test_patch_rejects_invalid_timezone(prefs_store):
+    with pytest.raises(HTTPException) as exc:
+        prefs_svc.patch_preferences("u1", NotificationPreferencesPatch(timezone="Not/AZone"))
+    assert exc.value.status_code == 422
+    assert exc.value.detail == "invalid_timezone"
+
+
+def test_patch_rejects_invalid_quiet_hours_format(prefs_store):
+    with pytest.raises(HTTPException) as exc:
+        prefs_svc.patch_preferences(
+            "u1", NotificationPreferencesPatch(quiet_hours_start="not-a-time")
+        )
+    assert exc.value.status_code == 422
+    assert exc.value.detail == "invalid_quiet_hours_format"
+
+
+def test_patch_rejects_wholly_empty_body(prefs_store):
+    with pytest.raises(HTTPException) as exc:
+        prefs_svc.patch_preferences("u1", NotificationPreferencesPatch())
+    assert exc.value.status_code == 422
+    assert exc.value.detail == "empty_patch"
+
+
+def test_patch_settings_only_body_is_valid_with_empty_preferences(prefs_store):
+    resp = prefs_svc.patch_preferences("u1", NotificationPreferencesPatch(timezone="UTC"))
+    assert resp.timezone == "UTC"
 
 
 def test_admin_patch_rejects_empty_default_channels(prefs_store):

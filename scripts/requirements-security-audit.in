@@ -1,0 +1,9 @@
+# LUM-190 / LUM-873 — security-audit tool inputs. Compile into the hashed lock
+# scripts/requirements-security-audit.txt (ADR-097 convention); never install this file directly.
+#
+#   uv pip compile --generate-hashes --universal --python-version 3.10 \
+#     scripts/requirements-security-audit.in -o scripts/requirements-security-audit.txt
+#
+# Quarterly bump review: raise the pins here, recompile, review the lock diff.
+bandit==1.9.4
+pip-audit==2.10.1

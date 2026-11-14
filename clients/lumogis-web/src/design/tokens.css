@@ -285,7 +285,8 @@ input:focus-visible,
 }
 
 /* Phase 3E — limited offline notice (status only; not a modal). */
-.lumogis-offline-banner {
+.lumogis-offline-banner,
+.lumogis-single-user-banner {
   flex-shrink: 0;
   padding: var(--lumogis-space-2) var(--lumogis-space-4);
   padding-left: max(var(--lumogis-space-4), env(safe-area-inset-left, 0px));
@@ -302,16 +303,19 @@ input:focus-visible,
 }
 
 @media (prefers-color-scheme: dark) {
-  .lumogis-offline-banner {
+  .lumogis-offline-banner,
+  .lumogis-single-user-banner {
     background: color-mix(in srgb, var(--lumogis-warn) 22%, var(--lumogis-surface-alt));
   }
 }
 
-:root[data-theme="light"] .lumogis-offline-banner {
+:root[data-theme="light"] .lumogis-offline-banner,
+:root[data-theme="light"] .lumogis-single-user-banner {
   background: color-mix(in srgb, var(--lumogis-warn) 16%, var(--lumogis-surface-alt));
 }
 
-:root[data-theme="dark"] .lumogis-offline-banner {
+:root[data-theme="dark"] .lumogis-offline-banner,
+:root[data-theme="dark"] .lumogis-single-user-banner {
   background: color-mix(in srgb, var(--lumogis-warn) 22%, var(--lumogis-surface-alt));
 }
 
@@ -474,7 +478,9 @@ input:focus-visible,
   font: inherit;
   font-size: 0.86rem;
   font-weight: 500;
-  transition: background 0.14s, color 0.14s;
+  transition:
+    background 0.14s,
+    color 0.14s;
 }
 
 .lumogis-bottomnav__item {
@@ -759,12 +765,15 @@ input:focus-visible,
 
 .lumogis-field__select {
   appearance: none;
-  background-image: linear-gradient(45deg, transparent 50%, var(--lumogis-fg-muted) 50%),
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--lumogis-fg-muted) 50%),
     linear-gradient(135deg, var(--lumogis-fg-muted) 50%, transparent 50%);
   background-position:
     calc(100% - 14px) calc(50% - 2px),
     calc(100% - 9px) calc(50% - 2px);
-  background-size: 5px 5px, 5px 5px;
+  background-size:
+    5px 5px,
+    5px 5px;
   background-repeat: no-repeat;
   padding-right: 1.75rem;
 }
@@ -1049,7 +1058,10 @@ input:focus-visible,
   white-space: nowrap;
   border-radius: var(--lumogis-radius-md);
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
 }
 
 .lumogis-btn:disabled {
@@ -1146,6 +1158,31 @@ input:focus-visible,
 .lumogis-admin-dense-section {
   min-width: 0;
   max-width: 100%;
+}
+
+/*
+ * LUM-282 — the sources zero state.
+ *
+ * `EmptyState` was authored for full-page states (`DocumentsPage`) and centres
+ * its content. On a settings page it sits above a left-aligned form, under a
+ * left-aligned h1, so it has to be re-aligned.
+ *
+ * TWO classes deliberately. The component's own `.root` is a single hashed
+ * class from a CSS module; a bare `.lumogis-sources__empty` would tie it on
+ * specificity and the winner would be decided by whichever stylesheet Vite
+ * happens to emit last. `.lumogis-admin-dense-section .lumogis-sources__empty`
+ * is 0,2,0 and wins regardless of order.
+ *
+ * The selector depends on `SourcesView` keeping `className="lumogis-admin-
+ * dense-section"` on its <section>. If that ever moves, this rule stops
+ * matching silently. Nothing checks that a selector still matches: the LUM-852
+ * guard (`tests/design/classNames.test.ts`) only proves a class is mentioned.
+ * `DocumentsPage` once passed `lumogis-documents__empty`, which no stylesheet
+ * defined, so it never did anything.
+ */
+.lumogis-admin-dense-section .lumogis-sources__empty {
+  align-items: flex-start;
+  text-align: left;
 }
 
 .lumogis-table-scroll {
@@ -1538,6 +1575,67 @@ input:focus-visible,
   margin: 0;
 }
 
+/* LUM-65: recovery affordance under the sign-in button. */
+.lumogis-login__recovery {
+  font-size: 0.875rem;
+  margin: 0;
+  text-align: center;
+}
+
+/* Auth recovery pages (LUM-65) — forgot-password, reset-password, Admin System mail.
+   Named `lumogis-auth-recovery`, NOT `lumogis-recovery`: that class was already
+   owned by the LUM-793 failed-send section on Approvals (see below, ~line 2741).
+   Both used the same single-class selector, so the two feature stylesheets
+   cross-applied — the failed-send list collapsed into this block's 420px
+   centred card, and its labels/inputs picked up reset-form typography. */
+.lumogis-auth-recovery {
+  max-width: 420px;
+  margin: 4rem auto;
+  padding: var(--lumogis-space-5);
+  background: var(--lumogis-surface);
+  border: 1px solid var(--lumogis-border);
+  border-radius: var(--lumogis-radius-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--lumogis-space-3);
+}
+
+.lumogis-auth-recovery label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lumogis-space-1);
+  font-size: 0.875rem;
+  color: var(--lumogis-fg-muted);
+}
+
+.lumogis-auth-recovery input {
+  padding: var(--lumogis-space-2) var(--lumogis-space-3);
+  border: 1px solid var(--lumogis-border);
+  border-radius: var(--lumogis-radius-md);
+  background: var(--lumogis-bg);
+  color: var(--lumogis-fg);
+  font: inherit;
+  min-height: var(--lumogis-tap-target-min);
+}
+
+.lumogis-auth-recovery__error {
+  color: var(--lumogis-danger);
+  font-size: 0.875rem;
+  margin: 0;
+}
+
+.lumogis-auth-recovery__hint {
+  font-size: 0.875rem;
+  margin: 0;
+  color: var(--lumogis-fg-muted);
+}
+
+.lumogis-auth-recovery code {
+  font-family: var(--lumogis-font-mono, ui-monospace, monospace);
+  font-size: 0.8125rem;
+  word-break: break-all;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -1770,9 +1868,15 @@ input:focus-visible,
 
 .lumogis-chat__main-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: var(--lumogis-space-3);
+}
+
+/* LUM-881: the privacy hint wraps under the picker instead of squeezing it. */
+.lumogis-chat__main-head > .lumogis-privacy-hint {
+  flex-basis: 100%;
 }
 
 .lumogis-chat__model-picker {
@@ -1818,6 +1922,19 @@ input:focus-visible,
   border: 1px solid var(--lumogis-border);
   border-radius: var(--lumogis-radius-sm);
   cursor: pointer;
+}
+
+/* LUM-881: calm one-line explanation of why cloud models are off. */
+.lumogis-privacy-hint {
+  font-size: 0.85rem;
+  color: var(--lumogis-fg-muted);
+  margin: var(--lumogis-space-1) 0 0;
+  max-width: 42rem;
+}
+
+.lumogis-privacy-hint a {
+  color: inherit;
+  text-decoration: underline;
 }
 
 .lumogis-chat__messages {
@@ -1896,8 +2013,14 @@ input:focus-visible,
 }
 
 @keyframes lumogis-chat-blink {
-  0%, 50% { opacity: 1; }
-  51%, 100% { opacity: 0; }
+  0%,
+  50% {
+    opacity: 1;
+  }
+  51%,
+  100% {
+    opacity: 0;
+  }
 }
 
 /* LUM-212 — pre-first-token typing indicator (animated dots). */
@@ -1924,9 +2047,28 @@ input:focus-visible,
   animation-delay: 0.4s;
 }
 
+/* LUM-876 — transient stream status (e.g. cold local model), beside the dots. */
+.lumogis-chat__stream-status,
+.lumogis-document-chat__status {
+  color: var(--lumogis-fg-muted, #999);
+  font-style: italic;
+}
+
+.lumogis-chat__stream-status {
+  margin-left: var(--lumogis-space-2, 0.5rem);
+}
+
 @keyframes lumogis-chat-typing {
-  0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
-  30% { opacity: 1; transform: translateY(-2px); }
+  0%,
+  60%,
+  100% {
+    opacity: 0.3;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2539,7 +2681,8 @@ input:focus-visible,
   align-items: center;
 }
 
-.lumogis-approvals__hard-limited {
+.lumogis-approvals__hard-limited,
+.lumogis-approvals__not-switchable {
   font-size: 0.8rem;
   color: var(--lumogis-fg-muted);
   font-style: italic;
@@ -2678,6 +2821,145 @@ input:focus-visible,
   }
 }
 
+/* ── Failed-send recovery (LUM-793) ────────────────────────────────────── */
+/* Sits under the approvals page. The outcome line is colour-coded because it
+   is the sentence the user is actually there to read; everything else is
+   supporting detail. */
+
+.lumogis-recovery {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lumogis-space-3);
+  margin-top: var(--lumogis-space-5);
+}
+
+.lumogis-recovery__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--lumogis-space-4);
+}
+
+.lumogis-recovery__item {
+  background: var(--lumogis-surface);
+  border: 1px solid var(--lumogis-border);
+  border-left: 3px solid var(--lumogis-warn);
+  border-radius: var(--lumogis-radius-md);
+  padding: var(--lumogis-space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--lumogis-space-2);
+}
+
+.lumogis-recovery__head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--lumogis-space-2);
+  align-items: baseline;
+  font-size: 0.8125rem;
+  color: var(--lumogis-fg-muted);
+}
+
+.lumogis-recovery__action {
+  font-weight: 600;
+  color: var(--lumogis-fg);
+}
+
+.lumogis-recovery__subject {
+  margin: 0;
+  font-weight: 600;
+}
+
+.lumogis-recovery__outcome {
+  margin: 0;
+  font-size: 0.875rem;
+}
+
+.lumogis-recovery__outcome--sent {
+  color: var(--lumogis-ok, var(--lumogis-accent));
+}
+
+.lumogis-recovery__outcome--partial,
+.lumogis-recovery__outcome--not-sent {
+  color: var(--lumogis-warn);
+}
+
+.lumogis-recovery__outcome--unknown {
+  color: var(--lumogis-fg-muted);
+}
+
+/* The body is the reassurance, so it keeps the author's line breaks rather
+   than being reflowed into a paragraph. */
+.lumogis-recovery__body {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.9375rem;
+  color: var(--lumogis-fg);
+}
+
+.lumogis-recovery__expand {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 0.8125rem;
+  color: var(--lumogis-accent);
+  cursor: pointer;
+}
+
+.lumogis-recovery__attachments,
+.lumogis-recovery__message {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--lumogis-fg-muted);
+}
+
+.lumogis-recovery__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--lumogis-space-2);
+  margin-top: var(--lumogis-space-2);
+}
+
+.lumogis-recovery__save,
+.lumogis-recovery__dismiss {
+  padding: var(--lumogis-space-2) var(--lumogis-space-4);
+  border-radius: var(--lumogis-radius-md);
+  font: inherit;
+  font-size: 0.875rem;
+  cursor: pointer;
+  min-height: var(--lumogis-tap-target-min);
+}
+
+.lumogis-recovery__save {
+  background: var(--lumogis-accent);
+  color: var(--lumogis-accent-fg);
+  border: 1px solid transparent;
+}
+
+.lumogis-recovery__dismiss {
+  background: var(--lumogis-surface);
+  color: var(--lumogis-fg);
+  border: 1px solid var(--lumogis-border);
+}
+
+.lumogis-recovery__save:disabled,
+.lumogis-recovery__dismiss:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@media (max-width: 640px) {
+  .lumogis-recovery__actions button {
+    flex: 1 1 auto;
+    text-align: center;
+  }
+}
+
 /* ── Document library + detail ─────────────────────────────────────────── */
 
 .lumogis-documents {
@@ -2714,7 +2996,10 @@ input:focus-visible,
   display: flex;
   flex-direction: column;
   gap: var(--lumogis-space-3);
-  min-height: calc(100dvh - var(--lumogis-shell-header-h) - var(--lumogis-shell-bottomnav-h) - 2 * var(--lumogis-space-4));
+  min-height: calc(
+    100dvh - var(--lumogis-shell-header-h) - var(--lumogis-shell-bottomnav-h) - 2 *
+      var(--lumogis-space-4)
+  );
   max-width: min(56rem, 100%);
   margin: 0 auto;
   width: 100%;
@@ -2794,6 +3079,14 @@ input:focus-visible,
   margin: 0;
   color: var(--lumogis-danger);
   font-size: 0.85rem;
+}
+
+/* "Context used: chunks …" under a document-chat answer (LUM-852).
+ * Was `text-sm text-muted`, which are utility names from another framework
+ * that no Lumogis stylesheet defines, so it rendered at body size. */
+.lumogis-document-chat__context-used {
+  font-size: 0.85rem;
+  color: var(--lumogis-fg-muted);
 }
 
 .lumogis-document-chat__compose textarea {
@@ -2885,7 +3178,9 @@ input:focus-visible,
   border: 1px dashed var(--lumogis-border-strong);
   border-radius: var(--lumogis-radius-md);
   background: var(--lumogis-surface-alt);
-  transition: border-color 0.15s ease, background 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
 }
 
 .lumogis-ingest-upload__dropzone--active {
@@ -2981,4 +3276,405 @@ input:focus-visible,
   width: 1rem;
   height: 1rem;
   accent-color: var(--lumogis-accent);
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   Email composer (LUM-818 unification)
+
+   The composer shipped with a full set of `lumogis-composer__*` class names
+   and NO rules for any of them, so every field rendered at browser defaults
+   inside a themed shell. Those class names are not decorative — the unit suite
+   selects `dialog.lumogis-composer` and e2e specs target `.lumogis-*` classes
+   elsewhere — so they are kept and given rules here rather than swapped for
+   hashed CSS-module names, which would break both.
+
+   Styles live in this file, next to `.lumogis-shell` and `.lumogis-documents`,
+   because that is where component rules for global `lumogis-*` classes already
+   live. A CSS module was tried first for the recipient dropdown alone and
+   removed: it split one component's styling across two conventions and, more
+   quietly, referenced `--lumogis-surface-raised` and `--lumogis-text-muted`,
+   neither of which exists — so those rules fell back to hardcoded hex and
+   stopped following the theme. Every custom property below is one this file
+   actually defines.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+.lumogis-composer {
+  width: min(46rem, 92vw);
+  padding: 0;
+  border: 1px solid var(--lumogis-border);
+  border-radius: var(--lumogis-radius-lg);
+  background: var(--lumogis-surface);
+  color: var(--lumogis-fg);
+}
+
+.lumogis-composer::backdrop {
+  background: rgb(0 0 0 / 45%);
+}
+
+.lumogis-composer__context {
+  padding: var(--lumogis-space-3) var(--lumogis-space-4);
+  border-bottom: 1px solid var(--lumogis-border);
+  color: var(--lumogis-fg-muted);
+  font-size: 0.9rem;
+}
+
+.lumogis-composer__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lumogis-space-3);
+  padding: var(--lumogis-space-4);
+}
+
+/* One rule for every text control: the composer has six, and styling them
+   individually is how they drift apart. */
+.lumogis-composer__to,
+.lumogis-composer__subject,
+.lumogis-composer__cc,
+.lumogis-composer__bcc,
+.lumogis-composer__body,
+.lumogis-composer__quote-body,
+.lumogis-composer__refine-instruction {
+  width: 100%;
+  padding: var(--lumogis-space-2) var(--lumogis-space-3);
+  border: 1px solid var(--lumogis-border);
+  border-radius: var(--lumogis-radius-sm);
+  background: var(--lumogis-bg);
+  color: var(--lumogis-fg);
+  font: inherit;
+}
+
+.lumogis-composer__body {
+  min-height: 10rem;
+  line-height: var(--lumogis-leading-body);
+  resize: vertical;
+}
+
+.lumogis-composer__quote-body {
+  min-height: 6rem;
+  color: var(--lumogis-fg-muted);
+  resize: vertical;
+}
+
+.lumogis-composer__recipients > summary {
+  cursor: pointer;
+  color: var(--lumogis-fg-muted);
+  font-size: 0.9rem;
+  padding-bottom: var(--lumogis-space-2);
+}
+
+.lumogis-composer__recipients .lumogis-recipient-input + .lumogis-recipient-input {
+  margin-top: var(--lumogis-space-2);
+}
+
+.lumogis-composer__drafting,
+.lumogis-composer__provenance,
+.lumogis-composer__refine-note,
+.lumogis-composer__refine-status,
+.lumogis-composer__quote-note {
+  margin: 0;
+  color: var(--lumogis-fg-muted);
+  font-size: 0.85rem;
+}
+
+.lumogis-composer__refine-row,
+.lumogis-composer__refine-preview-actions,
+.lumogis-composer__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--lumogis-space-2);
+  align-items: center;
+}
+
+.lumogis-composer__actions {
+  justify-content: flex-end;
+  padding: var(--lumogis-space-3) var(--lumogis-space-4);
+  border-top: 1px solid var(--lumogis-border);
+}
+
+.lumogis-composer__refine-chip {
+  padding: var(--lumogis-space-1) var(--lumogis-space-3);
+  border: 1px solid var(--lumogis-border);
+  border-radius: var(--lumogis-radius-lg);
+  background: var(--lumogis-surface-alt);
+  color: var(--lumogis-fg);
+  cursor: pointer;
+}
+
+.lumogis-composer__refine-preview {
+  padding: var(--lumogis-space-3);
+  border: 1px solid var(--lumogis-border);
+  border-radius: var(--lumogis-radius-sm);
+  background: var(--lumogis-surface-alt);
+}
+
+.lumogis-composer__refine-preview-label {
+  margin: 0 0 var(--lumogis-space-2);
+  color: var(--lumogis-fg-muted);
+  font-size: 0.85rem;
+}
+
+.lumogis-composer__refine-preview-body {
+  margin: 0;
+  white-space: pre-wrap;
+  line-height: var(--lumogis-leading-body);
+}
+
+.lumogis-composer__forward-attachment {
+  display: flex;
+  gap: var(--lumogis-space-2);
+  align-items: center;
+  padding: var(--lumogis-space-1) 0;
+}
+
+.lumogis-composer__forward-attachment-size {
+  color: var(--lumogis-fg-muted);
+  font-size: 0.85rem;
+}
+
+.lumogis-composer__review {
+  background: var(--lumogis-accent);
+  color: var(--lumogis-accent-fg);
+}
+
+/* Recipient completion (LUM-818).
+
+   `position: absolute` is the load-bearing rule, not decoration. Unstyled, the
+   suggestion <ul> is a block element inside the form, so it DISPLACES the
+   subject and body fields while open and lets them jump back on close — an
+   expanding section rather than a dropdown. */
+.lumogis-recipient-input {
+  position: relative;
+}
+
+.lumogis-recipient-input__suggestions {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  margin: var(--lumogis-space-1) 0 0;
+  padding: 0;
+  list-style: none;
+  max-height: 14rem;
+  overflow-y: auto;
+  border: 1px solid var(--lumogis-border-strong);
+  border-radius: var(--lumogis-radius-sm);
+  background: var(--lumogis-surface);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 35%);
+}
+
+.lumogis-recipient-input__suggestions li {
+  display: flex;
+  gap: var(--lumogis-space-2);
+  align-items: baseline;
+  padding: var(--lumogis-space-2) var(--lumogis-space-3);
+  cursor: pointer;
+  /* Addresses are long; wrapping turns the list into a wall of text. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lumogis-recipient-input__suggestions li:hover,
+.lumogis-recipient-input__suggestions li[aria-selected="true"] {
+  background: var(--lumogis-surface-alt);
+}
+
+.lumogis-recipient-input__name {
+  font-weight: 600;
+}
+
+.lumogis-recipient-input__addr {
+  color: var(--lumogis-fg-muted);
+  font-size: 0.9em;
+}
+
+/* Undelivered-message notice (LUM-820).
+
+   Sits above the triage lanes, and is styled as a warning rather than a lane:
+   a message that did not arrive is not something to triage, it is something
+   already believed done that turned out not to be. `--lumogis-danger` is the
+   existing token for that, so this does not invent a colour. */
+
+.lumogis-bounce-notice {
+  margin: var(--lumogis-space-3) 0;
+  padding: var(--lumogis-space-3) var(--lumogis-space-4);
+  border: 1px solid var(--lumogis-danger);
+  border-radius: var(--lumogis-radius-md);
+  background: color-mix(in srgb, var(--lumogis-danger) 12%, var(--lumogis-surface));
+  color: var(--lumogis-fg);
+}
+
+.lumogis-bounce-notice__title {
+  margin: 0 0 var(--lumogis-space-2);
+  font-size: 1rem;
+}
+
+.lumogis-bounce-notice__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--lumogis-space-2);
+}
+
+.lumogis-bounce-notice__item {
+  display: flex;
+  gap: var(--lumogis-space-3);
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.lumogis-bounce-notice__addr {
+  font-family: var(--lumogis-font-mono);
+  font-size: 0.9em;
+}
+
+.lumogis-bounce-notice__dismiss {
+  flex-shrink: 0;
+  padding: var(--lumogis-space-1) var(--lumogis-space-3);
+  border: 1px solid var(--lumogis-border);
+  border-radius: var(--lumogis-radius-sm);
+  background: var(--lumogis-surface);
+  color: var(--lumogis-fg);
+  cursor: pointer;
+}
+
+/* Visually hidden, still announced (LUM-821).
+ *
+ * The standard clip-rect pattern: removed from the visual layout without
+ * `display:none` or `visibility:hidden`, either of which also removes it from
+ * the accessibility tree — which would defeat the entire purpose.
+ *
+ * This exists because `aria-label` on a bare `<span>` does NOT work: a span
+ * with no role maps to `role=generic`, which prohibits naming, so browsers
+ * drop the label and the text is announced bare. Real text in the DOM is
+ * announced by every screen reader with no role negotiation at all.
+ */
+.lumogis-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Which mailbox a message arrived in (LUM-821).
+ *
+ * The triage lanes are cross-mailbox, so on a multi-mailbox account this is
+ * the only thing distinguishing personal mail from work mail sitting next to
+ * it. Styled as a quiet chip rather than plain text: it sits between the
+ * sender and the timestamp, and unstyled it would read as part of the sender's
+ * name — the one reading it must not produce is "who is this from?".
+ *
+ * Muted foreground on the alt surface measures 5.10:1 (light) and 6.04:1
+ * (dark), both clearing WCAG-AA body text; the pairing is asserted in
+ * tests/design/contrast.test.ts because this is its first use.
+ *
+ * Tokens only, so both themes follow the palette without a `[data-theme]`
+ * block of their own.
+ */
+.lumogis-email-card__mailbox {
+  /* Not a bare inline: `max-width`, `overflow` and vertical padding do not
+     apply to non-replaced inline elements, so the truncation below would
+     silently do nothing. The card's head has no layout rules of its own — none
+     of these BEM classes did before this one — so nothing blockifies it. */
+  display: inline-block;
+  vertical-align: middle;
+  padding: 0 var(--lumogis-space-2);
+  border: 1px solid var(--lumogis-border);
+  border-radius: var(--lumogis-radius-sm);
+  background: var(--lumogis-surface-alt);
+  color: var(--lumogis-fg-muted);
+  font-size: 0.8em;
+  /* The mailbox name is user-supplied and can be long ("Work — shared with
+     accounts"). Truncate rather than let one card's head wrap to two lines
+     and desynchronise the lane's rhythm; the full name stays in `title`. */
+  max-width: 14ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Start a message rather than answer one (LUM-830).
+ *
+ * A primary action, sitting directly under the tab strip, so it is styled as a
+ * button rather than left as the browser default that every other control on
+ * this page still is. Accent ground with `accent-fg` on it — the one pairing
+ * the contrast guard already asserts for buttons in both themes.
+ */
+.lumogis-email__compose {
+  padding: var(--lumogis-space-2) var(--lumogis-space-4);
+  border: 1px solid transparent;
+  border-radius: var(--lumogis-radius-sm);
+  background: var(--lumogis-accent);
+  color: var(--lumogis-accent-fg);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* The answer a user gets when no mailbox can send yet.
+ *
+ * Deliberately NOT styled as a warning: nothing is broken, and sending is one
+ * settings toggle away. Muted text on the alt surface — the pairing measured
+ * for the mailbox chip, so it inherits that contrast assertion.
+ */
+.lumogis-email__compose-off {
+  padding: var(--lumogis-space-2) var(--lumogis-space-3);
+  border: 1px solid var(--lumogis-border);
+  border-radius: var(--lumogis-radius-sm);
+  background: var(--lumogis-surface-alt);
+  color: var(--lumogis-fg-muted);
+  font-size: 0.9em;
+}
+
+/* Which mailbox a composed message leaves from (LUM-830).
+ *
+ * Sits above the To field, because the order it reads in is the order the
+ * decision is made in: who it comes from, then who it goes to. Given a border
+ * and the alt surface so it reads as a field rather than as a caption — ADR-213
+ * asks for the choice to be visible, and prose above a form is what people skip.
+ */
+.lumogis-composer__from {
+  padding: var(--lumogis-space-2) var(--lumogis-space-3);
+  border: 1px solid var(--lumogis-border);
+  border-radius: var(--lumogis-radius-sm);
+  background: var(--lumogis-surface-alt);
+}
+
+.lumogis-composer__from-fixed {
+  margin: 0;
+  color: var(--lumogis-fg-muted);
+}
+
+.lumogis-composer__from-label {
+  display: flex;
+  gap: var(--lumogis-space-2);
+  align-items: center;
+  color: var(--lumogis-fg-muted);
+}
+
+.lumogis-composer__from-select {
+  flex: 1;
+  min-width: 0;
+  padding: var(--lumogis-space-1) var(--lumogis-space-2);
+  border: 1px solid var(--lumogis-border);
+  border-radius: var(--lumogis-radius-sm);
+  background: var(--lumogis-surface);
+  color: var(--lumogis-fg);
+}
+
+/* LUM-831 — the From row's degraded note. Shown only when there are 2+ sendable
+   mailboxes and no addresses resolved: with one mailbox there is no choice to
+   get wrong, so the warning would be noise on the common path. */
+.lumogis-composer__from-degraded {
+  margin: var(--lumogis-space-1) 0 0;
+  font-size: 0.85em;
+  color: var(--lumogis-fg-muted);
 }

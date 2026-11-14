@@ -147,6 +147,7 @@ def _mint_jwt(user_id: str, role: str) -> str:
     return jwt.encode(
         {
             "sub": user_id,
+            "typ": "access",
             "role": role,
             "iat": int(time.time()),
             "exp": int(time.time()) + 600,
@@ -410,3 +411,82 @@ def test_per_user_listing_does_not_expose_tier_rows(store, auth_env):
         items = resp.json()["items"]
         # bob has no per-user rows of his own; tier rows MUST NOT appear.
         assert items == []
+
+
+# ---------------------------------------------------------------------------
+# LUM-65 — operator-managed connectors are refused on EVERY generic write
+# surface, not just the system tier.
+#
+# `system_smtp` has to be in the registry for `PUT /api/v1/admin/system-mail`
+# to pass `require_registered`, and registration is what makes a connector
+# writable at every tier. Guarding only the system router would leave the
+# per-user one open to any household member — and
+# `credential_tiers.resolve_runtime_credential` walks user → household →
+# system, so a member-planted relay would outrank the admin-proven one.
+# ---------------------------------------------------------------------------
+
+
+def _operator_managed_write_urls(target_user_id: str) -> dict[str, str]:
+    """One URL per generic credential write surface (all four routers)."""
+    return {
+        "per_user": "/api/v1/me/connector-credentials/system_smtp",
+        "admin_per_user": (
+            f"/api/v1/admin/users/{target_user_id}/connector-credentials/system_smtp"
+        ),
+        "household": f"{_TIER_PREFIX['household']}/system_smtp",
+        "system": f"{_TIER_PREFIX['system']}/system_smtp",
+    }
+
+
+@pytest.mark.parametrize("surface", ["per_user", "admin_per_user", "household", "system"])
+def test_operator_managed_connector_put_rejected_on_every_router(store, auth_env, surface):
+    admin = _seed(store, email="admin@home.lan", role="admin")
+    hdr = {"Authorization": f"Bearer {_mint_jwt(admin, 'admin')}"}
+    url = _operator_managed_write_urls(admin)[surface]
+
+    with _client() as client:
+        resp = client.put(url, json={"payload": {"host": "evil.example"}}, headers=hdr)
+
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"]["code"] == "use_system_mail_admin"
+
+
+@pytest.mark.parametrize("surface", ["per_user", "admin_per_user", "household", "system"])
+def test_operator_managed_connector_delete_rejected_on_every_router(store, auth_env, surface):
+    admin = _seed(store, email="admin@home.lan", role="admin")
+    hdr = {"Authorization": f"Bearer {_mint_jwt(admin, 'admin')}"}
+    url = _operator_managed_write_urls(admin)[surface]
+
+    with _client() as client:
+        resp = client.delete(url, headers=hdr)
+
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"]["code"] == "use_system_mail_admin"
+
+
+def test_operator_managed_connector_put_rejected_for_plain_member(store, auth_env):
+    """The finding this test exists for: a non-admin must not reach the tier walk."""
+    _seed(store, email="admin@home.lan", role="admin")
+    bob = _seed(store, email="bob@home.lan", role="user")
+    hdr = {"Authorization": f"Bearer {_mint_jwt(bob, 'user')}"}
+
+    with _client() as client:
+        resp = client.put(
+            "/api/v1/me/connector-credentials/system_smtp",
+            json={"payload": {"host": "relay.attacker.example", "port": 25}},
+            headers=hdr,
+        )
+
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"]["code"] == "use_system_mail_admin"
+
+
+def test_operator_managed_connector_absent_from_registry_listing(store, auth_env):
+    bob = _seed(store, email="bob@home.lan", role="user")
+    hdr = {"Authorization": f"Bearer {_mint_jwt(bob, 'user')}"}
+
+    with _client() as client:
+        resp = client.get("/api/v1/me/connector-credentials/registry", headers=hdr)
+
+    assert resp.status_code == 200, resp.text
+    assert "system_smtp" not in {item["id"] for item in resp.json()["items"]}

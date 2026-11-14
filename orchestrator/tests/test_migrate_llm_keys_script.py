@@ -232,7 +232,7 @@ def test_single_user_migration_writes_rows_and_audit(store, capsys):
     # One encrypted row per llm_<vendor> connector for alice.
     alice_rows = [k for k in store.rows if k[0] == "alice"]
     assert len(alice_rows) == 6
-    for uid, conn in alice_rows:
+    for uid, conn, _instance in alice_rows:
         assert conn.startswith("llm_")
 
     # Audit emission: one __connector_credential__.put per write.

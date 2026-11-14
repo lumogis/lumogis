@@ -108,8 +108,14 @@ test.describe("LUM-511 ingest upload progress (/documents)", () => {
       buffer: Buffer.from("LUM-511 ingest upload progress e2e.\n"),
     });
 
-    const panel = page.getByTestId("document-upload-panel");
-    await expect(panel.getByText(FILE_NAME).first()).toBeVisible({ timeout: 10_000 });
+    // Scoped to the selection chip, not a bare text match: the name also lands
+    // in the progress row once upload starts, so the unscoped locator resolved
+    // to one element or two depending on which won the race — a strict-mode
+    // violation roughly one run in three. The chip is the deterministic signal
+    // that the file registered; the progress row is asserted on its own below.
+    await expect(
+      page.getByLabel("Selected files").getByText(FILE_NAME),
+    ).toBeVisible({ timeout: 10_000 });
     const progressBar = page.getByTestId("ingest-progress-bar");
     await expect(progressBar).toBeVisible({ timeout: 10_000 });
 

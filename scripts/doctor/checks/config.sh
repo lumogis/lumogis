@@ -121,6 +121,7 @@ def main() -> int:
             )
 
     auth_raw = keys_found.get("AUTH_ENABLED", "false").strip().lower()
+    refresh_error_emitted = False
     if auth_raw == "true":
         if "LUMOGIS_PUBLIC_ORIGIN" not in keys_found:
             row(
@@ -130,10 +131,32 @@ def main() -> int:
                 "AUTH_ENABLED=true requires LUMOGIS_PUBLIC_ORIGIN in .env",
                 "Set LUMOGIS_PUBLIC_ORIGIN to the exact browser origin (scheme + host + optional port).",
             )
+        # LUM-885: the orchestrator refuses to boot with auth on when its refresh
+        # secret is missing, a placeholder, or equal to AUTH_SECRET. Resolve it
+        # the way auth._refresh_secret() does (first non-empty of the two names)
+        # so an upgrade is warned before the container exits. Values are never printed.
+        def _unq(name: str) -> str:
+            return keys_found.get(name, "").strip().strip('"').strip("'")
+
+        refresh_resolved = _unq("LUMOGIS_JWT_REFRESH_SECRET") or _unq("JWT_REFRESH_SECRET")
+        access_secret = _unq("AUTH_SECRET")
+        if refresh_resolved in PLACEHOLDERS or (
+            access_secret and refresh_resolved == access_secret
+        ):
+            refresh_error_emitted = True
+            row(
+                "config",
+                "JWT_REFRESH_SECRET",
+                "error",
+                "AUTH_ENABLED=true needs a refresh secret distinct from AUTH_SECRET; the orchestrator refuses to boot otherwise",
+                "Set JWT_REFRESH_SECRET (or LUMOGIS_JWT_REFRESH_SECRET) to the output of: openssl rand -hex 32",
+            )
 
     for wk in sorted(WATCH_KEYS):
         if wk not in keys_found:
             continue
+        if wk == "JWT_REFRESH_SECRET" and refresh_error_emitted:
+            continue  # the error row above already covers it
         v = keys_found[wk].strip().strip('"').strip("'")
         if v in PLACEHOLDERS:
             row(

@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import uuid
+from typing import Any
 from typing import Optional
 
 from auth import UserContext
@@ -24,6 +25,7 @@ from visibility import visible_filter
 from visibility import visible_qdrant_filter
 
 import config
+from services import task_models
 
 _log = logging.getLogger(__name__)
 
@@ -84,8 +86,8 @@ def summarize_session(
 
     Plan llm_provider_keys_per_user_migration Pass 2.10: ``user_id`` is
     threaded into ``get_llm_provider`` so a future switch to a cloud model
-    here resolves the key per-user. ``llama`` (the current default) has no
-    ``api_key_env`` so user_id is a no-op semantically.
+    here resolves the key per-user. The model comes from the ``session_summary``
+    task (``services/task_models.py``; the code default is ``llama``).
     """
     sid = session_id or str(uuid.uuid4())
     if _rc_session_end_stub_enabled():
@@ -94,8 +96,17 @@ def summarize_session(
     from services.connector_credentials import ConnectorNotConfigured
     from services.connector_credentials import CredentialUnavailable
     from services.context_budget import get_budget
+    from services.privacy_mode import resolve_job_model
 
-    budget = get_budget("llama")
+    # Resolve the model first so the budget is sized for the model that runs.
+    # Neither resolver step raises the credential errors the try below catches.
+    job_model = resolve_job_model(
+        task_models.resolve_task_model("session_summary", user_id=user_id), user_id
+    )
+    if not job_model:
+        return SessionSummary(session_id=sid, summary="")
+
+    budget = get_budget(job_model)
     trimmed = truncate_messages(messages, max_tokens=budget - 500)
 
     conversation_text = "\n".join(
@@ -108,12 +119,7 @@ def summarize_session(
         if config.is_injection_sanitiser_enabled()
         else _SUMMARIZE_PROMPT
     )
-    from services.privacy_mode import resolve_job_model
-
     try:
-        job_model = resolve_job_model("llama", user_id)
-        if not job_model:
-            return SessionSummary(session_id=sid, summary="")
         provider = config.get_llm_provider(job_model, user_id=user_id)
         response = provider.chat(
             messages=[{"role": "user", "content": summarise_prompt_body + conversation_text}],
@@ -146,6 +152,44 @@ def summarize_session(
     except (json.JSONDecodeError, KeyError):
         _log.warning("LLM returned non-JSON summary, using raw text")
         return SessionSummary(session_id=sid, summary=response.text)
+
+
+# The keys retrieve_context reads. A writer may not override them through **extra.
+_CONVERSATION_CONTRACT_KEYS = frozenset({"session_id", "summary", "user_id", "scope"})
+_CONVERSATION_SCOPES = frozenset({"personal", "shared", "system"})
+
+
+def conversation_payload(
+    *, item_id: str, summary: str, user_id: str, scope: str, **extra: Any
+) -> dict[str, Any]:
+    """Payload for any point written to the Qdrant ``conversations`` collection (LUM-954).
+
+    retrieve_context reads ``session_id`` (the item's id) and ``summary`` (its
+    recallable text). Every writer — sessions, capture notes, and the shared/system
+    projections of sessions, notes and audio memos — builds its payload here, so a
+    new kind cannot invent its own keys. Kind-specific keys (``note_id``, ``audio_id``,
+    ``published_from``, ``source``, ``topics``, ``entities``) go in ``extra``.
+    """
+    item_id = str(item_id)
+    if not item_id:
+        raise ValueError("conversation_payload: item_id must not be empty")
+    if scope not in _CONVERSATION_SCOPES:
+        # Any other scope is admitted by no arm of visible_qdrant_filter, so the
+        # point would silently never recall.
+        raise ValueError(
+            f"conversation_payload: scope must be one of {sorted(_CONVERSATION_SCOPES)}, "
+            f"got {scope!r}"
+        )
+    clash = sorted(_CONVERSATION_CONTRACT_KEYS & extra.keys())
+    if clash:
+        raise ValueError(f"conversation_payload: extra may not override contract keys {clash}")
+    return {
+        "session_id": item_id,
+        "summary": summary or "",
+        "user_id": user_id,
+        "scope": scope,
+        **extra,
+    }
 
 
 def store_session(
@@ -222,14 +266,14 @@ def store_session(
         collection="conversations",
         id=point_id,
         vector=vector,
-        payload={
-            "session_id": summary.session_id,
-            "summary": summary.summary,
-            "topics": summary.topics,
-            "entities": summary.entities,
-            "user_id": user_id,
-            "scope": scope,
-        },
+        payload=conversation_payload(
+            item_id=summary.session_id,
+            summary=summary.summary,
+            user_id=user_id,
+            scope=scope,
+            topics=summary.topics,
+            entities=summary.entities,
+        ),
     )
 
     # ---- Postgres (canonical record + entity_ids for reconciliation) ----
@@ -352,12 +396,24 @@ def retrieve_context(
         filter=visible_qdrant_filter(user, scope_filter),
     )
 
-    return [
-        ContextHit(
-            session_id=r["payload"].get("session_id", ""),
-            summary=r["payload"].get("summary", ""),
-            score=r["score"],
-            scope=r["payload"].get("scope", "personal"),
-        )
-        for r in raw
-    ]
+    return [_context_hit(r) for r in raw]
+
+
+def _context_hit(r: dict) -> ContextHit:
+    # LUM-954: points written before conversation_payload() existed carry
+    # note_id/text (note projections) or audio_id/transcript (audio-memo
+    # projections). Read them so notes shared before the fix still recall.
+    # Keep while a pre-LUM-954 backup can still be restored: admin restore and
+    # user import re-upsert stored payloads verbatim, old keys included. Remove
+    # once no supported backup predates the fix.
+    payload = r.get("payload") or {}
+    session_id = (
+        payload.get("session_id") or payload.get("note_id") or payload.get("audio_id") or ""
+    )
+    summary = payload.get("summary") or payload.get("text") or payload.get("transcript") or ""
+    return ContextHit(
+        session_id=session_id,
+        summary=summary,
+        score=r["score"],
+        scope=payload.get("scope", "personal"),
+    )

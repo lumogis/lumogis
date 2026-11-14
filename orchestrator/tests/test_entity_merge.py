@@ -55,48 +55,97 @@ _WINNER_POST_ROW = {
 # ---------------------------------------------------------------------------
 
 
-def _make_conn_mock(fail_at: str | None = None):
-    """Return a minimal mock psycopg2 connection.
+class _TxRecorder:
+    """Records how `ms.transaction()` was used, instead of faking a connection.
 
-    fail_at: if set, the cursor's execute() will raise RuntimeError on the
-    call matching that keyword.
+    The old helper built a mock psycopg2 connection and the tests asserted
+    `conn.commit()` / `conn.rollback()` on it — implementation detail of a
+    mechanism LUM-816 removed. `merge_entities` no longer owns a connection; it
+    opens `ms.transaction()` and lets the store commit or roll back.
+
+    So the observable behaviour is: was the block entered, and did it exit
+    cleanly or by exception? That is what these tests now assert, and it stays
+    true whichever way the store implements atomicity underneath.
     """
-    conn = MagicMock()
-    conn.autocommit = True  # simulates PostgresStore.conn.autocommit
 
-    cur = MagicMock()
-    cur.__enter__ = MagicMock(return_value=cur)
-    cur.__exit__ = MagicMock(return_value=False)
-    cur.rowcount = 2
+    def __init__(self):
+        self.entered = 0
+        self.committed = False
+        self.rolled_back = False
 
-    if fail_at:
-        _call_count = [0]
-        _orig = cur.execute.side_effect
+    def __call__(self):
+        return self
 
-        def _execute(sql, params=None):
-            _call_count[0] += 1
-            if fail_at in (sql or ""):
-                raise RuntimeError(f"injected failure at: {fail_at}")
+    def __enter__(self):
+        self.entered += 1
+        return None
 
-        cur.execute.side_effect = _execute
+    def __exit__(self, exc_type, exc, tb):
+        if exc_type is None:
+            self.committed = True
+        else:
+            self.rolled_back = True
+        return False
 
-    conn.cursor.return_value = cur
-    return conn, cur
+
+def _make_conn_mock(fail_at: str | None = None):
+    """Back-compat shim: returns (tx_recorder, None).
+
+    Kept so the many `conn, cur = _make_conn_mock()` call sites below read
+    unchanged; `conn` is now the transaction recorder.
+    """
+    return _TxRecorder(), None
+
+
+def _sql_calls(ms):
+    """Every statement the merge issued through the store.
+
+    Phase A used to drive raw cursors on `ms._conn`, so tests read
+    `cur.execute.call_args_list`. It now goes through the port — `ms.execute`
+    for plain statements and `ms.fetch_one`/`ms.fetch_all` for reads and row
+    counts — so the SQL lives across the mocks. Collecting them together keeps
+    these assertions about *what SQL ran*, which is the behaviour they were
+    always checking.
+    """
+    return (
+        list(ms.execute.call_args_list)
+        + list(ms.fetch_one.call_args_list)
+        + list(ms.fetch_all.call_args_list)
+    )
 
 
 def _make_ms(conn, winner_row=None, loser_row=None, winner_post=None):
-    """Return a mock MetadataStore whose fetch_one returns the given rows in sequence."""
-    ms = MagicMock()
-    ms._conn = conn
+    """Return a mock MetadataStore that answers reads by *what was asked*.
 
-    # fetch_one call order: winner verify, loser verify, winner pre, winner post
-    fetch_sequence = [
-        winner_row,  # Step 1a — verify winner
-        loser_row,  # Step 1b — verify loser
-        winner_row,  # pre-fetch for Phase B name
+    `fetch_one` used to be a fixed four-element `side_effect` sequence, which
+    made the fake a model of the implementation's call *order* rather than of a
+    store: moving the row counts onto `fetch_one` (a CTE, so Postgres counts
+    instead of shipping every affected row) silently fed an entity row to a
+    count and a count to an entity lookup, and ten tests failed for a reason
+    that had nothing to do with what they were testing.
+
+    Dispatching on the query is what a store actually does, and it survives the
+    merge issuing its statements in a different order.
+    """
+    ms = MagicMock()
+    ms.transaction = conn  # _TxRecorder is itself the context-manager factory
+    ms.fetch_all.return_value = []
+
+    # Entity reads, in the order the merge needs them:
+    # winner verify, loser verify, winner pre-fetch, winner post-update.
+    entity_rows = [
+        winner_row,
+        loser_row,
+        winner_row,
         winner_post or {"name": (winner_row or {}).get("name", ""), "aliases": []},
     ]
-    ms.fetch_one.side_effect = fetch_sequence
+
+    def _fetch_one(sql, params=None):
+        if str(sql).lstrip().startswith("WITH affected AS"):
+            return {"n": 1}  # one row touched by this UPDATE/DELETE
+        return entity_rows.pop(0) if entity_rows else None
+
+    ms.fetch_one.side_effect = _fetch_one
     return ms
 
 
@@ -123,7 +172,7 @@ class TestPhaseASuccess:
         assert result.winner_id == WINNER_ID
         assert result.loser_id == LOSER_ID
         # Phase A committed
-        conn.commit.assert_called_once()
+        assert conn.committed, "the transaction should have committed"
         # Hook fired after commit
         mock_hook.assert_called_once()
         call_kwargs = mock_hook.call_args
@@ -145,9 +194,7 @@ class TestPhaseASuccess:
             merge_entities(WINNER_ID, LOSER_ID, USER_ID)
 
         # Check UPDATE entities called with summed mention_count
-        update_calls = [
-            c for c in cur.execute.call_args_list if "UPDATE entities" in (c.args[0] or "")
-        ]
+        update_calls = [c for c in _sql_calls(ms) if "UPDATE entities" in (c.args[0] or "")]
         assert update_calls, "UPDATE entities not called"
         update_params = update_calls[0].args[1]
         assert 4 in update_params  # 3 + 1 = 4 mention_count
@@ -167,7 +214,7 @@ class TestPhaseASuccess:
             merge_entities(WINNER_ID, LOSER_ID, USER_ID)
 
         # The UPDATE entities SQL must set graph_projected_at = NULL
-        all_sql = " ".join(str(c.args[0]) for c in cur.execute.call_args_list if c.args)
+        all_sql = " ".join(str(c.args[0]) for c in _sql_calls(ms) if c.args)
         assert "graph_projected_at = NULL" in all_sql
 
     def test_loser_deleted(self):
@@ -184,9 +231,7 @@ class TestPhaseASuccess:
 
             merge_entities(WINNER_ID, LOSER_ID, USER_ID)
 
-        delete_calls = [
-            c for c in cur.execute.call_args_list if "DELETE FROM entities" in (c.args[0] or "")
-        ]
+        delete_calls = [c for c in _sql_calls(ms) if "DELETE FROM entities" in (c.args[0] or "")]
         assert delete_calls, "DELETE FROM entities not called"
         assert LOSER_ID in delete_calls[0].args[1]
 
@@ -204,9 +249,7 @@ class TestPhaseASuccess:
 
             merge_entities(WINNER_ID, LOSER_ID, USER_ID)
 
-        session_calls = [
-            c for c in cur.execute.call_args_list if "array_replace" in (c.args[0] or "")
-        ]
+        session_calls = [c for c in _sql_calls(ms) if "array_replace" in (c.args[0] or "")]
         assert session_calls, "array_replace UPDATE sessions not called"
         sql = session_calls[0].args[0]
         assert "entity_ids" in sql
@@ -226,7 +269,7 @@ class TestPhaseASuccess:
             merge_entities(WINNER_ID, LOSER_ID, USER_ID)
 
         relation_calls = [
-            c for c in cur.execute.call_args_list if "UPDATE entity_relations" in (c.args[0] or "")
+            c for c in _sql_calls(ms) if "UPDATE entity_relations" in (c.args[0] or "")
         ]
         assert relation_calls, "UPDATE entity_relations not called"
         params = relation_calls[0].args[1]
@@ -266,7 +309,8 @@ class TestPhaseAFailure:
     def test_rollback_on_sql_error(self):
         conn, cur = _make_conn_mock()
         ms = MagicMock()
-        ms._conn = conn
+        ms.transaction = conn
+        ms.fetch_all.return_value = [{"?column?": 1}, {"?column?": 1}]
         # Make fetch_one raise after winner found
         ms.fetch_one.side_effect = [_WINNER_ROW, RuntimeError("constraint violation")]
 
@@ -279,13 +323,14 @@ class TestPhaseAFailure:
             with pytest.raises(RuntimeError):
                 merge_entities(WINNER_ID, LOSER_ID, USER_ID)
 
-        conn.rollback.assert_called_once()
+        assert conn.rolled_back, "the transaction should have rolled back"
         mock_hook.assert_not_called()
 
     def test_no_qdrant_call_on_phase_a_failure(self):
         conn, cur = _make_conn_mock()
         ms = MagicMock()
-        ms._conn = conn
+        ms.transaction = conn
+        ms.fetch_all.return_value = [{"?column?": 1}, {"?column?": 1}]
         ms.fetch_one.side_effect = [_WINNER_ROW, RuntimeError("db error")]
 
         mock_vs = MagicMock()
@@ -328,7 +373,7 @@ class TestPhaseBQdrantFailure:
             result = merge_entities(WINNER_ID, LOSER_ID, USER_ID)
 
         # Phase A committed
-        conn.commit.assert_called_once()
+        assert conn.committed, "the transaction should have committed"
         # Hook fired
         mock_hook.assert_called_once()
         # qdrant_cleaned False
@@ -357,7 +402,8 @@ class TestEntityNotFound:
     def test_winner_not_found_raises_value_error(self):
         conn, _ = _make_conn_mock()
         ms = MagicMock()
-        ms._conn = conn
+        ms.transaction = conn
+        ms.fetch_all.return_value = [{"?column?": 1}, {"?column?": 1}]
         ms.fetch_one.return_value = None  # winner not found
 
         with patch("services.entity_merge.config.get_metadata_store", return_value=ms):
@@ -366,12 +412,13 @@ class TestEntityNotFound:
             with pytest.raises(ValueError, match="winner.*not found"):
                 merge_entities(WINNER_ID, LOSER_ID, USER_ID)
 
-        conn.rollback.assert_called_once()
+        assert conn.rolled_back, "the transaction should have rolled back"
 
     def test_loser_not_found_raises_value_error(self):
         conn, _ = _make_conn_mock()
         ms = MagicMock()
-        ms._conn = conn
+        ms.transaction = conn
+        ms.fetch_all.return_value = [{"?column?": 1}, {"?column?": 1}]
         # sequence: winner_pre (merge_entities), winner_row (_run_phase_a), loser_row (_run_phase_a)
         ms.fetch_one.side_effect = [_WINNER_ROW, _WINNER_ROW, None]  # loser not found
 
@@ -381,7 +428,7 @@ class TestEntityNotFound:
             with pytest.raises(ValueError, match="loser.*not found"):
                 merge_entities(WINNER_ID, LOSER_ID, USER_ID)
 
-        conn.rollback.assert_called_once()
+        assert conn.rolled_back, "the transaction should have rolled back"
 
 
 # ---------------------------------------------------------------------------
@@ -420,7 +467,8 @@ class TestEntitiesMergeRoute:
     def test_entity_not_found_returns_404(self, client):
         conn, _ = _make_conn_mock()
         ms = MagicMock()
-        ms._conn = conn
+        ms.transaction = conn
+        ms.fetch_all.return_value = [{"?column?": 1}, {"?column?": 1}]
         ms.fetch_one.return_value = None
 
         with patch("routes.admin.config.get_metadata_store", return_value=ms):
@@ -591,3 +639,167 @@ def test_merge_entities_handles_duplicate_evidence_collision():
         "_run_phase_a must return relations_dropped_as_duplicate so "
         "merge_entities can emit it in its 'Phase A committed' log line."
     )
+
+
+# ---------------------------------------------------------------------------
+# 11. entity_edges repoint (LUM-598)
+# ---------------------------------------------------------------------------
+
+
+def _run_merge_collect_sql():
+    conn, _ = _make_conn_mock()
+    ms = _make_ms(conn, _WINNER_ROW, _LOSER_ROW, _WINNER_POST_ROW)
+    with (
+        patch("services.entity_merge.config.get_metadata_store", return_value=ms),
+        patch("services.entity_merge.config.get_vector_store", return_value=MagicMock()),
+        patch("services.entity_merge.config.get_embedder", return_value=MagicMock()),
+        patch("services.entity_merge.hooks.fire_background"),
+    ):
+        from services.entity_merge import merge_entities
+
+        merge_entities(WINNER_ID, LOSER_ID, USER_ID)
+    return ms, [(" ".join(str(c.args[0]).split()), c.args[1]) for c in _sql_calls(ms)]
+
+
+class TestEntityEdgesRepoint:
+    def _edge_sql(self, calls):
+        return [(q, p) for q, p in calls if "entity_edges" in q]
+
+    def test_src_and_dst_repointed_in_merge_transaction_before_loser_delete(self):
+        ms, _ = _run_merge_collect_sql()
+        ordered = [" ".join(str(c.args[0]).split()) for c in ms.method_calls if c.args]
+        src_i = next(i for i, q in enumerate(ordered) if "SET src_entity_id = %s" in q)
+        dst_i = next(i for i, q in enumerate(ordered) if "SET dst_entity_id = %s" in q)
+        # The loser DELETE is the last statement of Phase A that hits `entities`.
+        del_i = max(i for i, q in enumerate(ordered) if q.startswith("DELETE FROM entities"))
+        assert src_i < del_i and dst_i < del_i
+
+    def test_repoint_params_and_user_scoping(self):
+        _, calls = _run_merge_collect_sql()
+        edge = self._edge_sql(calls)
+        src = [(q, p) for q, p in edge if "SET src_entity_id = %s" in q]
+        dst = [(q, p) for q, p in edge if "SET dst_entity_id = %s" in q]
+        assert len(src) == 1 and len(dst) == 1
+        # (winner, user, loser, winner): move loser -> winner for this user only.
+        assert src[0][1] == (WINNER_ID, USER_ID, LOSER_ID, WINNER_ID)
+        assert dst[0][1] == (WINNER_ID, USER_ID, LOSER_ID, WINNER_ID)
+        assert all("user_id = %s" in q for q, _ in edge)
+
+    def test_only_active_edges_move_and_every_bank_is_covered(self):
+        _, calls = _run_merge_collect_sql()
+        for q, _ in self._edge_sql(calls):
+            if "SET src_entity_id" in q or "SET dst_entity_id" in q:
+                assert "valid_until IS NULL" in q
+                # Banks are matched pairwise (not filtered) so all banks move.
+                assert "w.bank = e.bank" in q
+
+    def test_repoint_resets_projection_stamp_and_preserves_temporal_columns(self):
+        _, calls = _run_merge_collect_sql()
+        for q, _ in self._edge_sql(calls):
+            if "SET src_entity_id" in q or "SET dst_entity_id" in q:
+                set_clause = q.split(" SET ", 1)[1].split(" WHERE ", 1)[0]
+                assert "graph_projected_at = NULL" in set_clause
+                # LUM-599: a repointed edge gets a fresh reconcile retry budget.
+                assert "reconcile_attempts = 0" in set_clause
+                assert not re.search(
+                    r"\b(valid_from|valid_until|created_at|evidence_id|id|bank) =", set_clause
+                )
+
+    def test_duplicates_deleted_against_active_winner_edge_only(self):
+        _, calls = _run_merge_collect_sql()
+        dele = [q for q, _ in self._edge_sql(calls) if "DELETE FROM entity_edges" in q]
+        assert len(dele) == 1
+        assert "w.valid_until IS NULL" in dele[0]
+        assert "e.valid_until IS NULL" in dele[0]
+        # Repoint statements guard on ANY winner row (archived rows hold the UNIQUE slot).
+        for q, _ in self._edge_sql(calls):
+            if "SET src_entity_id" in q or "SET dst_entity_id" in q:
+                assert "w.valid_until" not in q
+
+    def test_selfloops_archived_not_repointed(self):
+        _, calls = _run_merge_collect_sql()
+        loops = [(q, p) for q, p in self._edge_sql(calls) if "SET valid_until = now()" in q]
+        assert len(loops) == 1
+        q, params = loops[0]
+        assert "valid_until IS NULL" in q
+        # loser->loser, loser->winner, winner->loser
+        assert params == (USER_ID, LOSER_ID, LOSER_ID, WINNER_ID, WINNER_ID, LOSER_ID)
+
+    def test_selfloop_archive_runs_before_repoint(self):
+        _, calls = _run_merge_collect_sql()
+        qs = [q for q, _ in self._edge_sql(calls)]
+        loop_i = next(i for i, q in enumerate(qs) if "SET valid_until = now()" in q)
+        move_i = next(i for i, q in enumerate(qs) if "SET src_entity_id" in q)
+        del_i = next(i for i, q in enumerate(qs) if "DELETE FROM entity_edges" in q)
+        assert loop_i < del_i < move_i
+
+    def test_edge_failure_rolls_back_whole_merge(self):
+        conn, _ = _make_conn_mock()
+        ms = _make_ms(conn, _WINNER_ROW, _LOSER_ROW, _WINNER_POST_ROW)
+        base = ms.fetch_one.side_effect
+
+        def boom(sql, params=None):
+            if "SET dst_entity_id" in str(sql):
+                raise RuntimeError("edge repoint failed")
+            return base(sql, params)
+
+        ms.fetch_one.side_effect = boom
+        with (
+            patch("services.entity_merge.config.get_metadata_store", return_value=ms),
+            patch("services.entity_merge.hooks.fire_background") as hook,
+        ):
+            from services.entity_merge import merge_entities
+
+            with pytest.raises(RuntimeError):
+                merge_entities(WINNER_ID, LOSER_ID, USER_ID)
+        assert conn.rolled_back and not conn.committed
+        hook.assert_not_called()
+
+    def test_unmerged_collision_with_archived_winner_edge_is_warned(self, caplog):
+        conn, _ = _make_conn_mock()
+        ms = _make_ms(conn, _WINNER_ROW, _LOSER_ROW, _WINNER_POST_ROW)
+        base = ms.fetch_one.side_effect
+
+        def counts(sql, params=None):
+            if str(sql).startswith("SELECT count(*) AS n FROM entity_edges"):
+                return {"n": 2}
+            return base(sql, params)
+
+        ms.fetch_one.side_effect = counts
+        with (
+            patch("services.entity_merge.config.get_metadata_store", return_value=ms),
+            patch("services.entity_merge.config.get_vector_store", return_value=MagicMock()),
+            patch("services.entity_merge.config.get_embedder", return_value=MagicMock()),
+            patch("services.entity_merge.hooks.fire_background"),
+            caplog.at_level("WARNING"),
+        ):
+            from services.entity_merge import merge_entities
+
+            merge_entities(WINNER_ID, LOSER_ID, USER_ID)
+        assert "archived winner edge" in caplog.text
+
+
+class TestLiveSqlTypeRegressions:
+    """Pins the two statements that failed on every real Postgres (types only a live DB checks)."""
+
+    def test_sessions_entity_ids_compared_as_text(self):
+        # sessions.entity_ids is TEXT[] (migration 003): no ::uuid casts.
+        _, calls = _run_merge_collect_sql()
+        sess = [q for q, _ in calls if "UPDATE sessions" in q]
+        assert len(sess) == 1 and "::uuid" not in sess[0]
+
+    def test_projection_remap_limited_to_entities_table(self):
+        # file_index.published_from is INTEGER; an entity UUID there aborts the merge.
+        conn, _ = _make_conn_mock()
+        ms = _make_ms(conn, _WINNER_ROW, _LOSER_ROW, _WINNER_POST_ROW)
+        with (
+            patch("services.entity_merge.config.get_metadata_store", return_value=ms),
+            patch("services.entity_merge.config.get_vector_store", return_value=MagicMock()),
+            patch("services.entity_merge.config.get_embedder", return_value=MagicMock()),
+            patch("services.entity_merge.hooks.fire_background"),
+            patch("services.projection.remap_published_from") as remap,
+        ):
+            from services.entity_merge import merge_entities
+
+            merge_entities(WINNER_ID, LOSER_ID, USER_ID)
+        remap.assert_called_once_with(LOSER_ID, WINNER_ID, tables=("entities",))

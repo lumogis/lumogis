@@ -3,17 +3,28 @@
 """Semantic search: embed query, Qdrant retrieval, BGE reranking."""
 
 import logging
-import os
 from pathlib import Path
 from typing import Optional
 
 from auth import UserContext
 from models.search import SearchResult
+from visibility import visible_filter
 from visibility import visible_qdrant_filter
 
 import config
 
 _log = logging.getLogger(__name__)
+
+
+def _caller_context(user_id: str) -> UserContext:
+    """Build the caller context the way search does, from a bare ``user_id``.
+
+    Chat file tools (``read_file``, the filename fallback) use this too, so
+    chat and search share one visibility definition (LUM-884).
+    ``UserContext`` is not marked authenticated here, so ``allows_shared``
+    is read from the database.
+    """
+    return UserContext(user_id=user_id)
 
 
 def _user_filter(user_id: str, scope_filter: Optional[str] = None) -> dict:
@@ -24,7 +35,7 @@ def _user_filter(user_id: str, scope_filter: Optional[str] = None) -> dict:
     a signature break — the helper now returns the household union
     `(scope='personal' AND user_id=$me) OR scope IN ('shared','system')`.
     """
-    return visible_qdrant_filter(UserContext(user_id=user_id), scope_filter)
+    return visible_qdrant_filter(_caller_context(user_id), scope_filter)
 
 
 def semantic_search(
@@ -55,7 +66,15 @@ def semantic_search(
 
     if not raw:
         _log.debug("No Qdrant results for '%s', trying filename fallback", query)
-        return _fuzzy_to_results(fuzzy_filename_search(query), limit)
+        # The old disk walk never touched Postgres; this fallback can fail during
+        # a DB outage. Callers then see "no results" and the warning below is the
+        # only signal (LUM-884).
+        try:
+            hits = fuzzy_filename_search(query, user_id=user_id, scope_filter=scope_filter)
+        except Exception:
+            _log.warning("filename fallback failed", exc_info=True)
+            return []
+        return _fuzzy_to_results(hits, limit)
 
     if reranker is not None:
         candidates = []
@@ -96,26 +115,42 @@ def semantic_search(
     ]
 
 
-def fuzzy_filename_search(query: str, limit: int = 10) -> list[dict]:
-    """Walk ingest roots in order; earlier roots fill the limit first."""
+def fuzzy_filename_search(
+    query: str,
+    limit: int = 10,
+    *,
+    user_id: str,
+    scope_filter: Optional[str] = None,
+) -> list[dict]:
+    """Find indexed files by name, under the same visibility rule as search.
+
+    Queries ``file_index`` through :func:`visibility.visible_filter` for the
+    caller (LUM-884); it no longer walks the disk, so it cannot name another
+    member's files. Raises on metadata-store errors; callers degrade.
+    """
+    q = (query or "").strip()
+    if not q:
+        return []
+    clause, params = visible_filter(_caller_context(user_id), scope_filter)
+    # "!" is the LIKE escape character, so no backslash literal is needed.
+    escaped = q.replace("!", "!!").replace("%", "!%").replace("_", "!_")
+    pattern = "%" + escaped + "%"
+    rows = config.get_metadata_store().fetch_all(
+        "SELECT DISTINCT file_path FROM file_index "
+        f"WHERE {clause} "
+        "AND regexp_replace(file_path, '^.*/', '') ILIKE %s ESCAPE '!' "
+        "ORDER BY file_path LIMIT %s",
+        (*params, pattern, limit),
+    )
     results: list[dict] = []
-    q = query.lower()
-    for root_str in config.get_effective_ingest_paths():
-        root_path = Path(root_str)
-        if not root_path.is_dir():
-            continue
-        for root, dirs, files in os.walk(root_path):
-            dirs[:] = [d for d in dirs if not d.startswith(".")]
-            for name in files:
-                if q in name.lower():
-                    full = Path(root) / name
-                    try:
-                        size_kb = round(full.stat().st_size / 1024)
-                    except OSError:
-                        size_kb = 0
-                    results.append({"path": str(full), "name": name, "size_kb": size_kb})
-                    if len(results) >= limit:
-                        return results
+    for row in rows:
+        file_path = row["file_path"]
+        p = Path(file_path)
+        try:
+            size_kb = round(p.stat().st_size / 1024)
+        except OSError:
+            size_kb = 0
+        results.append({"path": file_path, "name": p.name, "size_kb": size_kb})
     return results
 
 

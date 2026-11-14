@@ -10,7 +10,6 @@ Three scenarios from the plan acceptance sketch:
 
 from __future__ import annotations
 
-import os
 import time
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -19,10 +18,7 @@ import psycopg2
 import psycopg2.extras
 import pytest
 from auth import UserContext
-
-
-def _integration_dsn() -> str | None:
-    return os.environ.get("LUMOGIS_INTEGRATION_POSTGRES_DSN")
+from tests.integration._pgguard import integration_dsn_or_skip
 
 
 def _postgres_store(raw: str):
@@ -62,13 +58,7 @@ def _delete_entity(cur, entity_id) -> None:
 
 @pytest.fixture
 def dsn():
-    raw = _integration_dsn()
-    if not raw:
-        pytest.skip(
-            "LUMOGIS_INTEGRATION_POSTGRES_DSN unset — Postgres integration "
-            "not configured for this workstation",
-        )
-    return raw
+    return integration_dsn_or_skip()
 
 
 @pytest.fixture

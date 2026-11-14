@@ -1,0 +1,9 @@
+# Dev/test tools — NOT installed in the Docker image.
+# Used by `make test-kg` (local venv) and `make compose-test-kg` (in-container).
+-r requirements.txt
+ruff>=0.4.0
+pytest>=8.0.0
+pytest-asyncio>=0.24.0
+# KG auth tests (LUM-885) mint JWTs. PyJWT is a runtime dep only when AUTH_ENABLED=true
+# on the KG container, so it is NOT in requirements.txt; the typ tests need it here.
+pyjwt>=2.8.0

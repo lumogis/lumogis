@@ -50,6 +50,7 @@ from typing import Any
 from typing import Optional
 
 from auth import UserContext
+from services.memory import conversation_payload
 
 import config
 
@@ -208,14 +209,17 @@ def project_note(src: dict, *, target_scope: str, actor: UserContext) -> dict:
     new_pk = projection_pk("notes", src_pk, target_scope)
     point_id = projection_point_id("conversations", src_pk, target_scope)
 
-    payload = {
-        "note_id": new_pk,
-        "text": src.get("text") or "",
-        "user_id": actor.user_id,
-        "scope": target_scope,
-        "published_from": src_pk,
-    }
-    vector = _embed_for_projection(payload["text"])
+    text = src.get("text") or ""
+    payload = conversation_payload(
+        item_id=new_pk,
+        summary=text,
+        user_id=actor.user_id,
+        scope=target_scope,
+        note_id=new_pk,
+        source=src.get("source") or "quick_capture",
+        published_from=src_pk,
+    )
+    vector = _embed_for_projection(text)
     _qdrant_upsert_safe("conversations", point_id, vector, payload)
 
     row = _insert_projection_or_rollback_qdrant(
@@ -256,14 +260,16 @@ def project_audio_memo(src: dict, *, target_scope: str, actor: UserContext) -> d
     new_pk = projection_pk("audio_memos", src_pk, target_scope)
     point_id = projection_point_id("conversations", src_pk, target_scope)
 
-    payload = {
-        "audio_id": new_pk,
-        "transcript": src.get("transcript") or "",
-        "user_id": actor.user_id,
-        "scope": target_scope,
-        "published_from": src_pk,
-    }
-    vector = _embed_for_projection(payload["transcript"])
+    transcript = src.get("transcript") or ""
+    payload = conversation_payload(
+        item_id=new_pk,
+        summary=transcript,
+        user_id=actor.user_id,
+        scope=target_scope,
+        audio_id=new_pk,
+        published_from=src_pk,
+    )
+    vector = _embed_for_projection(transcript)
     _qdrant_upsert_safe("conversations", point_id, vector, payload)
 
     row = _insert_projection_or_rollback_qdrant(
@@ -334,15 +340,15 @@ def project_session(
             src.get("summary") or ""
         )
     topics = src.get("topics") or []
-    payload = {
-        "session_id": new_pk,
-        "summary": summary_text,
-        "topics": topics,
-        "entities": src.get("entities") or [],
-        "user_id": actor.user_id,
-        "scope": target_scope,
-        "published_from": src_pk,
-    }
+    payload = conversation_payload(
+        item_id=new_pk,
+        summary=summary_text,
+        user_id=actor.user_id,
+        scope=target_scope,
+        topics=topics,
+        entities=src.get("entities") or [],
+        published_from=src_pk,
+    )
     vector = _embed_for_projection(f"{summary_text} Topics: {', '.join(topics)}")
     _qdrant_upsert_safe("conversations", point_id, vector, payload)
 
@@ -781,9 +787,9 @@ def project_signal(src: dict, *, target_scope: str, actor: UserContext) -> dict:
         INSERT INTO signals (signal_id, user_id, source_id, title, url, published_at,
                              content_summary, entities, topics, importance_score,
                              relevance_score, notified, scope, published_from,
-                             source_url, source_label)
+                             source_url, source_label, category, from_addr, from_display)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s,
-                %s, %s, %s, %s)
+                %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (published_from, scope) WHERE published_from IS NOT NULL DO UPDATE SET
             title = EXCLUDED.title,
             url = EXCLUDED.url,
@@ -793,7 +799,10 @@ def project_signal(src: dict, *, target_scope: str, actor: UserContext) -> dict:
             importance_score = EXCLUDED.importance_score,
             relevance_score = EXCLUDED.relevance_score,
             source_url = EXCLUDED.source_url,
-            source_label = EXCLUDED.source_label
+            source_label = EXCLUDED.source_label,
+            category = EXCLUDED.category,
+            from_addr = EXCLUDED.from_addr,
+            from_display = EXCLUDED.from_display
         RETURNING *
         """,
         params=(
@@ -813,6 +822,9 @@ def project_signal(src: dict, *, target_scope: str, actor: UserContext) -> dict:
             src_pk,
             src.get("source_url"),
             src.get("source_label"),
+            src.get("category") or "",
+            src.get("from_addr") or "",  # LUM-642: carry sender onto shared rows
+            src.get("from_display") or "",
         ),
     )
     _log.info(
@@ -951,7 +963,9 @@ _PROJECTION_TABLES: tuple[tuple[str, str], ...] = (
 )
 
 
-def remap_published_from(loser_id: Any, winner_id: Any) -> None:
+def remap_published_from(
+    loser_id: Any, winner_id: Any, *, tables: tuple[str, ...] | None = None
+) -> None:
     """Repoint every projection row from ``loser_id`` to ``winner_id``.
 
     Called from ``services/entity_merge.merge_entities`` after the
@@ -967,6 +981,12 @@ def remap_published_from(loser_id: Any, winner_id: Any) -> None:
          would otherwise reject the UPDATE).
       2. ``UPDATE`` survivors to point at ``winner_id``.
 
+    ``tables`` restricts the sweep to the named projection tables (default: all).
+    Each table's ``published_from`` references that table's OWN primary key, so a
+    caller remapping an entity id must pass ``("entities",)``: sweeping
+    ``file_index`` (``published_from INTEGER``) with a UUID raises
+    ``invalid input syntax for type integer`` and aborts the transaction.
+
     Postcondition: ``SELECT 1 FROM <each table> WHERE published_from
     = $loser_id LIMIT 1`` returns nothing on every table.
 
@@ -977,7 +997,8 @@ def remap_published_from(loser_id: Any, winner_id: Any) -> None:
     than leave the household graph half-remapped.
     """
     ms = config.get_metadata_store()
-    for table, _pk in _PROJECTION_TABLES:
+    swept = [t for t, _pk in _PROJECTION_TABLES if tables is None or t in tables]
+    for table in swept:
         ms.execute(
             f"DELETE FROM {table} t "
             f"WHERE t.published_from = %s "
@@ -994,7 +1015,7 @@ def remap_published_from(loser_id: Any, winner_id: Any) -> None:
 
     _log.info(
         "remap_published_from: swept %d tables loser=%s winner=%s",
-        len(_PROJECTION_TABLES),
+        len(swept),
         loser_id,
         winner_id,
     )

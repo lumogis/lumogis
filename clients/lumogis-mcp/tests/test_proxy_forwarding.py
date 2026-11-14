@@ -17,6 +17,8 @@ from mcp.types import TextContent
 from mcp.types import Tool
 
 from lumogis_mcp.config import BridgeConfig
+from lumogis_mcp.proxy import _leaf_exception
+from lumogis_mcp.proxy import _report_upstream_error
 from lumogis_mcp.proxy import _upstream_headers
 from lumogis_mcp.proxy import run_stdio_proxy
 
@@ -174,3 +176,29 @@ def test_main_connection_refused(monkeypatch):
         with pytest.raises(SystemExit) as exc:
             entry.main()
         assert exc.value.code == 1
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [(401, "MCP token rejected"), (403, "Unexpected Origin rejection"), (500, "HTTP error 500")],
+)
+def test_upstream_status_error_reported_through_exception_group(
+    bridge_config, capsys, status, expected
+):
+    """streamablehttp_client raises upstream errors inside an anyio ExceptionGroup (LUM-904)."""
+    request = httpx.Request("POST", bridge_config.url)
+    response = httpx.Response(status, request=request)
+    err = httpx.HTTPStatusError("upstream", request=request, response=response)
+    wrapped = ExceptionGroup("unhandled errors in a TaskGroup", [ExceptionGroup("inner", [err])])
+
+    _report_upstream_error(bridge_config, _leaf_exception(wrapped))
+
+    assert expected in capsys.readouterr().err
+
+
+def test_upstream_connect_error_reported_through_exception_group(bridge_config, capsys):
+    wrapped = ExceptionGroup("tg", [httpx.ConnectError("refused")])
+
+    _report_upstream_error(bridge_config, _leaf_exception(wrapped))
+
+    assert "not reachable at http://127.0.0.1:8000/mcp/" in capsys.readouterr().err

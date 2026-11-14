@@ -10,6 +10,13 @@ import { AccessTokenStore } from "../../../src/api/tokens";
 import { AuthProvider } from "../../../src/auth/AuthProvider";
 import { CaptureInboxView } from "../../../src/features/capture/CaptureInboxView";
 import { jsonResponse } from "../../helpers/jsonResponse";
+import { seedSignedInDevice } from "../../helpers/signedInDevice";
+
+// LUM-886: this suite mounts a real AuthProvider; mark the device as already reconciled so the
+// first-sign-in wipe does not remove the view's own queries.
+beforeEach(() => {
+  seedSignedInDevice("u1");
+});
 
 const adminUser = { id: "u1", email: "a@home.lan", role: "admin" as const };
 

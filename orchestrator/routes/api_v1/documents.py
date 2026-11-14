@@ -157,6 +157,15 @@ def publish_document(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"error": "document_not_found"},
         ) from exc
+    except ValueError as exc:
+        # LUM-724 D1: an external document. This is the THIRD publish door and
+        # the one the web ShareToggle actually calls — it has no size branch, so
+        # a guard placed only on the scope route would leave it open. Without
+        # this mapping the refusal would surface as a 500.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error": "external_document", "message": str(exc)},
+        ) from None
 
 
 @router.delete(

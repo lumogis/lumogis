@@ -241,18 +241,36 @@ def reset_patterns_cache_for_tests() -> None:
     _patterns_loaded = None
 
 
-def neutralize_wrapper_breakout_literals(body: str) -> str:
-    """Avoid closing fake ``</retrieved_chunk>`` / envelope tags inside plaintext."""
+# The document-ingest wrappers this function was written for. Kept as the
+# default so every existing caller is unchanged by the LUM-704 generalisation.
+_DOCUMENT_WRAPPER_TAGS: tuple[str, ...] = ("retrieved_chunk", "lumogis_injected_context")
 
-    replacements = (
-        ("</retrieved_chunk>", "⟨/retrieved_chunk⟩"),
-        ("<retrieved_chunk", "⟨retrieved_chunk"),
-        ("</lumogis_injected_context>", "⟨/lumogis_injected_context⟩"),
-        ("<lumogis_injected_context", "⟨lumogis_injected_context"),
-    )
+
+def neutralize_wrapper_breakout_literals(
+    body: str, tags: Sequence[str] = _DOCUMENT_WRAPPER_TAGS
+) -> str:
+    """Defuse literal delimiter tags inside text that is about to be wrapped in them.
+
+    Content carrying the literal closing tag — ``</retrieved_chunk>``,
+    ``</email>``, ``</body>`` — lets a naive "the first closing tag is the real
+    boundary" reading treat everything after it as *outside* the delimited
+    block, i.e. as instructions. The fix is not to strip: the reader should
+    still see what the sender wrote. Both brackets are swapped for the
+    visually-similar mathematical angle brackets ``⟨⟩`` (U+27E8/U+27E9), which
+    are not ``<`` and ``>`` and so cannot close anything.
+
+    Generalised for **LUM-704** to take the tag names, so the four email prompts
+    (`text_refine`, `email_reply_draft`, and both `signal_processor` builders)
+    reuse this rather than growing a third copy of the same idea. Callers pass
+    bare names — ``"email"``, not ``"<email>"``.
+
+    The opening form is matched **without** its closing ``>`` on purpose, so
+    ``<email foo="bar">`` is caught too.
+    """
     adjusted = body
-    for bad, safe in replacements:
-        adjusted = adjusted.replace(bad, safe)
+    for tag in tags:
+        adjusted = adjusted.replace(f"</{tag}>", f"⟨/{tag}⟩")
+        adjusted = adjusted.replace(f"<{tag}", f"⟨{tag}")
     return adjusted
 
 

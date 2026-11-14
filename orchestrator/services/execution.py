@@ -209,10 +209,9 @@ class ToolExecutor:
                 output="Permission denied",
                 denied=True,
             )
-        try:
-            out: Any = spec.handler(input_, user_id=user_id)
-        except TypeError:
-            out = spec.handler(input_)
+        # Same keyword-only ``user_id`` contract as ``run_tool`` (LUM-884): a
+        # handler without it raises TypeError; there is no one-argument retry.
+        out: Any = spec.handler(input_, user_id=user_id)
         text = out if isinstance(out, str) else str(out)
         self.emit_audit(
             ToolAuditEnvelope(

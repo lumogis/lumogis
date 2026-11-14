@@ -1,11 +1,11 @@
 # ADR 034: Linear ↔ repo evidence index (maintainer register)
 
-> Status: Needs update
+> Status: **SUPERSEDED by [ADR-203](203-lum-300-retire-linear-evidence-index.md) (2026-08-04, LUM-300).** The register, its four scripts and its skill gates are removed; `drift_check.mjs` is the sole Product OS linkage layer. This file is retained as the record of what was built and why — do not implement from it.
 > Last reviewed: 2026-07-12
 > Verified against commit: f75554a
 > Notes: This register remains the canonical description of the Linear evidence index, but the **ADR number collides** with `docs/decisions/034-agent-harness-foundation-terminology-and-boundaries.md`. Filename prefixes **049–161** are already in use under `docs/decisions/` (including duplicate clusters on **053**, **059**, **060**, **061**, **063**, **064**, **072** (`072-lum-398-*.md` and `072-lum-401-*.md`), **074** (`074-lum-162-*.md` and `074-lum-178-*.md`), **098** (`098-lum-93-*.md` and `098-lum-185-*.md`), **101** (four **`101-lum-*`** files), **147** (three **`147-lum-*`** files), **154** (three **`154-lum-*`** files), **156** (three **`156-lum-*`** files), plus **`065-lum-320-doctor-v2-shell-fix-remediation.md`** through **`161-lum-606-607-capture-inbox-archive.md`**). A coordinated rename must use a **non-colliding** slug (for example **`162+`**) — **not** **053** / **061** / **063** / **064** / **065**–**161**. Coordinate with the **046** / **072** / **074** pair renames if multiple new numbers are needed in one pass—see `docs/_librarian/docs-inventory.md`. Paths under **`.cursor/`** and **`scripts/linear/`** exist when **`lumogis-app/.cursor`** is symlinked to **lumogis-devtools** per **`AGENTS.md`** (absent in product-only checkouts).
 
-**Status:** Finalised  
+**Status:** Superseded (2026-08-04 — ADR-203)  
 **Created:** 2026-05-07  
 **Last updated:** 2026-05-07  
 **Decided by:** `.cursor/plans/LUM-86-linear-evidence-index.plan.md` + `/verify-plan`  

@@ -25,7 +25,7 @@ the suite.
 Route auth
 ----------
 Route tests mint JWTs inline via ``jwt.encode`` (mirroring
-``tests/integration/test_two_user_isolation.py::_hdr``) and toggle the
+``tests/test_two_user_isolation.py::_hdr``) and toggle the
 ``AUTH_ENABLED=true`` environment via ``monkeypatch.setenv`` per test.
 The route TestClient is constructed inside a ``with``-block so the
 FastAPI lifespan runs (matches ``_booted_client()`` from the same
@@ -74,7 +74,8 @@ class _FakeConnectorPermStore:
 
     Reading
         * SELECT mode FROM connector_permissions WHERE user_id = %s AND connector = %s
-        * SELECT connector, mode FROM connector_permissions WHERE user_id = %s ORDER BY connector
+        * SELECT connector, mode, scopes, updated_at FROM connector_permissions
+          WHERE user_id = %s ORDER BY connector
         * SELECT user_id, connector, mode FROM connector_permissions ORDER BY user_id, connector
         * SELECT approval_count, edit_count, auto_approved FROM routine_do_tracking WHERE ...
         * SELECT * FROM users WHERE id = %s   (services.users.get_user_by_id)
@@ -278,6 +279,15 @@ class _FakeConnectorPermStore:
                 "auto_approved": row["auto_approved"],
             }
 
+        # LUM-885: the revocation helper bumps ``token_version`` first.
+        if q.startswith("update users set token_version = token_version + 1"):
+            uid = p[0]
+            if uid not in self.users:
+                return None
+            row = self.users[uid]
+            row["token_version"] = int(row.get("token_version") or 1) + 1
+            return {"token_version": row["token_version"]}
+
         if q.startswith("select * from users where id ="):
             uid = p[0]
             row = self.users.get(uid)
@@ -324,7 +334,13 @@ class _FakeConnectorPermStore:
         q = self._norm(query)
         p = params or ()
 
-        if q.startswith("select connector, mode, scopes from connector_permissions where user_id"):
+        # LUM-849: production now selects `updated_at` too. This fake was ALREADY
+        # returning it — modelling a column the real query never asked for — which
+        # is why no test caught `updated_at: null` leaking onto the degrade branch
+        # for months. A fake more capable than production hides production's gap.
+        if q.startswith(
+            "select connector, mode, scopes, updated_at from connector_permissions where user_id"
+        ):
             (uid,) = p
             rows = [
                 {
@@ -439,6 +455,7 @@ def _hdr(user_id: str, role: str = "user") -> dict[str, str]:
     token = jwt.encode(
         {
             "sub": user_id,
+            "typ": "access",
             "role": role,
             "iat": int(datetime.now(timezone.utc).timestamp()),
             "exp": int(datetime.now(timezone.utc).timestamp()) + 600,
@@ -486,8 +503,25 @@ def _seed_perm(
     perm_store._next_cp_id += 1
 
 
-def _stub_capability_registry(monkeypatch, capability_ids: list[str]) -> None:
-    """Force ``_known_capability_connectors()`` to return ``capability.{id}`` rows."""
+def _stub_capability_registry(
+    monkeypatch,
+    capability_ids: list[str],
+    *,
+    permissions_required: list[str] | None = None,
+    write_tools: list[str] | None = None,
+) -> None:
+    """Force the capability registry to yield ``capability.{id}`` rows.
+
+    Feeds ``permission_connectors.known_capability_connectors()`` / ``connector_gate()``.
+
+    ``write_tools`` (LUM-962): names of ``is_write=True`` tools every stubbed
+    capability declares. ``None`` keeps today's single read tool ``cap.tool``.
+
+    ``permissions_required`` defaults to ``[]`` so every pre-existing caller keeps
+    its exact previous behaviour; LUM-616's consent-surface tests pass a non-empty
+    list because ``required_scopes_for`` reads it and an all-empty ``required``
+    cannot distinguish granted from missing.
+    """
     from datetime import datetime
     from datetime import timezone
 
@@ -498,14 +532,19 @@ def _stub_capability_registry(monkeypatch, capability_ids: list[str]) -> None:
     from models.capability import CapabilityTransport
     from services.capability_registry import RegisteredService
 
-    def _tool() -> CapabilityTool:
-        return CapabilityTool(
-            name="cap.tool",
-            description="t",
-            license_mode=CapabilityLicenseMode.COMMUNITY,
-            input_schema={"type": "object"},
-            output_schema={"type": "object"},
-        )
+    def _tools() -> list[CapabilityTool]:
+        names = write_tools if write_tools is not None else ["cap.tool"]
+        return [
+            CapabilityTool(
+                name=n,
+                description="t",
+                license_mode=CapabilityLicenseMode.COMMUNITY,
+                input_schema={"type": "object"},
+                output_schema={"type": "object"},
+                is_write=write_tools is not None,
+            )
+            for n in names
+        ]
 
     services: list[RegisteredService] = []
     for cap_id in capability_ids:
@@ -518,10 +557,10 @@ def _stub_capability_registry(monkeypatch, capability_ids: list[str]) -> None:
             license_mode=CapabilityLicenseMode.COMMUNITY,
             maturity=CapabilityMaturity.PREVIEW,
             description="route-test fixture",
-            tools=[_tool()],
+            tools=_tools(),
             health_endpoint="/health",
             capabilities_endpoint="/capabilities",
-            permissions_required=[],
+            permissions_required=list(permissions_required or []),
             config_schema={"type": "object"},
             min_core_version="0.1.0",
             maintainer="t",
@@ -540,6 +579,9 @@ def _stub_capability_registry(monkeypatch, capability_ids: list[str]) -> None:
         def all_services(self):
             return services
 
+        def get_service(self, service_id):
+            return next((x for x in services if x.manifest.id == service_id), None)
+
     import config as _config
 
     monkeypatch.setattr(_config, "get_capability_registry", lambda: _FakeCapReg())
@@ -548,7 +590,7 @@ def _stub_capability_registry(monkeypatch, capability_ids: list[str]) -> None:
 def _stub_registry(monkeypatch, connectors: list[str]) -> None:
     """Force ``actions.registry.list_actions`` to return a fixed connector set.
 
-    Tests that need ``_known_connectors()`` to be deterministic call
+    Tests that need ``permission_connectors.known_action_connectors()`` to be deterministic call
     this so the assertion is genuinely about per-user state, not about
     whatever connectors happen to be auto-registered.
     """
@@ -1373,9 +1415,9 @@ def test_capability_put_fails_closed_when_registry_unavailable(
 ):
     """LUM-615 — ``capability.*`` PUT is fail-closed when the registry is down."""
     _stub_registry(monkeypatch, [])
-    import routes.connector_permissions as cp_routes
+    import services.permission_connectors as permission_connectors
 
-    monkeypatch.setattr(cp_routes, "_known_capability_connectors", lambda: None)
+    monkeypatch.setattr(permission_connectors, "known_capability_connectors", lambda: None)
     alice_id = _create_user(perm_store, user_id="alice", email="a@home.lan", role="user")
     with _booted_client() as client:
         r = client.put(
@@ -1427,3 +1469,155 @@ def test_delete_capability_grant_bypasses_existence_check(
         )
     assert admin_del.status_code == 200, admin_del.text
     assert (alice_id, orphan) not in perm_store.cp
+
+
+# ---------------------------------------------------------------------------
+# LUM-616 — admin consent-surface parity (required-vs-granted capability scopes).
+# ---------------------------------------------------------------------------
+
+
+_CAP_ADMIN_URL = "/api/v1/admin/users/{uid}/permissions/capabilities"
+
+
+def test_admin_capability_consent_surface_matches_self_service(
+    perm_store,
+    auth_env,
+    monkeypatch,
+):
+    """LUM-616 — admin's view of alice is byte-identical to alice's view of herself.
+
+    Asserted as equality against the shipped route rather than by re-deriving the
+    expected rows, so the two surfaces cannot drift without failing here.
+    """
+    _stub_registry(monkeypatch, [])
+    _stub_capability_registry(
+        monkeypatch, ["mock-echo"], permissions_required=["echo:run", "memory:read"]
+    )
+    alice_id = _create_user(perm_store, user_id="alice", email="a@home.lan", role="user")
+    admin_id = _create_user(perm_store, user_id="admin1", email="ad@home.lan", role="admin")
+    _seed_perm(
+        perm_store,
+        user_id=alice_id,
+        connector="capability.mock-echo",
+        mode="ASK",
+        scopes=["echo:run"],
+    )
+    with _booted_client() as client:
+        mine = client.get("/api/v1/me/permissions/capabilities", headers=_hdr(alice_id))
+        theirs = client.get(
+            _CAP_ADMIN_URL.format(uid=alice_id), headers=_hdr(admin_id, role="admin")
+        )
+    assert mine.status_code == 200, mine.text
+    assert theirs.status_code == 200, theirs.text
+    assert theirs.json() == mine.json()
+
+
+def test_admin_capability_consent_surface_reports_required_granted_missing(
+    perm_store,
+    auth_env,
+    monkeypatch,
+):
+    """LUM-616 — the split is computed for the TARGET user, not the calling admin.
+
+    The admin deliberately holds a different grant on the same connector; if the
+    handler resolved scopes from the caller this returns the admin's row instead.
+    """
+    _stub_registry(monkeypatch, [])
+    _stub_capability_registry(
+        monkeypatch, ["mock-echo"], permissions_required=["echo:run", "memory:read"]
+    )
+    alice_id = _create_user(perm_store, user_id="alice", email="a@home.lan", role="user")
+    admin_id = _create_user(perm_store, user_id="admin1", email="ad@home.lan", role="admin")
+    _seed_perm(
+        perm_store,
+        user_id=alice_id,
+        connector="capability.mock-echo",
+        mode="ASK",
+        scopes=["echo:run"],
+    )
+    _seed_perm(
+        perm_store,
+        user_id=admin_id,
+        connector="capability.mock-echo",
+        mode="DO",
+        scopes=["echo:run", "memory:read"],
+    )
+    with _booted_client() as client:
+        r = client.get(_CAP_ADMIN_URL.format(uid=alice_id), headers=_hdr(admin_id, role="admin"))
+    assert r.status_code == 200, r.text
+    rows = r.json()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["capability_id"] == "mock-echo"
+    assert row["connector"] == "capability.mock-echo"
+    assert row["required"] == ["echo:run", "memory:read"]
+    assert row["granted"] == ["echo:run"]
+    # The admin's own fully-granted row must not leak into alice's answer.
+    assert row["missing"] == ["memory:read"]
+
+
+def test_admin_capability_consent_surface_404_for_unknown_user(
+    perm_store,
+    auth_env,
+    monkeypatch,
+):
+    """LUM-616 — unknown user is 404, never an empty list.
+
+    ``200 []`` would read as "this user has granted nothing" when the truth is
+    "no such user" — the distinction an on-behalf support surface exists to make.
+    """
+    _stub_registry(monkeypatch, [])
+    _stub_capability_registry(monkeypatch, ["mock-echo"], permissions_required=["echo:run"])
+    admin_id = _create_user(perm_store, user_id="admin1", email="ad@home.lan", role="admin")
+    with _booted_client() as client:
+        r = client.get(_CAP_ADMIN_URL.format(uid="ghost"), headers=_hdr(admin_id, role="admin"))
+    assert r.status_code == 404, r.text
+
+
+def test_admin_capability_consent_surface_requires_admin(
+    perm_store,
+    auth_env,
+    monkeypatch,
+):
+    """LUM-616 — a plain user cannot read another user's consent surface."""
+    _stub_registry(monkeypatch, [])
+    _stub_capability_registry(monkeypatch, ["mock-echo"], permissions_required=["echo:run"])
+    alice_id = _create_user(perm_store, user_id="alice", email="a@home.lan", role="user")
+    bob_id = _create_user(perm_store, user_id="bob", email="b@home.lan", role="user")
+    with _booted_client() as client:
+        r = client.get(_CAP_ADMIN_URL.format(uid=alice_id), headers=_hdr(bob_id))
+    assert r.status_code == 403, r.text
+
+
+def test_admin_capabilities_literal_not_swallowed_by_connector_param(
+    perm_store,
+    auth_env,
+    monkeypatch,
+):
+    """LUM-616 — ordering guard for the literal ``/capabilities`` path.
+
+    ``_CONNECTOR_PATTERN`` matches the bare word ``capabilities``, so if the new
+    route is registered AFTER ``GET /{connector}`` the path param swallows it and
+    the endpoint answers 200 with a single ``ConnectorPermissionAdminView`` — the
+    wrong body shape, not a 404. Asserting the shape is what catches that; a bare
+    status-code assertion would pass either way.
+    """
+    _stub_registry(monkeypatch, [])
+    _stub_capability_registry(monkeypatch, ["mock-echo"], permissions_required=["echo:run"])
+    alice_id = _create_user(perm_store, user_id="alice", email="a@home.lan", role="user")
+    admin_id = _create_user(perm_store, user_id="admin1", email="ad@home.lan", role="admin")
+    with _booted_client() as client:
+        r = client.get(_CAP_ADMIN_URL.format(uid=alice_id), headers=_hdr(admin_id, role="admin"))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert isinstance(body, list), f"expected grant-view list, got {type(body)}: {body!r}"
+    assert body, "stubbed registry has one capability; empty list means it never resolved"
+    # Subset, not equality: CapabilityGrantView also carries an optional
+    # `risk_tier` the ticket's shape description omits. Pinning equality here
+    # would make this ordering guard fail on any additive model change, which
+    # is not what it exists to catch.
+    assert {"capability_id", "connector", "required", "granted", "missing"} <= set(body[0])
+    # A swallowed route would return the per-connector admin view instead —
+    # `mode`/`user_id` are its discriminators and appear on no grant view.
+    assert "mode" not in body[0]
+    assert "user_id" not in body[0]

@@ -380,6 +380,35 @@ def test_store_edge_does_not_stamp_when_node_absent(monkeypatch):
     assert _stamp_calls(ms) == []
 
 
+def test_stamp_resets_reconcile_attempts():
+    """LUM-599 — a confirmed attach zeroes the retry counter with the stamp."""
+    ms = _fake_ms()
+    entity_edges.stamp_edge_projected("e", ms=ms)
+    sql, params = ms.execute.call_args.args
+    assert "graph_projected_at = now()" in sql
+    assert "reconcile_attempts = 0" in sql
+    assert params == ("e",)
+
+
+def test_reset_edge_reconcile_attempts_for_entity_sql():
+    """LUM-599 — promotion resets only this user's unstamped, spent edges, both ends."""
+    ms = _fake_ms()
+    entity_edges.reset_edge_reconcile_attempts_for_entity("ent", user_id="u", ms=ms)
+    sql, params = ms.execute.call_args.args
+    assert "SET reconcile_attempts = 0" in sql
+    assert "user_id = %s" in sql
+    assert "(src_entity_id = %s OR dst_entity_id = %s)" in sql
+    assert "graph_projected_at IS NULL" in sql
+    assert "reconcile_attempts > 0" in sql
+    assert params == ("u", "ent", "ent")
+
+
+def test_reset_edge_reconcile_attempts_failure_is_swallowed():
+    ms = _fake_ms()
+    ms.execute.side_effect = RuntimeError("db down")
+    entity_edges.reset_edge_reconcile_attempts_for_entity("ent", user_id="u", ms=ms)  # no raise
+
+
 def test_store_edge_does_not_stamp_when_graph_disabled(monkeypatch):
     """LUM-580 — with no graph backend the edge is never projected, so no stamp."""
     monkeypatch.setattr(config, "get_graph_store", lambda bank=None: None)

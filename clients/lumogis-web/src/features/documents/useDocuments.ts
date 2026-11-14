@@ -25,11 +25,17 @@ function isShareTransient(status: ShareStatus | undefined): boolean {
   return status === "sharing" || status === "unsharing";
 }
 
-export function useDocuments(client: ApiClient) {
+/**
+ * `pollWhileBusy` (default true): re-fetch every 2 s while a row is indexing or mid-share.
+ * Chat only needs "is there any row" (LUM-853), so it passes `false`; `/documents` keeps polling.
+ */
+export function useDocuments(client: ApiClient, options: { pollWhileBusy?: boolean } = {}) {
+  const pollWhileBusy = options.pollWhileBusy ?? true;
   return useQuery({
     queryKey: documentsQueryKey,
     queryFn: () => listDocuments(client),
     refetchInterval: (q) => {
+      if (!pollWhileBusy) return false;
       const docs = q.state.data?.documents ?? [];
       const busy = docs.some(
         (d) => d.status === "indexing" || isShareTransient(d.share_status),

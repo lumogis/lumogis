@@ -10,6 +10,8 @@ import re
 import httpx
 import pytest
 
+from _reachability import skip_unless_reachable
+
 pytestmark = pytest.mark.integration
 
 ORIGIN = os.environ.get("LUMOGIS_PUBLIC_ORIGIN", "http://127.0.0.1").strip().rstrip("/") or "http://127.0.0.1"
@@ -35,6 +37,8 @@ def test_login_refresh_me_round_trip():
 
     if not email or len(password) < 12:
         pytest.skip("smoke credentials unset")
+
+    skip_unless_reachable(base, what="orchestrator")
 
     with httpx.Client(base_url=base, timeout=180.0) as raw:
         lr = raw.post(
@@ -73,6 +77,7 @@ def test_login_refresh_me_round_trip():
 @pytest.mark.public_rc
 def test_me_rejects_bad_bearer():
     base = os.environ.get("LUMOGIS_API_URL", "http://127.0.0.1:8000").strip().rstrip("/")
+    skip_unless_reachable(base, what="orchestrator")
     with httpx.Client(base_url=base, timeout=30.0) as c:
         r = c.get("/api/v1/auth/me", headers={"Authorization": "Bearer not-a-real-token"})
     assert r.status_code == 401

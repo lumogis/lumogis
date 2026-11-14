@@ -4,7 +4,36 @@ services:
       context: .
       dockerfile: orchestrator/Dockerfile
     ports:
-    - "8000:8000"
+    # Host side is overridable so a second stack can run beside a first one.
+    # Default is unchanged (8000) for every ordinary install. The CI
+    # `doctor-integration` job sets this: it brings a full stack up on a
+    # self-hosted runner that is also somebody's daily driver, and a hardcoded
+    # 8000 made it fail with "port is already allocated" whenever a dev stack
+    # was up — taking the whole job down before doctor ran at all.
+    # `scripts/doctor/checks/services.sh` reads the published port back out of
+    # `docker compose config`, and separately honours ORCHESTRATOR_HOST_PORT,
+    # so the /healthz probe follows this automatically.
+    # Loopback only (LUM-887 / INFRA-001): reach Core through Caddy (/api, /mcp,
+    # /v1, /events), never by forwarding 8000. Same shape as Qdrant (LUM-565).
+    # On Docker < 28, hosts on the same L2 segment can still reach a
+    # 127.0.0.1-published port; that residual is the same as Qdrant's.
+    - "127.0.0.1:${ORCHESTRATOR_HOST_PORT:-8000}:8000"
+    # Every capability is dropped except what the root init in
+    # docker-entrypoint.sh uses before it drops to the checkout owner (LUM-916):
+    # CHOWN for the ownership repair, DAC_OVERRIDE to write the checkout
+    # owner's .env and config/, FOWNER so `sed -i` on .env keeps its mode, and
+    # SETUID / SETGID for `setpriv`. The app itself runs with none: the drop to
+    # a non-root uid clears them.
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
+    security_opt:
+      - "no-new-privileges:true"
     env_file: .env
     environment:
       FILESYSTEM_ROOT: /data
@@ -14,9 +43,11 @@ services:
       # origin. Default matches http://localhost (port 80) — set in .env if you
       # use 127.0.0.1, HTTPS, or a LAN hostname. See .env.example.
       LUMOGIS_PUBLIC_ORIGIN: ${LUMOGIS_PUBLIC_ORIGIN:-http://localhost}
-      # Trust Caddy (and any listed proxies) for X-Forwarded-For. The app
-      # trusts no forwarded headers unless this env is explicitly set.
-      LUMOGIS_TRUSTED_PROXIES: ${LUMOGIS_TRUSTED_PROXIES:-127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7}
+      # Core trusts only the Caddy container, by service name (resolved by
+      # Docker DNS), for X-Forwarded-For. Caddy decides the client IP; see
+      # LUMOGIS_CADDY_TRUSTED_PROXIES below. The app trusts no forwarded
+      # headers unless this env is set (LUM-887 / ID-007).
+      LUMOGIS_TRUSTED_PROXIES: ${LUMOGIS_TRUSTED_PROXIES:-caddy}
     volumes:
       - ${FILESYSTEM_ROOT:-./lumogis-data}:/data:ro
       # Project root — admin.py writes /project/.env (RERANKER_BACKEND, FILESYSTEM_ROOT),
@@ -25,13 +56,21 @@ services:
       # generates secrets in /project/.env on first boot.
       # Directory mount avoids Docker's single-file bind mount bug where individual
       # file mounts (./.env:/app/host.env) create empty directories instead of files.
+      # The orchestrator process runs as the owner of this checkout folder
+      # (LUMOGIS_RUN_UID / LUMOGIS_RUN_GID override it; 0 keeps root). LUM-887.
       - .:/project
       # ai-workspace/inbox → /workspace/inbox (auto-ingest); see .env.example (LUMOGIS_INBOX_*).
-      - ./ai-workspace:/workspace
+      # Everything Lumogis stores lives here: uploads, inbox, captures (LUM-892).
+      - ${WORKSPACE_HOST_DIR:-./ai-workspace}:/workspace
       # DR backup mount — relocation via BACKUP_HOST_DIR on host (LUM-185).
       - ${BACKUP_HOST_DIR:-./ai-workspace/backups}:/workspace/backups
       # HuggingFace model cache — persists BGE reranker weights across container rebuilds
-      - hf_cache:/root/.cache/huggingface
+      - hf_cache:/var/lib/lumogis/hf-cache
+      # LUM-695 outbound email attachment staging — WRITABLE, and deliberately
+      # OUTSIDE /data. /data is mounted :ro above (so staging could never write
+      # there) and FILESYSTEM_ROOT=/data makes it the folder-watcher's root, so a
+      # staged file placed there would also be ingested as a new document.
+      - email_staging:/var/lib/lumogis/email-staging
     depends_on:
       qdrant:
         condition: service_healthy
@@ -53,6 +92,9 @@ services:
     build:
       context: ./docker/qdrant
     image: lumogis-qdrant:v1.14.1
+    # Built here, never in a registry: without this, `docker compose up` first asks a
+    # registry for it and prints "pull access denied" on every new install (LUM-310).
+    pull_policy: never
     # Loopback-only host publish — Qdrant HTTP API has no auth (ADR-053 FalkorDB precedent).
     ports:
       - "127.0.0.1:${QDRANT_HOST_PORT:-6334}:6333"
@@ -91,11 +133,10 @@ services:
   # Activepieces (optional automation UI) — see docker-compose.activepieces.yml
   # FalkorDB graph store (for graph plugins) — see docker-compose.falkordb.yml
 
-  # mongodb + librechat are gated behind the `librechat` compose profile so the
-  # legacy LibreChat surface can be skipped once a deployment cuts over to the
-  # Lumogis Web SPA. The .env.example sets COMPOSE_PROFILES=librechat by default
-  # so existing installs keep starting LibreChat unchanged. To disable, set
-  # COMPOSE_PROFILES= (empty) or remove `librechat` from the value.
+  # mongodb + librechat are gated behind the `librechat` compose profile. The
+  # .env.example leaves COMPOSE_PROFILES empty, so a new install skips them and
+  # uses Lumogis Web (LUM-95). An existing install keeps its own .env; to start
+  # LibreChat, set COMPOSE_PROFILES=librechat.
   mongodb:
     image: mongo:7.0
     profiles: ["librechat"]
@@ -112,7 +153,9 @@ services:
     image: ghcr.io/danny-avila/librechat:v0.7.9
     profiles: ["librechat"]
     ports:
-      - "3080:3080"
+      # Host only (LUM-916), like Core's 8000. LibreChat is not behind Caddy;
+      # other devices use Lumogis Web through Caddy.
+      - "127.0.0.1:3080:3080"
     env_file: .env
     environment:
       HOST: 0.0.0.0
@@ -178,6 +221,8 @@ services:
       context: ./clients/lumogis-web
       dockerfile: Dockerfile
     restart: unless-stopped
+    security_opt:
+      - "no-new-privileges:true"
     expose:
       - "80"
     # Probe 127.0.0.1 — busybox wget resolves `localhost` to ::1 first while
@@ -191,14 +236,33 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    # The preflight warns in this container's log when sign-in is off and
+    # CADDY_DOMAIN is a public hostname, then runs Caddy (LUM-916).
+    entrypoint: ["/bin/sh", "/etc/caddy/preflight.sh"]
+    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
     ports:
-      - "80:80"  # LAN access only by default; see docs/deployment/remote-access.md for off-LAN/mobile setup
-      - "443:443"
-      - "443:443/udp"
+    # Host side overridable, same reason and same shape as the orchestrator's
+    # port above — and this is the service that actually kept `doctor-integration`
+    # red. Caddy starts LAST (it depends on orchestrator being healthy), so a
+    # collision here wastes the entire stack bring-up before failing, and the
+    # teardown removes every container: the job's own diagnostics then print an
+    # empty `docker compose ps -a`, which reads like "nothing ever started".
+    # Defaults are unchanged (80/443) for every ordinary install; only CI
+    # overrides them. LAN access only by default — see
+    # docs/deployment/remote-access.md for off-LAN/mobile setup.
+      - "${CADDY_HTTP_HOST_PORT:-80}:80"
+      - "${CADDY_HTTPS_HOST_PORT:-443}:443"
+      - "${CADDY_HTTPS_HOST_PORT:-443}:443/udp"
     environment:
       CADDY_DOMAIN: ${CADDY_DOMAIN:-:80}
+      # Read only by the preflight above.
+      AUTH_ENABLED: ${AUTH_ENABLED:-false}
+      # Upstream proxies Caddy believes for the client IP (space-separated
+      # CIDRs). Default trusts none. See .env.example (LUM-887 / ID-007).
+      LUMOGIS_CADDY_TRUSTED_PROXIES: ${LUMOGIS_CADDY_TRUSTED_PROXIES:-127.0.0.1/32}
     volumes:
       - ./docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./docker/caddy/preflight.sh:/etc/caddy/preflight.sh:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
@@ -260,6 +324,7 @@ services:
       BACKUP_MAX_FAILED_SNAPSHOTS: ${BACKUP_MAX_FAILED_SNAPSHOTS:-3}
       BACKUP_STALE_HOURS: ${BACKUP_STALE_HOURS:-24}
       BACKUP_INCLUDE_FALKORDB: ${BACKUP_INCLUDE_FALKORDB:-}
+      WORKSPACE_PATH: /workspace
       POSTGRES_HOST: postgres
       QDRANT_URL: http://qdrant:6333
       GRAPH_MODE: ${GRAPH_MODE:-disabled}
@@ -268,6 +333,8 @@ services:
       TZ: ${TZ:-UTC}
     volumes:
       - ${BACKUP_HOST_DIR:-./ai-workspace/backups}:/backups
+      # files store; restore writes here (LUM-892)
+      - ${WORKSPACE_HOST_DIR:-./ai-workspace}:/workspace
     depends_on:
       postgres:
         condition: service_healthy
@@ -283,4 +350,5 @@ volumes:
   qdrant_data:
   postgres_data:
   hf_cache:      # HuggingFace model cache — persists across container rebuilds (BGE reranker)
+  email_staging: # LUM-695 outbound attachment staging (writable; outside /data)
   # ntfy_data:   # uncomment if ntfy service above is enabled

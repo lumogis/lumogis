@@ -19,7 +19,7 @@ Shrink the bundled Core sidecar using a **layered requirements + packaging strat
 
 1. **`orchestrator/requirements-core.txt`** — base runtime deps **without** `sentence-transformers`; single source of truth for bundled freeze and Docker base install context.
 2. **`orchestrator/requirements.txt`** — BGE-profile extension: `-r requirements-core.txt` + `sentence-transformers` (Docker/Compose full profile).
-3. **`build-orchestrator-sidecar.sh`** — isolated `apps/lumogis-server/.venv-bundled-build/` from core only; **refuses** active repo dev `VIRTUAL_ENV`; recreates venv when `requirements-core.txt` SHA changes.
+3. **`build-orchestrator-sidecar.sh`** — isolated build venv (`.venv-bundled-build/`) from core only; **refuses** active repo dev `VIRTUAL_ENV`; recreates venv when `requirements-core.txt` SHA changes.
 4. **`orchestrator-bundled.spec`** — `excludes` for **reranker ML stack only** (`torch`, `triton`, `nvidia*`, `transformers`, `sentence_transformers`); never exclude splink/pandas dedup-search stack.
 5. **`check-orchestrator-bundle-size.sh`** + **`smoke-bundled-sidecar-contents.sh`** — CI/local guards on bundle size and contents (dedup stack present, ML wheels absent).
 
@@ -51,3 +51,4 @@ Add-back framework (Class A via Ollama only) and GGUF reranker path remain **sep
 - 2026-06-10: Draft created by /explore LUM-447
 - 2026-06-10: Updated after review — layered requirements, reranker-only excludes, LUM-460/461/462 split
 - 2026-06-10: Finalised by /verify-plan LUM-460 — implementation confirmed
+- 2026-11-10: public-boundary wording (LUM-898).

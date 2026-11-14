@@ -1,0 +1,5 @@
+# Shell scripts exempt from scripts/check-exec-bits.sh (LUM-784).
+# One path per line, then "# reason". Only files that are never executed
+# directly belong here; anything with an entrypoint role must be 100755.
+scripts/backup/lib/common.sh  # library, sourced by scripts/backup/*.sh, never executed
+scripts/backup/lib/files.sh  # library, sourced by scripts/backup/*.sh, never executed

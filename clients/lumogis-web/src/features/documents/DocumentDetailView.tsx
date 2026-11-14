@@ -23,6 +23,12 @@ import { useDocumentsSseInvalidation } from "./useDocumentsSseInvalidation";
 import { IngestProgressBar } from "./IngestProgressBar";
 import { useIngestJobProgress } from "./useIngestJobProgress";
 import { ShareToggle } from "./ShareToggle";
+import {
+  EXTERNAL_REINGEST_EXPLANATION,
+  EXTERNAL_SHARE_EXPLANATION,
+  isExternal,
+  originOf,
+} from "./documentOrigin";
 
 function parseDocumentId(raw: string | undefined): number | null {
   if (!raw) return null;
@@ -161,14 +167,21 @@ export function DocumentDetailView(): JSX.Element {
         <div className="lumogis-kv-row">
           <dt className="lumogis-kv-row__label">Sharing</dt>
           <dd className="lumogis-kv-row__value">
-            <ShareToggle
-              client={client}
-              documentId={documentId}
-              displayName={title}
-              shareStatus={doc.share_status}
-              isOwner={doc.is_owner ?? true}
-              sharedBy={doc.shared_by}
-            />
+            {/* LUM-724: the server refuses with 409, but a control that fails
+                on click is worse than one that explains first — the reason is
+                not something a user could guess. */}
+            {isExternal(doc.file_path) ? (
+              <span data-testid="share-unavailable">{EXTERNAL_SHARE_EXPLANATION}</span>
+            ) : (
+              <ShareToggle
+                client={client}
+                documentId={documentId}
+                displayName={title}
+                shareStatus={doc.share_status}
+                isOwner={doc.is_owner ?? true}
+                sharedBy={doc.shared_by}
+              />
+            )}
             {shareJobId && shareProgress ? (
               <IngestProgressBar
                 stage={shareProgress.stage}
@@ -214,7 +227,14 @@ export function DocumentDetailView(): JSX.Element {
             Delete document
           </Button>
         ) : null}
-        {doc.source_available ? (
+        {isExternal(doc.file_path) ? (
+          // Re-ingest reads the file from disk, which a logical path does not
+          // name. The server already refuses; "source unavailable" would read as
+          // a bug, so the origin is named instead.
+          <span data-testid="reingest-unavailable">
+            {EXTERNAL_REINGEST_EXPLANATION[originOf(doc.file_path) as "paperless" | "email"]}
+          </span>
+        ) : doc.source_available ? (
           <>
             <Button type="button" variant="secondary" onClick={() => void handleReingest(false)}>
               Re-ingest

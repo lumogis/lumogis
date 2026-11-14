@@ -20,7 +20,7 @@ LUM-466 proved Linux x64 core-venv. LUM-468 extends toward macOS/Windows. Slice 
 
 ## Decision (slice 1)
 
-- **`apps/lumogis-server/scripts/pbs-asset.sh`** — resolves `python-build-standalone` `install_only` tarball for all five `TARGET_TRIPLE` values (rejects unknown triples).
+- **`pbs-asset.sh`** (appliance build) — resolves `python-build-standalone` `install_only` tarball for all five `TARGET_TRIPLE` values (rejects unknown triples).
 - **`refresh-pbs-sha256.sh`** — portable `sha256sum`/`shasum`; per-OS pin refresh on matching runner.
 - **`server-build.yml`** — `spike-server-build-macos-windows` matrix (`workflow_dispatch` only); sidecar staging expected green; `stage-core-venv.sh` + dmg/nsis marked `continue-on-error`.
 
@@ -34,3 +34,4 @@ LUM-466 proved Linux x64 core-venv. LUM-468 extends toward macOS/Windows. Slice 
 ## Status history
 
 - 2026-06-22: Slice 1 recorded by `/record-retro` — on `dev` @ `c1d30c1d4`. Parent LUM-468 remains **In Review**.
+- 2026-11-10: public-boundary wording (LUM-898).

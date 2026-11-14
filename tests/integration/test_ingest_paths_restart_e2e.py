@@ -14,6 +14,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from _smoke_auth import login_access_token
 from restart_e2e_env import (
     assert_test_env_example_guard,
     backup_project_env,
@@ -69,16 +70,9 @@ def _admin_bearer(client: httpx.Client) -> str:
     email, password = _smoke_credentials()
     if not email or len(password) < 12:
         pytest.skip("LUMOGIS_WEB_SMOKE_EMAIL / LUMOGIS_WEB_SMOKE_PASSWORD unset or too short")
-    lr = client.post(
-        "/api/v1/auth/login",
-        json={"email": email, "password": password},
-        headers={"Origin": ORIGIN},
-    )
-    if lr.status_code == 503:
+    token = login_access_token(str(client.base_url))
+    if token is None:
         pytest.skip("AUTH_ENABLED=false — login unavailable")
-    assert lr.status_code == 200, lr.text[:800]
-    token = lr.json().get("access_token")
-    assert token
     return token
 
 

@@ -128,11 +128,20 @@ class _RoutesFakeStore(FakeUsersStore):
             row = self.tokens.get(tid)
             return dict(row) if row else None
 
-        if q.startswith("select * from mcp_tokens where token_prefix = %s and revoked_at is null"):
+        if q.startswith(
+            "select t.*, u.id as owner_id, u.disabled as owner_disabled "
+            "from mcp_tokens t left join users u on u.id = t.user_id "
+            "where t.token_prefix = %s and t.revoked_at is null"
+        ):
             (prefix,) = p
             for row in self.tokens.values():
                 if row["token_prefix"] == prefix and row["revoked_at"] is None:
-                    return dict(row)
+                    owner = self.rows.get(row["user_id"])
+                    return {
+                        **row,
+                        "owner_id": owner["id"] if owner else row["user_id"],
+                        "owner_disabled": owner["disabled"] if owner else False,
+                    }
             return None
 
         if q.startswith("insert into audit_log"):
@@ -250,6 +259,7 @@ def _mint_jwt(user_id: str, role: str) -> str:
     return jwt.encode(
         {
             "sub": user_id,
+            "typ": "access",
             "role": role,
             "iat": int(time.time()),
             "exp": int(time.time()) + 600,

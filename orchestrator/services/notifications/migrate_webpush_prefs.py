@@ -14,24 +14,57 @@ import config
 _log = logging.getLogger(__name__)
 
 _SEEDER_FLAG_KEY = "webpush_prefs_seeded_v1"
+# LUM-648: a distinct one-time flag so the consent reset runs once on this chunk's
+# first deploy, independent of the older seeder above.
+_NOTIFY_ON_SIGNALS_RESET_FLAG_KEY = "webpush_notify_on_signals_reset_v1"
 
 
-def _seeder_already_ran() -> bool:
+def _flag_set(key: str) -> bool:
     ms = config.get_metadata_store()
-    row = ms.fetch_one(
-        "SELECT value FROM app_settings WHERE key = %s",
-        (_SEEDER_FLAG_KEY,),
-    )
+    row = ms.fetch_one("SELECT value FROM app_settings WHERE key = %s", (key,))
     return bool(row and row.get("value") == "1")
 
 
-def _mark_seeder_done() -> None:
+def _mark_flag(key: str) -> None:
     ms = config.get_metadata_store()
     ms.execute(
         "INSERT INTO app_settings (key, value, updated_at) VALUES (%s, %s, NOW()) "
         "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()",
-        (_SEEDER_FLAG_KEY, "1"),
+        (key, "1"),
     )
+
+
+def _seeder_already_ran() -> bool:
+    return _flag_set(_SEEDER_FLAG_KEY)
+
+
+def _mark_seeder_done() -> None:
+    _mark_flag(_SEEDER_FLAG_KEY)
+
+
+def reset_notify_on_signals_for_consent() -> None:
+    """One-time reset of ``notify_on_signals`` to FALSE on this chunk's first deploy.
+
+    LUM-648 makes ``notify_on_signals`` the **sole live gate** admitting real email
+    sender+subject content to a device push — the column was functionally inert
+    before this chunk. Any pre-existing ``TRUE`` value would silently start pushing
+    PII with no fresh confirmation, so we reset every existing subscription to FALSE
+    once (guarded by an ``app_settings`` flag); users must re-opt-in for the new
+    behaviour. Idempotent, fail-open — never blocks startup.
+    """
+    try:
+        if _flag_set(_NOTIFY_ON_SIGNALS_RESET_FLAG_KEY):
+            return
+        ms = config.get_metadata_store()
+        ms.execute(
+            "UPDATE webpush_subscriptions SET notify_on_signals = FALSE "
+            "WHERE notify_on_signals = TRUE",
+            (),
+        )
+        _mark_flag(_NOTIFY_ON_SIGNALS_RESET_FLAG_KEY)
+        _log.info("webpush notify_on_signals reset to FALSE for fresh consent (LUM-648)")
+    except Exception:
+        _log.exception("webpush notify_on_signals reset failed — will retry next startup")
 
 
 def _sparse_row_exists(user_id: str, ntype: NotificationType, channel: ChannelId) -> bool:

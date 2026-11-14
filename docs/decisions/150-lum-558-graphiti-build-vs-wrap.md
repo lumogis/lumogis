@@ -31,7 +31,7 @@ Full comparison: `.cursor/explorations/LUM-558-graphiti-build-vs-wrap.md`.
 
 ## Consequences
 
-**Easier:** ADR-015 scope union, ADR-138 bank graphs, and the ADR-042 export boundary stay untouched; the premium SKU remains self-contained (no third-party runtime in the paid differentiator); LUM-104 has a concrete borrowed spec (schema, contradiction semantics, prompt discipline) instead of an open design space; no new pip dependency, no bundled-lock (LUM-470) regeneration.
+**Easier:** ADR-015 scope union and ADR-138 bank graphs stay untouched; ~~the ADR-042 export boundary stays untouched; the premium SKU remains self-contained (no third-party runtime in the paid differentiator);~~ *(both retired 2026-11-07 by [ADR 229](229-lum-855-kg-agpl-relicence.md) — ADR-042 is superseded and there is no paid differentiator. **The build-clean-room verdict stands** on its decisive reason, the ADR-015 conformance failure in §2; the self-contained-SKU argument must not be cited again.)* LUM-104 has a concrete borrowed spec (schema, contradiction semantics, prompt discipline) instead of an open design space; no new pip dependency, no bundled-lock (LUM-470) regeneration.
 
 **Harder / owned:** Lumogis owns contradiction-detection quality on local models — the hardest thing Graphiti would have provided. LUM-104's hand-graded 50-episode-pair eval before auto-apply is the gate for that risk (wrap would not have removed it: Graphiti documents the same small-model structured-output failure mode). The Postgres↔graph temporal sync (`invalid_at` ↔ `valid_until`) becomes a Lumogis-owned invariant and must be an explicit LUM-104 acceptance criterion.
 

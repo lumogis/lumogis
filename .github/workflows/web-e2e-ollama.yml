@@ -123,6 +123,23 @@ jobs:
           test -f .env.example || (echo "web-e2e: missing .env.example" >&2; exit 1)
           cp .env.example .env
 
+      # LUM-791 — this is the ONLY stack-building lane with no free-disk step, and it is
+      # also the heaviest: the slim stack's images PLUS ollama/ollama (~3.5GB). Run #4 —
+      # the first run in this lane's history to get past the label gate — was KILLED
+      # ~1 min into compose up, with no logs retained. Disk is the leading hypothesis,
+      # not a proven cause. Same recipe as ci.yml's heavy jobs (0d55e3e, 219d119); the
+      # `df -h /` before and after is deliberate, so the next failure here is diagnosable
+      # from the log stream instead of an artifact that may not survive a kill.
+      - name: Free runner disk before compose build
+        if: steps.gate.outputs.run_stack == 'true'
+        run: |
+          set -euo pipefail
+          echo "--- disk before cleanup ---"; df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/.ghcup /opt/hostedtoolcache/CodeQL || true
+          docker system prune -af --volumes || true
+          echo "--- disk after cleanup ---"; df -h /
+
       - name: Docker compose build (slim services)
         if: steps.gate.outputs.run_stack == 'true'
         env:
@@ -244,6 +261,35 @@ jobs:
             clients/lumogis-web/test-results/
           if-no-files-found: ignore
           retention-days: 7
+
+      # LUM-788/LUM-791 — a lane that skipped and a lane that passed must not look
+      # identical. Runs #1-#3 of this workflow reported `success` for doing nothing
+      # (label gate not met, ~16s each) and that green was read as coverage for three
+      # weeks, hiding a Postgres misconfiguration nobody could see. A skip is still not
+      # a failure — it must not fail the job — but it MUST say so where the green tick
+      # is, which is the run summary, not a log line nobody opens.
+      - name: Record what this run actually did
+        if: always()
+        shell: bash
+        env:
+          PATHS_RAN: ${{ steps.paths.outputs.should_run }}
+          STACK_RAN: ${{ steps.gate.outputs.run_stack }}
+        run: |
+          set -euo pipefail
+          if [[ "${PATHS_RAN:-}" != "true" ]]; then
+            verdict="**SKIPPED — NOTHING RAN.** No paths matched the contract; no stack, no specs."
+          elif [[ "${STACK_RAN:-}" != "true" ]]; then
+            verdict="**SKIPPED — NOTHING RAN.** Gate not met (fork PR, or the opt-in label is absent); no stack, no specs."
+          else
+            verdict="Specs executed against a live stack. A green tick here means the suite ran."
+          fi
+          {
+            echo "### Web E2E Ollama (Playwright)"
+            echo
+            echo "$verdict"
+            echo
+            echo "_A green result on a skipped run means the gate was not met — not that anything was verified._"
+          } >>"$GITHUB_STEP_SUMMARY"
 
       - name: Teardown compose stack
         if: always() && steps.gate.outputs.run_stack == 'true'

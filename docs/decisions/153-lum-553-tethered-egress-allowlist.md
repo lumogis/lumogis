@@ -4,7 +4,7 @@
 
 **Created:** 2026-07-05
 
-**Last updated:** 2026-07-05
+**Last updated:** 2026-11-10 (amended for LUM-903)
 
 **Decided by:** /explore --headless (claude-opus-4-8-thinking-medium, LUM-553)
 
@@ -32,7 +32,7 @@ During `/review-plan --arbitrate` R1, **process-wide ceiling** (`LUMOGIS_FF_EGRE
 
 ## Decision
 
-Adopt an **opt-in, default-off in-process egress allowlist** using **`tethered==0.5.1`** (PEP 578 audit hooks):
+Adopt an **opt-in, default-off in-process egress allowlist** using **`tethered==0.5.1`** (PEP 578 audit hooks) — *amended 2026-11-10 (LUM-903): now `tethered==1.1.1`; see Status history*:
 
 1. **`LUMOGIS_FF_EGRESS_GUARD`** (registered in `features.py` as `EGRESS_GUARD`, default off) enables `EgressGuardingLLMProvider`, which enters `tethered.scope(allowlist)` around each `chat` / `chat_stream` call.
 2. **Allowlist** is built dynamically per cache miss from env backends (Postgres, Qdrant, FalkorDB, ntfy, Ollama), loopback hosts, `LUMOGIS_OUTBOUND_PRIVATE_HOST_ALLOWLIST`, cached dynamic Ollama hosts (60s TTL), and cloud API hosts only when effective privacy policy allows cloud (`effective_privacy_mode`).
@@ -42,7 +42,7 @@ Adopt an **opt-in, default-off in-process egress allowlist** using **`tethered==
 
 **Process-wide ceiling** is deferred to a follow-up child issue under LUM-553.
 
-**Option 2** (in-repo PEP 578 hook) remains the documented fallback if `tethered` supply-chain review fails; v1 proceeded with `tethered` (MIT, hash-pinned in `orchestrator/locks-bundled/`).
+**Option 2** (in-repo PEP 578 hook) remains the documented fallback if `tethered` supply-chain review fails; v1 proceeded with `tethered` (MIT, hash-pinned in the appliance's Core lock).
 
 ## Alternatives Considered
 
@@ -68,6 +68,12 @@ Full comparison: `.cursor/explorations/LUM-553-tethered-egress-allowlist.md`.
 
 ## Status history
 
+- 2026-11-10: Amended (LUM-903) — pin moved from `tethered==0.5.1` to `1.1.1`. 1.x checks `bytes`/`bytearray`
+  socket hosts (0.5.1 let them skip every check) and refuses to activate once uvloop is loaded, because
+  libuv sockets raise no PEP 578 audit events. Under 0.5.1 with uvicorn's default uvloop, async socket
+  traffic was therefore not seen by the hook at all; Core now runs uvicorn with `--loop asyncio`
+  (Dockerfile CMD, the dev overlay and every other launch path). The `scope()` doors are otherwise unchanged.
+- 2026-11-10: public-boundary wording (LUM-898).
 - 2026-07-05: **LUM-570 follow-up (residuals closed on `agent/lum-570`)** — Production `EgressGuardingLLMProvider` unwraps OpenAI/Anthropic SDK-wrapped `tethered.EgressBlocked` via `__cause__`; `tethered.scope(..., allow_localhost=False)` so only explicit allowlist loopback hosts pass (not all `127.0.0.0/8`); `invalidate_llm_cache()` evicts `llm:` keys and closes httpx clients on eviction. PoC tests no longer use a harness shim.
 - 2026-07-05: **LUM-570 PoC (partial closure)** — `orchestrator/tests/test_egress_guard_poc.py` proves real `OpenAILLM` socket I/O through sync `/v1/chat/completions` (non-stream blocked/allowed, upstream-error discrimination, streaming tool-loop second connect blocked, cache invalidation, warm-pool diagnostic). Blocked cases target **`93.184.216.34`** (non-loopback; tethered blocks at `connect` with no outbound packets). Happy path uses loopback fake server on **`127.0.0.1`**.
 - 2026-07-05: Finalised by /verify-plan — v1 scoped-only implementation confirmed; ceiling deferred; ADR 153 (152 taken by LUM-473).

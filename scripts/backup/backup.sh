@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: AGPL-3.0-only
-# Instance-scoped DR backup — Postgres, Qdrant, optional FalkorDB (LUM-185).
+# Instance-scoped DR backup — Postgres, files, Qdrant, optional FalkorDB (LUM-185, LUM-892).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 source "${SCRIPT_DIR}/lib/common.sh"
+# shellcheck source=lib/files.sh
+source "${SCRIPT_DIR}/lib/files.sh"
 
 POSTGRES_HOST="${POSTGRES_HOST:-postgres}"
 POSTGRES_USER="${POSTGRES_USER:-lumogis}"
@@ -24,6 +26,10 @@ run_backup() {
     exit 0
   fi
 
+  # Manifests finalised before LUM-892 are 0600 (mktemp); the non-root orchestrator
+  # reads them for the status card.
+  find "$(snapshots_dir)" -maxdepth 2 -name manifest.json -exec chmod 644 {} + 2>/dev/null || true
+
   local started
   started="$(date +%s)"
   local snap_id
@@ -38,7 +44,10 @@ run_backup() {
   }
   trap cleanup_tmp ERR
 
-  if ! preflight_disk_headroom "$(estimate_data_usage_bytes)"; then
+  local prev_files required
+  prev_files="$(files_previous_snapshot)"
+  required=$(( $(estimate_data_usage_bytes) + $(files_estimate_bytes "$prev_files") ))
+  if ! preflight_disk_headroom "$required"; then
     cleanup_tmp
     release_backup_lock
     exit 1
@@ -52,6 +61,23 @@ run_backup() {
     exit 1
   fi
   unset PGPASSWORD
+
+  # File tree (uploads, inbox, captures). Runs after pg_dump while the stack is
+  # live: a document deleted in between has a row and no file in the snapshot,
+  # and the restored stack reports it as missing (backup status files_missing).
+  # A file uploaded in that window has no row and is harmless.
+  local files_store_json files_rc=0 files_partial=false
+  files_store_json="$(files_snapshot "$tmp_dir")" || files_rc=$?
+  case "$files_rc" in
+    0) ;;
+    3) files_partial=true ;;
+    *)
+      log_error "file tree copy failed"
+      cleanup_tmp
+      release_backup_lock
+      exit 1
+      ;;
+  esac
 
   local qdrant_json='{"collections":[],"collections_meta":{},"files":{}}'
   local collections collections_resp
@@ -165,15 +191,18 @@ run_backup() {
     --arg q_eng "$qdrant_engine" \
     --argjson qdrant "$qdrant_json" \
     --argjson falkor "$falkor_manifest" \
+    --argjson files "$files_store_json" \
+    --argjson schema "$BACKUP_MANIFEST_SCHEMA" \
     '{
-      schema_version: 1,
+      schema_version: $schema,
       created_at: $created,
       verified_at: null,
       lumogis_version: $version,
       stores: {
         postgres: {file: "postgres.dump", sha256: $pg_sha, bytes: $pg_bytes, engine_version: $pg_eng},
         qdrant: ($qdrant + {engine_version: ($q_eng|if .=="" then null else . end)}),
-        falkordb: $falkor
+        falkordb: $falkor,
+        files: $files
       },
       compose_project: $compose,
       graph_mode: $graph,
@@ -203,6 +232,16 @@ run_backup() {
   fi
 
   release_backup_lock
+
+  # A database-only snapshot still counts as a successful one for retention
+  # (prune_snapshots keeps by count). If the file copy keeps failing for longer
+  # than the keep window (BACKUP_KEEP_DAILY + BACKUP_KEEP_WEEKLY), the last
+  # snapshot that holds files is pruned. The admin backup card warns on every
+  # such run (backup_files_not_in_snapshot), which is the guard (LUM-892).
+  if [[ "$files_partial" == "true" ]]; then
+    log_error "backup saved databases only; the file copy failed (see above)"
+    exit 1
+  fi
 }
 
 case "$cmd" in

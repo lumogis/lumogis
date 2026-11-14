@@ -23,8 +23,10 @@ import { CaptureArchiveView } from "./CaptureArchiveView";
 import {
   addAudioOutboxItem,
   addTextUrlOutboxItem,
+  claimLegacyOutboxItem,
   discardOutboxItem,
   getOutboxStats,
+  listLegacyOutboxItems,
   listOutboxItems,
   MAX_LOCAL_VOICE_BYTES_TOTAL,
   MAX_PENDING_VOICE_CLIPS,
@@ -34,6 +36,7 @@ import {
 } from "../../pwa/captureOutbox";
 import { getDraft, makeCaptureDraftKey, setDraft } from "../../pwa/drafts";
 import { useOnlineStatus } from "../../pwa/useOnlineStatus";
+import { pickAudioMimeType } from "../../hooks/useAudioRecorder";
 
 const DRAFT_KEY = makeCaptureDraftKey("__quickcapture__");
 
@@ -69,13 +72,23 @@ function parseTagsInput(raw: string): string[] | null {
   return parts;
 }
 
-function pickAudioMimeType(): string {
-  if (typeof MediaRecorder === "undefined") return "";
-  const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"];
-  for (const c of candidates) {
-    if (MediaRecorder.isTypeSupported(c)) return c;
+// LUM-653: the codec-fallback helper is now shared with useAudioRecorder (the
+// single source of truth for MediaRecorder mime selection). QuickCapture keeps
+// its own capture-attachment recording flow (C2 — see the plan); only this
+// helper is de-duplicated, so behaviour is unchanged.
+
+/** Short, recognisable label for a legacy (ownerless) row: title, text start, URL host, else "Voice clip". */
+function legacyPreview(item: CaptureOutboxItemMeta): string {
+  if (item.title) return item.title.slice(0, 40);
+  if (item.text) return item.text.slice(0, 40);
+  if (item.url) {
+    try {
+      return new URL(item.url).host;
+    } catch {
+      return item.url.slice(0, 40);
+    }
   }
-  return "";
+  return "Voice clip";
 }
 
 function errorToMessage(err: unknown): string {
@@ -87,7 +100,10 @@ function errorToMessage(err: unknown): string {
 }
 
 export function QuickCapturePage(): JSX.Element {
-  const { client } = useAuth();
+  const { client, user } = useAuth();
+  // The page renders only inside RequireAuth after the sign-in reconcile (LUM-886), so
+  // this is the reconciled member whenever a handler can run.
+  const ownerId = user?.id ?? "";
   const online = useOnlineStatus();
   // LUM-606: Compose · Inbox · Outbox tabs. The device-only outbox stays a
   // separate surface from the server-backed inbox.
@@ -116,9 +132,13 @@ export function QuickCapturePage(): JSX.Element {
   const [recorderMime, setRecorderMime] = useState<string>("");
   const [recording, setRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const mountedRef = useRef(true);
   const chunksRef = useRef<Blob[]>([]);
 
   const [outboxItems, setOutboxItems] = useState<CaptureOutboxItemMeta[]>([]);
+  /** Rows written before LUM-886 (no owner): shown apart, claim-or-discard per item. */
+  const [legacyItems, setLegacyItems] = useState<CaptureOutboxItemMeta[]>([]);
   const [outboxStats, setOutboxStats] = useState({
     pendingCount: 0,
     pendingAudioCount: 0,
@@ -147,10 +167,15 @@ export function QuickCapturePage(): JSX.Element {
   }, [searchParams, setSearchParams]);
 
   const refreshOutbox = useCallback(async () => {
-    const [items, stats] = await Promise.all([listOutboxItems(), getOutboxStats()]);
+    const [items, stats, legacy] = await Promise.all([
+      listOutboxItems(ownerId),
+      getOutboxStats(ownerId),
+      listLegacyOutboxItems(),
+    ]);
     setOutboxItems(items);
     setOutboxStats(stats);
-  }, []);
+    setLegacyItems(legacy);
+  }, [ownerId]);
 
   useEffect(() => {
     setRecorderMime(pickAudioMimeType());
@@ -159,6 +184,28 @@ export function QuickCapturePage(): JSX.Element {
   useEffect(() => {
     void refreshOutbox();
   }, [refreshOutbox]);
+
+  // LUM-886: leaving the page while recording (sign-out, navigation) must release the
+  // microphone and save nothing — the next member's session must not inherit a live mic.
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      const mr = mediaRecorderRef.current;
+      mediaRecorderRef.current = null;
+      if (mr) {
+        mr.ondataavailable = null;
+        try {
+          if (mr.state !== "inactive") mr.stop();
+        } catch {
+          /* already stopped */
+        }
+      }
+      mediaStreamRef.current?.getTracks().forEach((tr) => tr.stop());
+      mediaStreamRef.current = null;
+      chunksRef.current = [];
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -254,6 +301,7 @@ export function QuickCapturePage(): JSX.Element {
     try {
       const tags = parseTagsInput(tagsRaw);
       await addTextUrlOutboxItem({
+        ownerUserId: ownerId,
         kind: u && !t ? "url" : "text",
         title: title.trim() || undefined,
         text: t || undefined,
@@ -278,9 +326,11 @@ export function QuickCapturePage(): JSX.Element {
     }
     setBusy(true);
     try {
-      const r = await syncOutbox(client);
+      const r = await syncOutbox(client, ownerId);
       await refreshOutbox();
-      if (r.synced > 0 && r.failed === 0) {
+      if (r.stopped) {
+        setInfo("Sync stopped because you signed out.");
+      } else if (r.synced > 0 && r.failed === 0) {
         setInfo(`Synced ${r.synced} local item(s) to the server. Transcribe from the capture list if needed.`);
       } else if (r.failed > 0) {
         setError(r.errors.filter(Boolean).join(" — ") || "Some items failed to sync.");
@@ -298,11 +348,37 @@ export function QuickCapturePage(): JSX.Element {
     setError(null);
     setBusy(true);
     try {
-      await discardOutboxItem(localCaptureId);
+      await discardOutboxItem(localCaptureId, ownerId);
       await refreshOutbox();
       setInfo("Local item discarded.");
     } catch (e) {
       setError(outboxErrorToMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Legacy row: give it to the signed-in member, then sync just that row. */
+  const handleClaimLegacy = async (localCaptureId: string) => {
+    setError(null);
+    setInfo(null);
+    if (!online) {
+      setError("Connect to Lumogis, then sync this capture to your account.");
+      return;
+    }
+    setBusy(true);
+    try {
+      if (!(await claimLegacyOutboxItem(localCaptureId, ownerId))) {
+        setError("That capture is no longer available to claim.");
+      } else {
+        const r = await syncOutbox(client, ownerId, { onlyIds: [localCaptureId] });
+        if (r.stopped) setInfo("Sync stopped because you signed out.");
+        else if (r.failed > 0) setError(r.errors.filter(Boolean).join(" — ") || "Sync failed.");
+        else setInfo("Synced to your account.");
+      }
+      await refreshOutbox();
+    } catch (e) {
+      setError(errorToMessage(e));
     } finally {
       setBusy(false);
     }
@@ -354,6 +430,7 @@ export function QuickCapturePage(): JSX.Element {
     setBusy(true);
     try {
       await addAudioOutboxItem({
+        ownerUserId: ownerId,
         blob: file,
         mimeType: file.type || "audio/webm",
         title: title.trim() || undefined,
@@ -380,6 +457,12 @@ export function QuickCapturePage(): JSX.Element {
     }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (!mountedRef.current) {
+        // The page went away while the permission prompt was pending: release the mic.
+        stream.getTracks().forEach((tr) => tr.stop());
+        return;
+      }
+      mediaStreamRef.current = stream;
       chunksRef.current = [];
       const mr = new MediaRecorder(stream, { mimeType: recorderMime });
       mediaRecorderRef.current = mr;
@@ -429,6 +512,7 @@ export function QuickCapturePage(): JSX.Element {
           return;
         }
         await addAudioOutboxItem({
+          ownerUserId: ownerId,
           blob: file,
           mimeType: recorderMime,
           title: title.trim() || undefined,
@@ -614,6 +698,44 @@ export function QuickCapturePage(): JSX.Element {
           </ul>
         )}
       </section>
+
+      {legacyItems.length > 0 && (
+        <section data-testid="capture-outbox-legacy-panel" className="lumogis-capture-page__outbox">
+          <h2 style={{ fontSize: "1.15rem", marginTop: 0 }}>Saved on this device before an update</h2>
+          <p style={{ margin: "0.25rem 0" }}>
+            These were saved before Lumogis recorded who saved them, so anyone who signs in on this device can see
+            them. Sync one to your account only if it is yours.
+          </p>
+          <ul data-testid="capture-outbox-legacy-list" style={{ paddingLeft: "1.2rem", marginTop: "0.75rem" }}>
+            {legacyItems.map((item) => (
+              <li key={item.local_capture_id} style={{ marginBottom: "0.5rem" }}>
+                <strong>{item.kind}</strong> “{legacyPreview(item)}” · {new Date(item.created_at).toLocaleString()} ·{" "}
+                {item.status}
+                {item.kind === "audio" ? ` · ${(item.size_bytes / 1024).toFixed(0)} KiB` : ""}
+                {item.last_error ? ` — ${item.last_error}` : ""}
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  disabled={busy || !online}
+                  onClick={() => void handleClaimLegacy(item.local_capture_id)}
+                >
+                  Sync to my account
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => void handleDiscardOutbox(item.local_capture_id)}
+                >
+                  Discard
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <p className="lumogis-prose-mono" style={{ marginTop: "1rem" }}>
         Nothing leaves this device until you tap <strong>Sync now</strong>.

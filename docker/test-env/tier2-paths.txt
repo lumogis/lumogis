@@ -1,0 +1,15 @@
+# Paths that make `scripts/test-env.sh run --tier auto` pick tier 2
+# (throwaway Postgres, Qdrant and FalkorDB). One extended regex per line,
+# matched against repo-relative paths changed since the merge base.
+# Rule of thumb: anything that talks to a database, defines its schema, or
+# decides who may see a row.
+^postgres/
+^orchestrator/adapters/
+^orchestrator/db_migrations\.py$
+^orchestrator/visibility\.py$
+^orchestrator/tests/integration/
+^orchestrator/services/.*(store|memory|entit|share|graph|search|email|signal|document|user)
+^orchestrator/plugins/graph/
+^services/lumogis-graph/adapters/
+^docker/test-env/
+^scripts/test-env\.sh$

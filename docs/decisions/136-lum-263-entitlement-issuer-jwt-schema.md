@@ -1,6 +1,6 @@
 # ADR-136: LUM-263 — lumogis-cloud entitlement issuer (Coding Graph / Household Graph JWT)
 
-**Status:** Finalised
+**Status:** Finalised — **amended 2026-11-07 by [ADR 229](229-lum-855-kg-agpl-relicence.md):** the graph SKUs are retired. `ISSUABLE_ENTITLEMENTS` becomes `[]`, so no licence can be issued until a real SKU exists; `coding_graph` and `household_graph` stay in `ALL_KNOWN_ENTITLEMENTS` so already-issued JWTs keep validating. The `plan: one_off` freeze recorded here **holds** — it is not widened
 **Created:** 2026-06-25
 **Last updated:** 2026-06-25
 **Decided by:** /verify-plan LUM-263

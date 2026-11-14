@@ -19,12 +19,11 @@ from contextlib import contextmanager
 import pytest
 from auth import UserContext
 from fastapi.testclient import TestClient
+from tests.integration._pgguard import require_postgres
 
 import config
 from services import conversations as conv
 from services import projection as proj
-
-pytestmark = pytest.mark.integration
 
 COLLECTION = "conversations"
 
@@ -73,7 +72,7 @@ def live_stores(monkeypatch, auth_env):
         except Exception:
             vs.create_collection(COLLECTION, _vector_dim())
     except Exception as exc:  # pragma: no cover - env-dependent
-        pytest.skip(f"real stack not reachable — run under make compose-test: {exc}")
+        require_postgres(exc, what="Postgres/Qdrant")
 
     monkeypatch.setitem(config._instances, "vector_store", vs)
     monkeypatch.setitem(config._instances, "metadata_store", ms)
@@ -120,11 +119,33 @@ def _seed_personal_session(ms, owner_id: str, summary: str) -> str:
     return sid
 
 
+def _fresh_postgres():
+    """A store the TestClient lifespan did not close.
+
+    ``live_stores`` patches the same instance into ``config._instances``, so
+    ``finally`` after ``TestClient`` exits cannot use that handle.
+    """
+    import os
+
+    from adapters.postgres_store import PostgresStore
+
+    return PostgresStore(
+        host=os.environ.get("POSTGRES_HOST", "postgres"),
+        port=int(os.environ.get("POSTGRES_PORT", "5432")),
+        user=os.environ.get("POSTGRES_USER", "lumogis"),
+        password=os.environ.get("POSTGRES_PASSWORD", "lumogis-dev"),
+        dbname=os.environ.get("POSTGRES_DB", "lumogis"),
+    )
+
+
 def _cleanup(ms, vs, alice_id: str, bob_id: str, session_id: str) -> None:
+    store = ms
+    if not store.ping():
+        store = _fresh_postgres()
     proj_id = str(proj.projection_pk("sessions", session_id, "shared"))
     for sid in (session_id, proj_id):
         try:
-            ms.execute("DELETE FROM sessions WHERE session_id = %s::uuid", (sid,))
+            store.execute("DELETE FROM sessions WHERE session_id = %s::uuid", (sid,))
         except Exception:
             pass
     try:
@@ -140,7 +161,12 @@ def _cleanup(ms, vs, alice_id: str, bob_id: str, session_id: str) -> None:
         pass
     for uid in (alice_id, bob_id):
         try:
-            ms.execute("DELETE FROM users WHERE id = %s", (uid,))
+            store.execute("DELETE FROM users WHERE id = %s", (uid,))
+        except Exception:
+            pass
+    if store is not ms:
+        try:
+            store.close()
         except Exception:
             pass
 
@@ -188,41 +214,47 @@ def test_live_conversation_share_member_retrieves_edited_summary(live_stores):
             assert body["shared_summary"] == household_summary
             assert body["is_owner"] is False
 
-        # Source summary unchanged in Postgres.
-        src_row = ms.fetch_one(
-            "SELECT summary FROM sessions WHERE session_id = %s::uuid AND scope = 'personal'",
-            (session_id,),
-        )
-        assert src_row is not None
-        assert src_row["summary"] == ai_summary
-
-        # Qdrant: shared projection exists in the conversations collection.
-        proj_id = str(proj.projection_pk("sessions", session_id, "shared"))
-        assert (
-            vs.count_where(
-                COLLECTION,
-                {
-                    "must": [
-                        {"key": "published_from", "match": {"value": session_id}},
-                        {"key": "scope", "match": {"value": "shared"}},
-                    ]
-                },
+            # These reads MUST stay inside the TestClient. The fixture patches
+            # ``ms`` into ``config._instances``; lifespan shutdown calls
+            # ``ms.close()`` (pool ``closeall``) on the way out. Querying
+            # ``ms`` after the ``with`` is ``PoolError: connection pool is
+            # closed`` — LUM-816 made that loud; the unpooled store used to
+            # reconnect. Sibling tests already pin this (``test_two_user_isolation``).
+            src_row = ms.fetch_one(
+                "SELECT summary FROM sessions WHERE session_id = %s::uuid AND scope = 'personal'",
+                (session_id,),
             )
-            >= 1
-        )
-        stored = [
-            p
-            for p in vs.scroll_collection(COLLECTION, user_id=alice_id, with_vectors=True)
-            if (p.get("payload") or {}).get("scope") == "shared"
-            and str((p.get("payload") or {}).get("published_from")) == session_id
-        ]
-        assert stored, "shared conversation projection missing from conversations collection"
-        assert stored[0]["payload"]["summary"] == household_summary
+            assert src_row is not None
+            assert src_row["summary"] == ai_summary
 
-        # Service-layer list mirrors the API proof.
-        bob_user = UserContext(user_id=bob_id, is_authenticated=True, role="user")
-        svc_rows = conv.list_conversations(bob_user)
-        assert any(r.conversation_id == proj_id and r.share_status == "shared" for r in svc_rows)
+            # Qdrant: shared projection exists in the conversations collection.
+            assert (
+                vs.count_where(
+                    COLLECTION,
+                    {
+                        "must": [
+                            {"key": "published_from", "match": {"value": session_id}},
+                            {"key": "scope", "match": {"value": "shared"}},
+                        ]
+                    },
+                )
+                >= 1
+            )
+            stored = [
+                p
+                for p in vs.scroll_collection(COLLECTION, user_id=alice_id, with_vectors=True)
+                if (p.get("payload") or {}).get("scope") == "shared"
+                and str((p.get("payload") or {}).get("published_from")) == session_id
+            ]
+            assert stored, "shared conversation projection missing from conversations collection"
+            assert stored[0]["payload"]["summary"] == household_summary
+
+            # Service-layer list mirrors the API proof.
+            bob_user = UserContext(user_id=bob_id, is_authenticated=True, role="user")
+            svc_rows = conv.list_conversations(bob_user)
+            assert any(
+                r.conversation_id == proj_id and r.share_status == "shared" for r in svc_rows
+            )
     finally:
         if session_id:
             _cleanup(ms, vs, alice_id, bob_id, session_id)

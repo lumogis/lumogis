@@ -26,6 +26,7 @@ def test_require_tv_claim_rejects_legacy_jwt(users_store, auth_env, monkeypatch)
     legacy = jwt.encode(
         {
             "sub": u.id,
+            "typ": "access",
             "role": "admin",
             "iat": int(time.time()),
             "exp": int(time.time()) + 600,

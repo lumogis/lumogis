@@ -54,7 +54,8 @@ def test_pass_c_passes_on_rc_render() -> None:
     """check_compose_policy Pass C must exit 0 for the RC render (mock contained)."""
     args = ["python3", "scripts/check_compose_policy.py", "--project-directory", str(_ROOT)]
     for f in _CHAIN:
-        args += ["-f", f]
+        # LUM-620: the whole RC chain is first-party (core) compose.
+        args += ["--core-file", f]
     args += ["--community-service", _MOCK]
     proc = subprocess.run(
         args, cwd=str(_ROOT), capture_output=True, text=True, env=_env(), check=False

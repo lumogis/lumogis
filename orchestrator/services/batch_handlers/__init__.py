@@ -2,6 +2,7 @@
 # Copyright (C) 2026 Lumogis
 """Side-effect imports register all batch queue handlers."""
 
+from . import email_unsubscribe_batch as _email_unsubscribe_batch  # noqa: F401
 from . import entities_extract as _entities_extract  # noqa: F401
 from . import ingest_folder as _ingest_folder  # noqa: F401
 from . import ingest_upload as _ingest_upload  # noqa: F401

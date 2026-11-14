@@ -15,7 +15,7 @@ services:
       # overlay intentionally does not include (GHA "orchestrator conflicts" error).
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"
-      # Fast, public-export-safe doctor stack (no premium graph plugin / sidecars).
+      # Fast doctor stack (no graph service / sidecars).
       GRAPH_MODE: disabled
       RERANKER_BACKEND: none
       LUMOGIS_INBOX_MODE: off
@@ -25,3 +25,28 @@ services:
       # Skip entrypoint Ollama wait + model pulls — doctor JSON proof does not need embeddings.
       OLLAMA_SKIP_WAIT: "true"
       OLLAMA_EXTRA_MODELS: ""
+    # Base compose still lists ollama as depends_on; keep a healthy dependency name
+    # but do not pull the multi-GB ollama/ollama image on GHA (disk ENOSPC).
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      stack-control:
+        condition: service_started
+      ollama:
+        condition: service_healthy
+
+  # Replace ollama/ollama (~3.5GB) with a tiny healthy stub. Doctor JSON does not
+  # call embeddings; OLLAMA_SKIP_WAIT already skips Core's model wait.
+  ollama:
+    image: alpine:3.20
+    command: ["sleep", "infinity"]
+    healthcheck:
+      test: ["CMD", "true"]
+      interval: 2s
+      timeout: 2s
+      retries: 3
+      start_period: 1s
+    volumes: !reset []
+    restart: "no"

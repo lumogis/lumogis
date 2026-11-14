@@ -49,6 +49,30 @@ class TestRestart:
         resp = client.post("/restart", headers={"X-Lumogis-Restart-Token": "wrong"})
         assert resp.status_code == 403
 
+    def test_non_ascii_token_returns_403(self, client):
+        # Sent as latin-1 bytes; a str compare_digest would raise TypeError -> 500.
+        resp = client.post(
+            "/restart", headers={"X-Lumogis-Restart-Token": "tëst".encode("latin-1")}
+        )
+        assert resp.status_code == 403
+
+    def test_token_check_uses_compare_digest(self, client):
+        calls = []
+        real = main.hmac.compare_digest
+
+        def spy(a, b):
+            calls.append((a, b))
+            return real(a, b)
+
+        mock_result = MagicMock(returncode=0, stdout="done", stderr="")
+        with patch.object(main.hmac, "compare_digest", spy), patch(
+            "main.subprocess.run", return_value=mock_result
+        ):
+            resp = client.post("/restart", headers=_auth_headers())
+        assert resp.status_code == 200
+        assert len(calls) == 1
+        assert all(isinstance(x, bytes) for x in calls[0])
+
     def test_valid_token_triggers_compose_restart(self, client):
         mock_result = MagicMock()
         mock_result.returncode = 0

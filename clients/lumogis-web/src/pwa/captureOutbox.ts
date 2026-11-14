@@ -3,6 +3,12 @@
 //
 // Phase 5F — local capture outbox (IndexedDB via idb-keyval) + manual sync only.
 // No Cache Storage, no service worker, no Background Sync, no silent upload.
+//
+// LUM-886 owner rule: every row carries `owner_user_id`. List, stats, sync, discard and
+// the voice clip-count cap act only on the signed-in member's rows, and a sync stops as
+// soon as the live session is no longer that member's. Rows survive sign-out — they can
+// be the only copy of a capture — so the sign-out boundary module never touches the
+// outbox. Rows written before this change have no owner and are never auto-synced.
 
 import { del, get, set } from "idb-keyval";
 
@@ -46,6 +52,8 @@ export interface CaptureOutboxTextUrlMeta {
   created_at: string;
   status: CaptureOutboxStatus;
   last_error: string | null;
+  /** Absent = written before LUM-886; such rows are never auto-synced. */
+  owner_user_id?: string;
 }
 
 export interface CaptureOutboxAudioMeta {
@@ -62,6 +70,8 @@ export interface CaptureOutboxAudioMeta {
   created_at: string;
   status: CaptureOutboxStatus;
   last_error: null | string;
+  /** Absent = written before LUM-886; such rows are never auto-synced. */
+  owner_user_id?: string;
 }
 
 export type CaptureOutboxBackend = {
@@ -128,26 +138,35 @@ function countsTowardVoiceCap(m: CaptureOutboxItemMeta): boolean {
   );
 }
 
+function isPendingStatus(m: CaptureOutboxItemMeta): boolean {
+  return m.status === "local_pending" || m.status === "failed" || m.status === "syncing";
+}
+
+// LUM-853: rows tagged `default` from single-user mode are not listed, synced or wiped after
+// sign-in is turned on, and still count toward the device-wide voice cap.
+function ownedBy(m: CaptureOutboxItemMeta, ownerUserId: string): boolean {
+  return typeof m.owner_user_id === "string" && m.owner_user_id === ownerUserId;
+}
+
+/** Device-wide on purpose: this cap guards the device's storage quota, not a member. */
 async function totalPendingVoiceBytes(): Promise<number> {
-  const items = await listOutboxItems();
+  const items = await listAllOutboxItems();
   return items.filter(countsTowardVoiceCap).reduce((s, m) => s + (m.kind === "audio" ? m.size_bytes : 0), 0);
 }
 
-async function pendingVoiceClipCount(): Promise<number> {
-  const items = await listOutboxItems();
+async function pendingVoiceClipCount(ownerUserId: string): Promise<number> {
+  const items = await listOutboxItems(ownerUserId);
   return items.filter(countsTowardVoiceCap).length;
 }
 
-/** Public stats for UI (synced rows are removed from storage). */
-export async function getOutboxStats(): Promise<{
+/** Public stats for UI (synced rows are removed from storage). The owner's rows only. */
+export async function getOutboxStats(ownerUserId: string): Promise<{
   pendingCount: number;
   pendingAudioCount: number;
   audioBytes: number;
 }> {
-  const items = await listOutboxItems();
-  const pending = items.filter(
-    (m) => m.status === "local_pending" || m.status === "failed" || m.status === "syncing",
-  );
+  const items = await listOutboxItems(ownerUserId);
+  const pending = items.filter(isPendingStatus);
   const audioPending = pending.filter((m): m is CaptureOutboxAudioMeta => m.kind === "audio");
   return {
     pendingCount: pending.length,
@@ -156,7 +175,7 @@ export async function getOutboxStats(): Promise<{
   };
 }
 
-export async function listOutboxItems(): Promise<CaptureOutboxItemMeta[]> {
+async function listAllOutboxItems(): Promise<CaptureOutboxItemMeta[]> {
   const ids = await readIndex();
   const out: CaptureOutboxItemMeta[] = [];
   for (const id of ids) {
@@ -165,6 +184,16 @@ export async function listOutboxItems(): Promise<CaptureOutboxItemMeta[]> {
     out.push(raw as CaptureOutboxItemMeta);
   }
   return out;
+}
+
+/** The signed-in member's rows only. */
+export async function listOutboxItems(ownerUserId: string): Promise<CaptureOutboxItemMeta[]> {
+  return (await listAllOutboxItems()).filter((m) => ownedBy(m, ownerUserId));
+}
+
+/** Rows written before LUM-886 (no owner). Never synced automatically. */
+export async function listLegacyOutboxItems(): Promise<CaptureOutboxItemMeta[]> {
+  return (await listAllOutboxItems()).filter((m) => typeof m.owner_user_id !== "string");
 }
 
 async function saveMeta(m: CaptureOutboxItemMeta): Promise<void> {
@@ -178,7 +207,8 @@ async function saveMeta(m: CaptureOutboxItemMeta): Promise<void> {
   }
 }
 
-export async function discardOutboxItem(localCaptureId: string): Promise<void> {
+/** Remove a row and its blob with no owner check (callers have already checked). */
+async function removeOutboxRow(localCaptureId: string): Promise<void> {
   const raw = await backend().get(metaKey(localCaptureId));
   const meta = raw as CaptureOutboxItemMeta | undefined;
   if (meta?.kind === "audio") {
@@ -197,15 +227,45 @@ export async function discardOutboxItem(localCaptureId: string): Promise<void> {
 }
 
 /**
+ * Discard one row. Refuses another member's row (`not_owner`); the member's own rows
+ * and legacy (ownerless) rows are discarded. A missing id is a no-op.
+ */
+export async function discardOutboxItem(localCaptureId: string, ownerUserId: string): Promise<void> {
+  const raw = (await backend().get(metaKey(localCaptureId))) as CaptureOutboxItemMeta | undefined;
+  if (raw && typeof raw.owner_user_id === "string" && raw.owner_user_id !== ownerUserId) {
+    throw new CaptureOutboxError("not_owner", "This capture belongs to someone else.");
+  }
+  await removeOutboxRow(localCaptureId);
+}
+
+/** Give a legacy row to `ownerUserId`. Returns false unless the row exists and has no owner. */
+export async function claimLegacyOutboxItem(localCaptureId: string, ownerUserId: string): Promise<boolean> {
+  const raw = (await backend().get(metaKey(localCaptureId))) as CaptureOutboxItemMeta | undefined;
+  if (!raw || typeof raw !== "object" || typeof raw.owner_user_id === "string") return false;
+  await saveMeta({ ...raw, owner_user_id: ownerUserId });
+  return true;
+}
+
+function requireOwner(ownerUserId: string): string {
+  const id = typeof ownerUserId === "string" ? ownerUserId.trim() : "";
+  if (!id) {
+    throw new CaptureOutboxError("no_owner", "Sign in again to save captures on this device.");
+  }
+  return id;
+}
+
+/**
  * Text or URL capture for later sync. Requires non-empty text and/or URL after trim.
  */
 export async function addTextUrlOutboxItem(input: {
+  ownerUserId: string;
   kind: "text" | "url";
   title?: string;
   text?: string;
   url?: string;
   tags?: string[] | null;
 }): Promise<CaptureOutboxItemMeta> {
+  const owner = requireOwner(input.ownerUserId);
   const text = input.text?.trim() ?? "";
   const url = input.url?.trim() ?? "";
   if (!text && !url) {
@@ -222,6 +282,7 @@ export async function addTextUrlOutboxItem(input: {
     created_at: new Date().toISOString(),
     status: "local_pending",
     last_error: null,
+    owner_user_id: owner,
   };
   await appendToIndex(local_capture_id);
   await saveMeta(meta);
@@ -232,6 +293,7 @@ export async function addTextUrlOutboxItem(input: {
  * Voice row: stores Blob under `blob:${local_attachment_id}`.
  */
 export async function addAudioOutboxItem(input: {
+  ownerUserId: string;
   blob: Blob;
   mimeType: string;
   title?: string;
@@ -240,6 +302,7 @@ export async function addAudioOutboxItem(input: {
   tags?: string[] | null;
   durationSeconds?: number;
 }): Promise<CaptureOutboxItemMeta> {
+  const owner = requireOwner(input.ownerUserId);
   const size = input.blob.size;
   if (size <= 0) {
     throw new CaptureOutboxError("validation", "Audio recording is empty.");
@@ -251,7 +314,7 @@ export async function addAudioOutboxItem(input: {
     );
   }
 
-  const n = await pendingVoiceClipCount();
+  const n = await pendingVoiceClipCount(owner);
   if (n >= MAX_PENDING_VOICE_CLIPS) {
     throw new CaptureOutboxError(
       "too_many_voice_clips",
@@ -263,7 +326,7 @@ export async function addAudioOutboxItem(input: {
   if (total + size > MAX_LOCAL_VOICE_BYTES_TOTAL) {
     throw new CaptureOutboxError(
       "voice_total_quota",
-      "Local voice storage would exceed the limit (100 MiB). Sync or discard clips first.",
+      "Voice storage on this device is full (100 MiB limit). Sync or discard your clips, or ask anyone else who uses this device to sync theirs.",
     );
   }
 
@@ -293,6 +356,7 @@ export async function addAudioOutboxItem(input: {
     created_at: new Date().toISOString(),
     status: "local_pending",
     last_error: null,
+    owner_user_id: owner,
   };
 
   try {
@@ -324,25 +388,54 @@ async function loadBlob(meta: CaptureOutboxItemMeta): Promise<Blob | null> {
   }
 }
 
-/**
- * Sync every **local_pending** or **failed** item (manual only — no background retry).
- * On full success, removes the local row and blob.
- */
-export async function syncOutbox(client: ApiClient): Promise<{
+export interface SyncOutboxResult {
   synced: number;
   failed: number;
+  /** Rows whose owner changed or that vanished between listing and syncing. */
+  skipped: number;
+  /** True when the live session stopped being `ownerUserId`'s; the loop ended early. */
+  stopped: boolean;
   errors: string[];
-}> {
+}
+
+/**
+ * Sync the owner's **local_pending** or **failed** items (manual only — no background
+ * retry). On full success, removes the local row and blob.
+ *
+ * Tied to the live session (LUM-886, D14): before each row's `syncing` write and
+ * immediately before each network call, `client.getSessionUserId()` must still be
+ * `ownerUserId`. Check and call run in the same synchronous turn, so a request never
+ * leaves with another member's token. On a mismatch the current row is put back to its
+ * previous status (not `failed`) and the loop stops.
+ */
+export async function syncOutbox(
+  client: ApiClient,
+  ownerUserId: string,
+  opts: { onlyIds?: readonly string[] } = {},
+): Promise<SyncOutboxResult> {
   const errors: string[] = [];
   let synced = 0;
   let failed = 0;
+  let skipped = 0;
+  const sessionIsOwner = (): boolean => client.getSessionUserId() === ownerUserId;
+  const result = (stopped: boolean): SyncOutboxResult => ({ synced, failed, skipped, stopped, errors });
 
-  const items = await listOutboxItems();
-  const work = items.filter(
-    (m) => m.status === "local_pending" || m.status === "failed" || m.status === "syncing",
-  );
+  const items = await listOutboxItems(ownerUserId);
+  const only = opts.onlyIds ? new Set(opts.onlyIds) : null;
+  const work = items.filter((m) => isPendingStatus(m) && (!only || only.has(m.local_capture_id)));
 
-  for (const meta of work) {
+  for (const listed of work) {
+    if (!sessionIsOwner()) return result(true);
+
+    // Re-read before the `syncing` write: the row may have been removed or re-owned.
+    const fresh = (await backend().get(metaKey(listed.local_capture_id))) as CaptureOutboxItemMeta | undefined;
+    if (!fresh || typeof fresh !== "object" || !ownedBy(fresh, ownerUserId)) {
+      skipped += 1;
+      continue;
+    }
+    const meta = fresh;
+    if (!sessionIsOwner()) return result(true);
+
     const m: CaptureOutboxItemMeta = { ...meta, status: "syncing", last_error: null };
     await saveMeta(m);
 
@@ -364,6 +457,10 @@ export async function syncOutbox(client: ApiClient): Promise<{
         throw new CaptureOutboxError("validation", "Cannot sync: missing text and URL.");
       }
 
+      if (!sessionIsOwner()) {
+        await saveMeta(meta);
+        return result(true);
+      }
       const created = await createCapture(client, {
         client_id: m.local_capture_id,
         title: m.title ?? null,
@@ -381,10 +478,15 @@ export async function syncOutbox(client: ApiClient): Promise<{
         }
         const ext = m.mime_type.includes("webm") ? "webm" : m.mime_type.includes("mp4") ? "m4a" : "bin";
         const file = new File([blob], `sync.${ext}`, { type: m.mime_type });
+        if (!sessionIsOwner()) {
+          // The capture exists server-side (idempotent client_id); keep the row for a retry.
+          await saveMeta(meta);
+          return result(true);
+        }
         await uploadCaptureAttachment(client, captureId, file, m.local_attachment_id);
       }
 
-      await discardOutboxItem(m.local_capture_id);
+      await removeOutboxRow(m.local_capture_id);
       synced += 1;
     } catch (e) {
       failed += 1;
@@ -402,7 +504,7 @@ export async function syncOutbox(client: ApiClient): Promise<{
     }
   }
 
-  return { synced, failed, errors };
+  return result(false);
 }
 
 export function outboxErrorToMessage(err: unknown): string {

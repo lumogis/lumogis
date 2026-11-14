@@ -57,7 +57,10 @@ from models.auth import AckOk
 from models.auth import MePasswordChangeRequest
 from models.user_export import ExportRequest
 from models.user_export import SectionSummary
+from settings_store import get_setting
+from settings_store import put_settings
 
+import config
 from services import me_llm_providers as me_llm_providers_svc
 from services import me_notifications as me_notifications_svc
 from services import me_tools_catalog
@@ -255,6 +258,23 @@ def change_my_password(body: MePasswordChangeRequest, request: Request) -> AckOk
     return AckOk()
 
 
+# Auth-off only (LUM-853). Single-user means one person per instance, so the dismissal is
+# instance state in ``app_settings``; no ``users`` row is created for ``default``. After
+# sign-in is turned on, the auth-on branch reads ``users.wow_dismissed_at`` and this key is inert.
+_SINGLE_USER_WOW_DISMISSED_KEY = "single_user_wow_dismissed_at"
+
+
+def _single_user_dismissed_at() -> datetime | None:
+    raw = get_setting(_SINGLE_USER_WOW_DISMISSED_KEY, config.get_metadata_store())
+    if raw is None:
+        return None
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        _log.warning("single-user wow dismissal unparsable; ignoring")
+        return None
+
+
 def _onboarding_no_store(response: Response) -> None:
     response.headers["Cache-Control"] = "no-store"
 
@@ -268,8 +288,10 @@ def get_my_onboarding(request: Request, response: Response) -> MeOnboardingRespo
     """Return whether the caller has completed first-run onboarding (LUM-165).
 
     ``AUTH_ENABLED=false`` always returns a synthetic ``completed_at`` (UTC now)
-    so single-user dev never shows the modal. ``Cache-Control: no-store`` on
-    both auth modes for this route family.
+    so the modal never renders when auth is off. That is the product decision for
+    single-user installs (LUM-853): first run there is the chat empty-library
+    state leading to ``/me/sources``, not this modal. ``Cache-Control: no-store``
+    on both auth modes for this route family.
     """
     _onboarding_no_store(response)
     if not auth_enabled():
@@ -362,17 +384,24 @@ def _wow_state_response(
 def get_my_wow_state(request: Request, response: Response) -> MeWowStateResponse:
     """Return wow card eligibility inputs for the caller (LUM-216).
 
-    ``AUTH_ENABLED=false`` returns synthetic readiness for QA.
+    With auth off, readiness is real for the single user (``default``) and the
+    dismissal is instance state (LUM-853); onboarding stays synthetic-complete.
     """
     _onboarding_no_store(response)
     if not auth_enabled():
-        now = datetime.now(timezone.utc)
-        return MeWowStateResponse(
-            entities_ready=True,
-            top_entities=[],
-            wow_dismissed_at=None,
-            onboarding_completed_at=now,
-        )
+        caller = get_user(request)  # UserContext() -> "default"
+        try:
+            return _wow_state_response(
+                user_id=caller.user_id,
+                onboarding_completed_at=datetime.now(timezone.utc),
+                wow_dismissed_at=_single_user_dismissed_at(),
+            )
+        except Exception:
+            _log.exception("me/wow-state GET failed (single-user)")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="database_unavailable",
+            ) from None
     caller = get_user(request)
     try:
         if users_service.get_user_by_id(caller.user_id) is None:
@@ -382,6 +411,12 @@ def get_my_wow_state(request: Request, response: Response) -> MeWowStateResponse
             ) from None
         onboarding_at = users_service.get_onboarding_completed_at(caller.user_id)
         dismissed_at = users_service.get_wow_dismissed_at(caller.user_id)
+        # Inside the ``try`` so an entity-query failure is the 503 this branch promises.
+        return _wow_state_response(
+            user_id=caller.user_id,
+            onboarding_completed_at=onboarding_at,
+            wow_dismissed_at=dismissed_at,
+        )
     except HTTPException:
         raise
     except Exception:
@@ -390,11 +425,6 @@ def get_my_wow_state(request: Request, response: Response) -> MeWowStateResponse
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="database_unavailable",
         ) from None
-    return _wow_state_response(
-        user_id=caller.user_id,
-        onboarding_completed_at=onboarding_at,
-        wow_dismissed_at=dismissed_at,
-    )
 
 
 @router.patch(
@@ -413,13 +443,25 @@ def patch_my_wow_state(
     _ = request
     _onboarding_no_store(response)
     if not auth_enabled():
-        now = datetime.now(timezone.utc)
-        return MeWowStateResponse(
-            entities_ready=True,
-            top_entities=[],
-            wow_dismissed_at=now,
-            onboarding_completed_at=now,
-        )
+        caller = get_user(request)  # UserContext() -> "default"
+        try:
+            # First dismissal wins (idempotent), like ``users_service.set_wow_dismissed``.
+            if _single_user_dismissed_at() is None:
+                put_settings(
+                    config.get_metadata_store(),
+                    {_SINGLE_USER_WOW_DISMISSED_KEY: datetime.now(timezone.utc).isoformat()},
+                )
+            return _wow_state_response(
+                user_id=caller.user_id,
+                onboarding_completed_at=datetime.now(timezone.utc),
+                wow_dismissed_at=_single_user_dismissed_at(),
+            )
+        except Exception:
+            _log.exception("me/wow-state PATCH failed (single-user)")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="database_unavailable",
+            ) from None
     caller = get_user(request)
     try:
         if users_service.get_user_by_id(caller.user_id) is None:
@@ -429,6 +471,12 @@ def patch_my_wow_state(
             ) from None
         dismissed_at = users_service.set_wow_dismissed(caller.user_id)
         onboarding_at = users_service.get_onboarding_completed_at(caller.user_id)
+        # Inside the ``try`` so an entity-query failure is a 503, as for GET (LUM-853).
+        return _wow_state_response(
+            user_id=caller.user_id,
+            onboarding_completed_at=onboarding_at,
+            wow_dismissed_at=dismissed_at,
+        )
     except HTTPException:
         raise
     except LookupError:
@@ -442,8 +490,3 @@ def patch_my_wow_state(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="database_unavailable",
         ) from None
-    return _wow_state_response(
-        user_id=caller.user_id,
-        onboarding_completed_at=onboarding_at,
-        wow_dismissed_at=dismissed_at,
-    )

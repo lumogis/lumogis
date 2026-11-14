@@ -6,11 +6,15 @@ Surfaces **safe metadata** for notification channels:
 
 * **ntfy** — registered connector ``ntfy``; tier walk matches
   :mod:`services.ntfy_runtime` / :mod:`services.credential_tiers` precedence
-  for *row presence* only. **Does not** decrypt credential payloads: when a
-  user row exists, topic/token/url presence inside the blob is reported as
-  unknown (``null`` booleans) unless the legacy env-fallback path applies
-  (``AUTH_ENABLED=false``), where only **non-secret** deployment URL and
-  **booleans** for topic/token env vars are derived (values never returned).
+  for *row presence* only, through
+  :func:`services.credential_tiers.runtime_tier_from_records` — so a
+  **switched-off** user row is reported not configured, and no household,
+  system or env channel is reported in its place (LUM-850). **Does not**
+  decrypt credential payloads: when a user row exists, topic/token/url
+  presence inside the blob is reported as unknown (``null`` booleans) unless
+  the legacy env-fallback path applies (``AUTH_ENABLED=false``), where only
+  **non-secret** deployment URL and **booleans** for topic/token env vars are
+  derived (values never returned).
 
 * **web_push** — synthetic channel id ``web_push`` (not a registry connector);
   counts per-user rows in ``webpush_subscriptions`` and reports whether VAPID
@@ -97,22 +101,50 @@ def _build_ntfy_channel(user_id: str) -> MeNotificationChannelItem:
     sys_rec = ct.system_get_record(NTFY)
     env_fb = _ntfy_env_fallback_available()
 
-    meta_rec: object | None
-    if user_rec is not None:
-        tier: Literal["user", "household", "system", "env", "none"] = "user"
-        meta_rec = user_rec
-    elif hh_rec is not None:
-        tier = "household"
-        meta_rec = hh_rec
-    elif sys_rec is not None:
-        tier = "system"
-        meta_rec = sys_rec
-    elif env_fb:
-        tier = "env"
-        meta_rec = None
-    else:
-        tier = "none"
-        meta_rec = None
+    # LUM-850: the resolver's own walk. A switched-off user row stops it, so
+    # neither a household/system key nor the auth-off env channel is reported as
+    # active — ``ntfy_runtime`` refuses all three for a disabled row.
+    walk = ct.runtime_tier_from_records(
+        user_rec,
+        household_present=hh_rec is not None,
+        system_present=sys_rec is not None,
+        env_fallback=env_fb,
+    )
+    tier: Literal["user", "household", "system", "env", "none"] = (
+        "user" if walk == "disabled" else walk
+    )
+    # The winning row's metadata; env and none have no row.
+    meta_rec = {"user": user_rec, "household": hh_rec, "system": sys_rec}.get(tier)
+
+    # Checked before `delivery_paused`: a disabled row never reaches the pause
+    # check in `ntfy_runtime` (the resolver raises first), and "switched off"
+    # is the user's own act, so it is the reason to show.
+    if walk == "disabled" and user_rec is not None:
+        return MeNotificationChannelItem(
+            connector=NTFY,
+            label="ntfy",
+            description=_safe_registry_description(NTFY),
+            configured=False,
+            active_tier="user",
+            user_credential_present=True,
+            household_credential_available=hh_rec is not None,
+            system_credential_available=sys_rec is not None,
+            env_fallback_available=env_fb,
+            url=None,
+            url_configured=None,
+            topic_configured=None,
+            token_configured=None,
+            updated_at=user_rec.updated_at,
+            key_version=user_rec.key_version,
+            subscription_count=None,
+            push_service_configured=None,
+            status="not_configured",
+            why_not_available=(
+                "Your ntfy credential is switched off, so no notifications are sent "
+                "through ntfy, and no household, system or server-configured ntfy is "
+                "used instead. Switch it back on in Connectors."
+            ),
+        )
 
     if tier == "user" and user_rec is not None and user_rec.delivery_paused:
         return MeNotificationChannelItem(

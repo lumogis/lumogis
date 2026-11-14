@@ -23,6 +23,18 @@ services:
     environment:
       COMPOSE_FILE: docker-compose.yml:docker-compose.web-e2e-ollama-ci.yml
       GRAPH_MODE: disabled
+      # `config/test.env.example` above points POSTGRES_HOST/PORT at 127.0.0.1:5433 for
+      # HOST-side pytest (the published port). In-container that address is nothing:
+      # migrations wait 120s and fail, the default-user remap waits another 120s and
+      # fails, and Core then binds with NO SCHEMA — a stack that looks up and is empty.
+      # `docker-compose.test.yml:16-18` carries this override for exactly this reason;
+      # this overlay pins the same env_file but is deliberately NOT allowed to import
+      # that file (GHA Compose: "services.orchestrator conflicts with imported
+      # resource"), so it has to be repeated. Never pin that env_file without these.
+      # Same defect as docker-compose.web-e2e-ci.yml carried (LUM-786) — it survived
+      # here longer because this lane has never actually executed (LUM-791).
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
       # Unlike the slim stack this run HAS Ollama, so no session_end stub is needed.
       LUMOGIS_BOOTSTRAP_ADMIN_EMAIL: ${LUMOGIS_BOOTSTRAP_ADMIN_EMAIL}
       LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD: ${LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD}

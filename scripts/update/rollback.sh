@@ -23,7 +23,6 @@ source "$ROOT/scripts/update/common.sh"
 STATE_DIR="${LUMOGIS_UPDATE_STATE_DIR:-$ROOT/.lumogis-state}"
 STATE_FILE="$STATE_DIR/previous-images.txt"
 OVERRIDE_FILE="$STATE_DIR/rollback-compose.override.yml"
-HEALTH_URL="${LUMOGIS_HEALTH_URL:-http://127.0.0.1:8000/healthz}"
 HEALTH_RETRIES="${LUMOGIS_HEALTH_RETRIES:-60}"
 BACKUP_MAX_AGE_HOURS="${LUMOGIS_BACKUP_MAX_AGE_HOURS:-24}"
 
@@ -70,6 +69,6 @@ log "restarting stack on previous images (compose override pinned)"
 docker compose up -d
 
 # --- Health + migration gate ----------------------------------------------
-wait_for_stack_ready "$HEALTH_URL" "$HEALTH_RETRIES"
+wait_for_stack_ready "$(orchestrator_health_url)" "$HEALTH_RETRIES"
 log "rollback complete — orchestrator healthy"
 log "if data changed under the new version, restore with: make restore SNAPSHOT=<id>"

@@ -6,18 +6,115 @@ permissions:
 on:
   pull_request:
     branches: [master, main]
+  # LUM-788 — `dev` is here because CI is free now. Every job runs on the
+  # maintainer's laptop, GitHub bills only hosted runners, so the cost policy
+  # that kept `dev` uncovered no longer applies.
+  #
+  # It mattered: `dev` sat red on `ruff format --check` from before the LUM-793
+  # merge until 2026-08-04, and nothing looked. The pre-promotion gate
+  # (scripts/release-preflight.sh) still runs — it fails in seconds, before an
+  # RC branch exists, where this fails minutes later — but it is now a second
+  # net rather than the only one.
+  #
+  # The cost that remains is the laptop's CPU while its owner is using it. If
+  # that bites, scope the Docker-heavy lanes (doctor-integration,
+  # backup-integration, egress-containment, web-docker-build) off `dev` rather
+  # than dropping the trigger — the lint and unit lanes are the cheap ones and
+  # they catch the most.
   push:
-    branches: [main, master]
+    branches: [main, master, dev]
 
 # Cancel superseded PR runs (saves Actions minutes — CI is the heaviest always-on
 # workflow); never cancel an in-flight main run so the gate stays authoritative.
+#
+# `dev` cancels too: it is the messy integration line, pushes land in bursts,
+# and a superseded run holds one of three runners for nothing. `main` and
+# `master` are the release line and never cancel.
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/dev' }}
 
 jobs:
   lint-and-test:
+    # LUM-788 — self-hosted runner on the maintainer's laptop. GitHub bills only
+    # hosted runners, so this job costs nothing. It is the single heaviest job in
+    # the workflow (10.0 of ~36.6 billable job-minutes per run, measured on run
+    # 30824437823), which is why it moved first.
+    #
+    # Trade-off: the laptop must be awake when a job fires. If it is not, this job
+    # QUEUES rather than fails, and the rest of the workflow still runs on hosted
+    # runners. Revert by restoring `runs-on: ubuntu-latest` — one line, no other
+    # change needed.
     runs-on: ubuntu-latest
+
+    # LUM-718 — a real Postgres for orchestrator/tests/integration/. Without one
+    # every test in that directory skips, and the lane reports green while
+    # validating nothing. Two production defects shipped behind exactly that
+    # (LUM-648's snooze flip; email_organize's ledger write), and both failed on
+    # the first execution once anyone actually ran it.
+    #
+    # Qdrant is required too: paperless/live store fixtures (and other *_live
+    # modules) call require_postgres on a combined "Postgres/Qdrant" ping when
+    # LUMOGIS_REQUIRE_INTEGRATION_DB=1 — Postgres alone still reds the job.
+    # Official image (not lumogis-qdrant): GHA service healthchecks run in-container
+    # and the stock image has no curl, so readiness is waited from the host below.
+    #
+    # FalkorDB is required too (LUM-720): the *_falkordb_live modules treat an
+    # unset or unreachable FALKORDB_URL as a failure under
+    # LUMOGIS_REQUIRE_INTEGRATION_DB=1, so without it the lane is red, and before
+    # that guard existed they skipped and validated nothing. Same image tag as
+    # docker-compose.falkordb.yml; its healthcheck can use redis-cli in-container.
+    # HOST-SIDE service ports are assigned by Docker on every run (LUM-874) — no
+    # fixed host port, deliberately. The self-hosted runners share one Docker
+    # daemon with a live Lumogis stack, and a service container asking for a
+    # port that something already holds fails with "port is already allocated"
+    # and takes the whole job with it: first the well-known 5432 (run
+    # 31012266917), then the old fixed host ports, held by a container left
+    # behind by a cancelled run (run 42184924520). Two lint-and-test jobs on the
+    # two runners at once would collide the same way. CI must not require the
+    # product to be shut down. Container-side ports are unchanged; every step
+    # reads the assigned host port from `job.services.<id>.ports`, which is
+    # only available in step-level `env`, not job-level.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: lumogis
+          POSTGRES_PASSWORD: lumogis
+          POSTGRES_DB: lumogis
+        ports:
+          - 5432
+        # Without a healthcheck the job races the container's first boot and the
+        # guard below turns that race into a red build rather than a flake.
+        options: >-
+          --health-cmd "pg_isready -U lumogis -d lumogis"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      qdrant:
+        image: qdrant/qdrant:v1.14.1
+        ports:
+          - 6333
+      falkordb:
+        image: falkordb/falkordb:v4.18.1
+        ports:
+          - 6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+      # Greenmail IMAP/SMTP for test_lum811_verification's live mailbox tests
+      # (same image as scripts/verify_lum_811.sh). LUM811_REQUIRE stays unset:
+      # it would also unlock the p95 parse benchmark and the image's Python
+      # floor, which belong to `make verify-lum-811`. A configured but
+      # unreachable host still fails under LUMOGIS_REQUIRE_INTEGRATION_DB.
+      greenmail:
+        image: greenmail/standalone:2.1.0
+        ports:
+          - 3143
+          - 3025
+
     steps:
       - uses: actions/checkout@v4
         with:
@@ -33,47 +130,194 @@ jobs:
       - name: LUM-485 — backup retention prune unit test
         run: make test-backup-retention
 
+      - name: LUM-892 — backup files store unit tests (rsync)
+        run: make test-backup-files
+
       - name: LUM-60 — web-e2e path script syntax
         run: bash -n .github/scripts/web-e2e-paths.sh
 
+      - name: LUM-788 — release pre-flight contract tests
+        run: bash scripts/test-release-preflight.sh
+
+      - name: LUM-873 — audit_local.sh contract tests (both halves always run)
+        run: bash scripts/test-audit-local.sh
+
       - name: Shellcheck CI path scripts (lint-and-test)
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq shellcheck
+          command -v shellcheck >/dev/null 2>&1 || {
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq shellcheck
+          }
           shellcheck .github/scripts/web-e2e-paths.sh
           shellcheck .github/scripts/test-security-audit-paths.sh
+          shellcheck scripts/release-preflight.sh
+          shellcheck scripts/test-release-preflight.sh
+          shellcheck scripts/audit_local.sh
+          shellcheck scripts/test-audit-local.sh
 
+      # NO `cache:` ON ANY setup-* STEP IN THIS FILE — deliberate, do not re-add.
+      #
+      # Caching pip/npm was added in 07d38ad6 and was correct for ubuntu-latest:
+      # same datacentre, upload nearly free, ~24% off a hosted run. On the
+      # self-hosted laptop runner it inverts. The post-step pushes the cache up a
+      # domestic uplink, and on 2026-08-05 that meant `Sent 0 of 583024283 (0.0%),
+      # 0.0 MBs/sec` repeated for twelve minutes before GitHub cancelled it. Three
+      # jobs hung 4-35 minutes in cleanup, holding runners, and doctor-integration
+      # sat queued 42 minutes because nothing was free.
+      #
+      # It is also redundant: self-hosted runners keep ~/.cache/pip and ~/.npm on
+      # disk between jobs, so the local cache already does this job for free.
+      # Re-add `cache:` only if these jobs move back to GitHub-hosted runners.
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Install dependencies
+        # LUM-874: install into the runner's on-disk temp dir, not the VM's
+        # 3.9 GB RAM-backed /tmp ("No space left on device"). Install steps only:
+        # test steps keep /tmp, which some tests and debug scripts assume.
+        env:
+          TMPDIR: ${{ runner.temp }}
         run: |
           pip install -r orchestrator/requirements.txt
           pip install -r orchestrator/requirements-dev.txt
           pip install -r stack-control/requirements-dev.txt
-          # lumogis-graph is omitted from the public AGPL export (see scripts/public-export-strip-list.txt).
+          # lumogis-graph ships in both trees (ADR 229); the guard only covers checkouts without it.
           if [[ -f services/lumogis-graph/requirements.txt ]]; then
             pip install -r services/lumogis-graph/requirements.txt
             pip install -r services/lumogis-graph/requirements-dev.txt
           fi
 
       - name: Lint
+        # LUM-946 — keep in step with `make lint`. The graph service uses Core's
+        # ruff settings (root pyproject.toml); the guard matches the install step.
         run: |
           ruff check orchestrator/
           ruff format --check orchestrator/
+          if [[ -d services/lumogis-graph ]]; then
+            ruff check services/lumogis-graph/
+            ruff format --check services/lumogis-graph/
+          fi
+
+      # LUM-718 — the integration lane needs a provisioned database, not just a
+      # reachable one: base schema plus every migration. Most of those tests build
+      # an isolated schema per test, but the ones exercising the real app stack
+      # (conversation isolation, entity write isolation) read `users`/`entities`
+      # and fail without it. Applying the migrations here also exercises
+      # db_migrations.py itself against a virgin database on every run.
+      - name: LUM-718 — provision integration Postgres
+        env:
+          PGPASSWORD: lumogis
+          POSTGRES_HOST: 127.0.0.1
+          POSTGRES_PORT: ${{ job.services.postgres.ports['5432'] }}
+          POSTGRES_DB: lumogis
+          POSTGRES_USER: lumogis
+          POSTGRES_PASSWORD: lumogis
+          # PGPORT, not just POSTGRES_PORT: libpq does not read POSTGRES_PORT, so
+          # PGPORT is what keeps psql and every other libpq client in this step
+          # on the CI service container. The guard at the top of `run` is what
+          # stops an unresolved port reaching psql — an empty value would fall
+          # back to libpq's default 5432, which on a self-hosted runner may be a
+          # live Lumogis database.
+          PGPORT: ${{ job.services.postgres.ports['5432'] }}
+          # db_migrations.py defaults to /project/postgres/migrations (its
+          # in-container path) and exits 0 when the directory is absent, so
+          # dropping this does not fail here — it fails four steps later with an
+          # empty database. Do not remove it.
+          LUMOGIS_MIGRATIONS_DIR: ${{ github.workspace }}/postgres/migrations
+        run: |
+          set -euo pipefail
+          # LUM-874: an empty or default port would point psql at a live stack, not the service container.
+          [[ -n "${PGPORT}" && "${PGPORT}" != 5432 ]] \
+            || { echo "::error::Postgres service host port not resolved (PGPORT='${PGPORT}')" >&2; exit 1; }
+          echo "postgres service host port: ${PGPORT}"
+          # postgresql-client ships on GitHub-hosted images but not on the
+          # self-hosted runner. Guarded so it is a no-op after the first run.
+          command -v psql >/dev/null 2>&1 || {
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq postgresql-client
+          }
+          psql -h 127.0.0.1 -p "$PGPORT" -U lumogis -d lumogis -v ON_ERROR_STOP=1 -q -f postgres/init.sql
+          # db_migrations.main() exits 0 when the directory is missing — correct for
+          # a fresh install, and a silent-green hazard here, so assert the count.
+          cd orchestrator
+          python db_migrations.py | tee /tmp/migrate.log
+          grep -qE 'applied [0-9]+ new migration' /tmp/migrate.log \
+            || { echo "::error::no migrations applied — LUMOGIS_MIGRATIONS_DIR wrong?"; exit 1; }
+
+      - name: LUM-718 — wait for Qdrant (host-side readyz)
+        env:
+          # Not QDRANT_HOST_PORT: that name is the product's Qdrant publish port.
+          CI_QDRANT_PORT: ${{ job.services.qdrant.ports['6333'] }}
+        run: |
+          set -euo pipefail
+          # LUM-874: a clearer message than a curl failure; not a comparison against any port.
+          [[ -n "${CI_QDRANT_PORT}" ]] \
+            || { echo "::error::Qdrant service host port not resolved" >&2; exit 1; }
+          echo "qdrant service host port: ${CI_QDRANT_PORT}"
+          for i in $(seq 1 60); do
+            if curl -sf "http://127.0.0.1:${CI_QDRANT_PORT}/readyz" >/dev/null; then
+              echo "qdrant ready after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Qdrant service did not become ready on :${CI_QDRANT_PORT}" >&2
+          exit 1
 
       - name: Test orchestrator
+        env:
+          POSTGRES_HOST: 127.0.0.1
+          POSTGRES_PORT: ${{ job.services.postgres.ports['5432'] }}
+          POSTGRES_DB: lumogis
+          POSTGRES_USER: lumogis
+          POSTGRES_PASSWORD: lumogis
+          # Host-published Qdrant (service container). Overrides compose defaults
+          # (`http://qdrant:6333` / `:6337`) that only resolve inside Docker networks.
+          QDRANT_URL: http://127.0.0.1:${{ job.services.qdrant.ports['6333'] }}
+          # Three integration modules read a DSN rather than the POSTGRES_* pair;
+          # unset, they skip even with the service container attached.
+          LUMOGIS_INTEGRATION_POSTGRES_DSN: postgresql://lumogis:lumogis@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/lumogis
+          # Host-published FalkorDB (service container) for the *_falkordb_live modules (LUM-720).
+          FALKORDB_URL: redis://127.0.0.1:${{ job.services.falkordb.ports['6379'] }}
+          # The live FalkorDB gates that are opt-in elsewhere run here, now that the
+          # job has a FalkorDB: bank isolation, entity_edges, and the M1 compat gate
+          # (projection sweep Cypher). Left off, they skipped and one of them went
+          # stale unseen.
+          RUN_FALKORDB_BANK_ISOLATION: "1"
+          RUN_FALKORDB_ENTITY_EDGES: "1"
+          RUN_M1_COMPAT: "1"
+          # Greenmail service (LUM-811 live mailbox tests).
+          LUM811_IMAP_HOST: 127.0.0.1
+          LUM811_IMAP_PORT: ${{ job.services.greenmail.ports['3143'] }}
+          LUM811_SMTP_HOST: 127.0.0.1
+          LUM811_SMTP_PORT: ${{ job.services.greenmail.ports['3025'] }}
+          # The point of the ticket: here, an unreachable database is a FAILURE.
+          LUMOGIS_REQUIRE_INTEGRATION_DB: "1"
         run: |
           cd orchestrator && python -m pytest tests/ -x -q \
             --cov=. --cov-report=lcov:"$GITHUB_WORKSPACE/coverage-orchestrator.lcov"
 
+      # LUM-887 — the entrypoint privilege-drop section run with the REAL find,
+      # chown and setpriv. It needs root, which the pytest above does not have
+      # (the file skips there), so it runs in a throwaway container from the
+      # orchestrator's base image. test_deployment_hardening_config.py keeps
+      # this image equal to the FROM line in orchestrator/Dockerfile.
+      - name: Test entrypoint privilege drop as root (LUM-887)
+        run: |
+          docker run --rm -v "$PWD:/project:ro" -w /project/orchestrator \
+            -e PYTHONDONTWRITEBYTECODE=1 -e PIP_ROOT_USER_ACTION=ignore \
+            python:3.12.11-slim sh -c \
+            'pip install -q "pytest>=8.0.0" && python -m pytest -p no:cacheprovider --noconftest -q tests/test_entrypoint_privdrop_root.py'
+
       - name: Detect lumogis-mcp changes (PR)
+        # The stdio harness runs Core's MCP surface against a fake token store, so
+        # Core-side token/auth changes must run it too (LUM-904: LUM-885 broke it unseen).
         id: lumogis_mcp_changes
         if: github.event_name == 'pull_request'
         run: |
           git fetch origin "${{ github.base_ref }}"
-          if git diff --name-only "origin/${{ github.base_ref }}"...HEAD | grep -qE '^(clients/lumogis-mcp/|scripts/install-cursor-mcp\.sh|Makefile|tests/fixtures/coding_bank\.json)'; then
+          if git diff --name-only "origin/${{ github.base_ref }}"...HEAD | grep -qE '^(clients/lumogis-mcp/|scripts/install-cursor-mcp\.sh|Makefile|tests/fixtures/coding_bank\.json|orchestrator/(mcp_server|auth)\.py|orchestrator/(services|routes)/mcp_tokens\.py)'; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "run=false" >> "$GITHUB_OUTPUT"
@@ -93,7 +337,7 @@ jobs:
       - name: Test lumogis-graph
         run: |
           if [[ ! -f services/lumogis-graph/requirements.txt ]]; then
-            echo "lumogis-graph not in checkout (public export); skipping"
+            echo "lumogis-graph not in checkout; skipping"
             exit 0
           fi
           cd services/lumogis-graph && python -m pytest -q
@@ -126,9 +370,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          # Deliberately NOT cached: the two steps below run plain node/bash
+          # scripts with no `npm ci`, so an npm cache here would key on a
+          # lockfile this job never installs and buy nothing. Do not "fix".
 
       - name: LUM-429 — coverage matrix format + feature-ids.json
         run: make coverage-matrix-check
+
+      - name: ADR numbering — no new duplicate numbers
+        run: make adr-check
+
+      - name: LUM-784 — shell scripts are 100755 in the git index
+        run: make exec-bit-check
 
   compose-policy:
     runs-on: ubuntu-latest
@@ -140,9 +393,19 @@ jobs:
           python-version: "3.12"
 
       - name: Install PyYAML (LUM-43 compose policy script)
+        # LUM-874: install into the runner's on-disk temp dir, not the VM's
+        # 3.9 GB RAM-backed /tmp ("No space left on device"). Install steps only:
+        # test steps keep /tmp, which some tests and debug scripts assume.
+        env:
+          TMPDIR: ${{ runner.temp }}
         run: pip install -r scripts/requirements-compose-policy.txt
 
       - name: Install orchestrator deps (egress ACL check imports capability models)
+        # LUM-874: install into the runner's on-disk temp dir, not the VM's
+        # 3.9 GB RAM-backed /tmp ("No space left on device"). Install steps only:
+        # test steps keep /tmp, which some tests and debug scripts assume.
+        env:
+          TMPDIR: ${{ runner.temp }}
         run: pip install -r orchestrator/requirements.txt
 
       - name: Bootstrap .env for docker compose config
@@ -158,8 +421,18 @@ jobs:
           make compose-policy-check-adversarial-envfile
           make compose-policy-check-community
           make compose-policy-check-egress
+          make compose-policy-check-name-squat
           make check-egress-acl-divergence
           make check-no-tethered-lum613
+
+      - name: Install pytest (compose policy unit tests)
+        # LUM-874: on-disk temp dir for install steps (see above).
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: pip install "pytest>=8.0.0"
+
+      - name: LUM-43 / LUM-620 compose policy unit tests (name-squat, provenance, fail-closed)
+        run: python -m pytest -p no:cacheprovider -q scripts/tests/test_check_compose_policy.py
 
   # LUM-618 — live container-network egress containment proof (Docker + Squid).
   egress-containment:
@@ -176,15 +449,77 @@ jobs:
           python-version: "3.12"
 
       - name: Install test dependencies
+        # LUM-874: install into the runner's on-disk temp dir, not the VM's
+        # 3.9 GB RAM-backed /tmp ("No space left on device"). Install steps only:
+        # test steps keep /tmp, which some tests and debug scripts assume.
+        env:
+          TMPDIR: ${{ runner.temp }}
         run: pip install -r orchestrator/requirements.txt -r orchestrator/requirements-dev.txt
 
-      - name: Free runner disk before compose build
-        run: |
-          docker system prune -af --volumes || true
-          df -h /
-
+      # NO `docker system prune` HERE. See the note above `doctor-integration`.
       - name: Egress containment (allowed spliced / denied refused / no-route)
         run: make egress-containment-test
+
+  # LUM-572 — Layer-1 scoped egress guard against a real container environment.
+  #
+  # `if: pull_request` is deliberate. ci.yml triggers on BOTH pull_request and
+  # push-to-main, so an unguarded job charges Actions minutes twice per promotion
+  # (once on the PR, once post-merge). These lanes are Docker-heavy; the PR run is
+  # the one that can still block a bad merge, so it is the one worth paying for.
+  #
+  # LUMOGIS_REQUIRE_DOCKER=1 turns "Docker unavailable" into a hard failure. The
+  # LUM-718/753 skip-escalation machinery is path-scoped to
+  # orchestrator/tests/integration/ and does NOT cover the repo-root tests/
+  # tree, so without this a broken runner would green this lane forever — the
+  # exact failure shape these lanes exist to catch.
+  egress-guard:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: egress-guard-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+
+      # NO `docker system prune` HERE. See the note above `doctor-integration`.
+      #
+      # The `type=gha` BuildKit cache is gone for the same reason the pip/npm
+      # caches went (b7dff5c8): on a self-hosted runner the local layer cache is
+      # already warm and persistent, so `cache-to` only uploads hundreds of MB of
+      # layers over a domestic uplink to re-download them next run. `mode=max`
+      # made that worse by pushing every intermediate layer.
+      - name: Build orchestrator image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: orchestrator/Dockerfile
+          tags: lumogis-orchestrator:latest
+          load: true
+
+      - name: Scoped egress guard (real allowlist / blocked off-list / reachable control)
+        env:
+          LUMOGIS_REQUIRE_DOCKER: "1"
+        run: make egress-guard-test
+
+      # LUM-625/763 — the Layer-2 audit proof, now wired in.
+      #
+      # It was deliberately unwired until LUM-763 because it did not pass: its
+      # assertions read the CONNECT status line, which under `ssl_bump peek` is
+      # `200` for allowed and denied alike, so three failed and the fourth passed
+      # for the wrong reason. LUM-763 moved the observable to certificate identity
+      # (upstream leaf = spliced, `lumogis-egress-proxy-bump` = the proxy answered)
+      # and gave the lane in-network TLS servers to splice to, so it no longer
+      # depends on the public internet from a runner.
+      #
+      # `!cancelled()` (not `always()`) so a failure in the guard step above does
+      # not hide this lane's result — the two prove different layers and each is
+      # worth its own verdict on the PR — while a cancelled run still stops.
+      - name: Email IMAP egress audit (spliced-to-upstream vs proxy-answered)
+        if: ${{ !cancelled() }}
+        env:
+          LUMOGIS_REQUIRE_DOCKER: "1"
+        run: make egress-imap-test
 
   web-docker-build:
     runs-on: ubuntu-latest
@@ -205,8 +540,10 @@ jobs:
 
       - name: Shellcheck path-detection script
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq shellcheck
+          command -v shellcheck >/dev/null 2>&1 || {
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq shellcheck
+          }
           shellcheck .github/scripts/web-docker-build-paths.sh
 
       - name: Determine if web Docker build is needed
@@ -224,14 +561,25 @@ jobs:
           test -f .env.example || (echo "web-docker-build: missing .env.example" >&2; exit 1)
           cp .env.example .env
 
+      # `use: false` — deliberate, do not drop. Both self-hosted runners run as one
+      # OS user and share its ~/.docker/buildx config, so the default `use: true`
+      # made this job's throwaway builder the CURRENT builder for every other job.
+      # A concurrent `docker compose build` (doctor-integration, backup-integration)
+      # then built on it, and this job's post-step removed it mid-build: "target
+      # <svc>: failed to receive status: rpc error ... EOF" (runs 42688139175,
+      # 43006412085). The builder is named explicitly below instead.
       - name: Set up Docker Buildx
+        id: buildx
         if: steps.paths.outputs.should_build == 'true'
         uses: docker/setup-buildx-action@v3
+        with:
+          use: false
 
       - name: Docker compose build lumogis-web
         if: steps.paths.outputs.should_build == 'true'
         uses: docker/bake-action@v6
         with:
+          builder: ${{ steps.buildx.outputs.name }}
           files: docker-compose.yml
           targets: lumogis-web
           pull: true
@@ -244,6 +592,85 @@ jobs:
         if: steps.paths.outputs.should_build != 'true'
         run: |
           echo 'SKIP_WEB_DOCKER_BUILD: no paths matched contract'
+
+  # LUM-869 — Lumogis Web lint, unit tests, build and PWA dist check. The
+  # web-docker-build lane above only proves the image builds; nothing else ran
+  # `npm run lint`, `npm test` or `verify:pwa-dist` on a push, so an ESLint, vitest
+  # or precache-guardrail regression showed CI green. Kept separate from
+  # web-docker-build on purpose: that lane needs Docker and Buildx, this one needs
+  # only Node, and a lint failure should not wait on an image build.
+  # `npm run lint` already carries --max-warnings 0 (package.json), so no flag here.
+  web-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: web-checks-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate path-detection script syntax
+        run: bash -n .github/scripts/web-checks-paths.sh
+
+      - name: Determine if web checks are needed
+        id: paths
+        shell: bash
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
+        run: bash -euo pipefail .github/scripts/web-checks-paths.sh
+
+      - uses: actions/setup-node@v4
+        if: steps.paths.outputs.should_run == 'true'
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: clients/lumogis-web/package-lock.json
+
+      - name: Install web deps
+        # LUM-874: install into the runner's on-disk temp dir, not the VM's
+        # 3.9 GB RAM-backed /tmp ("No space left on device"). Install steps only:
+        # test steps keep /tmp, which some tests and debug scripts assume.
+        env:
+          TMPDIR: ${{ runner.temp }}
+        if: steps.paths.outputs.should_run == 'true'
+        working-directory: clients/lumogis-web
+        run: npm ci
+
+      - name: Generate OpenAPI types (from the committed snapshot)
+        if: steps.paths.outputs.should_run == 'true'
+        working-directory: clients/lumogis-web
+        run: npm run codegen
+
+      - name: Lint (--max-warnings 0 is in the npm script)
+        if: steps.paths.outputs.should_run == 'true'
+        working-directory: clients/lumogis-web
+        run: npm run lint
+
+      - name: Unit tests (vitest)
+        if: steps.paths.outputs.should_run == 'true'
+        working-directory: clients/lumogis-web
+        run: npm test
+
+      - name: Build
+        if: steps.paths.outputs.should_run == 'true'
+        working-directory: clients/lumogis-web
+        run: npm run build
+
+      - name: Verify PWA dist (non-empty precache)
+        if: steps.paths.outputs.should_run == 'true'
+        working-directory: clients/lumogis-web
+        run: npm run verify:pwa-dist
+
+      - name: Skip web checks (path contract)
+        if: steps.paths.outputs.should_run != 'true'
+        run: |
+          echo 'SKIP_WEB_CHECKS: no paths matched contract (lint, vitest, build and verify:pwa-dist NOT run)'
+          echo '### web-checks SKIPPED' >>"$GITHUB_STEP_SUMMARY"
+          echo 'No Lumogis Web paths changed; lint, vitest, build and verify:pwa-dist were not run.' >>"$GITHUB_STEP_SUMMARY"
 
   openapi-check:
     runs-on: ubuntu-latest
@@ -263,8 +690,10 @@ jobs:
 
       - name: Shellcheck OpenAPI path script
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq shellcheck
+          command -v shellcheck >/dev/null 2>&1 || {
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq shellcheck
+          }
           shellcheck .github/scripts/openapi-check-paths.sh
 
       - name: Determine if OpenAPI codegen check is needed
@@ -287,6 +716,11 @@ jobs:
           node-version: "20"
 
       - name: Install web deps and run OpenAPI check
+        # LUM-874: install into the runner's on-disk temp dir, not the VM's
+        # 3.9 GB RAM-backed /tmp ("No space left on device"). Install steps only:
+        # test steps keep /tmp, which some tests and debug scripts assume.
+        env:
+          TMPDIR: ${{ runner.temp }}
         if: steps.paths.outputs.should_run == 'true'
         run: |
           cd clients/lumogis-web && npm ci
@@ -411,8 +845,10 @@ jobs:
 
       - name: Shellcheck doctor integration path script
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq shellcheck
+          command -v shellcheck >/dev/null 2>&1 || {
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq shellcheck
+          }
           shellcheck .github/scripts/doctor-integration-paths.sh
 
       - name: Determine if doctor integration is needed
@@ -438,15 +874,47 @@ jobs:
           command -v jq >/dev/null 2>&1 || { echo "doctor-integration: jq missing after apt install" >&2; exit 1; }
           jq --version
 
-      - name: Free runner disk before compose build
-        if: steps.paths.outputs.should_run == 'true'
-        run: |
-          docker system prune -af --volumes || true
-          docker builder prune -af || true
-          df -h /
-
+      # LUM-788 — there is deliberately NO "Free runner disk" step here, and none
+      # in `egress-containment` or `egress-guard` either. The step that used to
+      # live here ran:
+      #
+      #     sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc ...
+      #     docker system prune -af --volumes
+      #     docker builder prune -af
+      #
+      # On a GitHub-hosted runner that was necessary (14 GB disk) and free (the
+      # VM is destroyed afterwards). On the maintainer's laptop all three lines
+      # are wrong, and run 31018376592 demonstrated each one:
+      #
+      #   1. It destroys the layer cache before every build, so this job rebuilt
+      #      the orchestrator image from zero and spent 25 minutes re-downloading
+      #      torch (526 MB) over a domestic uplink before being cancelled.
+      #   2. The three runners share ONE Docker daemon. `egress-containment`
+      #      pruned at 15:10:20 while `backup-integration` was mid-pull, and that
+      #      job died on `failed commit on ref "layer-sha256:...": no such file
+      #      or directory` — containerd's ingest directory deleted underneath it.
+      #   3. `prune -af --volumes` removes stopped containers and then their
+      #      now-unreferenced named volumes, and the `rm -rf` targets real
+      #      directories on a machine that is somebody's daily driver.
+      #
+      # Disk pressure on a self-hosted runner is a host-maintenance problem, not
+      # a per-job one. If it ever bites, prune from cron when no job is running.
       - name: Run compose-test-doctor (live stack + doctor JSON)
         if: steps.paths.outputs.should_run == 'true'
+        # Off the default host ports: this runner is also a daily driver, and
+        # anything already holding a port fails the whole job at `compose up`
+        # with "port is already allocated" — before doctor ever runs. Doctor
+        # reads the published port back out of compose config, so its /healthz
+        # probe follows the orchestrator override automatically.
+        #
+        # Caddy needs the same treatment and is the one that kept this job red
+        # after the orchestrator was moved: it starts last, so its collision
+        # discards a fully-built stack, and the teardown leaves the diagnostics
+        # step printing an empty container list.
+        env:
+          ORCHESTRATOR_HOST_PORT: "18000"
+          CADDY_HTTP_HOST_PORT: "18080"
+          CADDY_HTTPS_HOST_PORT: "18443"
         run: make compose-test-doctor
 
       - name: Upload doctor.json (debug)
@@ -493,8 +961,10 @@ jobs:
 
       - name: Shellcheck backup integration path script
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq shellcheck
+          command -v shellcheck >/dev/null 2>&1 || {
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq shellcheck
+          }
           shellcheck .github/scripts/backup-integration-paths.sh
           shellcheck .github/scripts/test-backup-integration-paths.sh
 
@@ -539,10 +1009,10 @@ jobs:
           cd "$GITHUB_WORKSPACE"
           if [[ -f docker-compose.falkordb.yml ]]; then
             export COMPOSE_FILE=docker-compose.yml:docker-compose.falkordb.yml
-            services="backup falkordb postgres qdrant"
+            services="backup falkordb orchestrator postgres qdrant"
           else
             export COMPOSE_FILE=docker-compose.yml
-            services="backup postgres qdrant"
+            services="backup orchestrator postgres qdrant"
           fi
           docker compose --env-file config/test.env.example ps -a
           # shellcheck disable=SC2086  # $services is an intentional space-separated service list
@@ -570,8 +1040,10 @@ jobs:
 
       - name: Shellcheck security-audit path script
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq shellcheck
+          command -v shellcheck >/dev/null 2>&1 || {
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq shellcheck
+          }
           shellcheck .github/scripts/security-audit-paths.sh
 
       - name: Determine if security audit is needed
@@ -587,21 +1059,22 @@ jobs:
         if: steps.paths.outputs.should_run == 'true'
         with:
           python-version: "3.12"
-          cache: "pip"
-          cache-dependency-path: scripts/requirements-security-audit.txt
 
       - uses: actions/setup-node@v4
         if: steps.paths.outputs.should_run == 'true'
         with:
           node-version: "20"
-          cache: "npm"
-          cache-dependency-path: clients/lumogis-web/package-lock.json
 
       - name: Install tools and run dependency audit (blocking)
+        # LUM-874: install into the runner's on-disk temp dir, not the VM's
+        # 3.9 GB RAM-backed /tmp ("No space left on device"). Install steps only:
+        # test steps keep /tmp, which some tests and debug scripts assume.
+        env:
+          TMPDIR: ${{ runner.temp }}
         if: steps.paths.outputs.should_run == 'true'
         run: |
           set -euo pipefail
-          pip install -r scripts/requirements-security-audit.txt
+          pip install --require-hashes -r scripts/requirements-security-audit.txt
           cd clients/lumogis-web && npm ci
           cd "$GITHUB_WORKSPACE"
           make audit-local || (echo "retry: make audit-local" && sleep 5 && make audit-local)
@@ -642,14 +1115,21 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit 0
 
-      - name: Upload Bandit orchestrator log
-        if: steps.paths.outputs.should_run == 'true'
-        continue-on-error: true
-        uses: actions/upload-artifact@v4
-        with:
-          name: bandit-orchestrator
-          path: bandit-orchestrator.log
-          retention-days: 7
+      # NO artifact upload for the Bandit log — the step above already writes it
+      # to $GITHUB_STEP_SUMMARY, and `-ll -ii` keeps that output well under the
+      # 100 KB the summary captures, so the artifact was a duplicate with WORSE
+      # retention (7 days, against the run log's 90).
+      #
+      # It was also failing every run and saying nothing, because
+      # `continue-on-error: true` swallowed it:
+      #
+      #   Failed to CreateArtifact: Artifact storage quota has been hit.
+      #   Unable to upload any new artifacts.
+      #
+      # That quota is account-level and still needs clearing — the OpenAPI HTML
+      # report upload (LUM-314) is hitting the same wall behind the same
+      # continue-on-error, and unlike this one it is not reproducible from the
+      # step summary.
 
       - name: Skip security audit (path contract)
         if: steps.paths.outputs.should_run != 'true'

@@ -1,0 +1,76 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Lumogis
+#
+# Throwaway databases for scripts/test-env.sh tier 2 (LUM-894 layer 2).
+#
+# Started once per run under a unique compose project name and removed with
+# `down -v` when the run ends, pass or fail. Never start this by hand
+# alongside a real stack: use `scripts/test-env.sh run --tier 2 -- <command>`.
+#
+# Deliberately standalone, not an overlay on docker-compose.yml: compose
+# MERGES `ports:` lists, so an overlay could not take away the base file's
+# host publishes. Here:
+#   * no service publishes a host port;
+#   * the only network is `internal: true` (no route out; the test runner
+#     joins it and sees nothing but these three services);
+#   * all data lives in tmpfs, so nothing survives the run.
+#
+# Images are the production pins: postgres in docker-compose.yml, FalkorDB in
+# docker-compose.falkordb.yml, and the Qdrant base of docker/qdrant/Dockerfile
+# (the stock image: the lumogis-qdrant wrapper only adds curl for an
+# in-container healthcheck, and docker/test-env/prepare_dbs.py waits on
+# /readyz from the runner instead). Keep them in step when those move.
+
+name: lumogis-testenv
+
+x-labels: &labels
+  labels:
+    org.lumogis.test-env: db
+
+services:
+  postgres:
+    image: postgres:16.8
+    <<: *labels
+    environment:
+      POSTGRES_USER: lumogis
+      POSTGRES_PASSWORD: ${LUMOGIS_TEST_ENV_PG_PASSWORD:?set by scripts/test-env.sh}
+      POSTGRES_DB: lumogis
+    volumes:
+      # Same initdb hook as docker-compose.yml; migrations are applied
+      # afterwards by prepare_dbs.py through orchestrator/db_migrations.py.
+      - ../../postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lumogis -d lumogis"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+    networks: [testnet]
+
+  qdrant:
+    image: qdrant/qdrant:v1.14.1
+    <<: *labels
+    tmpfs:
+      - /qdrant/storage
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    networks: [testnet]
+
+  falkordb:
+    image: falkordb/falkordb:v4.18.1
+    <<: *labels
+    tmpfs:
+      - /var/lib/falkordb/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6379", "PING"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+    networks: [testnet]
+
+networks:
+  testnet:
+    internal: true

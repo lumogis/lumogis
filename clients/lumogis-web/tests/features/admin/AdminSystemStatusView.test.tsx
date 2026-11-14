@@ -11,6 +11,13 @@ import { AccessTokenStore } from "../../../src/api/tokens";
 import { AuthProvider } from "../../../src/auth/AuthProvider";
 import { AdminSystemStatusView } from "../../../src/features/admin/AdminSystemStatusView";
 import { jsonResponse } from "../../helpers/jsonResponse";
+import { seedSignedInDevice } from "../../helpers/signedInDevice";
+
+// LUM-886: this suite mounts a real AuthProvider; mark the device as already reconciled so the
+// first-sign-in wipe does not remove the view's own queries.
+beforeEach(() => {
+  seedSignedInDevice("admin1");
+});
 
 const adminUser = { id: "admin1", email: "a@home.lan", role: "admin" as const };
 
@@ -77,6 +84,8 @@ function backupStatusPayload(overrides: Record<string, unknown> = {}) {
     ],
     last_verify_status: "ok",
     warnings: [],
+    coverage: [],
+    files_missing: null,
     ...overrides,
   };
 }
@@ -691,6 +700,85 @@ describe("AdminSystemStatusView", () => {
     expect(screen.getByRole("alert").textContent).toContain("30.0h old");
   });
 
+  // ── LUM-892: what the backup covers, and files missing from disk ──────────
+
+  function backupFetch(payload: Record<string, unknown>, omitKeys: string[] = []) {
+    const body = backupStatusPayload(payload) as Record<string, unknown>;
+    for (const k of omitKeys) delete body[k];
+    const fetchImpl = makeFetchImpl(async (input) => {
+      const u = String(input);
+      if (u.includes("/api/v1/auth/me")) return jsonResponse(200, adminUser);
+      if (u.includes("/api/v1/admin/diagnostics/stack-status")) return jsonResponse(200, stackPayload());
+      if (u.includes("/api/v1/admin/diagnostics/backup-status")) return jsonResponse(200, body);
+      if (u.includes("/api/v1/admin/ollama/discovery")) return jsonResponse(200, discoveryFixture());
+      return jsonResponse(404, { detail: "not found" });
+    }, { defaultActiveJob: false });
+    globalThis.fetch = fetchImpl;
+    renderView(fetchImpl);
+  }
+
+  it("lists what the backup covers and what it does not, with notes", async () => {
+    backupFetch({
+      coverage: [
+        { id: "database", label: "Database", covered: true, note: null },
+        { id: "uploads", label: "Uploaded documents", covered: true, note: null },
+        {
+          id: "env_file",
+          label: "The .env settings file",
+          covered: false,
+          note: "holds the key that decrypts saved passwords; keep a copy somewhere safe",
+        },
+      ],
+      stores: [
+        { id: "postgres", present: true, skipped: false, skip_reason: null },
+        { id: "files", present: true, skipped: false, skip_reason: null, file_count: 12, bytes: 99 },
+      ],
+    });
+
+    expect(await screen.findByRole("heading", { name: "Covered", level: 4 })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Not covered", level: 4 })).toBeTruthy();
+    expect(screen.getByText("Uploaded documents")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "The .env settings file — holds the key that decrypts saved passwords; keep a copy somewhere safe",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText(/files \(12 files\)/)).toBeTruthy();
+  });
+
+  it("shows every backup warning, so a stale warning cannot hide missing files", async () => {
+    backupFetch({
+      stale: true,
+      age_hours: 30,
+      warnings: [
+        { code: "backup_stale", message: "Last verified backup is 30.0h old (threshold 24h)" },
+        {
+          code: "backup_files_missing",
+          message: "3 uploaded documents or capture files are not on disk (uploads 2, captures 1).",
+        },
+      ],
+    });
+
+    expect(await screen.findByText("Disaster recovery backup")).toBeTruthy();
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toContain("30.0h old");
+    expect(alert.textContent).toContain("3 uploaded documents or capture files are not on disk");
+  });
+
+  it("renders no coverage lists when coverage is empty", async () => {
+    backupFetch({ coverage: [] });
+    expect(await screen.findByText("Disaster recovery backup")).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Covered", level: 4 })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Not covered", level: 4 })).toBeNull();
+  });
+
+  it("does not crash when an older Core omits coverage and files_missing entirely", async () => {
+    backupFetch({}, ["coverage", "files_missing"]);
+    expect(await screen.findByText("Disaster recovery backup")).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Covered", level: 4 })).toBeNull();
+    expect(screen.getByText(/Stores:/)).toBeTruthy();
+  });
+
   it("shows update available alert with release link", async () => {
     const fetchImpl = makeFetchImpl(
       standardAdminHandler({
@@ -758,6 +846,7 @@ describe("AdminSystemStatusView", () => {
   describe("update dismissal", () => {
     beforeEach(() => {
       localStorage.clear();
+      seedSignedInDevice("admin1");
     });
 
     it("dismiss hides alert until newer version", async () => {

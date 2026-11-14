@@ -65,6 +65,41 @@ export function subscribeWebPush(client: ApiClient, body: WebPushSubscribePayloa
   );
 }
 
+/**
+ * Delete this member's server row for a browser subscription (sign-out, LUM-886).
+ *
+ * Re-POSTs the subscription to the idempotent `/subscribe` to learn the row id, then
+ * DELETEs it. Uses `fetchOnce` deliberately: no refresh and no `onAuthExpired` while
+ * logout is running. A 401 on the re-POST is reported as `"unauthorized"` so the caller can
+ * refresh once and retry. The body omits prefs and `user_agent` — the row is deleted at once.
+ */
+export async function deleteOwnWebPushRowForSubscription(
+  client: ApiClient,
+  sub: PushSubscription,
+  signal?: AbortSignal,
+): Promise<"deleted" | "skipped" | "unauthorized"> {
+  const json = sub.toJSON();
+  const p256dh = json.keys?.p256dh;
+  const auth = json.keys?.auth;
+  if (!json.endpoint || !p256dh || !auth) return "skipped";
+  const payload: WebPushSubscribePayload = { endpoint: json.endpoint, keys: { p256dh, auth } };
+  const created = await client.fetchOnce("/api/v1/notifications/subscribe", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    signal,
+  });
+  if (created.status === 401) return "unauthorized";
+  if (!created.ok) return "skipped";
+  const row = (await created.json()) as Partial<WebPushSubscriptionCreated>;
+  if (typeof row.id !== "number") return "skipped";
+  const del = await client.fetchOnce(`/api/v1/notifications/subscriptions/${row.id}`, {
+    method: "DELETE",
+    signal,
+  });
+  return del.status === 204 ? "deleted" : "skipped";
+}
+
 export function patchWebPushSubscription(
   client: ApiClient,
   subscriptionId: number,

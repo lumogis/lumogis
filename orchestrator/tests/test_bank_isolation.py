@@ -245,6 +245,7 @@ def test_entity_edge_projection_uses_bank_graph(monkeypatch):
 
 
 def test_ensure_tenant_index_idempotent():
+    pytest.importorskip("qdrant_client")  # requirements-core dep, not in the test env
     client = Mock()
     from adapters.qdrant_store import QdrantStore
 
@@ -259,6 +260,7 @@ def test_ensure_tenant_index_idempotent():
 
 
 def test_ensure_tenant_index_passes_is_tenant():
+    pytest.importorskip("qdrant_client")  # requirements-core dep, not in the test env
     from qdrant_client.models import KeywordIndexParams
     from qdrant_client.models import KeywordIndexType
 

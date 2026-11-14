@@ -15,8 +15,8 @@ import { Link, useParams } from "react-router-dom";
 import type { ChatMessageDTO, DocumentCitationDTO } from "../../api/chat";
 import { CHAT_ERROR_LITERALS } from "../../api/chat";
 import { useAuth } from "../../auth/AuthProvider";
-import type { ModelDescriptor } from "../../api/models";
 import { ChatComposer } from "../../components/ChatComposer";
+import { transcribeVoice } from "../../api/voice";
 import { MetadataCaption } from "../../components/MetadataCaption";
 import {
   documentMetadataCaption,
@@ -24,6 +24,9 @@ import {
 } from "../../util/humanizeStoredName";
 import { consumeChatStream } from "../chat/ChatStream";
 import { EmptyState } from "../_shared/EmptyState";
+import { PrivacyBlockedHint } from "../_shared/PrivacyBlockedHint";
+import { catalogHasPrivacyBlock } from "../_shared/privacyBlockCopy";
+import { useModelCatalog } from "../chat/ChatPage";
 import { ContextUsedStrip } from "./ContextUsedStrip";
 
 const DEFAULT_MODEL = "claude";
@@ -47,10 +50,14 @@ export function DocumentChatPage(): JSX.Element {
   const [filePath, setFilePath] = useState<string | null>(null);
   const [titleError, setTitleError] = useState<string | null>(null);
   const [model, setModel] = useState(DEFAULT_MODEL);
-  const [models, setModels] = useState<ModelDescriptor[]>([]);
+  // `modelError` is ignored on purpose: the catalog stays optional for v1.
+  const { models: catalog } = useModelCatalog(client);
+  const models = useMemo(() => catalog.filter((m) => m.enabled), [catalog]);
   const [messages, setMessages] = useState<TurnMessage[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
+  // Transient stream status (LUM-876); shown in the empty assistant bubble only.
+  const [streamStatus, setStreamStatus] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
@@ -65,20 +72,10 @@ export function DocumentChatPage(): JSX.Element {
     [storedName, filePath],
   );
 
+  // Same rule as before: the first enabled model replaces DEFAULT_MODEL.
   useEffect(() => {
-    void (async () => {
-      try {
-        const res = await client.fetch("/api/v1/models");
-        if (!res.ok) return;
-        const body = (await res.json()) as { models: ModelDescriptor[] };
-        const enabled = body.models.filter((m) => m.enabled);
-        setModels(enabled);
-        if (enabled.length > 0) setModel(enabled[0].id);
-      } catch {
-        /* catalog optional for v1 */
-      }
-    })();
-  }, [client]);
+    if (models.length > 0) setModel(models[0].id);
+  }, [models]);
 
   useEffect(() => {
     if (numericId === null) {
@@ -131,6 +128,7 @@ export function DocumentChatPage(): JSX.Element {
     setInput("");
     setSubmitError(null);
     setStreaming(true);
+    setStreamStatus(null);
 
     const wireMessages: ChatMessageDTO[] = [
       ...messages
@@ -173,7 +171,9 @@ export function DocumentChatPage(): JSX.Element {
         onContextCitations: (c) => {
           citations = c;
         },
+        onStatus: (status) => setStreamStatus(status.message),
         onDelta: (delta) => {
+          setStreamStatus(null);
           setMessages((prev) =>
             prev.map((m) =>
               m.id === assistantId ? { ...m, content: m.content + delta } : m,
@@ -199,6 +199,7 @@ export function DocumentChatPage(): JSX.Element {
       setStreaming(false);
     } finally {
       abortRef.current = null;
+      setStreamStatus(null);
     }
   }, [client, input, messages, model, numericId, streaming]);
 
@@ -234,6 +235,7 @@ export function DocumentChatPage(): JSX.Element {
             </select>
           </label>
         ) : null}
+        {catalogHasPrivacyBlock(catalog) ? <PrivacyBlockedHint surface="picker" /> : null}
       </header>
 
       <div className="lumogis-document-chat__surface">
@@ -251,7 +253,20 @@ export function DocumentChatPage(): JSX.Element {
                   m.role === "user" ? "lumogis-document-chat__bubble--user" : "lumogis-document-chat__bubble--assistant",
                 ].join(" ")}
               >
-                {m.content}
+                {m.role === "assistant" &&
+                m.status === "streaming" &&
+                m.content.length === 0 &&
+                streamStatus !== null ? (
+                  <span
+                    className="lumogis-document-chat__status"
+                    role="status"
+                    data-testid="document-chat-stream-status"
+                  >
+                    {streamStatus}
+                  </span>
+                ) : (
+                  m.content
+                )}
                 {m.role === "assistant" && m.citations !== undefined ? (
                   <div style={{ marginTop: "0.5rem", borderTop: "1px solid var(--lumogis-border)", paddingTop: "0.5rem" }}>
                     <ContextUsedStrip citations={m.citations} />
@@ -281,6 +296,7 @@ export function DocumentChatPage(): JSX.Element {
           minRows={3}
           maxRows={8}
           textareaRef={composerRef}
+          voiceTranscribe={(blob) => transcribeVoice(client, blob).then((r) => r.text)}
         />
       </div>
     </div>

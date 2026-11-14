@@ -20,6 +20,8 @@ export const NOTIFICATION_ALLOWED_PATHS = [
   "/chat",
   "/approvals",
   "/me/notifications",
+  // LUM-648: needs-you / morning-brief pushes deep-link to the email surface.
+  "/email",
 ] as const;
 
 const ALLOWED = new Set<string>(NOTIFICATION_ALLOWED_PATHS);

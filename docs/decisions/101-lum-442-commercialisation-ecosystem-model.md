@@ -28,7 +28,7 @@ That lean was pressure-tested in dialogue and **did not survive**. The decisive 
 
 3. **The code moat was the wrong kind of moat.** A private KG image is defensible as code, but the API is AGPL and open: a third party can build their own app + relay against it and sell access, and AGPL's network clause does **not** reach an independent client/relay that merely calls Core over HTTP. The durable moat for a local-first product that tunnels into someone's **private home** is **trust + the official default + the registry + execution** — none of which can be stripped into a private repo or signed into a binary. Every comparable above faces the identical clone exposure and thrives on exactly this non-code moat.
 
-The shipped code already supports the resulting model with minimal rework: `GRAPH_MODE` defaults to `disabled` (so "KG off unless purchased" is the current default), `CapabilityLicenseMode` (`COMMUNITY`/`COMMERCIAL`) is the existing tier tag, and the strip-list already isolates `services/lumogis-graph/`, `apps/lumogis-server/`, and the premium surfaces.
+The shipped code already supports the resulting model with minimal rework: `GRAPH_MODE` defaults to `disabled` (so "KG off unless purchased" is the current default), `CapabilityLicenseMode` (`COMMUNITY`/`COMMERCIAL`) is the existing tier tag, and the strip-list already isolates `services/lumogis-graph/` and the other premium surfaces.
 
 ## Decision
 
@@ -62,7 +62,16 @@ Lumogis operates **one** cloud service plus a thin issuance endpoint. It is **no
 
 The **primary** lever is remote access; connectors are the natural second line the ecosystem creates; the KG is **gravy, not a pillar**; the goodwill licence captures Persona A without restricting them. The relay/apps + no-Docker official installer are bundled into the remote-access offering — the installer is **not** a separate SKU and **not** a feature gate (front-loading the paywall before first value, as Plex learned, loses to recurring remote access).
 
-### 4. Knowledge Graph — optional paid add-in, off by default
+### 4. Knowledge Graph — ~~optional paid add-in, off by default~~ **AGPL, off by default**
+
+> **Amended 2026-11-07 by [ADR 229](229-lum-855-kg-agpl-relicence.md).** The KG is no longer a paid
+> add-in: it is AGPL-3.0-only and ships in the public export. What survives: the KG is **off by
+> default** (`GRAPH_MODE=disabled`), Lumogis works fully without it, and the business does not
+> depend on it. What is superseded: the one-off purchase, the store entitlement,
+> `CapabilityLicenseMode.COMMERCIAL` on the graph, and `services/lumogis-graph/` being
+> strip-listed. §3's own pricing principle is what retires it — the KG is pure local compute. The
+> surviving paid lines (relay/remote access, official connectors, managed keys, goodwill licence)
+> are unaffected.
 
 - **Lumogis works fully without the KG.** It ships **off** by default (`GRAPH_MODE=disabled` — already the default, so **no code change** to the default). The base product is whole without it.
 - The KG is an **optional add-in purchased from the store**, unlocked via the same entitlement rail as paid connectors (§9). **One-off purchase**, not a subscription (§3).
@@ -91,6 +100,13 @@ The durable moat is being **the official, trusted Lumogis that just works**: off
 
 ### 9. Entitlement / licence mechanism
 
+> **Amended 2026-11-07 by [ADR 229](229-lum-855-kg-agpl-relicence.md).** The rail described below
+> stands and is still wanted for the relay subscription and official connectors. **The KG is no
+> longer a SKU on it**, so `ISSUABLE_ENTITLEMENTS` is `[]` and the issuer can mint nothing until a
+> real SKU exists. Also for the record: the runtime gate this section anticipated (LUM-262) was
+> **never built** — there is no JWS verification and no `402` path anywhere in the product. The KG
+> was gated by non-distribution plus a config switch, never by a paywall in code.
+
 - **One generic entitlement rail** serves all paid items (relay subscription, official connectors, KG add-in). Building it once for connectors means the **KG is just another SKU on the same rail** — the bespoke per-customer GHCR-image KG gate from the original LUM-260 plan does **not** return.
 - **Offline Ed25519-signed entitlements (JWS)**, public key embedded in the verifier; claims `plan`, `instance_id`, `entitlements[]`, `expires`, `issued_at`, `kid`. **Per-instance, never per-seat** (per the vision's anti-per-seat stance). Verify locally; soft daily online refresh with a generous grace window; on lapse, **degrade gracefully, never delete data** (subscriptions revert to local-only / read-only; one-off add-ins like the KG remain owned). Build-vs-buy (in-house Ed25519 vs keygen.sh / self-hosted Paycheck) is a LUM-263/96 implementation question, unchanged by this ADR.
 
@@ -98,16 +114,23 @@ The durable moat is being **the official, trusted Lumogis that just works**: off
 
 - **Supersedes** the prior LUM-442 lean (Option A KG-as-pillar; "Pro = per-household licence"; multi-user = Pro). The new primary lever is **remote access**, the moat is **trust/ecosystem**, and **multi-user is free**.
 - **Refines, does not reverse, ADR-042** (LUM-242 / LUM-238): the KG, connectors, and a Lumogis Cloud relay remain the paid surface, and the KG stays proprietary/stripped. What changes: the KG is demoted from *pillar* to an **optional one-off add-in (off by default)**, the **relay becomes the primary lever**, multi-user is **free**, and the moat is relocated from a KG code-gate to trust + ecosystem. The only thing superseded is the **mid-dialogue "default-on, free, open KG" idea** — the agreed final form is **KG off by default, optional paid one-off add-in**.
-- **Reconciles** the "Lumogis Server free vs paid packaging" question (Lever 3 in the exploration): the no-Docker official installer is a **bundled convenience inside the remote-access offering**, not a separate SKU; self-build stays free; `apps/lumogis-server/` stays strip-listed.
+- **Reconciles** the "Lumogis Server free vs paid packaging" question (Lever 3 in the exploration): the no-Docker official installer is a **bundled convenience inside the remote-access offering**, not a separate SKU; self-build stays free; the official installer build stays commercial.
 - **Confirms** managed-keys (LUM-169) as a separate optional add-on, **deferred past v1.x** — revisit only if Persona-C demand is proven.
 - **Confirms** v1.0/HN is search-first and sells nothing; the commercial surface is a later gate, not a launch blocker.
 
 ## Code & strip-list posture
 
+> **Amended 2026-11-07 by [ADR 229](229-lum-855-kg-agpl-relicence.md):** the KG rows below are
+> reversed. `services/lumogis-graph/`, `orchestrator/plugins/graph/`, the Falkor adapter, the
+> webhook dispatcher, `kg_premium_core.py`, `edge_quality.py`, `orchestrator/tests/premium/`, the
+> graph compose overlays and the five KG ADRs all become **public AGPL**;
+> `CapabilityLicenseMode` on the graph becomes `COMMUNITY`. Official paid connectors and
+> maintainer docs stay strip-listed; other commercial components stay outside this licence. `GRAPH_MODE` default `disabled` is unchanged.
+
 Largely **unchanged** — a strength, since most of the shipped open-core split holds:
 
 - **Stays public/AGPL:** Core, all clients, folder search, community connectors, multi-user/household.
-- **Stays strip-listed/proprietary:** `services/lumogis-graph/` (paid KG add-in), `apps/lumogis-server/` (official build), official paid connectors, the premium compose files, and the graph ADRs (007/008/009/011/035).
+- **Stays strip-listed/proprietary:** `services/lumogis-graph/` (paid KG add-in), official paid connectors, the premium compose files, and the graph ADRs (007/008/009/011/035). The official native installer build stays commercial.
 - **`GRAPH_MODE` default `disabled`** is correct as-is (KG off until purchased).
 - **`CapabilityLicenseMode.COMMERCIAL`** stays the tag for KG + official connectors.
 - **New, net:** the relay service + official mobile apps; the plugin **registry** + **permission/sandbox/signing** model; the generic **entitlement rail**. The bespoke KG runtime-licence gate (402-on-invalid private image) is **dropped** in favour of the entitlement rail.
@@ -159,3 +182,4 @@ Largely **unchanged** — a strength, since most of the shipped open-core split 
 ## Status history
 
 - 2026-06-15: Accepted via `/explore LUM-442` dialogue + operator decision. Reverses the prior LUM-442 lean (Option A KG-as-pillar, Pro = household): KG demoted to optional one-off paid add-in (off by default); multi-user made free; primary lever moved to relay-based remote access; moat relocated from a KG code-gate to trust + official apps/relay + an open plugin registry; managed-keys deferred. LUM-260 chain re-scoped onto a generic entitlement rail. Exploration rewritten in parallel (devtools).
+- 2026-11-10: public-boundary wording (LUM-898).

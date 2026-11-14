@@ -1,0 +1,12 @@
+# LUM-789 — paths reported by scripts/check-main-dev-drift.sh that are NOT drift.
+#
+# A path belongs here only when `dev` is legitimately ahead of `main` on it and the
+# difference is expected to persist. Reviewed once, then silenced — the same ratchet
+# shape as scripts/adr-duplicate-baseline.txt.
+#
+# This list should SHRINK. If a path stops appearing in the report (because a
+# promotion resynced it), delete the line rather than leaving it to rot.
+
+# `dev` authors the coverage matrices; `main` only ever carries the snapshot taken at
+# promotion time, so it is permanently behind between releases. Reviewed 2026-08-03.
+docs/testing/TEST-COVERAGE-MATRIX-web.md

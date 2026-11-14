@@ -5,6 +5,7 @@
 // Read-only smoke: load panel, nav link, RAM warning on BGE select, save disabled when clean.
 // Does not save or restart the stack.
 // Live-proven 2026-07-10 on lumogis-test stack (4/4); matrix row 2.2.16.
+// LUM-852: the "Reranking mode" legend is visually hidden (1px clip box).
 //
 //   export LUMOGIS_WEB_SMOKE_EMAIL=...
 //   export LUMOGIS_WEB_SMOKE_PASSWORD='...'   # ≥12 chars
@@ -39,6 +40,18 @@ test.describe("LUM-159 admin search & retrieval settings", () => {
     await expect(section.getByRole("heading", { name: /^search & retrieval$/i, level: 1 })).toBeVisible();
     await expect(section.getByRole("radio", { name: /off — default, lower ram/i })).toBeVisible();
     await expect(section.getByRole("radio", { name: /bge reranker/i })).toBeVisible();
+
+    // LUM-852: the legend names the fieldset but must not render (1px clip box).
+    // boundingBox() is null for a non-rendered element, so display:none fails the
+    // not-null check; the group-name assertion below is a second guard on the name.
+    const legend = section.locator("fieldset legend", { hasText: "Reranking mode" });
+    await expect(legend).toHaveCount(1);
+    const box = await legend.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.width).toBeLessThanOrEqual(1);
+    expect(box!.height).toBeLessThanOrEqual(1);
+    await expect(section.getByRole("group", { name: "Reranking mode" })).toHaveCount(1);
+
     await expect(section.getByRole("button", { name: /^save retrieval settings$/i })).toBeVisible();
   });
 

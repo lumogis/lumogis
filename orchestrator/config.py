@@ -16,6 +16,7 @@ import threading
 import time
 from functools import cache
 from pathlib import Path
+from typing import TYPE_CHECKING
 from typing import Literal
 from urllib.parse import urlparse
 from urllib.parse import urlunparse
@@ -26,6 +27,9 @@ from ports.llm_provider import LLMProvider
 from ports.metadata_store import MetadataStore
 from ports.vector_store import VectorStore
 
+if TYPE_CHECKING:  # annotations only — config must not import models.api_v1 at runtime
+    from models.api_v1 import ModelDisabledReason
+
 _log = logging.getLogger(__name__)
 _instances: dict[str, object] = {}
 _effective_graph_mode: str | None = None
@@ -33,6 +37,7 @@ _graph_store_import_warning_emitted: bool = False
 _falkordb_legacy_graph_name_warned: bool = False
 _memories_qdrant_indexes_ensured: bool = False
 _models_config: dict | None = None
+_tasks_config: dict | None = None  # LUM-877: the ``tasks:`` block of models.yaml
 
 # ---------------------------------------------------------------------------
 # kg_settings TTL cache (hot-reload KG parameters)
@@ -92,29 +97,149 @@ def invalidate_settings_cache() -> None:
 # ---------------------------------------------------------------------------
 
 _stop_entity_set: set[str] = set()
-_stop_entity_mtime: float | None = None
+# (path, mtime) of the file the cached set was read from: the effective file can
+# switch from the shipped list to the persisted one, and their mtimes may collide.
+_stop_entity_mtime: tuple[str, float] | None = None
+
+_STOP_ENTITIES_FILE = "stop_entities.txt"
 
 
 def get_stop_entities_path() -> str:
-    """Return the resolved filesystem path to the stop_entities.txt file.
+    """Where the admin's stop-entities list lives, and where edits are written.
 
-    Respects STOP_ENTITIES_PATH env var; falls back to _resolve_config_file().
-    Does not check whether the file exists — callers handle missing files.
+    ``STOP_ENTITIES_PATH`` when set, else ``{WORKSPACE_PATH}/config/stop_entities.txt``
+    (LUM-922). It used to be ``/app/config/stop_entities.txt``, inside the image:
+    edits lived in the container's writable layer, every recreate lost them and
+    the DR backup never saw them. The workspace is a host bind mount that the DR
+    backup copies. Does not check whether the file exists.
     """
-    return os.environ.get("STOP_ENTITIES_PATH") or _resolve_config_file("stop_entities.txt")
+    explicit = os.environ.get("STOP_ENTITIES_PATH", "").strip()
+    if explicit:
+        return explicit
+    return str(get_workspace_path() / "config" / _STOP_ENTITIES_FILE)
+
+
+def get_stop_entities_seed_path() -> str:
+    """The list shipped with Lumogis, which is also the pre-LUM-922 location.
+
+    ``STOP_ENTITIES_SEED_PATH`` when set, else ``/app/config/stop_entities.txt``
+    (then the image-baked ``/opt/lumogis/config``). Read-only: never written.
+    """
+    explicit = os.environ.get("STOP_ENTITIES_SEED_PATH", "").strip()
+    if explicit:
+        return explicit
+    return _resolve_config_file(_STOP_ENTITIES_FILE)
+
+
+def get_stop_entities_read_path() -> str:
+    """The file the stop list is read from: the persisted list, else the shipped one.
+
+    Until the persisted file exists (first boot, or a workspace that is not
+    writable) the shipped list applies, exactly as before LUM-922; it never
+    silently becomes empty.
+    """
+    path = get_stop_entities_path()
+    if os.path.isfile(path):
+        return path
+    seed = get_stop_entities_seed_path()
+    if os.path.isfile(seed):
+        return seed
+    return path
+
+
+def ensure_stop_entities_file() -> bool:
+    """One-time migration (LUM-922): copy the old/shipped list to the persisted path.
+
+    Copies only when the persisted file is missing, so a list the admin has
+    edited is never overwritten. The copy is written to a temp file and linked
+    into place, which fails if the target appeared meanwhile. Returns True when
+    a copy was made. Never raises: on failure the shipped list keeps applying
+    (see :func:`get_stop_entities_read_path`).
+    """
+    import shutil
+    import tempfile
+
+    dest = Path(get_stop_entities_path())
+    seed = Path(get_stop_entities_seed_path())
+    if dest.exists() or dest.is_symlink():
+        return False
+    try:
+        if not seed.is_file() or seed.resolve() == dest.resolve(strict=False):
+            return False
+    except OSError:
+        return False
+    tmp: str | None = None
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=str(dest.parent), prefix=".stop_entities_", suffix=".tmp")
+        os.close(fd)
+        shutil.copyfile(seed, tmp)
+        os.chmod(tmp, 0o644)
+        try:
+            os.link(tmp, dest)
+        except FileExistsError:
+            return False
+        except OSError:
+            # A filesystem without hard links: rename, after one more check.
+            if dest.exists():
+                return False
+            os.replace(tmp, dest)
+            tmp = None
+        _log.info("Stop entity list copied from %s to %s (LUM-922)", seed, dest)
+        return True
+    except OSError as exc:
+        _log.warning(
+            "Could not create the stop entity list at %s (%s); the shipped list at %s "
+            "applies and admin edits will fail until the folder is writable",
+            dest,
+            exc,
+            seed,
+        )
+        return False
+    finally:
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
+# Provider → installation-wide BYO OAuth client-id env var (LUM-686 / 674a).
+# Device-flow public clients need no secret; a later confidential-client path
+# would add its own var. 674a wires the credential/transport path; the connect
+# flow (device authorization grant) is 674b.
+_OAUTH_CLIENT_ID_ENV: dict[str, str] = {
+    "google": "LUMOGIS_OAUTH_GOOGLE_CLIENT_ID",
+    "microsoft": "LUMOGIS_OAUTH_MICROSOFT_CLIENT_ID",
+}
+
+
+def oauth_client_id(provider: str) -> str | None:
+    """The operator's BYO OAuth ``client_id`` for ``provider`` (Gmail/Outlook),
+    read from the installation-wide env var, or ``None`` when unset/empty.
+
+    Read by :func:`services.email_oauth._client_id`. Unknown provider → ``None``.
+    """
+    env_name = _OAUTH_CLIENT_ID_ENV.get(provider)
+    if not env_name:
+        return None
+    value = (os.environ.get(env_name) or "").strip()
+    return value or None
 
 
 def get_stop_entity_set() -> set[str]:
     """Return a cached set of lowercased stop phrases from stop_entities.txt.
 
-    The file is re-read only when its mtime changes.  On missing/unreadable
-    file: logs a WARNING once and returns an empty set.  Never raises.
+    Reads :func:`get_stop_entities_read_path` (the persisted list, else the
+    shipped one). The file is re-read only when it or its mtime changes. On
+    missing/unreadable file: logs a WARNING once and returns an empty set.
+    Never raises.
     """
     global _stop_entity_set, _stop_entity_mtime
 
-    path_str = get_stop_entities_path()
+    path_str = get_stop_entities_read_path()
     try:
-        mtime = os.path.getmtime(path_str)
+        mtime = (path_str, os.path.getmtime(path_str))
     except OSError:
         if _stop_entity_mtime is not None:
             # Previously loaded; file disappeared — keep the cached set.
@@ -167,14 +292,40 @@ def _resolve_config_file(name: str) -> str:
     return str(candidates[0])
 
 
+def _models_yaml_path() -> str:
+    """Path of config/models.yaml (``MODELS_CONFIG`` overrides); one copy for both loaders."""
+    return os.environ.get("MODELS_CONFIG", _resolve_config_file("models.yaml"))
+
+
 def _load_models_yaml() -> dict:
     """Load and cache config/models.yaml."""
     global _models_config
     if _models_config is None:
-        config_path = os.environ.get("MODELS_CONFIG", _resolve_config_file("models.yaml"))
+        config_path = _models_yaml_path()
         with open(config_path) as f:
             _models_config = yaml.safe_load(f).get("models", {})
     return _models_config
+
+
+def _read_tasks_raw():
+    """Return the raw ``tasks:`` value of config/models.yaml (any type, or ``None``)."""
+    with open(_models_yaml_path()) as f:
+        return (yaml.safe_load(f) or {}).get("tasks")
+
+
+def _load_tasks_yaml() -> dict:
+    """Load and cache the ``tasks:`` block of config/models.yaml (LUM-877).
+
+    Same path as :func:`_load_models_yaml` (:func:`_models_yaml_path`). Caches ``{}`` when the
+    block is absent or not a mapping (``services.task_models.check_tasks_at_boot``
+    reads the raw value itself to warn). The guard is ``is None``, never a falsy
+    test, so an empty table is not re-read on every call.
+    """
+    global _tasks_config
+    if _tasks_config is None:
+        tasks = _read_tasks_raw() or {}
+        _tasks_config = tasks if isinstance(tasks, dict) else {}
+    return _tasks_config
 
 
 _OLLAMA_BASE_URL = os.environ.get("OLLAMA_URL", "http://ollama:11434").rstrip("/") + "/v1"
@@ -229,6 +380,15 @@ def get_all_models_config() -> dict:
     return merged
 
 
+class UnknownModelError(ValueError):
+    """``get_model_config`` was asked for a model that is not configured.
+
+    A ``ValueError`` subclass so every existing ``except ValueError`` caller
+    behaves as before; ``GET /api/v1/models`` catches only this subclass
+    (LUM-881) so an unrelated ``ValueError`` still surfaces.
+    """
+
+
 def get_model_config(model_name: str) -> dict:
     """Return a single model's config entry (YAML or dynamic Ollama)."""
     models = _load_models_yaml()
@@ -237,7 +397,7 @@ def get_model_config(model_name: str) -> dict:
     dynamic = _dynamic_ollama_models()
     if model_name in dynamic:
         return dynamic[model_name]
-    raise ValueError(f"Unknown model '{model_name}'. Available: {list(models.keys())}")
+    raise UnknownModelError(f"Unknown model '{model_name}'. Available: {list(models.keys())}")
 
 
 def _close_llm_provider_hierarchy(provider) -> None:
@@ -339,8 +499,11 @@ def is_model_enabled(
       off, the function returns False without consulting per-user
       rows / env.
     - Non-optional cloud models (``api_key_env`` set):
-        * Under ``AUTH_ENABLED=false``: enabled iff the legacy
-          ``app_settings`` key is non-empty (with env-var fallback).
+        * Under ``AUTH_ENABLED=false``: enabled iff the caller has a key
+          in the credential tiers (user → household → system, as saved by
+          Lumogis Web; LUM-889), or the legacy ``app_settings`` key is
+          non-empty (with env-var fallback). ``user_id is None`` skips the
+          tiers and reads only the legacy path.
         * Under ``AUTH_ENABLED=true``: enabled iff the per-user row
           exists. ``user_id is None`` ⇒ False (no user → no key →
           not enabled). Never raises — admin/dashboard callers like
@@ -356,18 +519,53 @@ def is_model_enabled(
     except ValueError:
         return False
 
+    # Privacy first, and cheap: it short-circuits before any settings read.
+    if _model_blocked_by_privacy(model_name, user_id, _privacy_blocks_remote):
+        return False
+
+    return (
+        _model_availability_reason(
+            model_name, cfg, user_id=user_id, _credentials_present=_credentials_present
+        )
+        is None
+    )
+
+
+def _model_blocked_by_privacy(
+    model_name: str,
+    user_id: str | None,
+    _privacy_blocks_remote: bool | None,
+) -> bool:
+    """True if ADR 147 privacy mode blocks this (remote) model for the caller.
+
+    The one copy of the privacy rule, shared by :func:`is_model_enabled` and
+    :func:`model_disabled_reason`. With no hint, resolves the caller's policy;
+    with a hint (``/v1/models`` and ``GET /api/v1/models`` compute it once per
+    request), trusts it.
+    """
     if _privacy_blocks_remote is None:
         from services.privacy_mode import blocks_remote_models
         from services.privacy_mode import is_remote_model
 
-        if blocks_remote_models(user_id) and is_remote_model(model_name):
-            return False
-    elif _privacy_blocks_remote and not is_local_model(model_name):
-        return False
+        return bool(blocks_remote_models(user_id) and is_remote_model(model_name))
+    return bool(_privacy_blocks_remote and not is_local_model(model_name))
 
+
+def _model_availability_reason(
+    model_name: str,
+    cfg: dict,
+    *,
+    user_id: str | None,
+    _credentials_present: set[str] | None,
+) -> "ModelDisabledReason | None":
+    """Why a configured model is unusable *apart from privacy mode*, or ``None``.
+
+    The one copy of the key / optional-toggle rules (see
+    :func:`is_model_enabled` for the rules themselves).
+    """
     api_key_env = cfg.get("api_key_env", "")
     if not api_key_env:
-        return True
+        return None
 
     from auth import auth_enabled
 
@@ -378,18 +576,24 @@ def is_model_enabled(
         store = get_metadata_store()
         toggled = get_setting(f"optional_{model_name}", store)
         if not (toggled and toggled.lower() in ("true", "1", "yes")):
-            return False
+            return "optional_disabled"
 
     if auth_enabled():
         if not user_id:
-            return False
-        from services.llm_connector_map import connector_for_api_key_env
-        from services.llm_connector_map import has_credential
+            return "no_credentials"
+        present = _tier_key_present(user_id, api_key_env, _credentials_present)
+        return None if present else "no_credentials"
 
-        if _credentials_present is not None:
-            connector = connector_for_api_key_env(api_key_env)
-            return connector is not None and connector in _credentials_present
-        return has_credential(user_id, api_key_env)
+    # Auth-off, LUM-889: Lumogis Web saves keys to the credential tiers
+    # (``user_connector_credentials`` under the single ``"default"`` user, or
+    # the household/system tier), and the chat-time resolver
+    # (``llm_connector_map.effective_api_key``) walks those tiers first. Reading
+    # only app_settings + env here left a web-saved key resolvable but its model
+    # reported off. No user (dashboard, LibreChat config) keeps the legacy path.
+    # A switched-off web row with an env key still reads enabled here while the
+    # resolver refuses it — pre-existing auth-off gap, see LUM-889 "Later".
+    if user_id and _tier_key_present(user_id, api_key_env, _credentials_present):
+        return None
 
     # Auth-off: legacy global app_settings + env path.
     from settings_store import get_setting
@@ -397,7 +601,68 @@ def is_model_enabled(
     store = get_metadata_store()
     stored_key = get_setting(api_key_env, store)
     effective_key = (stored_key or os.environ.get(api_key_env, "") or "").strip()
-    return bool(effective_key)
+    return None if effective_key else "no_credentials"
+
+
+def _tier_key_present(
+    user_id: str, api_key_env: str, _credentials_present: set[str] | None
+) -> bool:
+    """True if ``user_id`` can use a stored ``llm_*`` key (user → household → system).
+
+    Uses the ``/v1/models`` snapshot hint when given, else one ``has_credential``
+    walk. Shared by both auth modes of :func:`_model_availability_reason`.
+    """
+    from services.llm_connector_map import connector_for_api_key_env
+    from services.llm_connector_map import has_credential
+
+    if _credentials_present is not None:
+        connector = connector_for_api_key_env(api_key_env)
+        return connector is not None and connector in _credentials_present
+    return has_credential(user_id, api_key_env)
+
+
+def model_disabled_reason(
+    model_name: str,
+    *,
+    user_id: str | None = None,
+    _credentials_present: set[str] | None = None,
+    _privacy_blocks_remote: bool | None = None,
+    _cfg: dict | None = None,
+) -> "ModelDisabledReason | None":
+    """Why a configured model is off for this caller, or ``None`` if it is on.
+
+    Invariant, for every configured ``m``:
+    ``is_model_enabled(m, ...) == (model_disabled_reason(m, ...) is None)``.
+
+    Precedence is **availability first, privacy last** (LUM-881 draft ADR):
+    ``"privacy_mode"`` is returned only when the model would otherwise be
+    usable (key present, optional toggle on, or a keyless remote ``base_url``).
+    A model with no key reads ``"no_credentials"`` whatever the privacy mode,
+    so an admin who never added a cloud key is never told about privacy mode.
+    Any future availability reason (e.g. a breaker state) must slot in before
+    the privacy check for the same reason.
+
+    A key the user switched off also reads ``"no_credentials"`` (LUM-850 / ADR-238:
+    the disabled row stops the tier walk, so the model is off). A separate
+    ``"disabled"`` reason would let a client say "switched off" instead of "no
+    key"; it is a wire change (OpenAPI snapshot, web types), not done yet.
+
+    Raises :class:`UnknownModelError` for a name that is not configured.
+    Callers iterating ``get_all_models_config()`` must catch it: dynamic Ollama
+    models can vanish between the listing and this lookup.
+
+    ``_cfg`` (LUM-877) is a precomputed config for ``model_name``; when given,
+    no lookup is made (``services.task_models`` already holds one model map).
+    """
+    cfg = _cfg if _cfg is not None else get_model_config(model_name)
+    reason = _model_availability_reason(
+        model_name, cfg, user_id=user_id, _credentials_present=_credentials_present
+    )
+    if reason is not None:
+        return reason
+    if _model_blocked_by_privacy(model_name, user_id, _privacy_blocks_remote):
+        return "privacy_mode"
+    return None
 
 
 def get_llm_provider(
@@ -506,56 +771,21 @@ def get_llm_provider(
 
 
 def _check_background_model_defaults() -> None:
-    """Boot-time gate against silent cloud-LLM background failures.
+    """Boot-time check of every background model task (LUM-877).
 
-    Plan ``llm_provider_keys_per_user_migration`` Pass 2.6: under
-    ``AUTH_ENABLED=true``, the **default** ``SIGNAL_LLM_MODEL`` (used
-    by signal sources that do not happen to thread a per-user
-    ``user_id``) MUST be a local model. A cloud default would
-    silently disable signal LLM enrichment for every signal whose
-    source omits ``user_id`` — no per-user key can be resolved
-    without one.
+    Generalises the ADR 026 gate (formerly a single signal-model check): the body
+    lives in ``services.task_models.check_tasks_at_boot``. It warns about retired
+    env vars, a malformed ``tasks:`` block and unsatisfiable listed entries, and
+    under ``AUTH_ENABLED=true`` refuses to boot when a task that runs without a
+    user has no keyless model candidate. An unexpected error in the check logs a
+    warning and boot continues.
 
-    Behaviour matrix:
-
-    * Unknown model → WARN (not RAISE) — the runtime ``_call_llm``
-      branch already short-circuits gracefully when the model is
-      not in ``models.yaml``.
-    * Cloud model + ``AUTH_ENABLED=true`` → RAISE ``RuntimeError``
-      with operator-actionable message (no env var threading can
-      satisfy a process-wide default).
-    * Local model OR ``AUTH_ENABLED=false`` → silent pass.
-
-    Wired into ``main._enforce_auth_consistency``'s lifespan
-    immediately after the existing auth-consistency gate so a
-    misconfigured signal pipeline halts startup before the embedder
-    ping or route registration.
+    Wired into ``main._enforce_auth_consistency``'s lifespan immediately after
+    the auth-consistency gate, before the embedder ping or route registration.
     """
-    from auth import auth_enabled
+    from services import task_models
 
-    model_name = os.environ.get("SIGNAL_LLM_MODEL", "llama")
-
-    try:
-        cfg = get_model_config(model_name)
-    except ValueError:
-        _log.warning(
-            "SIGNAL_LLM_MODEL=%r is not in models.yaml; signal LLM enrichment "
-            "will be disabled at runtime (process continues).",
-            model_name,
-        )
-        return
-
-    if cfg.get("api_key_env") and auth_enabled():
-        raise RuntimeError(
-            f"SIGNAL_LLM_MODEL is set to a cloud model ({model_name!r}) under "
-            "AUTH_ENABLED=true. This default would silently disable signal LLM "
-            "enrichment for any signal whose source did not happen to thread a "
-            "user_id (the substrate cannot resolve a per-user API key without "
-            "one). Set SIGNAL_LLM_MODEL to a local model to proceed (e.g. "
-            "SIGNAL_LLM_MODEL=llama). Per-user signal sources that thread "
-            "user_id at runtime can still target cloud models on a per-call "
-            "basis — this boot check guards the *default* model only."
-        )
+    task_models.check_tasks_at_boot()
 
 
 def get_vector_store() -> VectorStore:
@@ -588,6 +818,31 @@ def get_metadata_store() -> MetadataStore:
         else:
             raise ValueError(f"Unknown metadata store backend: {backend}")
     return _instances["metadata_store"]  # type: ignore[return-value]
+
+
+def get_system_smtp_sender():
+    """Return the cached transactional system mailer transport (LUM-65).
+
+    The composition seam that keeps ``services.system_mail`` from importing
+    ``adapters.system_smtp`` directly — services depend on the port, config
+    binds the implementation.
+
+    Paired with :func:`reset_system_smtp_sender`, which the System-mail admin
+    routes call on every write. Without that eviction an admin could point the
+    relay at a new host, run Send test, watch it pass against the **previous**
+    host, and flip ``email_reset_enabled`` true for a configuration that has
+    never actually delivered anything.
+    """
+    if "system_smtp_sender" not in _instances:
+        from adapters.system_smtp import SystemSmtpSender
+
+        _instances["system_smtp_sender"] = SystemSmtpSender()
+    return _instances["system_smtp_sender"]
+
+
+def reset_system_smtp_sender() -> None:
+    """Drop the cached system mailer so the next send re-reads configuration."""
+    _instances.pop("system_smtp_sender", None)
 
 
 def get_embedder() -> Embedder:
@@ -741,6 +996,42 @@ def set_tier_policies_cache(value: dict) -> None:
 def invalidate_tier_policy_cache() -> None:
     global _tier_policies_cache
     _tier_policies_cache = None
+
+
+# --- Per-user email taxonomy cache (LUM-629) -------------------------------
+# Bounded (evict-oldest) so a multi-user instance can't grow it without limit,
+# and guarded by a dedicated lock: it is read from the scheduler poll thread and
+# written from route handlers. The tier-policy trio above is followed for shape
+# only — it has no lock, so this cache brings its own.
+import collections as _collections  # noqa: E402
+
+_EMAIL_TAXONOMY_CACHE_MAX = 256
+_email_taxonomy_cache: "_collections.OrderedDict[str, dict]" = _collections.OrderedDict()
+_email_taxonomy_cache_lock = threading.Lock()
+
+
+def get_email_taxonomy_cache(user_id: str) -> dict | None:
+    with _email_taxonomy_cache_lock:
+        value = _email_taxonomy_cache.get(user_id)
+        if value is not None:
+            _email_taxonomy_cache.move_to_end(user_id)
+        return value
+
+
+def set_email_taxonomy_cache(user_id: str, value: dict) -> None:
+    with _email_taxonomy_cache_lock:
+        _email_taxonomy_cache[user_id] = value
+        _email_taxonomy_cache.move_to_end(user_id)
+        while len(_email_taxonomy_cache) > _EMAIL_TAXONOMY_CACHE_MAX:
+            _email_taxonomy_cache.popitem(last=False)
+
+
+def invalidate_email_taxonomy_cache(user_id: str | None = None) -> None:
+    with _email_taxonomy_cache_lock:
+        if user_id is None:
+            _email_taxonomy_cache.clear()
+        else:
+            _email_taxonomy_cache.pop(user_id, None)
 
 
 def get_notification_channels():
@@ -1269,14 +1560,19 @@ def get_quarantine_path() -> Path:
     return get_workspace_path() / "quarantine"
 
 
-def get_uploads_path() -> Path:
-    """Persistent push-ingest store under workspace (``uploads/`` by default)."""
+def resolve_uploads_path() -> Path:
+    """Pure uploads directory resolver — no mkdir (safe for status reads)."""
     raw = os.environ.get("LUMOGIS_UPLOADS_PATH", "").strip()
     if raw:
         path = Path(raw).expanduser()
     else:
         path = get_workspace_path() / "uploads"
-    resolved = path.resolve(strict=False)
+    return path.resolve(strict=False)
+
+
+def get_uploads_path() -> Path:
+    """Persistent push-ingest store under workspace (``uploads/`` by default)."""
+    resolved = resolve_uploads_path()
     resolved.mkdir(parents=True, exist_ok=True)
     return resolved
 
@@ -1311,15 +1607,29 @@ def get_ingest_paths_allowed_prefixes() -> list[str]:
     return parts or ["/data"]
 
 
-def get_effective_ingest_paths() -> list[str]:
-    """Container/runtime paths for search, tools, and ingest-path watchers."""
+def get_configured_ingest_paths() -> list[str]:
+    """Library folders named by explicit configuration only.
+
+    ``INGEST_PATHS`` (JSON list), else ``FILESYSTEM_ROOT``, else ``[]``. Anything
+    that *starts* a library scan (Rescan, the startup scan, the ``ingest_folder``
+    batch handler) must use this, so the implicit ``$HOME`` fallback of
+    :func:`get_effective_ingest_paths` never becomes a library (LUM-884).
+    """
     paths = _parse_json_path_list_env("INGEST_PATHS")
     if paths:
         return paths
     fs = os.environ.get("FILESYSTEM_ROOT", "").strip()
     if fs:
         return [fs]
-    return [str(Path.home())]
+    return []
+
+
+def get_effective_ingest_paths() -> list[str]:
+    """Container/runtime paths for search, tools, and ingest-path watchers.
+
+    Read-side callers only: falls back to ``$HOME`` when nothing is configured.
+    """
+    return get_configured_ingest_paths() or [str(Path.home())]
 
 
 def get_effective_ingest_paths_host() -> list[str]:
@@ -1606,6 +1916,43 @@ def get_graph_max_cooccurrence_pairs() -> int:
         return int(raw)
     except (ValueError, TypeError):
         return 100
+
+
+# ---------------------------------------------------------------------------
+# Orphan GC mass-delete guard (LUM-952). Mirrored in the other config module
+# (orchestrator/config.py <-> services/lumogis-graph/config.py): Core runs the
+# graph reconcile in-process with its own config, so both must define these.
+# ---------------------------------------------------------------------------
+
+
+def _gc_env_number(name: str, default, cast, *, minimum):
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = cast(raw)
+    except (ValueError, TypeError):
+        _log.warning("%s=%r is not a number — using %s", name, raw, default)
+        return default
+    if value < minimum:
+        _log.warning("%s=%r is below %s — using %s", name, raw, minimum, default)
+        return default
+    return value
+
+
+def get_gc_max_orphans() -> int:
+    """Refuse a GC pass that would delete more personal orphans than this (default 500)."""
+    return _gc_env_number("GRAPH_GC_MAX_ORPHANS", 500, int, minimum=0)
+
+
+def get_gc_max_orphan_ratio() -> float:
+    """Refuse when personal orphans exceed this share of personal nodes scanned (default 0.20)."""
+    return _gc_env_number("GRAPH_GC_MAX_ORPHAN_RATIO", 0.20, float, minimum=0.0)
+
+
+def get_gc_min_orphans_for_ratio() -> int:
+    """The ratio rule applies only from this many personal orphans (default 25)."""
+    return _gc_env_number("GRAPH_GC_MIN_ORPHANS_FOR_RATIO", 25, int, minimum=0)
 
 
 def get_graph_viz_max_nodes() -> int:
@@ -2123,7 +2470,7 @@ def get_graph_mode() -> str:
     Defaults to ``disabled`` when ``GRAPH_MODE`` is unset. Unknown env values map
     to ``disabled`` with a structured WARNING. After startup, reflects the mode
     returned from :func:`main._wire_graph_mode_handlers` (may differ from raw
-    env when premium service or in-process plugin pieces are absent).
+    env when the optional graph service or in-process plugin pieces are absent).
     """
     if _effective_graph_mode is not None:
         return _effective_graph_mode
@@ -2223,8 +2570,15 @@ def shutdown() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _on_connector_credential_change(*, user_id: str, connector: str, action: str) -> None:
-    """Funnel substrate change events into the per-user LLM cache invalidator."""
+def _on_connector_credential_change(
+    *, user_id: str, connector: str, action: str, instance: str = ""
+) -> None:
+    """Funnel substrate change events into the per-user LLM cache invalidator.
+
+    ``instance`` (LUM-170) is accepted (unused here — LLM connectors are
+    single-instance) so the change dispatcher can pass it uniformly without a
+    per-call exception fallback.
+    """
     if connector.startswith("llm_"):
         invalidate_llm_cache_for_user(user_id)
 

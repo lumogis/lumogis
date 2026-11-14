@@ -14,6 +14,22 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+# LUM-65. Registered here, not just emitted: an unregistered action falls
+# through `derive_event_type` into the generic `action.executed` bucket, so an
+# admin filtering the audit log by auth event types after a suspected
+# compromise would not see the record that someone changed a password through
+# the public reset link. `__system_mail__.dead_lettered` is the only signal
+# that reset mail was silently dropped, and it was buried the same way.
+PASSWORD_RESET_REQUESTED = "__password_reset__.requested"
+PASSWORD_RESET_REDEEMED = "__password_reset__.redeemed"
+SYSTEM_MAIL_DEAD_LETTERED = "__system_mail__.dead_lettered"
+
+PASSWORD_RESET_ACTIONS = (
+    PASSWORD_RESET_REQUESTED,
+    PASSWORD_RESET_REDEEMED,
+)
+SYSTEM_MAIL_ACTIONS = (SYSTEM_MAIL_DEAD_LETTERED,)
+
 USER_INVITE_MINTED = "__user_invite__.minted"
 USER_INVITE_REDEEMED = "__user_invite__.redeemed"
 USER_INVITE_REVOKED = "__user_invite__.revoked"
@@ -100,6 +116,8 @@ EXACT_MAPPED_ACTION_NAMES: tuple[str, ...] = (
     *CREDENTIAL_ACTIONS,
     *EXPORT_ACTIONS,
     *IMPORT_ACTIONS,
+    *PASSWORD_RESET_ACTIONS,
+    *SYSTEM_MAIL_ACTIONS,
 )
 
 # Escaped LIKE patterns for namespace prefixes (exclude_mapped SQL).
@@ -110,6 +128,8 @@ PREFIX_EXCLUSION_PATTERNS: tuple[str, ...] = (
     r"\_\_connector\_credential\_\_.%",
     r"\_\_user\_export\_\_.%",
     r"\_\_user\_import\_\_.%",
+    r"\_\_password\_reset\_\_.%",
+    r"\_\_system\_mail\_\_.%",
 )
 
 _NAMESPACE_PREFIXES: tuple[tuple[str, str], ...] = (
@@ -119,6 +139,8 @@ _NAMESPACE_PREFIXES: tuple[tuple[str, str], ...] = (
     ("__connector_credential__.", "auth.credential."),
     ("__user_export__.", "data.export."),
     ("__user_import__.", "data.import."),
+    ("__password_reset__.", "auth.password_reset."),
+    ("__system_mail__.", "auth.system_mail."),
 )
 
 _SECRET_KEYS = frozenset(
@@ -207,6 +229,10 @@ def _all_exact_event_types() -> dict[str, AuditFilterPredicate]:
             actions = EXPORT_ACTIONS
         elif prefix == "__user_import__.":
             actions = IMPORT_ACTIONS
+        elif prefix == "__password_reset__.":
+            actions = PASSWORD_RESET_ACTIONS
+        elif prefix == "__system_mail__.":
+            actions = SYSTEM_MAIL_ACTIONS
         else:
             continue
         for action in actions:

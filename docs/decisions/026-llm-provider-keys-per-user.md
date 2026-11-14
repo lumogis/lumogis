@@ -5,6 +5,7 @@
 **Finalised:** 2026-04-22 by `/verify-plan`
 **Decided by:** composer-2 via `/explore`; implementation verified by Claude Opus 4.7
 **Plan:** *(maintainer-local only; not part of the tracked repository)*
+**Amended by:** [ADR 241](241-lum-877-task-model-routing.md) (LUM-877, 2026-11-08). The `SIGNAL_LLM_MODEL` boot check now covers every background model task that runs without a user. `SIGNAL_LLM_MODEL` is no longer read.
 
 ## Context
 

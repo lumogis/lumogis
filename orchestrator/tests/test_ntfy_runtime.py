@@ -43,21 +43,48 @@ class _FakeStore:
     def fetch_one(self, query: str, params: tuple | None = None):
         q = self._norm(query)
         p = params or ()
+        # LUM-834 chunk B — is_disabled(). Absent row => False (not
+        # disabled): a connector nobody configured is not one somebody
+        # switched off, and answering otherwise would stop the tier walk
+        # for every user without a row.
+        if q.startswith("select enabled from user_connector_credentials"):
+            uid, conn, inst = p
+            row = self.creds.get((uid, conn, inst))
+            if row is None:
+                return None
+            return {"enabled": bool(row.get("enabled", True))}
+
         if q.startswith("select ciphertext from user_connector_credentials"):
-            uid, conn = p
-            row = self.creds.get((uid, conn))
-            return {"ciphertext": row["ciphertext"]} if row else None
+            # LUM-834 chunk B: the real query carries `AND enabled`, so a
+            # disabled row yields no ciphertext and is indistinguishable from an
+            # absent one.
+            #
+            # The filter is applied ONLY when the statement actually contains
+            # `and enabled`. Applying it unconditionally would move the gate
+            # INTO THE FAKE: delete `AND enabled` from `get_payload` or
+            # `resolve` and every gate test would still pass, because the fake
+            # would keep enforcing what production had stopped enforcing. §5a —
+            # the fake must fail the way the real collaborator fails, and real
+            # Postgres has no opinion about a predicate that is not there.
+            uid, conn, inst = p
+            row = self.creds.get((uid, conn, inst))
+            if row is None:
+                return None
+            if "and enabled" in q and not row.get("enabled", True):
+                return None
+            return {"ciphertext": row["ciphertext"]}
         if q.startswith(
-            "select user_id, connector, created_at, updated_at, "
+            "select user_id, connector, instance, created_at, updated_at, "
             "created_by, updated_by, key_version, delivery_paused, "
-            "delivery_paused_reason, delivery_paused_detail, delivery_paused_at "
+            "delivery_paused_reason, delivery_paused_detail, delivery_paused_at, "
+            "enabled, configured_keys "
             "from user_connector_credentials"
         ):
-            uid, conn = p
-            row = self.creds.get((uid, conn))
+            uid, conn, inst = p
+            row = self.creds.get((uid, conn, inst))
             return dict(row) if row else None
         if q.startswith("insert into user_connector_credentials"):
-            uid, conn, ciphertext, key_version, created_by, updated_by = p
+            uid, conn, inst, ciphertext, key_version, created_by, updated_by, configured_keys = p
             from datetime import datetime
             from datetime import timezone
 
@@ -65,6 +92,7 @@ class _FakeStore:
             row = {
                 "user_id": uid,
                 "connector": conn,
+                "instance": inst,
                 "ciphertext": ciphertext,
                 "key_version": key_version,
                 "created_at": now,
@@ -75,11 +103,14 @@ class _FakeStore:
                 "delivery_paused_reason": None,
                 "delivery_paused_detail": None,
                 "delivery_paused_at": None,
+                "enabled": True,
+                "configured_keys": configured_keys,
             }
-            self.creds[(uid, conn)] = row
+            self.creds[(uid, conn, inst)] = row
             return {
                 "user_id": uid,
                 "connector": conn,
+                "instance": inst,
                 "created_at": now,
                 "updated_at": now,
                 "created_by": created_by,
@@ -89,6 +120,8 @@ class _FakeStore:
                 "delivery_paused_reason": None,
                 "delivery_paused_detail": None,
                 "delivery_paused_at": None,
+                "enabled": True,
+                "configured_keys": configured_keys,
             }
         if q.startswith("insert into audit_log"):
             return {"id": 1}
@@ -141,7 +174,7 @@ def test_auth_enabled_delivery_paused_raises_not_configured(store, monkeypatch):
     monkeypatch.setenv("AUTH_ENABLED", "true")
     monkeypatch.delenv("NTFY_URL", raising=False)
     _seed(store, "alice", {"url": "http://ntfy.lan:8088", "topic": "alice"})
-    store.creds[("alice", "ntfy")]["delivery_paused"] = True
+    store.creds[("alice", "ntfy", "")]["delivery_paused"] = True
 
     from services.ntfy_runtime import load_ntfy_runtime_config
 
@@ -237,7 +270,7 @@ def test_decrypt_failure_propagates(store, monkeypatch):
     monkeypatch.setenv("AUTH_ENABLED", "true")
     _seed(store, "alice", {"topic": "alice"})
     # Corrupt the row so Fernet rejects it.
-    row = store.creds[("alice", "ntfy")]
+    row = store.creds[("alice", "ntfy", "")]
     row["ciphertext"] = b"not-a-valid-fernet-token"
 
     from services.ntfy_runtime import load_ntfy_runtime_config

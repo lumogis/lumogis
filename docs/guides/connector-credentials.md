@@ -1,7 +1,12 @@
 # Connector credentials
 
+> Status: Needs update
+> Last reviewed: 2026-09-12
+> Verified against commit: 8697cb02
+> Notes: This guide predates the unified connector card shipped in **LUM-834** (**[ADR 218](../decisions/218-lum-834-connector-test-connection.md)** / **[ADR 219](../decisions/219-lum-834-connector-enabled-and-field-presence.md)**) and the autonomy surface (**LUM-849**, **[ADR 220](../decisions/220-lum-849-autonomy-surface.md)**). For test-connection, enable/disable, typed Paperless form, field-presence rows, and Ask/Do placement, prefer **`docs/LUMOGIS_REFERENCE_MANUAL.md`** (connector manager subsection) until this page is refreshed.
+
 Lumogis stores per-user credentials for external services
-(ntfy, future calendar/IMAP/etc.) in an encrypted Postgres table
+(ntfy, IMAP mailboxes, CalDAV, and similar) in an encrypted Postgres table
 called `user_connector_credentials`. This page is the practical
 operator/user reference for the dashboard UI and the matching HTTP
 APIs.
@@ -10,6 +15,12 @@ For the underlying design rationale see
 [`018-per-user-connector-credentials.md`](../decisions/018-per-user-connector-credentials.md)
 and
 [`019-structured-audit-logging.md`](../decisions/019-structured-audit-logging.md).
+For IMAP mailbox setup (multi-instance credentials, SSRF guard, sync),
+see **`docs/LUMOGIS_REFERENCE_MANUAL.md`** (email connector subsection) and
+[`174-email-imap-signal-source.md`](../decisions/174-email-imap-signal-source.md).
+For OAuth email connect (Outlook device flow), see
+[`190-oauth2-provider-connect.md`](../decisions/190-oauth2-provider-connect.md)
+and **`docs/operators/oauth-email-setup.md`**.
 
 ## What you'll see in the dashboard
 
@@ -57,10 +68,12 @@ never be saved against another.
   fingerprint (`key_version`); there is no GET endpoint that
   returns the decrypted payload. To rotate or fix a credential,
   paste the full new JSON payload via Replace.
-* **Per-user isolation.** Rows are keyed by `(user_id, connector)`.
-  The user-facing endpoints scope every read/write to the calling
-  user; only admins can read/write rows owned by other users, and
-  every such call is audited.
+* **Per-user isolation.** Rows are keyed by `(user_id, connector)`;
+  IMAP mailboxes additionally use an `instance` column (typically the
+  email source id) so one user can hold several mailboxes. The
+  user-facing endpoints scope every read/write to the calling user;
+  only admins can read/write rows owned by other users, and every
+  such call is audited.
 * **No secret-reveal endpoint.** The dashboard exposes metadata
   only (created_at, updated_at, created_by, updated_by, and an
   admin-only `key_version`). Operators that need plaintext for
@@ -139,6 +152,11 @@ bearer token (CSRF rules in `orchestrator/csrf.py` apply).
 | `GET`    | `/{connector}`   | Read one row's metadata. |
 | `PUT`    | `/{connector}`   | Create or replace; body is `{"payload": {...}}`. |
 | `DELETE` | `/{connector}`   | Remove the row (idempotent: 404 when missing). |
+
+**Multi-instance connectors (IMAP):** append `?instance={source_id}` on
+GET/PUT/DELETE for the `imap` connector after registering the mailbox
+via `POST /api/v1/me/email-sources` — see
+[`174-email-imap-signal-source.md`](../decisions/174-email-imap-signal-source.md).
 
 ### Admin — `/api/v1/admin/users/{user_id}/connector-credentials`
 

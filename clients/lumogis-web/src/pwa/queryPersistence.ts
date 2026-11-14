@@ -21,6 +21,9 @@ export const QUERY_PERSIST_LOCALSTORAGE_KEY = "lumogis:query-cache";
 /**
  * Buster: must change when deploy changes query shapes or persistence policy.
  * Tied to `package.json` `version` so each release clears stored query state.
+ *
+ * Note (LUM-886): the version is `0.0.1` and never bumped, so this never busts.
+ * Moot while the allowlist below is empty — fix before adding an allowlist entry.
  */
 export function getQueryPersistenceBuster(): string {
   return packageJson.version;
@@ -87,4 +90,17 @@ export function createQueryPersistenceOptions(): Omit<PersistQueryClientOptions,
       shouldDehydrateMutation: () => false,
     },
   };
+}
+
+/**
+ * Remove the persisted query-cache slot (sign-out, LUM-886). The persister may
+ * rewrite the slot with an empty dehydrated state after the in-memory cache is
+ * cleared; that is harmless because it holds no queries.
+ */
+export function clearPersistedQueryCache(): void {
+  try {
+    globalThis.localStorage?.removeItem(QUERY_PERSIST_LOCALSTORAGE_KEY);
+  } catch {
+    /* storage disabled — nothing to clear */
+  }
 }

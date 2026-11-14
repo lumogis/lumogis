@@ -8,6 +8,11 @@ be consulted first if decrypts succeed. Does **not** decrypt ciphertext,
 does not read env values into the response, and does not change resolution
 semantics elsewhere.
 
+The tier walk is :func:`services.credential_tiers.runtime_tier_from_records`,
+the resolver's order on metadata (LUM-850). A **switched-off** user row is
+reported ``configured=False`` with ``active_tier="user"``: resolution stops
+there, and a household, system or env key is not used instead.
+
 **Limitation:** If a per-user row exists but decrypt fails at runtime,
 this view still reports ``active_tier="user"`` (row presence). Runtime
 errors remain the domain of chat / ``resolve_runtime_credential``.
@@ -39,6 +44,13 @@ _ENV_NAME_BY_CONNECTOR: dict[str, str] = {v: k for k, v in LLM_CONNECTOR_BY_ENV.
 _DESC_BRACES = re.compile(r"\{[^}]*\}")
 _PAYLOAD_WORD = re.compile(r"\bpayload\b", re.IGNORECASE)
 _TRAIL_JUNK = re.compile(r"\s*[,;—\-]+\s*$")
+
+# LUM-850. Names the consequence that surprises: a household or system key is
+# not used instead while the user's own credential is off.
+_DISABLED_WHY = (
+    "Your credential is switched off. While it is off, no household or system "
+    "key is used for you either. Switch it back on in Connectors."
+)
 
 
 def llm_connector_ids() -> tuple[str, ...]:
@@ -76,24 +88,21 @@ def build_me_llm_providers_response(user_id: str) -> MeLlmProvidersResponse:
         sys_rec = ct.system_get_record(cid)
         env_fb = _env_fallback_configured(cid)
 
-        meta_rec: object | None
-        if user_rec is not None:
-            tier: Literal["user", "household", "system", "env", "none"] = "user"
-            meta_rec = user_rec
-        elif hh_rec is not None:
-            tier = "household"
-            meta_rec = hh_rec
-        elif sys_rec is not None:
-            tier = "system"
-            meta_rec = sys_rec
-        elif env_fb:
-            tier = "env"
-            meta_rec = None
-        else:
-            tier = "none"
-            meta_rec = None
+        # LUM-850: the resolver's own walk, so a switched-off user row stops it
+        # here — it is not rescued by a household, system or env key.
+        walk = ct.runtime_tier_from_records(
+            user_rec,
+            household_present=hh_rec is not None,
+            system_present=sys_rec is not None,
+            env_fallback=env_fb,
+        )
+        tier: Literal["user", "household", "system", "env", "none"] = (
+            "user" if walk == "disabled" else walk
+        )
+        # The winning row's metadata; env and none have no row.
+        meta_rec = {"user": user_rec, "household": hh_rec, "system": sys_rec}.get(tier)
 
-        configured = tier != "none"
+        configured = walk in ct.SERVING_TIERS
 
         updated_at = getattr(meta_rec, "updated_at", None) if meta_rec is not None else None
         key_version = getattr(meta_rec, "key_version", None) if meta_rec is not None else None
@@ -101,6 +110,11 @@ def build_me_llm_providers_response(user_id: str) -> MeLlmProvidersResponse:
         if configured:
             status: Literal["configured", "not_configured"] = "configured"
             why_not = None
+        elif walk == "disabled":
+            # `active_tier` stays "user": that row is where resolution stops,
+            # and it is still stored — switched off, not deleted.
+            status = "not_configured"
+            why_not = _DISABLED_WHY
         else:
             status = "not_configured"
             why_not = (

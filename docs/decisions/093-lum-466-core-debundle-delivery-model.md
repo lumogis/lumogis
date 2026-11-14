@@ -5,7 +5,7 @@
 **Last updated:** 2026-06-11
 **Decided by:** `/explore LUM-466` (claude-opus-4-8); finalised by `/verify-plan LUM-466` (Phase 1 shipped)
 
-> Scope is the **Lumogis Hub** (private/commercial appliance) delivery model + Core (AGPL) packaging implications; stripped from the public AGPL export, like ADR-076/081. Draft mirror retained at `.cursor/adrs/core-debundle-delivery-model.md`.
+> Scope is the **Lumogis Hub** (commercial appliance) delivery model + Core (AGPL) packaging implications. Draft mirror retained at `.cursor/adrs/core-debundle-delivery-model.md`.
 
 ## Context
 
@@ -13,7 +13,7 @@ The fused slim PyInstaller Hub (LUM-396 / LUM-447 / LUM-460) keeps a small footp
 
 Two facts from the current code shape the decision:
 
-1. The Hub is **already** an internally client-server, supervised-sidecar Tauri app (`apps/lumogis-server/src-tauri/src/bundled/`), not a single frozen binary. Core is a PyInstaller one-dir sidecar; Qdrant + embedded Postgres are binary sidecars; Ollama is detect+guide. A Rust supervisor handles ordered start, `/healthz` polling, crash-restart, and clean shutdown.
+1. The Hub is **already** an internally client-server, supervised-sidecar Tauri app (its `bundled/` supervisor module), not a single frozen binary. Core is a PyInstaller one-dir sidecar; Qdrant + embedded Postgres are binary sidecars; Ollama is detect+guide. A Rust supervisor handles ordered start, `/healthz` polling, crash-restart, and clean shutdown.
 2. The torch divergence is driven by **one** optional dependency. The 6.7 GB figure (LUM-447) was PyInstaller dev-venv bloat, fixed by LUM-460 (~101 MB). A native installer *can* include torch without the PyInstaller fight, but the honest CPU-torch footprint (~200–600 MB) remains.
 
 The exploration (`.cursor/explorations/LUM-466-core-debundle-delivery-model.md`) evaluated three options: **A** status-quo fused slim Hub (parity by discipline), **B** full debundle with no fused UI (fails Persona C seam-hiding), **C** hybrid native installer where Core runs as an OS-managed local service under a thin client (one-app feel, parity by construction).
@@ -86,3 +86,4 @@ Full per-axis matrix: `.cursor/explorations/LUM-466-core-debundle-delivery-model
 - 2026-06-10: **LUM-466 repurposed exploration → feature** (milestone:v1.0, kept Backlog).
 - 2026-06-11: **Revised during `/review-plan --arbitrate` R1** — softened the supervisor consequence to allow Mechanism B (sidecar shim).
 - 2026-06-11: **Finalised by `/verify-plan LUM-466`** — Phase 1 (Linux x64) shipped: Mechanism B sidecar shim, on-disk venv with CPU torch + offline BGE, parity gate + relocation proven, full release `.deb` built. Implementation confirmed the decision (refined Option B, torch retained); CPU-torch footprint matched the ADR estimate. Implementation notes recorded under Consequences → As-built.
+- 2026-11-10: public-boundary wording (LUM-898).

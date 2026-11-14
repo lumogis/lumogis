@@ -238,3 +238,67 @@ class TestRetrieveContext:
     def test_empty_store_returns_empty_list(self, mock_embedder, mock_vector_store):
         hits = retrieve_context("query", user_id="nobody")
         assert hits == []
+
+    # -- LUM-954: points written before conversation_payload() existed ----------
+
+    @staticmethod
+    def _put(store, payload):
+        store.upsert(collection="conversations", id="pt", vector=[0.0] * 768, payload=payload)
+
+    def test_legacy_note_projection_payload_is_read(self, mock_embedder, mock_vector_store):
+        self._put(
+            mock_vector_store,
+            {
+                "note_id": "p1",
+                "text": "old note",
+                "user_id": "alice",
+                "scope": "shared",
+                "published_from": "s1",
+            },
+        )
+        (hit,) = retrieve_context("old note", user_id="bob")
+        assert hit.session_id == "p1"
+        assert hit.summary == "old note"
+
+    def test_legacy_audio_projection_payload_is_read(self, mock_embedder, mock_vector_store):
+        self._put(
+            mock_vector_store,
+            {
+                "audio_id": "a1",
+                "transcript": "old memo",
+                "user_id": "alice",
+                "scope": "shared",
+                "published_from": "s1",
+            },
+        )
+        (hit,) = retrieve_context("old memo", user_id="bob")
+        assert hit.session_id == "a1"
+        assert hit.summary == "old memo"
+
+    def test_canonical_keys_win_over_legacy_keys(self, mock_embedder, mock_vector_store):
+        self._put(
+            mock_vector_store,
+            {
+                "session_id": "new-id",
+                "summary": "new",
+                "note_id": "old-id",
+                "text": "old",
+                "user_id": "alice",
+                "scope": "shared",
+            },
+        )
+        (hit,) = retrieve_context("anything", user_id="bob")
+        assert (hit.session_id, hit.summary) == ("new-id", "new")
+
+    def test_legacy_fallback_does_not_bypass_visibility(self, mock_embedder, mock_vector_store):
+        self._put(
+            mock_vector_store,
+            {"note_id": "p1", "text": "old note", "user_id": "alice", "scope": "personal"},
+        )
+        assert retrieve_context("old note", user_id="bob") == []
+        assert len(retrieve_context("old note", user_id="alice")) == 1
+
+    def test_payload_without_any_text_key_reads_empty(self, mock_embedder, mock_vector_store):
+        self._put(mock_vector_store, {"user_id": "u", "scope": "personal"})
+        (hit,) = retrieve_context("anything", user_id="u")
+        assert (hit.session_id, hit.summary) == ("", "")

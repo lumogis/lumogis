@@ -11,6 +11,7 @@ import { isShared, type DocumentSummary } from "../../api/documents";
 import { EmptyState } from "../_shared/EmptyState";
 import { ErrorState } from "../_shared/ErrorState";
 import { LoadingPlaceholder, Skeleton } from "../_shared/Skeleton";
+import { originLabel, originOf } from "./documentOrigin";
 import { humanizeStoredName } from "../../util/humanizeStoredName";
 import { useDocuments, shareStatusLabel, statusLabel } from "./useDocuments";
 import { useDocumentsSseInvalidation } from "./useDocumentsSseInvalidation";
@@ -99,7 +100,6 @@ export function DocumentsPage(): JSX.Element {
         actions={[
           { label: "Open Capture", href: "/capture", primary: true },
         ]}
-        className="lumogis-documents__empty"
         />
       </section>
     );
@@ -151,6 +151,19 @@ export function DocumentsPage(): JSX.Element {
                   ) : (
                     label
                   )}
+                  {/* LUM-724: the library now spans three stores. The badge is
+                      what keeps one list honest — it answers "where do I go to
+                      work with this?", which differs per origin. Uploads get no
+                      badge: they are the unremarkable case, and badging every
+                      row would make the badge worthless. */}
+                  {originLabel(doc.file_path) ? (
+                    <span
+                      className={`lumogis-documents__origin lumogis-documents__origin--${originOf(doc.file_path)}`}
+                      data-testid="document-origin"
+                    >
+                      {originLabel(doc.file_path)}
+                    </span>
+                  ) : null}
                 </td>
                 <td data-label="Type">{doc.file_type || "—"}</td>
                 <td data-label="Entities">{doc.entity_count}</td>

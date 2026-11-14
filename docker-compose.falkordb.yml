@@ -1,0 +1,43 @@
+# Optional: FalkorDB graph store (built-in Redis protocol, no separate Redis needed).
+#
+# Enable by adding to COMPOSE_FILE in .env:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.falkordb.yml
+#
+# Then set in .env:
+#   FALKORDB_URL=redis://falkordb:6379
+#
+# Host-side tools (e.g. pytest from the host, `make m1-compat-with-retry`) use the
+# published loopback port: redis://127.0.0.1:${FALKORDB_HOST_PORT:-6380}
+# (see FALKORDB_HOST_PORT in .env.example). Services on the compose network keep
+# redis://falkordb:6379 — unchanged.
+#
+# The GraphStore port (ports/graph_store.py) defines the interface any graph
+# backend must implement. FalkorDB is the reference backend.
+# See docs/extending/extending-the-stack.md for details.
+
+services:
+  falkordb:
+    # Bump together with FALKORDB_IMAGE build arg on backup (docker/backup/Dockerfile).
+    image: ${FALKORDB_IMAGE:-falkordb/falkordb:v4.18.1}
+    ports:
+      - "127.0.0.1:${FALKORDB_HOST_PORT:-6380}:6379"
+    volumes:
+      - falkordb_data:/var/lib/falkordb/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6379", "PING"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  backup:
+    volumes:
+      - ${BACKUP_HOST_DIR:-./ai-workspace/backups}:/backups
+      - falkordb_data:/var/lib/falkordb/data
+    depends_on:
+      falkordb:
+        condition: service_healthy
+
+volumes:
+  falkordb_data:

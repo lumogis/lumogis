@@ -44,6 +44,24 @@ function makeChunkObject(content: string, opts: { finish?: "stop" | null; role?:
 }
 
 describe("consumeChatStream", () => {
+  it("LUM-876: reports lumogis.status via onStatus, never as answer text", async () => {
+    const onDelta = vi.fn();
+    const onStatus = vi.fn();
+    const status = { code: "local_model_loading", message: "Loading model on your machine…" };
+    const stream = streamFrom([
+      chunk(makeChunkObject("", { role: "assistant" })),
+      chunk({ ...makeChunkObject(""), lumogis: { status } }),
+      chunk(makeChunkObject("Hi", { finish: "stop" })),
+      chunk("[DONE]"),
+    ]);
+
+    await consumeChatStream(stream, { onDelta, onStatus });
+
+    expect(onStatus).toHaveBeenCalledTimes(1);
+    expect(onStatus).toHaveBeenCalledWith(status);
+    expect(onDelta.mock.calls).toEqual([["Hi"]]);
+  });
+
   it("emits each non-empty content delta in order", async () => {
     const onDelta = vi.fn();
     const onDone = vi.fn();

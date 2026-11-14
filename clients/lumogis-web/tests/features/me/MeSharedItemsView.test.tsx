@@ -11,6 +11,13 @@ import { AccessTokenStore } from "../../../src/api/tokens";
 import { AuthProvider } from "../../../src/auth/AuthProvider";
 import { MeSharedItemsView } from "../../../src/features/me/MeSharedItemsView";
 import { jsonResponse } from "../../helpers/jsonResponse";
+import { seedSignedInDevice } from "../../helpers/signedInDevice";
+
+// LUM-886: this suite mounts a real AuthProvider; mark the device as already reconciled so the
+// first-sign-in wipe does not remove the view's own queries.
+beforeEach(() => {
+  seedSignedInDevice("alice");
+});
 
 const ME = { id: "alice", email: "alice@home.lan", role: "user" as const };
 

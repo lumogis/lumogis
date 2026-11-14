@@ -88,10 +88,13 @@ def _parse_plaintext(plaintext: str) -> tuple[str, str] | None:
 
 def _lookup_active_by_prefix(token_prefix: str) -> dict | None:
     ms = config.get_metadata_store()
+    # LUM-885: an invite is valid only while its creator exists, is not
+    # disabled and is still an admin. A missing / disabled / demoted creator
+    # returns no row, the same response as an unknown token (no new oracle).
     return ms.fetch_one(
-        "SELECT * FROM user_invites "
-        "WHERE token_prefix = %s AND used_at IS NULL AND revoked_at IS NULL "
-        "AND expires_at > NOW()",
+        "SELECT i.* FROM user_invites i JOIN users c ON c.id = i.created_by "
+        "WHERE i.token_prefix = %s AND i.used_at IS NULL AND i.revoked_at IS NULL "
+        "AND i.expires_at > NOW() AND c.role = 'admin' AND c.disabled = FALSE",
         (token_prefix,),
     )
 
@@ -101,8 +104,27 @@ def _verify_row(plaintext: str, row: dict) -> bool:
     return hmac.compare_digest(presented_hash, row["token_hash"])
 
 
+def public_origin() -> str:
+    """``LUMOGIS_PUBLIC_ORIGIN`` normalised (no trailing slash), or ``""``."""
+    return os.environ.get("LUMOGIS_PUBLIC_ORIGIN", "").strip().rstrip("/")
+
+
+def build_public_url(path: str, *, token: str) -> str:
+    """Absolute ``{origin}{path}?token=…``. Raises when the origin is unset.
+
+    Fail-closed counterpart to :func:`build_invite_url`'s relative fallback
+    (LUM-65). An invite link degrades acceptably to a relative URL because an
+    admin copies it out of the UI they are already looking at; a password-reset
+    link is only ever delivered by email, where a relative URL is inert.
+    """
+    origin = public_origin()
+    if not origin:
+        raise ValueError("LUMOGIS_PUBLIC_ORIGIN is not set; cannot build an absolute public URL")
+    return f"{origin}{path}?token={quote(token, safe='')}"
+
+
 def build_invite_url(plaintext: str) -> str:
-    origin = os.environ.get("LUMOGIS_PUBLIC_ORIGIN", "").strip().rstrip("/")
+    origin = public_origin()
     rel = f"/invite?token={quote(plaintext, safe='')}"
     if origin:
         return f"{origin}{rel}"
@@ -178,6 +200,10 @@ def mint_invite(*, role: Role, allows_shared: bool, created_by: str) -> tuple[In
 
 
 def peek_invite(plaintext: str) -> InvitePeekPublic | None:
+    """Return the public peek for a live invite, else ``None``.
+
+    An invite is valid only while its creator is an active admin (LUM-885).
+    """
     parsed = _parse_plaintext(plaintext)
     if parsed is None:
         return None
@@ -199,6 +225,13 @@ class RedeemResult:
 
 
 def redeem_invite(plaintext: str, email: str, password: str) -> RedeemResult:
+    """Consume an invite and create the account.
+
+    An invite is valid only while its creator is an active admin (LUM-885).
+    The creator check is repeated inside the consume ``UPDATE``, so a
+    demotion, disable or delete that commits between the lookup and the
+    consume still blocks the redeem.
+    """
     parsed = _parse_plaintext(plaintext)
     if parsed is None:
         raise InviteInvalidError()
@@ -232,11 +265,19 @@ def redeem_invite(plaintext: str, email: str, password: str) -> RedeemResult:
         if existing is not None:
             raise DuplicateEmailError()
 
+        # The creator check below sees every demotion / disable / delete that
+        # COMMITTED before this statement. It does not lock the creator row, so
+        # one still in flight when the UPDATE runs can lose the race and the
+        # redeem succeeds; the cascade's invite revoke then skips the used row.
+        # Accepted at LUM-885 verify (needs both in the same instant); closing
+        # it means `SELECT … FROM users WHERE id = %s FOR SHARE` before this.
         consumed = ms.fetch_one(
-            "UPDATE user_invites SET used_at = NOW(), used_by = %s "
-            "WHERE id = %s AND used_at IS NULL AND revoked_at IS NULL "
-            "AND expires_at > NOW() "
-            "RETURNING *",
+            "UPDATE user_invites i SET used_at = NOW(), used_by = %s "
+            "FROM users c "
+            "WHERE i.id = %s AND i.used_at IS NULL AND i.revoked_at IS NULL "
+            "AND i.expires_at > NOW() AND c.id = i.created_by "
+            "AND c.role = 'admin' AND c.disabled = FALSE "
+            "RETURNING i.*",
             (user_id, invite_id),
         )
         if consumed is None:
@@ -295,6 +336,24 @@ def revoke_invite(invite_id: str, *, actor_admin_id: str) -> bool:
         result_summary={"ok": True},
     )
     return True
+
+
+def revoke_unredeemed_for_creator_in_transaction(created_by: str) -> list[str]:
+    """Revoke every unredeemed invite minted by ``created_by``; return the ids.
+
+    Must run inside the caller's transaction (it uses the thread-affine
+    ``config.get_metadata_store()`` handle, which joins it). Emits no audit:
+    the caller's ``finish_credential_revocation`` writes one per id after the
+    commit. Rows are kept (revoked), never deleted, like MCP token rows.
+    """
+    ms = config.get_metadata_store()
+    rows = ms.fetch_all(
+        "UPDATE user_invites SET revoked_at = NOW() "
+        "WHERE created_by = %s AND used_at IS NULL AND revoked_at IS NULL "
+        "RETURNING id",
+        (created_by,),
+    )
+    return [r["id"] for r in rows]
 
 
 def list_invites(*, include_consumed: bool = True) -> list[InternalInvite]:

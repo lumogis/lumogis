@@ -16,7 +16,7 @@ export function isWebPushSupported(): boolean {
 }
 
 /** Decode VAPID public key from base64 URL (RFC 4648 §5) to bytes for {@link PushManager.subscribe}. */
-export function urlBase64ToUint8Array(base64Url: string): Uint8Array {
+export function urlBase64ToUint8Array(base64Url: string): Uint8Array<ArrayBuffer> {
   const pad = "=".repeat((4 - (base64Url.length % 4)) % 4);
   const base64 = (base64Url + pad).replace(/-/g, "+").replace(/_/g, "/");
   const raw = globalThis.atob(base64);
@@ -60,5 +60,30 @@ export class PushSubscribeError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "PushSubscribeError";
+  }
+}
+
+/**
+ * Unsubscribe this browser from push (sign-out, LUM-886). Returns `false` for a
+ * null subscription or when `unsubscribe()` threw.
+ */
+export async function unsubscribeBrowserPush(sub: PushSubscription | null): Promise<boolean> {
+  if (!sub) return false;
+  try {
+    return await sub.unsubscribe();
+  } catch {
+    return false;
+  }
+}
+
+/** Close notifications still on screen so the next member does not see them. Never throws. */
+export async function closeShownNotifications(): Promise<void> {
+  try {
+    if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
+    const reg = await navigator.serviceWorker.getRegistration();
+    const shown = (await reg?.getNotifications()) ?? [];
+    for (const n of shown) n.close();
+  } catch {
+    /* best effort */
   }
 }

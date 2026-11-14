@@ -37,9 +37,9 @@ test.describe("Phase 2D mobile documents library (/documents)", () => {
     await expect(page).toHaveURL(/\/documents$/);
 
     await expect(page.locator("#lumogis-main")).toBeVisible();
-    await expect(
-      page.getByTestId("documents-page").or(page.getByText("No documents yet")),
-    ).toBeVisible({ timeout: 15_000 });
+    // Empty-state heading is nested under documents-page; avoid `.or(...)` which
+    // matches both and fails Playwright strict mode on an empty library.
+    await expect(page.getByTestId("documents-page")).toBeVisible({ timeout: 15_000 });
 
     await expectNoPageHorizontalOverflow(page);
   });

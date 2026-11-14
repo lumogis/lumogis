@@ -265,14 +265,6 @@ def rotate_refresh(
     if not hmac.compare_digest(presented_hash, sess.refresh_token_hash):
         raise RefreshError("invalid refresh token")
 
-    user_row = ms.fetch_one(
-        "SELECT token_version FROM users WHERE id = %s",
-        (user_id,),
-    )
-    if user_row is None:
-        raise RefreshError("invalid refresh token")
-    token_version = int(user_row["token_version"])
-
     new_id = uuid.uuid4().hex
     # Local import: avoid import cycle at module load (`auth` does not import this module).
     from auth import mint_refresh_token
@@ -281,7 +273,46 @@ def rotate_refresh(
     new_hash = _hash_refresh_plaintext(new_refresh)
     new_expires = datetime.now(timezone.utc) + timedelta(seconds=refresh_ttl_seconds)
 
+    # LUM-896: the checks above ran outside any transaction, so a password
+    # change or "log out everywhere" (``services.users.revoke_credentials_in_transaction``)
+    # may have committed since. Everything that decides "this refresh may
+    # still rotate" is therefore re-done inside the transaction:
+    #
+    # 1. ``FOR SHARE`` on the ``users`` row. The revoke takes that row's lock
+    #    first (its ``token_version`` bump, D9), so the two serialise on it:
+    #    a revoke already in flight makes us wait and then read its new
+    #    version; a revoke that starts after us waits for our commit, and its
+    #    ``UPDATE auth_sessions … WHERE user_id`` then sees (and revokes) the
+    #    row we insert. Locking ``users`` before ``auth_sessions`` keeps the
+    #    revoke's lock order, so the two cannot deadlock.
+    # 2. Revoke the presented row with ``RETURNING``. No row back means it was
+    #    revoked after our read (by the revoke, or by a concurrent refresh of
+    #    the same cookie) and the refresh must fail, not mint a live session.
+    #    Two tabs refreshing one cookie at the same instant used to both win
+    #    (forking the family); the loser now gets a 401 and the route clears
+    #    its cookie. A slightly later loser already hit reuse detection above,
+    #    which is harsher, so this is no new failure mode for the Web client.
+    #    Not treated as reuse (audit #2 ID-008's suggested fix): the loser of
+    #    a cascade race would log a false reuse_detected, and two tabs racing
+    #    would lose the whole family. Revisit per ADR 252 if a racing replay
+    #    of a stolen cookie must also revoke the winner's child.
     with ms.transaction():
+        user_row = ms.fetch_one(
+            "SELECT token_version FROM users WHERE id = %s FOR SHARE",
+            (user_id,),
+        )
+        if user_row is None:
+            raise RefreshError("invalid refresh token")
+        token_version = int(user_row["token_version"])
+
+        consumed = ms.fetch_one(
+            "UPDATE auth_sessions SET revoked_at = NOW() "
+            "WHERE id = %s AND revoked_at IS NULL RETURNING id",
+            (jti,),
+        )
+        if consumed is None:
+            raise RefreshError("invalid refresh token")
+
         ms.execute(
             "INSERT INTO auth_sessions "
             "(id, user_id, family_id, refresh_token_hash, expires_at, device_label, "
@@ -297,10 +328,6 @@ def rotate_refresh(
                 sess.ip_hash,
                 sess.ua_hash,
             ),
-        )
-        ms.execute(
-            "UPDATE auth_sessions SET revoked_at = NOW() WHERE id = %s AND revoked_at IS NULL",
-            (jti,),
         )
 
     from auth import invalidate_sid_cache
@@ -395,57 +422,6 @@ def revoke_session_for_user(*, session_id: str, user_id: str) -> AuthSessionRow 
     except Exception:
         pass
     return _row_to_nt(row2)
-
-
-def bump_token_version_and_revoke_all_sessions(
-    *,
-    user_id: str,
-    cascade_actor_user_id: str,
-) -> int:
-    """Increment ``token_version``, revoke active ``auth_sessions`` for user.
-
-    Returns the new ``token_version``. Caller must run inside or outside txn —
-    opens **its own** transaction for atomicity."""
-    ms = config.get_metadata_store()
-    revoked_rows: list[dict] = []
-    new_ver = 1
-    with ms.transaction():
-        ver_row = ms.fetch_one(
-            "UPDATE users SET token_version = token_version + 1 WHERE id = %s "
-            "RETURNING token_version",
-            (user_id,),
-        )
-        if ver_row is None:
-            raise RuntimeError("user row missing during token bump")
-        new_ver = int(ver_row["token_version"])
-
-        revoked_rows = ms.fetch_all(
-            # SCOPE-EXEMPT: auth_sessions rows are keyed by owner user_id (no memory scope).
-            "UPDATE auth_sessions SET revoked_at = NOW() "
-            "WHERE user_id = %s AND revoked_at IS NULL RETURNING *",
-            (user_id,),
-        )
-
-    from auth import invalidate_sid_cache
-
-    for r in revoked_rows:
-        invalidate_sid_cache(r["id"])
-
-    for r in revoked_rows:
-        sid = r["id"]
-        try:
-            _emit_audit(
-                ACTION_SESSION_CASCADE_REVOKED,
-                user_id=cascade_actor_user_id,
-                input_summary={
-                    "session_id": sid,
-                    "owner_user_id": user_id,
-                },
-                result_summary={"revoked_at": r.get("revoked_at")},
-            )
-        except Exception:
-            pass
-    return new_ver
 
 
 def list_active_sessions_for_user(user_id: str) -> list[AuthSessionRow]:

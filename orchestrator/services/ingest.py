@@ -17,6 +17,8 @@ import time
 import traceback
 import unicodedata
 from collections.abc import Callable
+from dataclasses import dataclass
+from dataclasses import field
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
@@ -32,6 +34,7 @@ from models.ingest import IngestStats
 from services.injection_sanitiser import sanitise_at_ingest
 from services.injection_sanitiser import sanitize_attribute_source_token
 from services.point_ids import document_chunk_point_id
+from services.point_ids import email_attachment_chunk_point_id
 from services.point_ids import external_document_chunk_point_id
 from visibility import visible_filter
 from watchdog.events import FileSystemEventHandler
@@ -541,6 +544,7 @@ def ingest_external_document(
     content: str,
     poll_watermark: str,
     stored_source_poll_cursor: str | None,
+    title: str = "",
 ) -> IngestResult:
     """Ingest OCR text from an external REST source (paperless-ngx v0.1).
 
@@ -727,6 +731,25 @@ def ingest_external_document(
             ),
             (poll_watermark, source_id, poll_watermark),
         )
+        # LUM-724: INSIDE the transaction, with the ledger row and the cursor.
+        # Outside it, a failure between the two commits an advanced poll_cursor
+        # with no `file_index` row — the document is never re-polled, so it is
+        # invisible in the library FOREVER with no path to repair short of the
+        # backfill script. `strict=True` so the whole transaction rolls back.
+        from services import external_document_index as ext_index
+
+        ext_index.record(
+            user_id=user_id,
+            logical_path=logical_path,
+            file_hash=new_hash,
+            file_type=ext_index.file_type_for(title),
+            chunk_count=chunk_count_written,
+            # Paperless text IS OCR output, so claiming otherwise would misreport
+            # provenance on a surface that displays it.
+            ocr_used=True,
+            display_name=(title or "").strip() or f"Paperless document {external_document_id}",
+            strict=True,
+        )
 
     _log.info(
         "Ingested external %s: %d chunks (blocked_high_skips=%d)",
@@ -745,6 +768,115 @@ def ingest_external_document(
         file_path=logical_path,
         chunk_count=chunk_count_written,
         advance_external_poll_cursor=True,
+        removed_document_entity_ids=removed,
+    )
+
+
+def ingest_email_attachment(
+    *,
+    user_id: str,
+    source_id: str,
+    signal_id: str,
+    part_index: int,
+    filename: str,
+    content: str,
+    prior_chunk_count: int = 0,
+) -> IngestResult:
+    """File an email attachment's extracted text into the document library (LUM-702).
+
+    A **sibling** of :func:`ingest_external_document`, not a mode of it, and the
+    difference is the whole reason this function exists: the paperless path writes
+    ``sources.poll_cursor`` in three places, and for an IMAP source that column is
+    the mailbox's UID watermark (``"100:5"``). Its guard is a *string* comparison —
+    ``'100:5' < '2026-07-25T10:00:00Z'`` is ``True`` — so the guard does not
+    protect, it **permits** the overwrite. Calling the paperless ingest for a
+    mailbox would replace that mailbox's UID watermark with a timestamp, and the
+    next poll would either fail to parse it or re-ingest the entire mailbox. The
+    symptom would surface in ``feed_monitor``, hours later, in a component this
+    feature never touches.
+
+    A ``skip_cursor=True`` flag on the shared function would have been one wrong
+    call site away from that outage, and the wrong call site is the *natural* one.
+    So: **this function never writes ``sources.poll_cursor``, takes no
+    ``poll_watermark``, and never sets ``advance_external_poll_cursor``.**
+    ``test_ingest_email_attachment_never_writes_sources_poll_cursor`` is the
+    structural guard, mutation-checked — "we remembered not to" is not a guarantee
+    when the sibling twenty lines up does the opposite.
+
+    ``prior_chunk_count`` is the ledger row's recorded ``chunk_count`` when this
+    part has been filed before, and ``0`` when it has not — the fallback for
+    clearing legacy deterministic point ids. The ledger itself is written by the
+    caller (``services.email_attachment_ingest``), which owns the verdict; this
+    function owns only the vectors.
+    """
+    if not isinstance(user_id, str) or not user_id:
+        raise TypeError("ingest_email_attachment: user_id is required")
+
+    logical_path = f"email-attachment://{source_id}/{signal_id}/{part_index}"
+
+    def _point_id(i: int) -> str:
+        return email_attachment_chunk_point_id(user_id, signal_id, part_index, i)
+
+    # Re-ingest replaces rather than accumulates. Deterministic ids mean the
+    # upsert overwrites, and the payload-filter delete clears sparse indices the
+    # id loop cannot reach.
+    _delete_document_vectors_for_path(
+        user_id=user_id,
+        file_path=logical_path,
+        chunk_count_fallback=prior_chunk_count,
+        point_id_for_chunk=_point_id,
+    )
+
+    chunks = chunk_text(content)
+    if not chunks:
+        _log.info("email_attachment_ingest_no_chunks logical_path=%s", logical_path)
+        return IngestResult(file_path=logical_path, chunk_count=0, skipped=True)
+
+    chunk_count_written, drops_blocked_high = _ingest_chunked_text(
+        user_id=user_id,
+        logical_path=logical_path,
+        # Dotted, lowercased — the same convention ``get_extractors()`` is keyed
+        # on and ``ingest_file`` records, so a filed attachment is not a special
+        # case to anything reading ``file_type`` downstream.
+        file_type=(Path(filename).suffix.lower() or ".bin"),
+        text=content,
+        chunks=chunks,
+        point_id_for_chunk=_point_id,
+    )
+
+    _log.info(
+        "email_attachment_ingest logical_path=%s chunks=%d blocked_high_skips=%d",
+        logical_path,
+        chunk_count_written,
+        drops_blocked_high,
+    )
+    removed = _emit_document_ingested_and_entities(
+        logical_path=logical_path,
+        chunk_count_written=chunk_count_written,
+        user_id=user_id,
+        text=content,
+        ingestion_source_kind="external",
+    )
+    # LUM-724: on the success path only. This runs after `_file_one`'s
+    # duplicate-race branches have resolved in the caller, so a lost race cannot
+    # orphan a library row. Not `strict`: there is no cursor to advance here, so
+    # a failed write leaves the document searchable-but-unlisted — the
+    # pre-LUM-724 status quo, repairable by the backfill script.
+    from services import external_document_index as ext_index
+
+    ext_index.record(
+        user_id=user_id,
+        logical_path=logical_path,
+        file_hash=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        file_type=ext_index.file_type_for(filename),
+        chunk_count=chunk_count_written,
+        # The filename the user saw in their mail client — never the part index,
+        # which is what `Path(logical_path).name` would have produced.
+        display_name=filename,
+    )
+    return IngestResult(
+        file_path=logical_path,
+        chunk_count=chunk_count_written,
         removed_document_entity_ids=removed,
     )
 
@@ -1374,6 +1506,73 @@ def start_ingest_path_watchers() -> None:
     )
 
 
+@dataclass(frozen=True)
+class LibraryRescanResult:
+    """Outcome of :func:`enqueue_library_rescan` (resolved root paths)."""
+
+    queued: list[str] = field(default_factory=list)
+    already_queued: list[str] = field(default_factory=list)
+
+
+def _inflight_ingest_folder_paths(owner_user_id: str) -> set[str]:
+    """Paths of the owner's ``ingest_folder`` jobs that are pending or running.
+
+    Scoped to the owner: another user's pending (or retrying) job must not make
+    a Rescan report the root as already queued.
+    """
+    rows = config.get_metadata_store().fetch_all(
+        "SELECT payload->>'path' AS path FROM user_batch_jobs "
+        "WHERE kind = 'ingest_folder' AND user_id = %s "
+        "AND status IN ('pending','running')",
+        (owner_user_id,),
+    )
+    return {r["path"] for r in rows if r.get("path")}
+
+
+def enqueue_library_rescan(*, owner_user_id: str) -> LibraryRescanResult:
+    """Queue one ``ingest_folder`` scan per configured library folder.
+
+    Folders come from :func:`config.get_configured_ingest_paths` (explicit
+    configuration only, never the ``$HOME`` fallback). Roots that already have a
+    pending or running job for this owner are reported in ``already_queued``.
+
+    Coalescing is best-effort, not atomic (check, then insert, no uniqueness
+    constraint), so two concurrent Rescans can both enqueue. That is harmless
+    because unchanged files are hash-skipped, but nothing may rely on it for
+    correctness. Roots are enqueued one by one: a store failure partway leaves
+    earlier roots queued, and a retry coalesces them.
+
+    NOTE (LUM-884): with no ``INGEST_PATHS_OWNER_USER_ID``, two different admins
+    clicking Rescan index the library twice (once per admin, because
+    ``file_index`` is unique per ``(user_id, file_path)``). Set the owner to
+    avoid it; LUM-891 reworks library-folder ownership.
+    """
+    if not isinstance(owner_user_id, str) or not owner_user_id:
+        raise TypeError("enqueue_library_rescan: owner_user_id (keyword-only) is required")
+
+    from services.batch_queue import enqueue
+    from services.index_bootstrap import mark_scan_queued
+
+    from services import batch_handlers as _batch_handlers_registered  # noqa: F401
+
+    inflight = _inflight_ingest_folder_paths(owner_user_id)
+    queued: list[str] = []
+    already: list[str] = []
+    for root_str in config.get_configured_ingest_paths():
+        root = Path(root_str)
+        if not root.is_dir():
+            continue
+        resolved = str(Path(root_str).expanduser().resolve(strict=False))
+        if resolved in inflight:
+            _log.info("Library rescan: %s already has a pending/running scan", resolved)
+            already.append(resolved)
+            continue
+        mark_scan_queued()
+        enqueue(user_id=owner_user_id, kind="ingest_folder", payload={"path": resolved})
+        queued.append(resolved)
+    return LibraryRescanResult(queued=queued, already_queued=already)
+
+
 def enqueue_initial_ingest_scan() -> bool:
     """Enqueue the first bulk folder scan for each configured ingest root.
 
@@ -1396,25 +1595,8 @@ def enqueue_initial_ingest_scan() -> bool:
     if not owner:
         return False
 
-    from services.batch_queue import enqueue
-    from services.index_bootstrap import mark_scan_queued
-
-    from services import batch_handlers as _batch_handlers_registered  # noqa: F401
-
-    enqueued_any = False
-    for root_str in config.get_effective_ingest_paths():
-        root = Path(root_str)
-        if not root.is_dir():
-            continue
-        mark_scan_queued()
-        enqueue(
-            user_id=owner,
-            kind="ingest_folder",
-            payload={"path": str(root.expanduser().resolve(strict=False))},
-        )
-        enqueued_any = True
-
-    if enqueued_any:
+    result = enqueue_library_rescan(owner_user_id=owner)
+    if result.queued or result.already_queued:
         _initial_ingest_scan_enqueued = True
         _log.info("Initial library scan enqueued for owner_user_id=%s", owner)
     return _initial_ingest_scan_enqueued

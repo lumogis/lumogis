@@ -26,6 +26,17 @@ from .captures import router as captures_router
 from .chat import router as chat_router
 from .conversations import router as conversations_router
 from .documents import router as documents_router
+from .email_attachment_ingest import router as email_attachment_ingest_router
+from .email_attachments import router as email_attachments_router
+from .email_bounces import router as email_bounces_router
+from .email_providers import router as email_providers_router
+from .email_recipients import router as email_recipients_router
+from .email_search import router as email_search_router
+from .email_send import router as email_send_router
+from .email_sending_addresses import router as email_sending_addresses_router
+from .email_signature import router as email_signature_router
+from .email_taxonomy import router as email_taxonomy_router
+from .email_unsubscribe import router as email_unsubscribe_router
 from .events import router as events_router
 from .feature_flags import router as feature_flags_router
 from .health import router as health_router
@@ -49,6 +60,17 @@ router.include_router(approvals_router)
 router.include_router(biography_conflicts_router)
 router.include_router(audit_router)
 router.include_router(captures_router)
+router.include_router(email_providers_router)
+router.include_router(email_send_router)
+router.include_router(email_attachments_router)
+router.include_router(email_attachment_ingest_router)
+router.include_router(email_unsubscribe_router)
+router.include_router(email_recipients_router)
+router.include_router(email_sending_addresses_router)
+router.include_router(email_bounces_router)
+router.include_router(email_search_router)
+router.include_router(email_signature_router)
+router.include_router(email_taxonomy_router)
 router.include_router(notifications_router)
 router.include_router(notification_prefs_me_router)
 router.include_router(notification_prefs_admin_router)

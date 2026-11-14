@@ -118,10 +118,16 @@ def try_acquire_consolidation_lock(
 
 def _open_checkout_connection(dsn: str | None):
     if dsn is not None:
+        # Explicit DSN override, used by the isolation tests to hold the lock
+        # from a genuinely separate session. Kept (LUM-816): without it
+        # `test_entity_write_isolation.py` cannot prove two sessions contend.
         conn = psycopg2.connect(dsn)
         conn.autocommit = True
         return conn
     store = config.get_metadata_store()
-    conn = psycopg2.connect(**store._dsn)
+    # Outside the pool, and the handle closes it (LUM-816 decision 5). A pooled
+    # connection returned while still holding this lock would poison the free
+    # list — every later borrower would inherit a lock it never took.
+    conn = store.new_lock_connection()
     conn.autocommit = True
     return conn

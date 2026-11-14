@@ -10,6 +10,7 @@ household-global notification).
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from unittest.mock import MagicMock
 
 import pytest
@@ -33,15 +34,56 @@ class _DigestStore:
         return []
 
     def fetch_one(self, query: str, params: tuple | None = None):
-        q = " ".join(query.split()).lower()
-        if "pg_try_advisory_lock" in q:
-            return {"ok": self.advisory_try_ok}
-        if "pg_advisory_unlock" in q:
-            return {"ok": True}
         return None
 
     def execute(self, query: str, params: tuple | None = None):
         return None
+
+    @contextmanager
+    def checkout_connection(self):
+        """Model the advisory-lock connection (LUM-816).
+
+        The digest now takes and releases its lock through one checked-out
+        connection rather than two bare `fetch_one` calls, because under the
+        pool those were two different sessions — the unlock no-opped and the
+        lock rode a pooled connection back into the free list.
+
+        `self.lock_conn.closed` is what lets a test assert the release path: on
+        a real connection, closing is what frees a session-scoped lock even when
+        the explicit unlock is lost.
+        """
+        self.lock_conn = _DigestLockConn(self.advisory_try_ok)
+        try:
+            yield self.lock_conn
+        finally:
+            self.lock_conn.closed = True
+
+
+class _DigestLockConn:
+    """Just enough psycopg2 connection to carry the advisory lock calls."""
+
+    def __init__(self, try_ok: bool):
+        self.try_ok = try_ok
+        self.closed = False
+        self.calls: list[str] = []
+
+    @contextmanager
+    def cursor(self):
+        yield self
+
+    def execute(self, query: str, params: tuple | None = None):
+        q = " ".join(query.split()).lower()
+        if "pg_try_advisory_lock" in q:
+            self.calls.append("try_lock")
+            self._row = (self.try_ok,)
+        elif "pg_advisory_unlock" in q:
+            self.calls.append("unlock")
+            self._row = (True,)
+        else:
+            self._row = (None,)
+
+    def fetchone(self):
+        return self._row
 
 
 @pytest.fixture
@@ -236,3 +278,48 @@ def test_digest_runs_when_lock_acquired(install_store, monkeypatch):
 
     assert emit_mock.call_count == 1
     assert emit_mock.call_args.args[0].user_id == "zoe"
+
+
+def test_a_failure_in_the_digest_body_is_not_reported_as_a_lock_error(
+    install_store, monkeypatch, caplog
+):
+    """The `try` covered only the lock acquisition, and must go back to that.
+
+    LUM-816 moved the lock onto a checked-out connection and, in doing so,
+    widened this `try` to wrap the whole digest. Every failure in the body then
+    surfaced as `WARNING signal_digest: advisory lock try failed` — no
+    traceback, and the scheduler recorded the job as having succeeded. An
+    operator investigating "users stopped receiving digests" was pointed at a
+    Postgres advisory lock that was working perfectly.
+
+    Lock acquisition stays best-effort (another worker holding it is normal and
+    routine). The body is not: its failures belong to APScheduler, which logs
+    them with a traceback.
+    """
+    install_store(
+        {
+            "alice": [
+                {
+                    "title": "A1",
+                    "url": "u",
+                    "content_summary": "s",
+                    "relevance_score": 0.5,
+                    "importance_score": 0.5,
+                }
+            ],
+        }
+    )
+    boom = RuntimeError("dispatcher import blew up")
+    monkeypatch.setattr(
+        "services.notifications.dispatcher.emit",
+        MagicMock(side_effect=boom),
+    )
+
+    from signals import digest
+
+    monkeypatch.setattr(digest, "_format_digest", MagicMock(side_effect=boom))
+
+    with pytest.raises(RuntimeError, match="dispatcher import blew up"):
+        digest._send_digest()
+
+    assert "advisory lock try failed" not in caplog.text

@@ -45,6 +45,10 @@ class Event:
 
     SIGNAL_RECEIVED = "on_signal_received"
     FEEDBACK_RECEIVED = "on_feedback_received"
+    # LUM-645: fired post-persist for every LIVE-POLL classified email so the
+    # opt-in mailbox-organization hook can label/sort it (backfill is owned by
+    # the standing reconcile sweep, not this event).
+    EMAIL_SIGNAL_CLASSIFIED = "on_email_signal_classified"
 
     ACTION_EXECUTED = "on_action_executed"
     ACTION_REGISTERED = "on_action_registered"

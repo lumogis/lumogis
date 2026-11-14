@@ -1,0 +1,16 @@
+# Models + tasks for the opt-in temporal contradiction eval (LUM-877).
+# `make compose-test-temporal-eval` points MODELS_CONFIG here. It reproduces the old
+# LUMOGIS_TEMPORAL_EXTRACT_MODEL=llama / LUMOGIS_TEMPORAL_JUDGE_MODEL=llama override
+# for the eval only. The `llama` entry is a copy of config/models.yaml; a test holds
+# the two equal so the copy cannot drift silently.
+models:
+  llama:
+    adapter: openai
+    model: llama3.2:3b
+    base_url: http://ollama:11434/v1
+    tools: false
+    context_budget: 8192
+
+tasks:
+  temporal_extract: [llama]
+  temporal_judge: [llama]

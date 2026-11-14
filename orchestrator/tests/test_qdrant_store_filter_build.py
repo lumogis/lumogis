@@ -9,13 +9,20 @@ filter in Qdrant — a cross-tenant isolation failure for semantic search / CONT
 
 from __future__ import annotations
 
-from adapters.qdrant_store import QdrantStore
-from auth import UserContext
-from qdrant_client.models import FieldCondition
-from qdrant_client.models import Filter
-from qdrant_client.models import MatchAny
-from qdrant_client.models import MatchValue
-from visibility import visible_qdrant_filter
+import pytest
+
+# Heavy runtime adapter: qdrant-client is not in requirements-test.txt (it is a
+# requirements-core dep). Skip cleanly when absent instead of breaking collection
+# for the whole suite; runs normally where qdrant-client is installed (CI/core).
+pytest.importorskip("qdrant_client")
+
+from adapters.qdrant_store import QdrantStore  # noqa: E402
+from auth import UserContext  # noqa: E402
+from qdrant_client.models import FieldCondition  # noqa: E402
+from qdrant_client.models import Filter  # noqa: E402
+from qdrant_client.models import MatchAny  # noqa: E402
+from qdrant_client.models import MatchValue  # noqa: E402
+from visibility import visible_qdrant_filter  # noqa: E402
 
 
 def test_build_filter_default_visibility_uses_should_or_union() -> None:

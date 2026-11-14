@@ -4,13 +4,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 
 import { ApiClient } from "../../../src/api/client";
 import { AccessTokenStore } from "../../../src/api/tokens";
-import { AuthProvider } from "../../../src/auth/AuthProvider";
+import { AuthProvider, RequireAuth } from "../../../src/auth/AuthProvider";
 import { AdminUsersView } from "../../../src/features/admin/AdminUsersView";
 import { formatLastActive, roleLabel } from "../../../src/features/admin/adminUsersDisplay";
+import { TURN_ON_SIGN_IN_DOC_URL } from "../../../src/components/SingleUserBanner";
 import { jsonResponse } from "../../helpers/jsonResponse";
+import { seedSignedInDevice } from "../../helpers/signedInDevice";
+
+// LUM-886: this suite mounts a real AuthProvider; mark the device as already reconciled so the
+// first-sign-in wipe does not remove the view's own queries.
+beforeEach(() => {
+  seedSignedInDevice("a1");
+});
 
 describe("AdminUsersView", () => {
   let originalFetch: typeof fetch;
@@ -722,5 +731,49 @@ describe("AdminUsersView display helpers (LUM-334/520)", () => {
       expect(out).not.toBe("—");
       expect(out.length).toBeGreaterThan(0);
     });
+  });
+});
+
+describe("AdminUsersView — single-user mode (LUM-853)", () => {
+  let originalFetch: typeof fetch;
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+  });
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it("C7 shows a notice and mounts no user, invite or import query or control", async () => {
+    const seen: string[] = [];
+    const fetchImpl = vi.fn(async (input: RequestInfo) => {
+      const path = new URL(String(input), "http://x").pathname;
+      seen.push(path);
+      if (path === "/api/v1/auth/refresh")
+        return jsonResponse(503, { detail: "refresh is disabled in single-user dev mode" });
+      if (path === "/api/v1/auth/me")
+        return jsonResponse(200, { id: "default", email: "dev@local.lan", role: "admin" });
+      return jsonResponse(404, {});
+    });
+    const store = new AccessTokenStore();
+    const client = new ApiClient({ tokens: store, fetchImpl: fetchImpl as unknown as typeof fetch });
+    render(
+      <MemoryRouter>
+        <AuthProvider client={client} tokens={store}>
+          {/* As in the app: the view only mounts once the boot gate has settled. */}
+          <RequireAuth>
+            <AdminUsersView />
+          </RequireAuth>
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+    await screen.findByText("Sign-in is off");
+    expect(screen.getByRole("link", { name: "How to turn on sign-in" }).getAttribute("href")).toBe(
+      TURN_ON_SIGN_IN_DOC_URL,
+    );
+    expect(screen.queryByRole("button", { name: /create user/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /invite/i })).toBeNull();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(seen.filter((p) => p.startsWith("/api/v1/admin/"))).toEqual([]);
   });
 });

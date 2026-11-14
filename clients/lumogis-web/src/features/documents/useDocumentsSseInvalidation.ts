@@ -11,7 +11,16 @@ import type { AccessTokenStore } from "../../api/tokens";
 import { documentsQueryKey } from "./useDocuments";
 import { ingestJobQueryKey } from "./useIngestJobProgress";
 
-export function useDocumentsSseInvalidation(tokens: AccessTokenStore): void {
+// `enabled` (default true): chat opens this stream only while the library is empty (LUM-853),
+// because on plain HTTP/1.1 each always-open stream takes one of the browser's six per-origin
+// connections (a first-run user has two long-lived streams on chat; the fix for several
+// always-open streams is one shared events consumer). LUM-853: after sign-in is turned on under
+// an open tab, reconnects get 401 until the tab signs out.
+export function useDocumentsSseInvalidation(
+  tokens: AccessTokenStore,
+  options: { enabled?: boolean } = {},
+): void {
+  const enabled = options.enabled ?? true;
   const qc = useQueryClient();
   const qcRef = useRef(qc);
   useEffect(() => {
@@ -19,6 +28,7 @@ export function useDocumentsSseInvalidation(tokens: AccessTokenStore): void {
   });
 
   useEffect(() => {
+    if (!enabled) return;
     const handle = openReconnectingSse({
       url: "/api/v1/events",
       tokens,
@@ -42,5 +52,5 @@ export function useDocumentsSseInvalidation(tokens: AccessTokenStore): void {
       },
     });
     return () => handle.close();
-  }, [tokens]);
+  }, [tokens, enabled]);
 }

@@ -10,6 +10,13 @@ import { AccessTokenStore } from "../../../src/api/tokens";
 import { AuthProvider } from "../../../src/auth/AuthProvider";
 import { MeNotificationsView } from "../../../src/features/me/MeNotificationsView";
 import { jsonResponse } from "../../helpers/jsonResponse";
+import { seedSignedInDevice } from "../../helpers/signedInDevice";
+
+// LUM-886: this suite mounts a real AuthProvider; mark the device as already reconciled so the
+// first-sign-in wipe does not remove the view's own queries.
+beforeEach(() => {
+  seedSignedInDevice("u1");
+});
 
 describe("MeNotificationsView", () => {
   let originalFetch: typeof fetch;
@@ -306,6 +313,146 @@ describe("MeNotificationsView", () => {
     );
 
     await waitFor(() => expect(screen.getByLabelText("Consolidation done — ntfy")).toBeDisabled());
+  });
+
+  it("renders quiet hours controls seeded from the current preferences", async () => {
+    const seededPrefs = { ...samplePrefs, timezone: "Europe/Berlin", quiet_hours_start: "22:00:00", quiet_hours_end: "07:00:00" };
+    const fetchImpl = vi.fn(async (input: RequestInfo, init?: RequestInit) => {
+      const u = String(input);
+      if (u.includes("/api/v1/auth/me")) return jsonResponse(200, user);
+      if (u.includes("/api/v1/notifications/vapid-public-key")) {
+        return jsonResponse(503, { detail: { error: "webpush_not_configured" } });
+      }
+      if (/\/api\/v1\/notifications\/subscriptions$/.test(u)) return jsonResponse(200, { subscriptions: [] });
+      if (u.includes("/api/v1/me/notification-preferences") && init?.method !== "PATCH") {
+        return jsonResponse(200, seededPrefs);
+      }
+      if (u.includes("/api/v1/me/notifications")) return jsonResponse(200, samplePayload);
+      return jsonResponse(404, {});
+    });
+    const store = new AccessTokenStore();
+    const client = new ApiClient({ tokens: store, fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    render(
+      <AuthProvider client={client} tokens={store} skipRefreshOnMount>
+        <MeNotificationsView />
+      </AuthProvider>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Quiet hours timezone")).toHaveValue("Europe/Berlin"),
+    );
+    expect(screen.getByLabelText("Quiet hours start")).toHaveValue("22:00");
+    expect(screen.getByLabelText("Quiet hours end")).toHaveValue("07:00");
+    expect(screen.getByRole("button", { name: "Clear quiet hours" })).toBeInTheDocument();
+  });
+
+  it("does not show a clear button when no quiet-hours window is set", async () => {
+    const fetchImpl = mockFetch(async (input: RequestInfo) => {
+      const u = String(input);
+      if (u.includes("/api/v1/me/notifications")) return jsonResponse(200, samplePayload);
+      return jsonResponse(404, {});
+    });
+    const store = new AccessTokenStore();
+    const client = new ApiClient({ tokens: store, fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    render(
+      <AuthProvider client={client} tokens={store} skipRefreshOnMount>
+        <MeNotificationsView />
+      </AuthProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByLabelText("Quiet hours timezone")).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Clear quiet hours" })).toBeNull();
+  });
+
+  it("changing the timezone PATCHes immediately", async () => {
+    let patchedBody: unknown = null;
+    const fetchImpl = mockFetch(async (input: RequestInfo, init?: RequestInit) => {
+      const u = String(input);
+      if (u.includes("/api/v1/me/notifications")) return jsonResponse(200, samplePayload);
+      if (u.includes("/api/v1/me/notification-preferences") && init?.method === "PATCH") {
+        patchedBody = JSON.parse(String(init.body));
+        return jsonResponse(200, { ...samplePrefs, timezone: "Asia/Tokyo" });
+      }
+      return jsonResponse(404, {});
+    });
+    const store = new AccessTokenStore();
+    const client = new ApiClient({ tokens: store, fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    render(
+      <AuthProvider client={client} tokens={store} skipRefreshOnMount>
+        <MeNotificationsView />
+      </AuthProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByLabelText("Quiet hours timezone")).toBeInTheDocument());
+    fireEvent.change(screen.getByLabelText("Quiet hours timezone"), {
+      target: { value: "Asia/Tokyo" },
+    });
+    await waitFor(() => expect(patchedBody).toEqual({ timezone: "Asia/Tokyo" }));
+  });
+
+  it("blurring the quiet-hours start time PATCHes the new value", async () => {
+    let patchedBody: unknown = null;
+    const fetchImpl = mockFetch(async (input: RequestInfo, init?: RequestInit) => {
+      const u = String(input);
+      if (u.includes("/api/v1/me/notifications")) return jsonResponse(200, samplePayload);
+      if (u.includes("/api/v1/me/notification-preferences") && init?.method === "PATCH") {
+        patchedBody = JSON.parse(String(init.body));
+        return jsonResponse(200, { ...samplePrefs, quiet_hours_start: "22:00:00" });
+      }
+      return jsonResponse(404, {});
+    });
+    const store = new AccessTokenStore();
+    const client = new ApiClient({ tokens: store, fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    render(
+      <AuthProvider client={client} tokens={store} skipRefreshOnMount>
+        <MeNotificationsView />
+      </AuthProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByLabelText("Quiet hours start")).toBeInTheDocument());
+    fireEvent.change(screen.getByLabelText("Quiet hours start"), { target: { value: "22:00" } });
+    fireEvent.blur(screen.getByLabelText("Quiet hours start"));
+    await waitFor(() => expect(patchedBody).toEqual({ quiet_hours_start: "22:00" }));
+  });
+
+  it("clicking Clear quiet hours clears both start and end", async () => {
+    const seededPrefs = { ...samplePrefs, quiet_hours_start: "22:00:00", quiet_hours_end: "07:00:00" };
+    let patchedBody: unknown = null;
+    const fetchImpl = vi.fn(async (input: RequestInfo, init?: RequestInit) => {
+      const u = String(input);
+      if (u.includes("/api/v1/auth/me")) return jsonResponse(200, user);
+      if (u.includes("/api/v1/notifications/vapid-public-key")) {
+        return jsonResponse(503, { detail: { error: "webpush_not_configured" } });
+      }
+      if (/\/api\/v1\/notifications\/subscriptions$/.test(u)) return jsonResponse(200, { subscriptions: [] });
+      if (u.includes("/api/v1/me/notification-preferences") && init?.method === "PATCH") {
+        patchedBody = JSON.parse(String(init.body));
+        return jsonResponse(200, samplePrefs);
+      }
+      if (u.includes("/api/v1/me/notification-preferences")) return jsonResponse(200, seededPrefs);
+      if (u.includes("/api/v1/me/notifications")) return jsonResponse(200, samplePayload);
+      return jsonResponse(404, {});
+    });
+    const store = new AccessTokenStore();
+    const client = new ApiClient({ tokens: store, fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    render(
+      <AuthProvider client={client} tokens={store} skipRefreshOnMount>
+        <MeNotificationsView />
+      </AuthProvider>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Clear quiet hours" })).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Clear quiet hours" }));
+    await waitFor(() =>
+      expect(patchedBody).toEqual({ quiet_hours_start: null, quiet_hours_end: null }),
+    );
   });
 
   it("renders error state on API failure", async () => {

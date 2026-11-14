@@ -31,6 +31,18 @@ make doctor
 
 See also `docs/deployment/quickstart.md` and `docs/LUMOGIS_REFERENCE_MANUAL.md`.
 
+## Client IP behind Caddy (`caddy-gateway`, `caddy-trusted-proxies`; LUM-901)
+
+Two **network** rows help operators behind Tailscale Serve, Cloudflare Tunnel or a host proxy keep per-device login rate limits (`docs/deployment/remote-access.md`, ADR 246 / ADR 253):
+
+- **`caddy-gateway`** — the compose gateway, read with `docker compose exec -T caddy ip route show default` (the address after `via` on the `default` line; BusyBox also prints the subnet line). **`skipped`** when Caddy is not running or the route cannot be read.
+- **`caddy-trusted-proxies`** — the configured `LUMOGIS_CADDY_TRUSTED_PROXIES` (from `docker compose config`, so `.env` as Caddy will see it on its next start; default `127.0.0.1/32`):
+  - **`error`** when Caddy would refuse the value (a comma, a typo): parsed host-side first, so this works while Caddy is down; when Caddy runs, also `caddy validate` with the value passed as `-e`.
+  - **`warn`** when the value no longer includes the current gateway (stale after `down` / `up`), or when it trusts the gateway on Docker Desktop (`docker info` operating system), where every LAN client arrives through it.
+  - **`ok`** otherwise; with the default value the message names the `/32` to set behind a host proxy.
+
+Read-only: `docker compose exec` into a running Caddy only, never `run` or a restart. Not checked: whether a running Caddy still has an older value than `.env`.
+
 ## When the orchestrator is up: `make doctor` vs **`GET /admin/health`**
 
 **`make doctor`** (this tree) is intentionally **host-side**: it does **not** import the orchestrator and is meant to answer *“is Compose / disk / published ports sane?”* **even when the Python app is down**.

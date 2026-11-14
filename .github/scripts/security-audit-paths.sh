@@ -48,7 +48,7 @@ matches_path() {
   if [[ "$file" == "clients/lumogis-web/package.json" ]] || [[ "$file" == "clients/lumogis-web/package-lock.json" ]]; then
     return 0
   fi
-  if [[ "$file" == "scripts/audit_local.sh" ]] || [[ "$file" == "scripts/requirements-security-audit.txt" ]]; then
+  if [[ "$file" == "scripts/audit_local.sh" ]] || [[ "$file" == "scripts/npm_audit_allowlist.py" ]] || [[ "$file" == "scripts/requirements-security-audit.txt" ]] || [[ "$file" == "scripts/requirements-security-audit.in" ]]; then
     return 0
   fi
   if [[ "$file" == "Makefile" ]] || [[ "$file" == ".github/workflows/ci.yml" ]] || [[ "$file" == ".github/scripts/security-audit-paths.sh" ]]; then

@@ -21,7 +21,11 @@ RUN npm run codegen
 
 RUN npm run build
 
-FROM nginx:alpine
+# Runs as uid 101 (LUM-887). `listen 80` is kept: Docker sets
+# net.ipv4.ip_unprivileged_port_start=0 inside the container (verified on Docker
+# 29.9.2). If a runtime refuses, move to 8080 together with the Caddyfile
+# (lumogis-web:80), `expose` and the compose healthcheck.
+FROM nginxinc/nginx-unprivileged:1.31-alpine
 COPY --from=build /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80

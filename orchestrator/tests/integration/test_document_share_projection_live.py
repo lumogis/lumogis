@@ -30,12 +30,11 @@ import uuid
 import pytest
 from auth import UserContext
 from services.document_purge import purge_document
+from tests.integration._pgguard import require_postgres
 from visibility import visible_qdrant_filter
 
 import config
 from services import projection
-
-pytestmark = pytest.mark.integration
 
 COLLECTION = "documents"
 
@@ -80,7 +79,7 @@ def live_stores(monkeypatch):
             vs.create_collection(COLLECTION, _vector_dim())
             vs.count(COLLECTION)
     except Exception as exc:  # pragma: no cover - env-dependent
-        pytest.skip(f"real stack not reachable: {exc}")
+        require_postgres(exc, what="Postgres/Qdrant")
 
     monkeypatch.setitem(config._instances, "vector_store", vs)
     monkeypatch.setitem(config._instances, "metadata_store", ms)

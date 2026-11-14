@@ -10,13 +10,13 @@ import {VitePWA} from "vite-plugin-pwa";
 const pkgPath = fileURLToPath(new URL("./package.json", import.meta.url));
 const pkgJson = JSON.parse(readFileSync(pkgPath, "utf8")) as {version: string};
 
-// In dev, Vite proxies orchestrator paths to http://localhost:8000 so the SPA
+// In dev, Vite proxies orchestrator paths to http://127.0.0.1:8000 so the SPA
 // can reach `/api/v1/*`, `/events`, `/v1/*`, `/mcp`, and legacy root JSON
 // routes same-origin without CORS.
 // In production, Caddy terminates same-origin routing per docker/caddy/Caddyfile.
 export default defineConfig(({mode}) => {
   const env = loadEnv(mode, process.cwd(), "");
-  const orchestrator = env.LUMOGIS_DEV_ORCHESTRATOR_URL || "http://localhost:8000";
+  const orchestrator = env.LUMOGIS_DEV_ORCHESTRATOR_URL || "http://127.0.0.1:8000";
 
   return {
     plugins: [
@@ -62,6 +62,7 @@ export default defineConfig(({mode}) => {
         "/routines": {target: orchestrator, changeOrigin: false},
         "/signals": {target: orchestrator, changeOrigin: false},
         "/sources": {target: orchestrator, changeOrigin: false},
+        "/me/email-sources": {target: orchestrator, changeOrigin: false},
         "/feedback": {target: orchestrator, changeOrigin: false},
         "/capabilities": {target: orchestrator, changeOrigin: false},
         "/dashboard": {target: orchestrator, changeOrigin: false},

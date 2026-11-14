@@ -129,6 +129,7 @@ run_checks() {
   bash "$SCRIPT_DIR/checks/models.sh" >>"$out"
   bash "$SCRIPT_DIR/checks/storage.sh" >>"$out"
   bash "$SCRIPT_DIR/checks/network.sh" >>"$out"
+  bash "$SCRIPT_DIR/checks/client-ip.sh" >>"$out"
   bash "$SCRIPT_DIR/checks/security.sh" >>"$out"
 }
 

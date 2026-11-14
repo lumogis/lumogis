@@ -1577,11 +1577,7 @@ async function finishRestartSuccessFlow(statusEl) {
 
     if (statusEl) statusEl.textContent = 'Indexing files under new root\u2026';
     try {
-      await fetch('/ingest', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: '/data' }),
-      });
+      await fetch('/ingest', { method: 'POST' });
     } catch (_) {}
   }
 

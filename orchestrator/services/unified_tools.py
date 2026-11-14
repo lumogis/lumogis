@@ -133,7 +133,7 @@ def _classify_inprocess_spec(
 
 
 def _resolve_query_graph_proxy_handler() -> Any:
-    """Return service-mode proxy handler when premium module ships; else None."""
+    """Return service-mode proxy handler when the optional KG module ships; else None."""
     try:
         from services import kg_premium_core as kgpc
 

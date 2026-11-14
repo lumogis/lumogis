@@ -421,6 +421,32 @@ class TestDecidePromote:
 
         assert audit, "review_decisions not inserted on promote"
 
+    def test_promote_resets_edge_reconcile_attempts(self, client):
+        """LUM-599: promotion gives the entity's spent typed edges new retries."""
+        resets = []
+        ms = MagicMock()
+        ms.fetch_one.return_value = {"entity_id": ENTITY_ID}
+
+        def _exec(sql, params=None):
+            if "UPDATE entity_edges SET reconcile_attempts = 0" in (sql or ""):
+                resets.append(params)
+
+        ms.execute.side_effect = _exec
+
+        with patch("routes.admin.config.get_metadata_store", return_value=ms):
+            resp = client.post(
+                "/review-queue/decide",
+                json={
+                    "item_type": "staged_entity",
+                    "item_id": ENTITY_ID,
+                    "action": "promote",
+                },
+            )
+
+        assert resp.status_code == 200
+        assert len(resets) == 1
+        assert resets[0][1:] == (ENTITY_ID, ENTITY_ID)
+
 
 # ---------------------------------------------------------------------------
 # 8. POST /review-queue/decide — distinct
@@ -685,7 +711,15 @@ def auth_app(monkeypatch):
 
 
 @pytest.fixture
-def auth_client(auth_app):
+def auth_client(auth_app, monkeypatch):
+    # The middleware's throttled ``last_seen_at`` touch (LUM-334) writes through the
+    # same patched metadata store on a background thread. Whether it lands inside a
+    # test depends on the throttle state earlier tests left behind, so the
+    # "no DB writes" assertions below failed by test order. They are about the
+    # route's own writes, so the touch is switched off here.
+    import auth
+
+    monkeypatch.setattr(auth, "_maybe_touch_last_seen", lambda user_id: None)
     return TestClient(auth_app, raise_server_exceptions=False)
 
 

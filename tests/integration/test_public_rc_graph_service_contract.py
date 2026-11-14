@@ -10,6 +10,8 @@ import uuid
 import httpx
 import pytest
 
+from _reachability import skip_unless_reachable
+
 pytestmark = pytest.mark.integration
 
 
@@ -32,6 +34,7 @@ def _graph_query_envelope(arguments: dict) -> dict:
 @pytest.mark.public_rc
 def test_graph_service_health_contract():
     url = os.environ.get("LUMOGIS_GRAPH_HEALTH_URL", "http://127.0.0.1:18001/health").strip()
+    skip_unless_reachable(url, what="lumogis-graph")
     with httpx.Client(timeout=30.0) as c:
         r = c.get(url)
     assert r.status_code == 200
@@ -46,6 +49,7 @@ def test_graph_service_health_contract():
 @pytest.mark.public_rc
 def test_graph_capabilities_v1_manifest():
     base = _graph_base_url()
+    skip_unless_reachable(f"{base}/capabilities", what="lumogis-graph")
     with httpx.Client(timeout=30.0) as c:
         r = c.get(f"{base}/capabilities")
     assert r.status_code == 200
@@ -75,6 +79,7 @@ def _graph_auth_headers() -> dict[str, str]:
 def test_graph_query_graph_v1_invoke_envelope():
     """Live KG invoke returns the v1 response envelope (ok+output or ok+error)."""
     base = _graph_base_url()
+    skip_unless_reachable(f"{base}/health", what="lumogis-graph")
     with httpx.Client(timeout=30.0) as c:
         r = c.post(
             f"{base}/tools/query_graph",

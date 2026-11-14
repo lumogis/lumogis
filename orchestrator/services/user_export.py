@@ -133,6 +133,49 @@ _USER_EXPORT_TABLES: tuple[str, ...] = (
     "notification_user_settings",
     # Privacy mode per-user restriction (LUM-194); no scope column.
     "privacy_user_settings",
+    # Email taxonomy + rules (LUM-629) — user-editable classification config,
+    # composite PK (user_id, slug/rule_id), no scope column → user_id-only.
+    "email_category_taxonomy",
+    "email_classification_rule",
+    # Organize (label/move) history (migration 060) and outbound-send audit
+    # (migration 062) — portable per-user content, no scope column.
+    "email_organize_log",
+    "email_sent_log",
+    # LUM-819 — the extracted message text behind email search. Exported, not
+    # omitted: this is the user's own mail, and it is the one table in the
+    # email family that holds message CONTENT rather than metadata about it.
+    # `email_body_text_dead` is deliberately NOT here — it records which
+    # messages could not be re-fetched, which is operational state about the
+    # backfill, not user content.
+    "email_body_text",
+    # LUM-820 — bounces. Exported because "this message you sent did not
+    # arrive" is a fact about the user's own correspondence, not operational
+    # telemetry: an export missing it would hand back a sent-log that overstates
+    # what was actually delivered.
+    "email_bounce",
+    # LUM-697 — a subscription list and suppression rules are genuinely the
+    # user's own data and should leave with them.
+    "email_unsubscribe_target",
+    "email_sender_rule",
+    # LUM-695 — attachment METADATA (filename/mime/size/part_index) is portable
+    # user content and travels with the signals it annotates. The attachment
+    # BYTES are never stored, so there is nothing else to carry; the staging
+    # index exports its rows too, but the on-disk blobs are deliberately not in
+    # the archive (they are transient pre-send scratch, swept by proposal state).
+    "email_attachment",
+    "email_attachment_staged",
+    # LUM-702 — which email each auto-filed document came from, and how to take
+    # it back. Provenance is user-owned content: without it an exported library
+    # carries documents whose origin is unexplainable.
+    "email_attachment_ingest_log",
+    # LUM-727 — the user's own filing rules are user-owned configuration and
+    # travel with the ledger they act on.
+    "email_attachment_rule",
+    # Per-(user, signal) triage state (LUM-643) — durable, portable user-owned
+    # decisions (needs-you / good-to-know / snoozed / done); composite PK
+    # (user_id, signal_id), no scope column → user_id-only. FK targets (signals)
+    # are exported alongside.
+    "signal_triage",
 )
 
 # Tables with a `user_id` column that are deliberately omitted from
@@ -163,6 +206,11 @@ _OMITTED_USER_TABLES: dict[str, str] = {
     "user_connector_credentials": "excluded (sensitive, non-portable in standard export)",
     "user_batch_jobs": "excluded (operational queue state, non-portable)",
     "action_proposals": "excluded (Ask/Do proposal queue; operational, non-portable)",
+    # Bulk-cleanup job state (migration 061) — pending/backfilling/executing
+    # state machine tied to this instance's live IMAP walk cursors, not
+    # meaningful portable content. The organize log (undo-able outcomes it
+    # produces) is exported; the job bookkeeping that drove it is not.
+    "email_cleanup_job": "excluded (operational cleanup job state, non-portable)",
     # Web Push subscription rows are per-user *device handles* —
     # endpoint URLs minted by the recipient's browser/push service
     # against this Lumogis origin. Replaying them at a destination
@@ -192,6 +240,15 @@ _OMITTED_USER_TABLES: dict[str, str] = {
     # Document hard-delete tombstones (LUM-500) — same contract as conversations.
     "purged_documents": (
         "excluded (document purge tombstone bookkeeping; source-instance coordination)"
+    ),
+    # Forgot-password tokens (LUM-65) — same contract as ``mcp_tokens``: rows
+    # hold the SHA-256 of a live bearer credential. Exporting the hashes would
+    # move redeemable-adjacent material into a portable archive, and exporting
+    # the metadata without them would be dead state at the destination, since
+    # the plaintext only ever existed in one email. Rows are 30-minute-lived
+    # and single-use; a user who needs one at the destination asks for a new one.
+    "password_reset_tokens": (
+        "excluded (short-lived single-use credential hashes; not portable content)"
     ),
 }
 
@@ -1624,6 +1681,14 @@ def _import_user_impl(
                 )
 
             # Mint user + bulk insert in a single transaction.
+            #
+            # This block holds a **pooled** connection (LUM-816) for its whole
+            # duration, and that duration is not short: it reads zip entries and
+            # `create_user` runs an argon2 hash, deliberately expensive. That is
+            # accepted rather than overlooked — an admin runs one import at a
+            # time, so it occupies 1 of `LUMOGIS_PG_POOL_MAX` (10) connections
+            # and cannot starve the request path. Splitting it would trade that
+            # for a half-imported account on any failure, which is worse.
             try:
                 with meta.transaction():
                     try:

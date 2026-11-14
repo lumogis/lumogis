@@ -1,2 +1,5 @@
 # Shell scripts must use LF so Linux containers execute shebangs correctly on Windows checkouts.
 *.sh text eol=lf
+# Vendored third-party files: byte-exact (SRI and SHA-256 pins), never line-ending converted (LUM-941).
+orchestrator/static/vendor/** -text -diff linguist-vendored
+services/lumogis-graph/static/vendor/** -text -diff linguist-vendored

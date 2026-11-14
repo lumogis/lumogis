@@ -135,7 +135,7 @@ export function AdminSearchSettingsView(): JSX.Element {
       </p>
 
       <fieldset style={{ border: "none", padding: 0, marginTop: "1rem" }}>
-        <legend className="sr-only">Reranking mode</legend>
+        <legend className="lumogis-visually-hidden">Reranking mode</legend>
         <label style={{ display: "block", marginBottom: "0.5rem" }}>
           <input
             type="radio"

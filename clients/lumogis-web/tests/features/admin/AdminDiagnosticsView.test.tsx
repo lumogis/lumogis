@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Lumogis
 // Admin diagnostics — GET /api/v1/admin/diagnostics (read-only).
+//
+// Playwright is deliberately not used for the Background model tasks table (LUM-877):
+// it renders server-computed resolution, and asserting it in a browser would re-test
+// Python logic through the DOM. Vitest covers rendering; the backend tests
+// (test_api_v1_admin_diagnostics.py T-D*) cover the computation.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
@@ -8,8 +13,10 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { ApiClient } from "../../../src/api/client";
 import { AccessTokenStore } from "../../../src/api/tokens";
 import { AuthProvider } from "../../../src/auth/AuthProvider";
+import type { AdminDiagnosticsTask } from "../../../src/api/adminDiagnostics";
 import { AdminDiagnosticsView } from "../../../src/features/admin/AdminDiagnosticsView";
 import { jsonResponse } from "../../helpers/jsonResponse";
+import { seedSignedInDevice } from "../../helpers/signedInDevice";
 
 const adminUser = { id: "admin1", email: "a@home.lan", role: "admin" as const };
 
@@ -85,6 +92,9 @@ describe("AdminDiagnosticsView", () => {
 
   beforeEach(() => {
     originalFetch = globalThis.fetch;
+    // LUM-886: a real AuthProvider is mounted; mark the device as already reconciled so
+    // the first-sign-in wipe does not remove the view's own queries.
+    seedSignedInDevice(adminUser.id);
   });
 
   afterEach(() => {
@@ -205,5 +215,137 @@ describe("AdminDiagnosticsView", () => {
 
     await screen.findByLabelText(/Overall status: ok/);
     expect(screen.getByRole("status")).toHaveTextContent(/Tool and permission sanity slice not present/i);
+  });
+  // --- LUM-877: Background model tasks ---------------------------------------
+
+  function task(over: Partial<AdminDiagnosticsTask>): AdminDiagnosticsTask {
+    return {
+      task: "session_summary",
+      description: "Summarises a finished chat session.",
+      local_only: false,
+      needs_tools: false,
+      threads_user_id: true,
+      destructive: false,
+      configured: [],
+      default_model: "llama",
+      resolved_model: "llama",
+      resolved_from: "default",
+      default_skip_reason: null,
+      ...over,
+    };
+  }
+
+  async function renderWith(payload: unknown) {
+    const fetchImpl = vi.fn(async (input: RequestInfo) => {
+      const u = String(input);
+      if (u.includes("/api/v1/auth/me")) return jsonResponse(200, adminUser);
+      if (u.includes("/api/v1/admin/diagnostics") && !u.includes("fingerprint")) {
+        return jsonResponse(200, payload);
+      }
+      if (u.includes("credential-key-fingerprint")) {
+        return jsonResponse(200, {
+          current_key_version: 1,
+          rows_by_key_version: { user: {}, household: {}, system: {} },
+        });
+      }
+      return jsonResponse(404, {});
+    });
+    const store = new AccessTokenStore();
+    const client = new ApiClient({ tokens: store, fetchImpl: fetchImpl as unknown as typeof fetch });
+    render(
+      <AuthProvider client={client} tokens={store} skipRefreshOnMount>
+        <AdminDiagnosticsView />
+      </AuthProvider>,
+    );
+    await screen.findByLabelText(/Overall status: ok/);
+  }
+
+  it("renders one row per background task with (default) on default rows", async () => {
+    await renderWith({
+      ...diagPayload(),
+      tasks: [
+        task({ task: "session_summary" }),
+        task({ task: "relation_extraction", description: "Finds relations." }),
+      ],
+    });
+    expect(screen.getByRole("heading", { name: "Background model tasks" })).toBeInTheDocument();
+    expect(screen.getByText("session_summary")).toBeInTheDocument();
+    expect(screen.getByText("relation_extraction")).toBeInTheDocument();
+    expect(screen.getAllByText("llama (default)")).toHaveLength(2);
+  });
+
+  it("renders plain skip labels for configured entries", async () => {
+    await renderWith({
+      ...diagPayload(),
+      tasks: [
+        task({
+          task: "email_classify",
+          local_only: true,
+          configured: [
+            { model: "claude", skip_reason: "not_on_box" },
+            { model: "gpt", skip_reason: "no_credentials" },
+            { model: "grok", skip_reason: "privacy_mode" },
+            { model: "llama", skip_reason: null },
+          ],
+          resolved_model: "llama",
+          resolved_from: "list",
+        }),
+      ],
+    });
+    expect(screen.getByText(/not on this network/)).toBeInTheDocument();
+    expect(screen.getByText(/no key/)).toBeInTheDocument();
+    expect(screen.getByText(/blocked by privacy mode/)).toBeInTheDocument();
+    expect(screen.getByText("On-box only")).toBeInTheDocument();
+  });
+
+  it("renders Skipped when an on-box-only task has no usable model", async () => {
+    await renderWith({
+      ...diagPayload(),
+      tasks: [task({ task: "email_reply_draft", local_only: true, resolved_model: null })],
+    });
+    expect(screen.getByText("Skipped (no on-box model)")).toBeInTheDocument();
+  });
+
+  it("omits the section when tasks is absent (older Core) and still renders the page", async () => {
+    await renderWith(diagPayload());
+    expect(screen.queryByRole("heading", { name: "Background model tasks" })).toBeNull();
+    expect(screen.getByLabelText(/Tool catalog total: 10/)).toBeInTheDocument();
+  });
+
+  it("says a default is not configured when it will fail downstream", async () => {
+    await renderWith({
+      ...diagPayload(),
+      tasks: [
+        task({
+          task: "temporal_judge",
+          destructive: true,
+          default_model: "llama3.1:8b",
+          resolved_model: "llama3.1:8b",
+          default_skip_reason: "unknown",
+        }),
+        task({ task: "session_summary" }),
+      ],
+    });
+    expect(screen.getByText("llama3.1:8b (default — not configured)")).toBeInTheDocument();
+    expect(screen.getByText("llama (default)")).toBeInTheDocument();
+  });
+
+  it("labels the column for the viewer, shows the caption and the first-entry chip", async () => {
+    await renderWith({
+      ...diagPayload(),
+      tasks: [
+        task({
+          task: "temporal_judge",
+          destructive: true,
+          configured: [{ model: "claude", skip_reason: "privacy_mode" }],
+          resolved_model: "claude",
+          resolved_from: "list",
+        }),
+      ],
+    });
+    expect(screen.getByRole("columnheader", { name: "Uses now (for you)" })).toBeInTheDocument();
+    expect(screen.getByText(/This is not a health check/)).toBeInTheDocument();
+    expect(screen.getByText("First entry only")).toBeInTheDocument();
+    expect(screen.getByText("claude — blocked by privacy mode")).toBeInTheDocument();
   });
 });

@@ -28,12 +28,11 @@ import hooks
 import pytest
 from auth import UserContext
 from events import Event
+from tests.integration._pgguard import require_postgres
 
 import config
 from services import document_entity_cascade as cascade
 from services import shared_items as shared_items_svc
-
-pytestmark = pytest.mark.integration
 
 ENTITIES = "entities"
 
@@ -83,7 +82,7 @@ def _live_stack_or_skip(monkeypatch):
         if gs is None or not gs.ping():
             raise RuntimeError("FalkorDB graph store unavailable")
     except Exception as exc:  # pragma: no cover - env-dependent
-        pytest.skip(f"live stack not reachable: {exc}")
+        require_postgres(exc, what="Postgres/Qdrant/FalkorDB")
 
     monkeypatch.setitem(config._instances, "vector_store", vs)
     monkeypatch.setitem(config._instances, "metadata_store", ms)
@@ -123,10 +122,14 @@ def _relate_to_document(ms, owner: str, entity_id: str, file_path: str) -> None:
 
 
 def _seed_personal_graph_pair(gs, *, e1: str, e2: str, user_id: str) -> None:
-    """Personal RELATES_TO edge with co_occurrence_count at the query threshold."""
+    """Personal RELATES_TO edge with co_occurrence_count at the query threshold.
+
+    LUM-961: the seeds carry ``scope = 'personal'`` like the real writer's nodes;
+    the sweep selects personal nodes by it and ignores unscoped ones.
+    """
     gs.query(
-        "MERGE (a:Person {lumogis_id: $e1, user_id: $u}) "
-        "MERGE (b:Person {lumogis_id: $e2, user_id: $u}) "
+        "MERGE (a:Person {lumogis_id: $e1, user_id: $u}) SET a.scope = 'personal' "
+        "MERGE (b:Person {lumogis_id: $e2, user_id: $u}) SET b.scope = 'personal' "
         "MERGE (a)-[r:RELATES_TO {user_id: $u}]->(b) "
         "SET r.co_occurrence_count = 3, r.evidence_id = $ev "
         "RETURN id(r) AS rid",
@@ -177,7 +180,7 @@ def test_publish_doc_projects_entities_to_shared_graph(live_graph_e2e):
         # Negative: member B cannot resolve the entity before the document is shared.
         pre = json.loads(
             graph_query.query_graph_tool(
-                {"mode": "ego", "entity": name_a, "user_id": member, "limit": 10}
+                {"mode": "ego", "entity": name_a, "limit": 10}, user_id=member
             )
         )
         assert pre.get("found") is False, "member B saw owner's entity before share"
@@ -199,7 +202,7 @@ def test_publish_doc_projects_entities_to_shared_graph(live_graph_e2e):
 
         post = json.loads(
             graph_query.query_graph_tool(
-                {"mode": "ego", "entity": name_a, "user_id": member, "limit": 10}
+                {"mode": "ego", "entity": name_a, "limit": 10}, user_id=member
             )
         )
         assert post.get("found") is True, post

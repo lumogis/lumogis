@@ -19,7 +19,6 @@ Degradation contract (plan §Error handling):
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import Optional
 
 from auth import get_user
@@ -88,7 +87,12 @@ def search(
         file_path = str(getattr(r, "file_path", meta.get("file_path", meta.get("id", ""))))
         title = meta.get("title")
         if not title and file_path:
-            title = Path(file_path).name or None
+            # LUM-724: the THIRD renderer that derives a name from the path, and
+            # the one two review rounds missed. `Path(...).name` on
+            # `paperless://{src}/documents/42` is `42`.
+            from services.documents import display_name_for_path
+
+            title = display_name_for_path(user_id, file_path) or None
         hits.append(
             MemorySearchHit(
                 id=file_path,

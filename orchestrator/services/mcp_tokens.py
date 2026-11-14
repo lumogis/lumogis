@@ -339,6 +339,13 @@ def verify(presented: str) -> InternalMcpToken | None:
         prefix lookup             → no row, return None
         SHA-256 + compare_digest  → mismatch, log WARNING (without the
                                     bearer) and return None
+        owner check (LUM-885)     → owner row missing or disabled, return
+                                    None (backstop for a delete / disable
+                                    that skipped the cascade). In
+                                    single-user mode (``AUTH_ENABLED=false``)
+                                    a token owned by the synthetic
+                                    ``default`` user has no ``users`` row
+                                    and is accepted
         hit                       → schedule throttled stamp, return row
     """
     if not isinstance(presented, str) or not presented.startswith(_TOKEN_PREFIX_TAG):
@@ -351,7 +358,9 @@ def verify(presented: str) -> InternalMcpToken | None:
     ms = config.get_metadata_store()
     try:
         row = ms.fetch_one(
-            "SELECT * FROM mcp_tokens WHERE token_prefix = %s AND revoked_at IS NULL",
+            "SELECT t.*, u.id AS owner_id, u.disabled AS owner_disabled "
+            "FROM mcp_tokens t LEFT JOIN users u ON u.id = t.user_id "
+            "WHERE t.token_prefix = %s AND t.revoked_at IS NULL",
             (token_prefix,),
         )
     except Exception:
@@ -374,6 +383,24 @@ def verify(presented: str) -> InternalMcpToken | None:
             "mcp_token prefix hit with hash mismatch — possible token leak / typo; token_id=%s",
             row["id"],
         )
+        return None
+
+    # LUM-885 owner check. ``owner_id`` / ``owner_disabled`` come from the LEFT
+    # JOIN on ``users``; pop them so they never reach ``_row_to_internal``.
+    row = dict(row)
+    owner_id = row.pop("owner_id", None)
+    owner_disabled = row.pop("owner_disabled", None)
+    if owner_id is None:
+        # Single-user mode mints tokens for the synthetic ``default`` user,
+        # which has no ``users`` row. Everywhere else a missing owner means
+        # the account was deleted: reject.
+        from auth import auth_enabled
+
+        if auth_enabled() or row["user_id"] != "default":
+            _log.info("mcp_token verify: owner missing; token_id=%s", row["id"])
+            return None
+    elif owner_disabled:
+        _log.info("mcp_token verify: owner disabled; token_id=%s", row["id"])
         return None
 
     token = _row_to_internal(row)

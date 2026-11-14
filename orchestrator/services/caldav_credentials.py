@@ -55,6 +55,7 @@ from connectors.registry import CALDAV
 from services.outbound_http_url import validate_outbound_connector_base_url
 
 from services import connector_credentials as ccs
+from services import credential_tiers
 
 _PAYLOAD_KEYS: tuple[str, str, str] = ("base_url", "username", "password")
 """Wire contract for the encrypted CalDAV payload (v1).
@@ -87,35 +88,68 @@ class CaldavConnection:
 def load_connection(user_id: str) -> CaldavConnection:
     """Return the CalDAV connection params for ``user_id``.
 
+    Walks ``user → household → system`` via
+    :func:`services.credential_tiers.resolve_runtime_credential` (LUM-24),
+    then falls back to the legacy env vars under ``AUTH_ENABLED=false``.
+
+    Before LUM-24 this consulted the per-user tier only, so a household
+    CalDAV credential written through
+    ``PUT /api/v1/admin/connector-credentials/household/caldav`` resolved
+    correctly in the resolver and was then ignored here. The env tier
+    stays inline rather than using the resolver's ``fallback_env``: that
+    helper yields the single-value ``{"value": ...}`` shape, which cannot
+    carry ``CALENDAR_CALDAV_URL`` + ``CALENDAR_USERNAME`` +
+    ``CALENDAR_PASSWORD``.
+
     Raises:
         ConnectorNotConfigured: under ``AUTH_ENABLED=true`` when no
-            row exists, or under ``AUTH_ENABLED=false`` when no row
-            exists and ``CALENDAR_CALDAV_URL`` env is empty.
+            row exists at any tier, or under ``AUTH_ENABLED=false``
+            when no row exists and ``CALENDAR_CALDAV_URL`` env is empty.
         CredentialUnavailable: payload is structurally wrong
             (non-dict, missing key, non-string field), or propagated
-            from :func:`services.connector_credentials.get_payload`
-            on decrypt failure.
+            from the tier services on decrypt failure.
         ValueError: payload structurally fine but a required string
             is empty, or ``base_url`` fails the D11 URL-shape rule
             (scheme allowlist + non-empty netloc + no whitespace).
     """
-    payload = ccs.get_payload(user_id, CALDAV)
+    try:
+        resolved = credential_tiers.resolve_runtime_credential(user_id, CALDAV)
+    except ccs.ConnectorNotConfigured:
+        # Nothing at any tier; the env fallback below is the last word.
+        # Decrypt failures (CredentialUnavailable) still propagate.
+        resolved = None
 
-    if payload is not None:
-        base_url, username, password = _validate_payload(payload)
+    if resolved is not None:
+        base_url, username, password = _validate_payload(resolved.payload)
         return CaldavConnection(
             base_url=base_url,
             username=username,
             password=password,
         )
 
+    # LUM-834 chunk B — a disabled user row must not reach the env fallback.
+    #
+    # Note the shape above: this loader CATCHES ConnectorNotConfigured from
+    # the resolver and treats it as "nothing at any tier", which is right for
+    # absent and wrong for disabled — the resolver's tier-1 raise would
+    # otherwise be swallowed here and the CALENDAR_* env trio used anyway
+    # under the default AUTH_ENABLED=false.
+    #
+    # Consequence worth knowing when reading logs: the disabled-specific
+    # message from the resolver is discarded by that except, so what an
+    # operator sees on this path is the message raised here.
+    if ccs.is_disabled(user_id, CALDAV):
+        raise ccs.disabled_error(CALDAV)
+
     if auth_enabled():
-        raise ccs.ConnectorNotConfigured(f"no caldav credential row for user_id={user_id!r}")
+        raise ccs.ConnectorNotConfigured(
+            f"no caldav credential row at any tier (user/household/system) for user_id={user_id!r}"
+        )
 
     env_url = os.environ.get("CALENDAR_CALDAV_URL", "")
     if not env_url:
         raise ccs.ConnectorNotConfigured(
-            f"no caldav credential row for user_id={user_id!r} and no "
+            f"no caldav credential row at any tier for user_id={user_id!r} and no "
             "CALENDAR_CALDAV_URL env fallback (AUTH_ENABLED=false)"
         )
     return CaldavConnection(

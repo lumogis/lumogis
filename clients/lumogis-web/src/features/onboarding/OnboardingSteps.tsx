@@ -12,7 +12,13 @@ export const REMOTE_ACCESS_DOC_URL =
 export interface OnboardingStepsProps {
   step: number;
   inviteOnboarding?: InviteOnboardingHintStored | null;
-  onGoToConnectors: () => void;
+  /** LUM-282: renamed from `onGoToConnectors`. The old name outlived the old
+   *  destination, and a name that points somewhere the code does not go is how
+   *  the next reader learns the wrong thing. */
+  onGoToSources: () => void;
+  /** True while the completion PATCH is in flight — the handoff button joins
+   *  the same disabled set as Back/Skip/Next/Done, so one intent is one write. */
+  busy: boolean;
 }
 
 function HouseholdStep({ allowsShared }: { allowsShared: boolean }): JSX.Element {
@@ -62,14 +68,24 @@ function AddKnowledgeStep(): JSX.Element {
   );
 }
 
-function ConnectSourcesStep({ onGoToConnectors }: { onGoToConnectors: () => void }): JSX.Element {
+function ConnectSourcesStep({
+  onGoToSources,
+  busy,
+}: {
+  onGoToSources: () => void;
+  busy: boolean;
+}): JSX.Element {
   return (
     <>
-      <p style={{ marginTop: 0 }}>Connect sources and capabilities in Settings.</p>
+      <p style={{ marginTop: 0 }}>Give Lumogis something to read.</p>
       <p>
-        Use <strong>Sources &amp; connectors</strong> to wire read-only feeds (for example documents)
-        and optional tools your operator has enabled. Calendar and other connectors depend on how
-        this household&apos;s Lumogis is configured.
+        <strong>Sources</strong> are the document archives, feeds and pages Lumogis watches
+        for you. If you keep scanned documents in <strong>Paperless-ngx</strong>, that is the
+        one most people start with — it takes the server address and an API token.
+      </p>
+      <p>
+        You can skip this and set it up later from <strong>Sources</strong> or{" "}
+        <strong>Connectors</strong> under Settings.
       </p>
       <p style={{ fontSize: "0.9rem", opacity: 0.9 }}>
         Need access away from home? See the{" "}
@@ -79,8 +95,12 @@ function ConnectSourcesStep({ onGoToConnectors }: { onGoToConnectors: () => void
         for Tailscale, tunnels, and similar patterns.
       </p>
       <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", marginTop: "0.75rem" }}>
-        <button type="button" onClick={onGoToConnectors}>
-          Open connectors
+        {/* The label states BOTH facts it must not lose to rewording: where it
+            goes, and that it ends the tour. This is a one-way door — onboarding
+            completion is recorded at most once and there is no un-complete —
+            so a label reading only "Open sources" would be a lie by omission. */}
+        <button type="button" onClick={onGoToSources} disabled={busy}>
+          Set up documents now — this finishes the tour
         </button>
       </div>
     </>
@@ -102,17 +122,18 @@ function DoneStep(): JSX.Element {
 export function OnboardingStepBody({
   step,
   inviteOnboarding,
-  onGoToConnectors,
+  onGoToSources,
+  busy,
 }: OnboardingStepsProps): JSX.Element {
   if (inviteOnboarding) {
     if (step === 0) return <HouseholdStep allowsShared={inviteOnboarding.allows_shared} />;
     if (step === 1) return <WelcomeStep />;
     if (step === 2) return <AddKnowledgeStep />;
-    if (step === 3) return <ConnectSourcesStep onGoToConnectors={onGoToConnectors} />;
+    if (step === 3) return <ConnectSourcesStep onGoToSources={onGoToSources} busy={busy} />;
     return <DoneStep />;
   }
   if (step === 0) return <WelcomeStep />;
   if (step === 1) return <AddKnowledgeStep />;
-  if (step === 2) return <ConnectSourcesStep onGoToConnectors={onGoToConnectors} />;
+  if (step === 2) return <ConnectSourcesStep onGoToSources={onGoToSources} busy={busy} />;
   return <DoneStep />;
 }

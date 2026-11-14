@@ -1,0 +1,115 @@
+# LUM-572 — compose e2e for the Layer-1 scoped egress guard.
+#
+# WHY THIS LANE EXISTS
+# `egress_guard.build_allowlist` composes the allowlist from the process
+# ENVIRONMENT (POSTGRES_HOST, QDRANT_URL, OLLAMA_URL, …) and from DB state (the
+# instance privacy mode). Every other test supplies that environment itself —
+# `test_egress_guard_integration.py` drives a TestClient under mock.patch — so the
+# guard's LOGIC is well covered and its INPUTS are not covered at all. A compose
+# overlay that renames a service, reshapes a URL, or fails to merge a variable
+# would silently produce an allowlist that is too narrow (blocking legitimate local
+# traffic) or too wide (silently permitting egress the guard exists to stop).
+# Neither is a logic bug, so no unit test can see it. This lane asserts the
+# allowlist a REAL container actually computes.
+#
+# WHAT THIS LANE DELIBERATELY DOES NOT DO
+# It does not boot the orchestrator HTTP server, and it does not assert a route
+# returns 503. That design was tried and rejected on review:
+#
+#   * `build_allowlist` ADDS EVERY CONFIGURED MODEL'S OWN ENDPOINT to the
+#     allowlist (egress_guard.py:447-462), so a model pointed at a "blocked" stub
+#     allowlists that stub. The guard blocks SECONDARY egress during a call — never
+#     the model's own endpoint.
+#   * `is_local_model` is a substring test for "ollama" (config.py:327-334) and a
+#     fresh Postgres defaults to LOCAL_ONLY, so a stub not URL-matching "ollama" is
+#     refused by PRIVACY POLICY before the guard ever runs — and the flag-off
+#     control is refused identically, proving nothing.
+#
+# Route wiring is already covered by unit tests. What they cannot cover is the
+# environment, which is the entire premise of LUM-572 and what this lane owns.
+#
+# The probe runs the real orchestrator IMAGE but not the server (`sleep infinity`),
+# so there is no 300s health start_period, no migrations, no auth, and no
+# ollama/stack-control dependency — just the real code against the real merged env.
+#
+# Run via `make egress-guard-test`. Requires Docker.
+
+name: lum572-egress-guard
+
+services:
+  postgres:
+    image: postgres:16.8
+    environment:
+      POSTGRES_USER: lumogis
+      POSTGRES_PASSWORD: lumogis-test
+      POSTGRES_DB: lumogis
+    volumes:
+      # build_allowlist reads the instance privacy mode from app_settings, so the
+      # schema must exist — the allowlist depends on DB state, not env alone. Same
+      # init path the base stack uses; no migrations step needed for this table.
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lumogis"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+    networks: [guard-net]
+
+  qdrant:
+    image: ${QDRANT_IMAGE:-lumogis-qdrant:v1.14.1}
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "-o", "/dev/null", "http://127.0.0.1:6333/readyz"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+    networks: [guard-net]
+
+  # The off-allowlist host. Reachable on this network and named by NOTHING that
+  # build_allowlist reads — so it is absent from the allowlist for the only reason
+  # that matters. Its reachability is asserted by the test (a connect from OUTSIDE
+  # the guarded scope must succeed), because a block against an UNREACHABLE host
+  # would pass just as well with the guard disabled.
+  stub-offlist:
+    image: python:3.11-slim
+    command:
+      - python
+      - -c
+      - |
+        import socketserver
+        class H(socketserver.BaseRequestHandler):
+            def handle(self): self.request.sendall(b"ok\n")
+        socketserver.TCPServer.allow_reuse_address = True
+        socketserver.TCPServer(("0.0.0.0", 8080), H).serve_forever()
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket;socket.create_connection(('127.0.0.1',8080),3).close()"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+    networks: [guard-net]
+
+  # The real orchestrator image, real merged environment, no server.
+  guard-probe:
+    image: ${ORCHESTRATOR_IMAGE:-lumogis-orchestrator:latest}
+    entrypoint: ["sleep", "infinity"]
+    environment:
+      # These are the values under test: the allowlist must be derived from THESE,
+      # exactly as a deployment would set them.
+      POSTGRES_HOST: postgres
+      POSTGRES_USER: lumogis
+      POSTGRES_PASSWORD: lumogis-test
+      POSTGRES_DB: lumogis
+      QDRANT_URL: http://qdrant:6333
+      OLLAMA_URL: http://ollama:11434
+      LUMOGIS_FF_EGRESS_GUARD: "true"
+      # Not an auth test; docker-entrypoint.sh hard-exits without real secrets when
+      # this is true, and config/test.env.example (the obvious thing to copy) sets
+      # it true — so it is pinned false deliberately rather than inherited.
+      AUTH_ENABLED: "false"
+    depends_on:
+      postgres: {condition: service_healthy}
+      qdrant: {condition: service_healthy}
+      stub-offlist: {condition: service_healthy}
+    networks: [guard-net]
+
+networks:
+  guard-net: {}

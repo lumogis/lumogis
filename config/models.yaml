@@ -98,3 +98,39 @@ models:
     api_key_env: MISTRAL_API_KEY
     tools: false
     optional: true
+
+# --- Background model tasks (LUM-877) -----------------------------------------
+# Each background job is a named task with its own model. List models, in order,
+# under `tasks:` below (uncomment it). The first usable entry wins; if none is
+# usable the task's code default (the comment on each line) is the last resort.
+# An absent or empty `tasks:` block keeps today's behaviour exactly. Read at
+# start-up and when a job starts: restart Core after editing. See
+# orchestrator/services/task_models.py.
+#
+#   * On-box only (cannot be loosened): for the three email tasks, entity_extraction
+#     (email attachments reach it) and routine_weekly_review (it reads email
+#     signals), list on-box models only (loopback, a LAN address, or a host in
+#     EMAIL_LLM_ALLOWLIST); any other entry is skipped. The email tasks also refuse
+#     an off-box code default.
+#   * temporal_judge uses only its first entry and never falls back down the list
+#     (its verdicts can invalidate facts).
+#   * The list is read when a job starts, from configuration. It is not runtime
+#     failover: a listed model that is down fails the job; it does not move to the
+#     next entry.
+#   * List model aliases (qwen2.5), not Ollama tags (qwen2.5:7b). A model pulled
+#     into Ollama has no context_budget, so prompts are sized to 2048 tokens; define
+#     it under models: with a context_budget for larger prompts.
+#   * Under privacy mode `local_only`, a listed cloud model is skipped, and the
+#     privacy fallback may choose a different local model.
+#
+# tasks:
+#   signal_enrichment: [llama]          # code default: llama
+#   email_classify: [llama]             # code default: llama
+#   email_reply_draft: [llama]          # code default: llama
+#   email_compose_refine: [llama]       # code default: llama
+#   entity_extraction: [llama]          # code default: llama
+#   relation_extraction: [llama]        # code default: llama
+#   session_summary: [qwen, llama]      # code default: llama
+#   routine_weekly_review: [llama]      # code default: llama
+#   temporal_extract: [llama]           # code default: llama
+#   temporal_judge: [llama]             # code default: llama (the ADR 151 reference, LUM-927)

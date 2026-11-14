@@ -42,7 +42,13 @@ def read_entity_summary(
         FROM entities
         WHERE entity_id = %s AND {vis_clause}
     """
-    row = store.fetch_one(sql, (entity_id, *vis_params))
+    # str(), not the UUID object: psycopg2 does not adapt uuid.UUID unless
+    # register_uuid() has been called, and postgres_store never calls it. Doing so
+    # globally would also flip uuid COLUMN reads from str to UUID across every
+    # model, so the cast belongs here — matching how the rest of the codebase binds
+    # ids. Only the real-Postgres lane catches this; the in-memory store adapts
+    # anything (LUM-718).
+    row = store.fetch_one(sql, (str(entity_id), *vis_params))
     if row is None:
         _log.debug(
             "read_entity_summary: no visible row entity_id=%s caller=%s",
@@ -149,7 +155,7 @@ def _guarded_update(
         WHERE entity_id = %s AND {where_scope} AND version = %s{staged_clause}
         RETURNING version
     """
-    params = extra_params + (entity_id,) + scope_params + (read_version,)
+    params = extra_params + (str(entity_id),) + scope_params + (read_version,)
     row = store.fetch_one(sql, params)
     if row is None:
         _log.info(

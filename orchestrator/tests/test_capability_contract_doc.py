@@ -29,6 +29,7 @@ from models.capability_invoke import CapabilityInvokeRequest
 REPO = Path(__file__).resolve().parents[2]
 DOC = REPO / "docs" / "extending" / "capability-contract-v1.md"
 STRIP_LIST = REPO / "scripts" / "public-export-strip-list.txt"
+STRIP_LIST_LOCAL = REPO / "scripts" / "public-export-strip-list.local.txt"
 
 # Generic field names that are substring noise (appear everywhere) — excluded
 # from the drift guard so it only protects distinctive contract fields.
@@ -79,12 +80,15 @@ def test_capability_contract_doc_matches_models():
 
 
 def _strip_entries() -> set[str]:
-    text = STRIP_LIST.read_text(encoding="utf-8")
+    """Main strip list plus the local list when present, as the export reads them."""
     out: set[str] = set()
-    for raw in text.splitlines():
-        line = raw.split("#", 1)[0].strip()
-        if line:
-            out.add(line.rstrip("/"))
+    for path in (STRIP_LIST, STRIP_LIST_LOCAL):
+        if not path.is_file():
+            continue
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            line = raw.split("#", 1)[0].strip()
+            if line:
+                out.add(line.rstrip("/"))
     return out
 
 

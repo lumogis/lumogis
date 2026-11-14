@@ -1,0 +1,144 @@
+# LUM-625 — standalone live fixture for the email-IMAP cooperative-audit egress
+# layer (used by tests/integration/test_email_imap_egress.py,
+# `make egress-imap-test`).
+#
+# Reuses the REAL docker/egress-proxy/squid.conf (validates the production config).
+# The allow dir is mounted from ${IMAP_EGRESS_ALLOW_DIR} so the test can point it at
+# a temp dir with a generated allow file — the committed tree is never mutated.
+#
+# Topology mirrors the shared community-egress proxy so the source-scoping is
+# exercised for real:
+#   * egress-proxy at 172.31.0.2
+#   * core-probe   at 172.31.0.3  — matches the squid `core_egress_src` ACL (Core)
+#   * community-probe at 172.31.0.10 — a *contained community capability* stand-in
+#
+# Asserts: Core (172.31.0.3) may CONNECT to a declared host on 993 (spliced), while
+# an UNDECLARED host / a non-993 port / a CONNECT from the community source
+# (172.31.0.10) is refused by a Squid deny — proving the LUM-625 P0 source-scope.
+#
+# Proves *proxy* behaviour (the audit layer), NOT that a dual-homed Core cannot
+# bypass the proxy — the hard per-connection guarantee is Layer 1 (in-process).
+networks:
+  imap-egress-net:
+    enable_ipv6: false
+    ipam:
+      config:
+        - subnet: 172.31.0.0/24
+
+services:
+  egress-proxy:
+    # Must be built --with-openssl (ssl_bump / peek / splice). Pin a verified
+    # digest in deploy: `docker run --rm <img> squid -v | grep -- --with-openssl`.
+    image: ${EGRESS_PROXY_IMAGE:-jacobalberty/squid@sha256:559a8dd2178cf9a40b9a526948467448bb627de98cb22edfddf4699b86a9f370}
+    # LUM-758: same entrypoint as production — this overlay exists to validate the
+    # real proxy config, so it must boot the real boot path.
+    entrypoint: ["/usr/local/bin/entrypoint.sh"]
+    environment:
+      LUMOGIS_EGRESS_ALLOW_WATCH: ${LUMOGIS_EGRESS_ALLOW_WATCH:-1}
+      LUMOGIS_EGRESS_ALLOW_POLL_SECONDS: ${LUMOGIS_EGRESS_ALLOW_POLL_SECONDS:-1}
+    volumes:
+      - ./docker/egress-proxy/squid.conf:/etc/squid/squid.conf:ro
+      - ${IMAP_EGRESS_ALLOW_DIR:-./docker/egress-proxy/allow}:/etc/squid/allow:ro
+      - ./docker/egress-proxy/gen-bump-cert.sh:/usr/local/bin/gen-bump-cert.sh:ro
+      - ./docker/egress-proxy/entrypoint.sh:/usr/local/bin/entrypoint.sh:ro
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -c
+        - 'exec 3<>/dev/tcp/127.0.0.1/3128 && { [ "$${LUMOGIS_EGRESS_ALLOW_WATCH:-1}" = "0" ] || find /var/run/lumogis-allow-watch.alive -mmin -1 2>/dev/null | grep -q .; }'
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 8s
+    networks:
+      imap-egress-net:
+        ipv4_address: 172.31.0.2
+
+  # LUM-763 — two IMAPS servers that differ ONLY in allow-file membership.
+  #
+  # WHY THESE EXIST. The lane used to point at example.com / example.org and assert
+  # the CONNECT status line. Under `ssl_bump peek` Squid answers `200 Connection
+  # established` to EVERY CONNECT — it must, to read the ClientHello — so that
+  # observable does not vary with the thing under test. Three assertions failed
+  # although the proxy was enforcing correctly, and the one that passed would have
+  # passed for any host at all.
+  #
+  # The observable that DOES vary is the certificate the client ends up talking to:
+  #   * spliced (allowed) -> the UPSTREAM server's cert, end-to-end, no MITM
+  #   * denied            -> the proxy's bump cert (CN=lumogis-egress-proxy-bump)
+  # That needs a real TLS server to splice TO, which example.com:993 never was
+  # (nothing listens there — the "allowed" case simply timed out). Hence in-network
+  # servers, which also removes this lane's dependence on the public internet.
+  #
+  # Both run the SAME image and the SAME command. The only difference between them
+  # is whether the test writes their name into the allow file, so a difference in
+  # outcome cannot be attributed to anything else.
+  imap-declared:
+    image: python:3.11-slim
+    # Self-signed cert generated at start and never committed (same rule as
+    # gen-bump-cert.sh). `openssl s_server` ships in python:3.11-slim, so no
+    # bespoke image is needed. -naccept 0 keeps it serving indefinitely.
+    command:
+      - sh
+      - -c
+      - |
+        openssl req -x509 -newkey rsa:2048 -nodes -keyout /tmp/k.pem -out /tmp/c.pem \
+          -days 1 -subj "/CN=imap-declared.test" >/dev/null 2>&1
+        exec openssl s_server -quiet -accept 993 -cert /tmp/c.pem -key /tmp/k.pem
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket;socket.create_connection(('127.0.0.1',993),3).close()"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+    networks:
+      imap-egress-net:
+        # Static, and OUTSIDE the .2/.3/.10 set the ACLs depend on. Without this
+        # Docker's IPAM hands these containers addresses from the low end of the
+        # subnet — and because core-probe depends_on them, they start first and can
+        # take 172.31.0.3, the address the `core_egress_src` ACL is written against.
+        ipv4_address: 172.31.0.20
+        aliases: [imap-declared.test]
+
+  imap-undeclared:
+    image: python:3.11-slim
+    command:
+      - sh
+      - -c
+      - |
+        openssl req -x509 -newkey rsa:2048 -nodes -keyout /tmp/k.pem -out /tmp/c.pem \
+          -days 1 -subj "/CN=imap-undeclared.test" >/dev/null 2>&1
+        exec openssl s_server -quiet -accept 993 -cert /tmp/c.pem -key /tmp/k.pem
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket;socket.create_connection(('127.0.0.1',993),3).close()"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+    networks:
+      imap-egress-net:
+        ipv4_address: 172.31.0.21
+        aliases: [imap-undeclared.test]
+
+  core-probe:
+    image: python:3.11-slim
+    depends_on:
+      egress-proxy:
+        condition: service_healthy
+      imap-declared:
+        condition: service_healthy
+      imap-undeclared:
+        condition: service_healthy
+    command: ["sleep", "600"]
+    networks:
+      imap-egress-net:
+        ipv4_address: 172.31.0.3
+
+  community-probe:
+    image: python:3.11-slim
+    depends_on:
+      egress-proxy:
+        condition: service_healthy
+    command: ["sleep", "600"]
+    networks:
+      imap-egress-net:
+        ipv4_address: 172.31.0.10

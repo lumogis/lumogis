@@ -24,6 +24,7 @@ from services.memory_purge import PurgeResult
 from visibility import visible_filter
 
 import config
+from services import external_document_index as ext_index
 from services import users as users_service
 
 _log = logging.getLogger(__name__)
@@ -278,7 +279,7 @@ def _row_to_summary(
     )
     return DocumentSummary(
         document_id=row["id"],
-        display_name=Path(row["file_path"]).name,
+        display_name=display_name_for(row),
         file_path=row["file_path"],
         file_type=row.get("file_type") or "",
         chunk_count=int(row.get("chunk_count") or 0),
@@ -293,6 +294,62 @@ def _row_to_summary(
     )
 
 
+def display_name_for_path(user_id: str, file_path: str) -> str:
+    """The display name for a path, looked up when no row is in hand.
+
+    Search hits carry a payload `file_path` rather than a `file_index` row, so
+    this resolves the stored name for the one case that needs it — an external
+    document — and short-circuits for everything else. An uploaded file never
+    queries: its name is its path's basename, and a database round trip per
+    search hit to learn that would be absurd.
+    """
+    from services import external_document_index as ext_index
+
+    if not ext_index.is_external_path(file_path):
+        return Path(str(file_path)).name
+
+    try:
+        ms = config.get_metadata_store()
+        row = ms.fetch_one(
+            # SCOPE-EXEMPT: the caller's own row, keyed on their own user_id.
+            "SELECT display_name FROM file_index "
+            "WHERE user_id = %s AND file_path = %s AND published_from IS NULL",
+            (user_id, str(file_path)),
+        )
+    except Exception:  # noqa: BLE001 - a name lookup must never break search
+        row = None
+    stored = str((row or {}).get("display_name") or "").strip()
+    if stored:
+        return stored
+    # Better a readable fallback than a bare integer, even with no row.
+    if file_path.startswith(ext_index.PAPERLESS_SCHEME):
+        return f"Paperless document {Path(str(file_path)).name}"
+    return Path(str(file_path)).name
+
+
+def display_name_for(row) -> str:
+    """The name a human sees for a document. **Three renderers use this.**
+
+    `Path(file_path).name` is right for a filesystem document and catastrophic
+    for a logical one: `paperless://{src}/documents/42` yields `42` and
+    `email-attachment://{src}/{sig}/0` yields `0`. A library in which every
+    external document is a bare integer is not browsable — which is the entire
+    point of LUM-724.
+
+    `display_name` is NULL for every uploaded file, so they keep the old
+    behaviour exactly and no backfill is needed for correctness.
+
+    One function because this derivation was fixed **three times, once per
+    review round** — the list, then the detail page, then memory search — each
+    fix leaving the next renderer showing a bare number. A second copy is how a
+    fourth surface gets missed.
+    """
+    stored = (row.get("display_name") or "").strip() if hasattr(row, "get") else ""
+    if stored:
+        return stored
+    return Path(str(row["file_path"] if hasattr(row, "__getitem__") else row)).name
+
+
 def list_documents(user: UserContext, *, limit: int = 50) -> list[DocumentSummary]:
     """List ingested documents visible to the caller (household union default)."""
     ms = config.get_metadata_store()
@@ -302,7 +359,7 @@ def list_documents(user: UserContext, *, limit: int = 50) -> list[DocumentSummar
         rows = ms.fetch_all(
             f"""
             SELECT fi.id, fi.file_path, fi.file_type, fi.chunk_count, fi.user_id,
-                   fi.scope, fi.updated_at, fi.published_from,
+                   fi.scope, fi.updated_at, fi.published_from, fi.display_name,
                    (
                      SELECT COUNT(*)::int
                      FROM entity_relations er
@@ -386,6 +443,7 @@ def get_document(user: UserContext, document_id: int) -> DocumentDetail:
     row = ms.fetch_one(
         f"""
         SELECT fi.id, fi.file_path, fi.file_type, fi.file_hash, fi.chunk_count,
+               fi.display_name,
                fi.user_id, fi.scope, fi.updated_at, fi.published_from,
                (
                  SELECT COUNT(*)::int
@@ -459,7 +517,7 @@ def get_document(user: UserContext, document_id: int) -> DocumentDetail:
     file_path = row["file_path"]
     return DocumentDetail(
         document_id=row["id"],
-        display_name=Path(file_path).name,
+        display_name=display_name_for(row),
         file_path=file_path,
         file_type=row.get("file_type") or "",
         chunk_count=int(row.get("chunk_count") or 0),
@@ -548,7 +606,10 @@ def _fetch_personal_source(user_id: str, document_id: int) -> dict[str, Any] | N
     """Owner-only, personal-source-only fetch (mirrors routes/scope.py guard)."""
     ms = config.get_metadata_store()
     return ms.fetch_one(
-        "SELECT id FROM file_index WHERE id = %s AND user_id = %s AND scope = 'personal'",
+        # `file_path` is projected so callers can apply the LUM-724 external
+        # guard without a second round trip.
+        "SELECT id, file_path FROM file_index "
+        "WHERE id = %s AND user_id = %s AND scope = 'personal'",
         (document_id, user_id),
     )
 
@@ -600,8 +661,13 @@ def share_document(user_id: str, document_id: int):
     enqueue); the projection itself runs in the ``share_document`` background
     job. Idempotent — a duplicate share coalesces onto the in-flight job.
     """
-    if _fetch_personal_source(user_id, document_id) is None:
+    row = _fetch_personal_source(user_id, document_id)
+    if row is None:
         raise DocumentNotFoundError(document_id)
+    # LUM-724 D1. One of THREE publish doors — see
+    # `external_document_index.refuse_share_if_external` for the other two, which
+    # do not pass through here at all.
+    ext_index.refuse_share_if_external(str(row.get("file_path") or ""))
     return _enqueue_share_job(user_id, document_id, kind="share_document", share_status="sharing")
 
 

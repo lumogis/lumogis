@@ -10,6 +10,13 @@ import { AccessTokenStore } from "../../../src/api/tokens";
 import { AuthProvider } from "../../../src/auth/AuthProvider";
 import { AdminSearchSettingsView } from "../../../src/features/admin/AdminSearchSettingsView";
 import { jsonResponse } from "../../helpers/jsonResponse";
+import { seedSignedInDevice } from "../../helpers/signedInDevice";
+
+// LUM-886: this suite mounts a real AuthProvider; mark the device as already reconciled so the
+// first-sign-in wipe does not remove the view's own queries.
+beforeEach(() => {
+  seedSignedInDevice("admin1");
+});
 
 const adminUser = { id: "admin1", email: "a@home.lan", role: "admin" as const };
 
@@ -126,6 +133,27 @@ describe("AdminSearchSettingsView", () => {
 
     expect(await screen.findByText(/Change pending — restart orchestrator/i)).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Save & restart stack/i })).toBeNull();
+  });
+
+  // The accessible-name assertion would also pass with `sr-only`; it guards
+  // against "fixing" the duplicate text by deleting the legend, which would
+  // drop the group's name. The class assertion pins the binding. Whether the
+  // CSS actually hides the legend needs a browser: see admin_search_settings.spec.ts.
+  it("names the reranking radio group with a visually-hidden legend (LUM-852)", async () => {
+    const fetchImpl = vi.fn(async (input, init) => {
+      const u = String(input);
+      if (u.includes("/api/v1/auth/me")) return jsonResponse(200, adminUser);
+      if (u.endsWith("/settings") && (!init?.method || init.method === "GET")) {
+        return jsonResponse(200, settingsBody());
+      }
+      return jsonResponse(404, {});
+    }) as unknown as typeof fetch;
+    globalThis.fetch = fetchImpl;
+
+    renderView(fetchImpl);
+
+    const group = await screen.findByRole("group", { name: "Reranking mode" });
+    expect(group.querySelector("legend")).toHaveClass("lumogis-visually-hidden");
   });
 
   it("hides Save & restart when stack-control is unreachable and shows manual guidance after save", async () => {

@@ -5,6 +5,12 @@
 Binary blobs are never stored in Postgres. Each attachment lands on disk
 under ``CAPTURE_MEDIA_ROOT/{user_id}/{capture_id}/{attachment_id}/``.
 
+The default root is ``{WORKSPACE_PATH}/captures`` (LUM-892). It used to be
+``/opt/lumogis/data/captures``, a path no compose file mounts: the files lived
+in the container's writable layer and every image update deleted them. The
+workspace is a host bind mount that the DR backup copies, so captures now live
+next to uploads and the inbox.
+
 Security invariants (plan §12.2):
 - ``safe_attachment_path()`` resolves the full candidate path and asserts
   it stays inside the root via ``Path.is_relative_to()``. Any ``..``
@@ -26,8 +32,32 @@ from typing import Literal
 # via environment for the process lifetime).
 # ---------------------------------------------------------------------------
 
-_DATA_DIR = Path(os.environ.get("LUMOGIS_DATA_DIR", "/opt/lumogis/data"))
-_CAPTURE_MEDIA_ROOT: Path = Path(os.environ.get("CAPTURE_MEDIA_ROOT", str(_DATA_DIR / "captures")))
+
+def _resolve_capture_media_root() -> Path:
+    """Capture media root: ``CAPTURE_MEDIA_ROOT``, else ``LUMOGIS_DATA_DIR/captures``,
+    else ``{WORKSPACE_PATH}/captures``. Blank values are ignored.
+
+    An explicit value must point at a mounted path, or captures are lost on
+    recreate and are not in the DR backup (see ``.env.example``).
+    """
+    explicit = os.environ.get("CAPTURE_MEDIA_ROOT", "").strip()
+    if explicit:
+        return Path(explicit)
+    data_dir = os.environ.get("LUMOGIS_DATA_DIR", "").strip()
+    if data_dir:
+        return Path(data_dir) / "captures"
+    import config  # local import: keeps this module import-cycle free
+
+    return config.get_workspace_path() / "captures"
+
+
+_CAPTURE_MEDIA_ROOT: Path = _resolve_capture_media_root()
+
+
+def capture_media_root() -> Path:
+    """Current capture media root (honours a monkeypatched ``_CAPTURE_MEDIA_ROOT``)."""
+    return _CAPTURE_MEDIA_ROOT
+
 
 _IMAGE_MAX_BYTES: int = int(os.environ.get("CAPTURE_MAX_IMAGE_BYTES", str(10 * 1024 * 1024)))
 _AUDIO_MAX_BYTES: int = int(os.environ.get("CAPTURE_MAX_AUDIO_BYTES", str(25 * 1024 * 1024)))

@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Lumogis
+# NOTE: reads retired GET /export and Core /graph/stats; see LUM-929 findings 1 and 7.
 """Phase 3 machine-verifiable validation checkpoint (M9).
 
 This module provides automated gates that confirm Phase 3 correctness.

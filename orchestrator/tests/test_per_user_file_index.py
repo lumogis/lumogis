@@ -10,7 +10,7 @@ Covers:
       test for the CalDAV signal_id helper (B11 surface #3).
 
 The B12 SQL upsert contract (file_index ON CONFLICT) is exercised in
-tests/integration/test_two_user_isolation.py::test_two_users_can_ingest_same_path.
+tests/test_two_user_isolation.py::test_two_users_can_ingest_same_path.
 """
 
 from __future__ import annotations

@@ -54,7 +54,8 @@ _TEST_FERNET_KEY = "OlGLYckGIbBSt54y8XVmgb441LgKJWvvYoHnpQ_cv9A="
 
 class _FakeStore:
     def __init__(self) -> None:
-        self.creds: dict[tuple[str, str], dict] = {}
+        # LUM-170: keyed by (user_id, connector, instance).
+        self.creds: dict[tuple[str, str, str], dict] = {}
 
     @staticmethod
     def _norm(q: str) -> str:
@@ -63,35 +64,65 @@ class _FakeStore:
     def fetch_one(self, query: str, params: tuple | None = None):
         q = self._norm(query)
         p = params or ()
+        # LUM-834 chunk B — is_disabled(). Absent row => False (not
+        # disabled): a connector nobody configured is not one somebody
+        # switched off, and answering otherwise would stop the tier walk
+        # for every user without a row.
+        if q.startswith("select enabled from user_connector_credentials"):
+            uid, conn, inst = p
+            row = self.creds.get((uid, conn, inst))
+            if row is None:
+                return None
+            return {"enabled": bool(row.get("enabled", True))}
+
         if q.startswith("select ciphertext from user_connector_credentials"):
-            uid, conn = p
-            row = self.creds.get((uid, conn))
-            return {"ciphertext": row["ciphertext"]} if row else None
+            # LUM-834 chunk B: the real query carries `AND enabled`, so a
+            # disabled row yields no ciphertext and is indistinguishable from an
+            # absent one.
+            #
+            # The filter is applied ONLY when the statement actually contains
+            # `and enabled`. Applying it unconditionally would move the gate
+            # INTO THE FAKE: delete `AND enabled` from `get_payload` or
+            # `resolve` and every gate test would still pass, because the fake
+            # would keep enforcing what production had stopped enforcing. §5a —
+            # the fake must fail the way the real collaborator fails, and real
+            # Postgres has no opinion about a predicate that is not there.
+            uid, conn, inst = p
+            row = self.creds.get((uid, conn, inst))
+            if row is None:
+                return None
+            if "and enabled" in q and not row.get("enabled", True):
+                return None
+            return {"ciphertext": row["ciphertext"]}
         if q.startswith(
-            "select user_id, connector, created_at, updated_at, "
+            "select user_id, connector, instance, created_at, updated_at, "
             "created_by, updated_by, key_version "
             "from user_connector_credentials"
         ):
-            uid, conn = p
-            row = self.creds.get((uid, conn))
+            uid, conn, inst = p
+            row = self.creds.get((uid, conn, inst))
             return dict(row) if row else None
         if q.startswith("insert into user_connector_credentials"):
-            uid, conn, ciphertext, key_version, created_by, updated_by = p
+            uid, conn, inst, ciphertext, key_version, created_by, updated_by, configured_keys = p
             now = datetime.now(timezone.utc)
             row = {
                 "user_id": uid,
                 "connector": conn,
+                "instance": inst,
                 "ciphertext": ciphertext,
                 "key_version": key_version,
                 "created_at": now,
                 "updated_at": now,
                 "created_by": created_by,
                 "updated_by": updated_by,
+                "enabled": True,
+                "configured_keys": configured_keys,
             }
-            self.creds[(uid, conn)] = row
+            self.creds[(uid, conn, inst)] = row
             return {
                 "user_id": uid,
                 "connector": conn,
+                "instance": inst,
                 "created_at": now,
                 "updated_at": now,
                 "created_by": created_by,
@@ -333,7 +364,7 @@ def test_load_connection_auth_off_no_row_no_env_url_raises(store, monkeypatch):
 def test_load_connection_decrypt_failure_propagates(store, monkeypatch):
     monkeypatch.setenv("AUTH_ENABLED", "true")
     _seed(_GOOD_PAYLOAD, user_id="alice")
-    store.creds[("alice", registry.CALDAV)]["ciphertext"] = b"not-a-valid-fernet-token"
+    store.creds[("alice", registry.CALDAV, "")]["ciphertext"] = b"not-a-valid-fernet-token"
 
     from services.caldav_credentials import load_connection
 
@@ -363,7 +394,7 @@ def test_load_connection_payload_empty_string_raises_value_error(store, monkeypa
     from cryptography.fernet import Fernet
 
     fernet = Fernet(_TEST_FERNET_KEY.encode())
-    store.creds[("alice", registry.CALDAV)] = {
+    store.creds[("alice", registry.CALDAV, "")] = {
         "user_id": "alice",
         "connector": registry.CALDAV,
         "ciphertext": fernet.encrypt(json.dumps(payload).encode()),
@@ -439,7 +470,7 @@ def test_adapter_get_connection_returns_none_on_missing_row(store, monkeypatch, 
 def test_adapter_get_connection_returns_none_on_decrypt_failure(store, monkeypatch, caplog):
     monkeypatch.setenv("AUTH_ENABLED", "true")
     _seed(_GOOD_PAYLOAD, user_id="alice")
-    store.creds[("alice", registry.CALDAV)]["ciphertext"] = b"corrupt-fernet"
+    store.creds[("alice", registry.CALDAV, "")]["ciphertext"] = b"corrupt-fernet"
 
     from adapters.calendar_adapter import CalendarAdapter
 
@@ -462,7 +493,7 @@ def test_adapter_get_connection_returns_none_on_value_error(store, monkeypatch, 
     from cryptography.fernet import Fernet
 
     fernet = Fernet(_TEST_FERNET_KEY.encode())
-    store.creds[("alice", registry.CALDAV)] = {
+    store.creds[("alice", registry.CALDAV, "")] = {
         "user_id": "alice",
         "connector": registry.CALDAV,
         "ciphertext": fernet.encrypt(json.dumps(payload).encode()),
@@ -501,7 +532,7 @@ def test_adapter_skip_log_does_not_leak_credentials(store, monkeypatch, caplog):
         },
         user_id="alice",
     )
-    store.creds[("alice", registry.CALDAV)]["ciphertext"] = b"corrupt-fernet"
+    store.creds[("alice", registry.CALDAV, "")]["ciphertext"] = b"corrupt-fernet"
 
     from adapters.calendar_adapter import CalendarAdapter
 
