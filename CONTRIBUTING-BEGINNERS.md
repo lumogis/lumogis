@@ -25,7 +25,7 @@ Welcome! This guide is a gentler on-ramp than [CONTRIBUTING.md](CONTRIBUTING.md)
    cp .env.example .env
    docker compose up -d
    ```
-   For integration tests after the stack is up, see `make test-integration` and `make compose-test` in [CONTRIBUTING.md](CONTRIBUTING.md).
+   In a checkout this builds the Lumogis images from your code (households install from the release files instead — `docs/deployment/quickstart.md`). For integration tests after the stack is up, see `make test-integration` and `make compose-test` in [CONTRIBUTING.md](CONTRIBUTING.md).
 7. **Pick a good first issue** from GitHub (label query only — do not rely on hardcoded issue numbers):
    [good first issue — open issues](https://github.com/lumogis/lumogis/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
 8. **Create a branch**, make the smallest safe change, run `make lint` and `make test` again, then open a pull request. Link the issue and sign the CLA when the bot prompts you (see [CONTRIBUTING.md](CONTRIBUTING.md) — Contributor Licence Agreement).

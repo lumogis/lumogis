@@ -11,6 +11,22 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.13.1] — 2026-11-15
+
+### Fixed
+
+- **The admin Software updates card no longer always says an update is available.** Lumogis reported its version as 0.3.0rc1 in 0.12.0 and 0.13.0, so the card compared that with the latest release and always offered one. It now reports 0.13.1, and a release can no longer be published while the code reports a different version.
+
+### Security
+
+- **Dependency updates for the desktop search app** (`clients/lumogis-search`, not yet released): updates within the existing version ranges for its test tooling, and newer `quinn-proto`, `rustls` and `serde_with` in the app itself. The images a household runs are not affected. The remaining alerts need major upgrades of the test tooling and are tracked separately.
+
+### Changed
+
+- **The agent guides for this repository** (`AGENTS.md`, `docs/LUMOGIS_AGENT_ORIENTATION.md`) describe the current release, the five published images and the two-file install.
+
+---
+
 ## [0.13.0] — 2026-11-15
 
 **Install Lumogis like Immich.** Download two files from this release into an empty folder and run `docker compose up -d`: every image is pulled ready-made, nothing is built, and you need no copy of the source. Update later with `docker compose pull && docker compose up -d`. This release's `docker-compose.yml` and `example.env` are new (the first release to carry them).

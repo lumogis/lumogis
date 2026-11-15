@@ -23,13 +23,14 @@ Do not duplicate long prose from those files into issues or comments; link paths
 - **Core** = FastAPI orchestrator ([`orchestrator/`](orchestrator/)).
 - **Lumogis Web** = first-party SPA ([`clients/lumogis-web/`](clients/lumogis-web/)), same-origin behind Caddy — search, document-chat, capture inbox/archive, household sharing, **email triage** (`/email`), unified document library, admin, and **safety playground**.
 - **Capability security** — invoke contract v1, permission scopes, community sandbox, optional egress containment — see [`docs/capabilities.md`](docs/capabilities.md) and ADRs **169–173**.
-- **Email connector arc** — IMAP signal source, taxonomy, optional write-back, SMTP send/reply/compose, attachments at `/email/attachments`, OAuth mailbox connect, poll-health banners, structured SMTP opt-in errors, post-setup send enablement, recoverable failed sends on Approvals, and unsubscribe; on the integration branch also extracted-text body reading, local email search, unified read across mailboxes, an on-demand sending address, mailbox auth method in source health, OAuth refresh back-off and IDNA host handling — see [`docs/capabilities.md`](docs/capabilities.md) and ADRs **174–202**, **205**, **207–214**, **225**, **228**, **237** (latest public tag **0.11.0** until the next publish).
+- **Email connector arc** — IMAP signal source, taxonomy, optional write-back, SMTP send/reply/compose, attachments at `/email/attachments`, OAuth mailbox connect, poll-health banners, structured SMTP opt-in errors, post-setup send enablement, recoverable failed sends on Approvals, and unsubscribe; also extracted-text body reading, local email search, unified read across mailboxes, an on-demand sending address, mailbox auth method in source health, OAuth refresh back-off and IDNA host handling — see [`docs/capabilities.md`](docs/capabilities.md) and ADRs **174–202**, **205**, **207–214**, **225**, **228**, **237**.
 - **Action proposals** — atomic claim execution with terminal failure on the first attempt — ADR **201** (amends **ADR 040**).
 - **Sources and connectors** — per-user paperless / RSS / page sources with edit, pause/resume and poll health; connector test-connection and on/off switch; a switched-off connector reads as off everywhere — ADRs **215–219**, **221**, **226**, **238**.
 - **Knowledge graph** — `services/lumogis-graph/` (FalkorDB-backed), AGPL-3.0-only; `GRAPH_MODE` defaults to `disabled`, and **`service` is the only mode that works on the standard Core image** — ADRs **229**, **239**, [`docs/capabilities.md`](docs/capabilities.md) § Knowledge Graph. Every node the writer projects carries `scope`, which every visibility-filtered graph read relies on (**ADR 260**); orphan GC and co-occurrence counts (**ADR 259**); graph pages load only same-origin vendored scripts (**ADR 256**).
+- **Install from two release files** — households download `docker-compose.yml` and `example.env` from a GitHub Release, run `docker compose up -d`, and update with `docker compose pull && docker compose up -d`; nothing is built ([`docs/deployment/quickstart.md`](docs/deployment/quickstart.md), [`docs/deployment/upgrading.md`](docs/deployment/upgrading.md), **ADR 262**). The release compose is generated from this repo's `docker-compose.yml` by `scripts/release/build_release_compose.py`; the orchestrator image creates the database schema on a new database.
 - **Default install and deployment** — a default install opens Lumogis Web in single-user mode with sign-in off; turn sign-in on before anyone else can reach it ([`docs/deployment/quickstart.md`](docs/deployment/quickstart.md), **ADR 247**). The orchestrator API is published on `127.0.0.1` only, Caddy is the only trusted proxy, and the orchestrator runs as the owner of the checkout, not root (**ADR 246**).
 - **Lumogis Search** = Tauri 2 desktop memory-search overlay ([`clients/lumogis-search/`](clients/lumogis-search/)), connecting to your household server over HTTP.
-- **Default stack** = Docker Compose ([`docker-compose.yml`](docker-compose.yml)); optional profiles and overlays documented in [`README.md`](README.md).
+- **Default stack** = Docker Compose ([`docker-compose.yml`](docker-compose.yml)). In a checkout it **builds** the Lumogis images (`pull_policy: build`); optional profiles and overlays documented in [`README.md`](README.md).
 
 ## Open-core boundary
 
@@ -41,7 +42,7 @@ This repository is the **public AGPL export** of Lumogis Core, Lumogis Web, Lumo
 - Do **not** invent references to repositories, issue trackers, or tooling that are not documented here.
 - Do **not** commit secrets, API keys, tokens, or real `.env` files (only [`.env.example`](.env.example) patterns).
 - Respect **AGPL-3.0-only** licensing on contributed code ([`CONTRIBUTING.md`](CONTRIBUTING.md) CLA section).
-- **GHCR images** (`ghcr.io/lumogis/lumogis-orchestrator`, `ghcr.io/lumogis/lumogis-web`) are published from **this public repo** — see [`docs/decisions/037-ghcr-publish-public-repo-only.md`](docs/decisions/037-ghcr-publish-public-repo-only.md).
+- **GHCR images** (`ghcr.io/lumogis/lumogis-orchestrator`, `-web`, `-stack-control`, `-backup`, `-caddy`) are published and attested from **this public repo** — see [`docs/decisions/037-ghcr-publish-public-repo-only.md`](docs/decisions/037-ghcr-publish-public-repo-only.md) and [`docs/decisions/262-lum-980-install-from-published-images.md`](docs/decisions/262-lum-980-install-from-published-images.md). A Release is published by `.github/workflows/release-assets.yml` only after it has pulled those images anonymously by digest.
 
 ## Common commands
 
@@ -62,7 +63,8 @@ This repository is the **public AGPL export** of Lumogis Core, Lumogis Web, Lumo
 | Knowledge graph service tests | `make compose-test-kg` (Docker; not part of `make test`); `make test-graph-parity` (slow; its own compose project) |
 | Live ingest lane (sign-in on, graph service) | `make e2e-ingest-live` (Docker, 15–40 min; fails on any skip) |
 | Fast local debug chain | `make debug`, `make test-list` |
-| Local stack | `docker compose up -d` (after `cp .env.example .env`) |
+| Local stack (checkout; builds the images) | `docker compose up -d` (after `cp .env.example .env`); update with `git pull && make update` |
+| Release install files | `make release-compose` (writes `dist/release/`; `make compose-policy-check` checks the generated file too) |
 | Operator health CLI | `make doctor` |
 | Lumogis Search overlay | `make search-dev`, `make search-build` (`clients/lumogis-search/`) |
 

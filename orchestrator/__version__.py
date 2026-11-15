@@ -7,13 +7,17 @@ Single source of truth for the running Core version, importable as:
 
 IMPORTANT: this value MUST stay in lockstep with the `version` field in
 pyproject.toml. When bumping the project version, update BOTH files in
-the same commit. There is currently no automated check enforcing this —
-a CI guard or PEP 621 dynamic-version setup is a future improvement.
+the same commit. `orchestrator/tests/test_version_lockstep.py` checks both.
 
 Used by the capability-service registry (Area 2) to compare incoming
 manifests' `min_core_version` against the running Core via
 packaging.version.Version.
 """
 
-# Keep in sync with pyproject.toml [project].version
-__version__ = "0.3.0rc1"
+# Keep in sync with pyproject.toml [project].version, and set it to the release
+# version on private main before each public release: the admin update card
+# compares it with the latest GitHub release, and release-assets.yml refuses a
+# release whose tree reports another version (LUM-980). It stayed "0.3.0rc1"
+# through 0.12.0 and 0.13.0, so those installs always saw "update available".
+# Raising it never breaks a capability: manifests ask for min_core_version 0.3.0rc1.
+__version__ = "0.13.1"

@@ -93,6 +93,21 @@ jobs:
           ref: refs/tags/${{ steps.input.outputs.tag }}
           persist-credentials: false
 
+      - name: Core reports the release version
+        run: |
+          set -euo pipefail
+          # The admin update card compares Core's __version__ with the latest
+          # release; 0.12.0 and 0.13.0 shipped reporting 0.3.0rc1, so every install
+          # always saw "update available". Bump orchestrator/__version__.py and
+          # pyproject.toml on private main before exporting (publish skill, Step A).
+          core="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' orchestrator/__version__.py)"
+          base="${VERSION%%-*}"
+          if [[ "$core" != "$base" ]]; then
+            echo "::error::Core reports version '${core:-none}' (orchestrator/__version__.py) but this release is ${base}. Bump it on private main and re-export before releasing."
+            exit 1
+          fi
+          echo "Core reports version $core"
+
       - name: Require a draft Release
         env:
           GH_TOKEN: ${{ github.token }}
