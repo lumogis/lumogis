@@ -142,3 +142,34 @@ def test_missing_site_out_fails() -> None:
         env=env,
     )
     assert result.returncode != 0
+
+
+@pytest.mark.skipif(not _node_available(), reason="node not available")
+def test_repo_relative_links_point_at_the_public_repo(tmp_path: Path) -> None:
+    """Relative links (ADRs, guides) do not exist on lumogis.ai; they go to GitHub."""
+    cap = tmp_path / "capabilities.md"
+    cap.write_text(
+        "# Capabilities\n\n"
+        "See [ADR 229](decisions/229-x.md), [a guide](guides/b.md#setup), "
+        "[the repo](https://github.com/lumogis/lumogis), [below](#more) and [top](/).\n",
+        encoding="utf-8",
+    )
+    log = tmp_path / "CHANGELOG.md"
+    log.write_text(
+        "# Changelog\n\n## [1.0.0] — 2026-01-01\n\n### Added\n\n"
+        "- Email ([ADR 174](docs/decisions/174-email.md)).\n",
+        encoding="utf-8",
+    )
+    out = tmp_path / "site"
+    out.mkdir()
+    result = _run_render(out, capabilities_md=cap, changelog_md=log)
+    assert result.returncode == 0, result.stderr
+    blob = "https://github.com/lumogis/lumogis/blob/main/"
+    cap_html = (out / "capabilities" / "index.html").read_text(encoding="utf-8")
+    assert f'href="{blob}docs/decisions/229-x.md"' in cap_html
+    assert f'href="{blob}docs/guides/b.md#setup"' in cap_html
+    assert 'href="https://github.com/lumogis/lumogis"' in cap_html
+    assert 'href="#more"' in cap_html
+    assert 'href="/"' in cap_html
+    log_html = (out / "changelog" / "index.html").read_text(encoding="utf-8")
+    assert f'href="{blob}docs/decisions/174-email.md"' in log_html

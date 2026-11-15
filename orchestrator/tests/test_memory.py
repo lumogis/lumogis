@@ -88,9 +88,28 @@ class TestSummarizeSession:
         llm = _mock_llm(raw)
         monkeypatch.setattr(_config, "get_llm_provider", lambda name, *, user_id=None: llm)
 
-        # Falls back to raw text — key thing is it does not raise
+        # A fenced answer is parsed, not stored raw: History titles used to read
+        # "``` { \"summary\": …" because this case fell back to the raw text.
         result = summarize_session(MESSAGES)
-        assert result.summary  # non-empty
+        assert result.summary == "Fenced."
+        assert "```" not in result.summary
+
+    def test_fenced_invalid_json_falls_back_without_fences(self, monkeypatch):
+        self._patch_budget(monkeypatch)
+        llm = _mock_llm("```json\nnot json at all\n```")
+        monkeypatch.setattr(_config, "get_llm_provider", lambda name, *, user_id=None: llm)
+
+        result = summarize_session(MESSAGES)
+        assert result.summary == "not json at all"
+
+    def test_non_object_json_falls_back_instead_of_raising(self, monkeypatch):
+        self._patch_budget(monkeypatch)
+        llm = _mock_llm('["a", "b"]')
+        monkeypatch.setattr(_config, "get_llm_provider", lambda name, *, user_id=None: llm)
+
+        result = summarize_session(MESSAGES)
+        assert result.summary == '["a", "b"]'
+        assert result.topics == []
 
     def test_rc_stub_skips_llm_and_uses_first_user_line(self, monkeypatch):
         monkeypatch.setenv("LUMOGIS_RC_SESSION_END_STUB", "true")

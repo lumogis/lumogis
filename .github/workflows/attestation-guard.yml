@@ -115,7 +115,9 @@ jobs:
             fi
 
             local jobif
-            jobif="$(yq e ".jobs[\"$job\"].if // \"\"" "$PUBLISH" | tr -d '\r\n')"
+            # tostring, not `// ""`: yq's // would turn a boolean `if: false` into "".
+            jobif="$(yq e ".jobs[\"$job\"].if | tostring" "$PUBLISH" | tr -d '\r\n')"
+            [[ "$jobif" == "null" ]] && jobif=""
             local compact="${jobif//[[:space:]]/}"
             if [[ "$compact" == "false" ]] || [[ "$compact" == '${{false}}' ]] || [[ "$compact" == '${{ false }}' ]]; then
               echo "::error::Job '$job' must not use a false-static guard on job.if (bypass risk)"
@@ -144,9 +146,12 @@ jobs:
               echo "::error::Job '$job' must contain exactly one step with uses: actions/attest-build-provenance@<40-hex-sha> (found $found)"
               exit 1
             fi
-            local stif
-            stif="$(yq e ".jobs[\"$job\"].steps[$found_idx].if // \"\"" "$PUBLISH" | tr -d '\r\n')"
-            if [[ -n "$stif" ]]; then
+            if [[ "$(yq e ".jobs[\"$job\"].steps[$found_idx] | has(\"continue-on-error\")" "$PUBLISH")" == "true" ]]; then
+              echo "::error::Attest step in job '$job' must not set continue-on-error (bypass risk)"
+              exit 1
+            fi
+            # has("if"), not `.if // ""`: yq's // treats `if: false` as missing.
+            if [[ "$(yq e ".jobs[\"$job\"].steps[$found_idx] | has(\"if\")" "$PUBLISH")" == "true" ]]; then
               echo "::error::Attest step in job '$job' index $found_idx must not have 'if:' (bypass risk). Remove conditional on attest-build-provenance (LUM-276)."
               exit 1
             fi
@@ -161,8 +166,37 @@ jobs:
             done
           }
 
-          check_job publish-orchestrator
-          check_job publish-lumogis-web
+          # LUM-980: every image a household pulls is published and attested. A
+          # required list catches a deleted job; the sweep catches a new one.
+          REQUIRED=(publish-orchestrator publish-lumogis-web publish-stack-control publish-backup publish-caddy)
+          # Read once, then match: `yq | grep -q` under pipefail can fail on SIGPIPE.
+          DIGEST_NEEDS="$(yq e '.jobs["record-publish-digests"].needs[]' "$PUBLISH")"
+          for job in "${REQUIRED[@]}"; do
+            check_job "$job"
+            if ! grep -qx "$job" <<<"$DIGEST_NEEDS"; then
+              echo "::error::record-publish-digests must need '$job' (its digest goes into publish-digests.json)"
+              exit 1
+            fi
+          done
+          while IFS= read -r job; do
+            [[ -n "$job" ]] && check_job "$job"
+          done < <(yq e '.jobs | keys | .[] | select(test("^publish-"))' "$PUBLISH")
+
+          # LUM-980: release-assets.yml attests the two downloaded files the same way.
+          ASSETS=.github/workflows/release-assets.yml
+          if [[ ! -f "$ASSETS" ]]; then
+            echo "::error::$ASSETS must exist (it attaches and attests the release compose files)"
+            exit 1
+          fi
+          n_attest="$(yq e '[.jobs[].steps[] | select((.uses // "") | test("^actions/attest-build-provenance@[0-9a-f]{40}$"))] | length' "$ASSETS")"
+          if [[ "$n_attest" -ne 1 ]]; then
+            echo "::error::$ASSETS must contain exactly one SHA-pinned attest-build-provenance step (found $n_attest)"
+            exit 1
+          fi
+          if yq e '.jobs[].steps[] | select((.uses // "") | test("^actions/attest-build-provenance@")) | (has("if") or has("continue-on-error"))' "$ASSETS" | grep -qx true; then
+            echo "::error::The attest step in $ASSETS must not have 'if:' or continue-on-error (bypass risk)"
+            exit 1
+          fi
 
           if [[ "$(yq e '.jobs["record-publish-digests"] == null' "$PUBLISH")" == "true" ]]; then
             echo "::error::Expected job 'record-publish-digests' in $PUBLISH (attestation-verify downloads publish-digests artifact)"

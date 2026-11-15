@@ -106,3 +106,6 @@ docker/egress-proxy/bump.pem
 
 # LUM-929 — live-lane evidence (junit, run records, snapshots, container logs).
 .cache/lum929/
+
+# LUM-980: generated release files (make release-compose)
+dist/

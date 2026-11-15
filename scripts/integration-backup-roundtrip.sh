@@ -62,9 +62,12 @@ log() {
   echo "[integration-backup-roundtrip] $*" >&2
 }
 
+# Every `compose run` whose stdout is read uses --quiet-build: the repo compose
+# builds Lumogis images on each run (pull_policy: build, LUM-980), and the build
+# progress would otherwise land in the captured output.
 qdrant_point_count() {
   local collection="$1"
-  compose run --rm --no-deps backup \
+  compose run --rm --no-deps --quiet-build backup \
     curl -sf -X POST "http://qdrant:6333/collections/${collection}/points/count" \
     -H 'Content-Type: application/json' \
     -d '{}' | jq -r '.result.count'
@@ -81,7 +84,7 @@ falkor_graph_read_name() {
 backup_sh() {
   local snippet="$1"
   shift
-  compose run --rm --no-deps --entrypoint sh backup -c "$snippet" _ "$@"
+  compose run --rm --no-deps --quiet-build --entrypoint sh backup -c "$snippet" _ "$@"
 }
 
 clear_test_workspace() {
@@ -303,7 +306,7 @@ fi
 log "snapshot files: ${file_count} files, root-owned, read-only"
 
 if [[ "$INCLUDE_FALKORDB" == "true" ]]; then
-  falkor_skipped="$(compose run --rm --no-deps backup \
+  falkor_skipped="$(compose run --rm --no-deps --quiet-build backup \
     jq -r '.stores.falkordb.skipped // false' "/backups/snapshots/${latest}/manifest.json")"
   if [[ "$falkor_skipped" == "true" ]]; then
     log "backup manifest skipped falkordb — cannot run graph round-trip"

@@ -25,6 +25,11 @@ docker/
 !docker/backup/**
 mcp-servers/
 postgres/
+# LUM-980: the orchestrator image carries the schema (init.sql + migrations),
+# so an install from the two release files needs no checkout.
+!postgres/init.sql
+!postgres/migrations/
+!postgres/migrations/**
 scripts/
 !scripts/backup/
 !scripts/backup/**

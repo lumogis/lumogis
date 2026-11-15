@@ -52,6 +52,10 @@ RUN --mount=type=cache,target=/root/.cache/pip \
   && python -c "import torch, sys; v = torch.__version__; sys.exit(0 if v.endswith('+cpu') else f'expected a CPU-only torch, got {v}')"
 COPY orchestrator/ .
 COPY config/ /opt/lumogis/config/
+# LUM-980: the schema ships in the image. db_migrations.py prefers
+# /project/postgres (a git checkout) and falls back to this copy (a release install).
+COPY postgres/init.sql /opt/lumogis/postgres/init.sql
+COPY postgres/migrations/ /opt/lumogis/postgres/migrations/
 COPY orchestrator/docker-entrypoint.sh /docker-entrypoint.sh
 # Strip CR so Windows CRLF checkouts do not break shebang (exec: no such file)
 RUN sed -i 's/\r$//' /docker-entrypoint.sh && chmod +x /docker-entrypoint.sh
@@ -72,3 +76,14 @@ ENTRYPOINT ["/docker-entrypoint.sh"]
 # networking raises no audit events), so the egress ceiling could not boot.
 # test_egress_ceiling.py enforces this on the CMD and the dev overlay.
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-keep-alive", "75", "--loop", "asyncio"]
+
+# LUM-980: the version this image was built as: dev for a local build, X.Y.Z for a
+# release, the short commit for main. Last in the file so a new version rebuilds
+# no other layer. Backups record it, and checks use it to tell pulled from built.
+ARG LUMOGIS_IMAGE_VERSION=dev
+ENV LUMOGIS_IMAGE_VERSION=$LUMOGIS_IMAGE_VERSION
+# LUM-980: fingerprint of the release docker-compose.yml this image ships with
+# (dev for local builds); the compose freshness check compares it with the
+# header of the compose file in the install folder.
+ARG LUMOGIS_COMPOSE_FINGERPRINT=dev
+ENV LUMOGIS_COMPOSE_FINGERPRINT=$LUMOGIS_COMPOSE_FINGERPRINT

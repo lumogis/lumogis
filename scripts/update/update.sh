@@ -2,16 +2,21 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Lumogis
 #
-# LUM-187 — operator update flow for a Docker Compose Lumogis install:
-#   pull latest images -> capture rollback state -> rebuild the backup image ->
-#   rescue capture media and the stop-entities list from the old container ->
-#   restart -> run migrations
+# LUM-187 — operator update flow for a git-checkout Lumogis install:
+#   capture rollback state -> pull the images that are not built here ->
+#   build the Lumogis images from this checkout -> rescue capture media and the
+#   stop-entities list from the old container -> restart -> run migrations
 #   (on boot, via orchestrator/docker-entrypoint.sh) -> confirm health.
+#
+# An install from the release files has no scripts: it updates with
+#   docker compose pull && docker compose up -d   (docs/deployment/upgrading.md).
+# With the ghcr overlay (COMPOSE_FILE=…:docker-compose.ghcr.yml) the same steps
+# pull the Lumogis images instead, and the build finds nothing to build (LUM-980).
 #
 # Safe by design:
 #   * Records per-service image digests to a state file BEFORE pulling,
 #     generates rollback-compose.override.yml, so `make rollback` pins them back
-#     (required for GHCR installs where IMAGE_TAG=:latest would otherwise float).
+#     (required for ghcr-overlay installs, where :latest would otherwise float).
 #   * Never deletes data. Migrations are idempotent (orchestrator/db_migrations.py).
 #   * Post-health gate verifies no pending migrations and no boot migration errors.
 #   * Strongly recommends a fresh backup first (see `make backup`, LUM-185).
@@ -39,7 +44,8 @@ docker compose version >/dev/null 2>&1 || die "docker compose v2 required"
 # --- Confirmation ---------------------------------------------------------
 if [[ "${LUMOGIS_ASSUME_YES:-}" != "1" ]]; then
   cat <<'MSG'
-This will pull the latest Lumogis images and restart the stack.
+This will rebuild Lumogis from this checkout (pulling the images it does
+not build) and restart the stack.
 Database migrations run automatically on restart (idempotent).
 Recommended: run `make backup` first so `make rollback` can restore data.
 MSG
@@ -50,20 +56,23 @@ fi
 # --- Capture rollback state (per-service image refs) ------------------------
 capture_rollback_state "$STATE_FILE" "$OVERRIDE_FILE" "$WRITE_OVERRIDE"
 
-# --- Pull + restart -------------------------------------------------------
-log "pulling latest images"
-# --ignore-buildable: qdrant (lumogis-qdrant) and the other build-only images
-# have no registry; a plain pull asks for them and exits non-zero (LUM-900).
+# --- Pull + build -----------------------------------------------------------
+installing="$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null || echo "unknown")"
+log "installing Lumogis ${installing} from this checkout"
+
+log "pulling the images that are not built here"
+# --ignore-buildable: the Lumogis images are built from this checkout
+# (pull_policy: build) and have no tag to pull (LUM-900). With the ghcr overlay
+# they are not buildable, so this pulls them too.
 docker compose pull --ignore-buildable
 
-# The backup service is build-only (no GHCR image) and bakes scripts/backup/ into
-# its image, so pull + up never refresh it. Without this an updated install keeps
-# the old image and writes database-only snapshots forever (LUM-892). A failed
-# build (GitHub, apt or Docker Hub unreachable) must not block an image update;
-# the backup card reports the stale image.
-log "rebuilding the backup image (its scripts are baked in; LUM-892)"
-docker compose build --pull backup \
-  || warn "could not rebuild the backup image (network?); backups stay database-only until 'docker compose build backup' succeeds — the backup card will say so"
+# Every Lumogis image bakes its code (and backup bakes scripts/backup/, LUM-892),
+# so rebuild them all; the layer cache makes it quick when nothing changed. Under
+# the ghcr overlay there is nothing to build. A failed build stops here, before
+# anything is stopped: `up` would only try the same build again.
+log "building the Lumogis images from this checkout"
+docker compose build --pull \
+  || die "building the Lumogis images failed (see above; network?). Nothing was stopped or changed. Fix the error and run the update again."
 
 # Capture media used to live in the orchestrator container's writable layer and
 # was deleted by the recreate below. Copy it to the workspace first. Runs last,

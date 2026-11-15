@@ -148,16 +148,13 @@ jobs:
               "**Contract failure:** artifact \`publish-digests\` not found for run ${RUN_ID}. Re-run **Publish image** after \`record-publish-digests\` ships on \`main\`."
           fi
 
-          ORCH="$(jq -r '."publish-orchestrator" // empty' "${DIGEST_FILE}")"
-          WEB="$(jq -r '."publish-lumogis-web" // empty' "${DIGEST_FILE}")"
-
-          if [[ -z "${ORCH}" ]]; then
-            report_contract_failure "Attestation verify failed: missing digest for publish-orchestrator @ ${HEAD_SHA:0:7}" \
-              "**Contract failure:** no \`publish-orchestrator\` digest in \`publish-digests\` artifact on run ${RUN_ID}."
-          fi
-          if [[ -z "${WEB}" ]]; then
-            report_contract_failure "Attestation verify failed: missing digest for publish-lumogis-web @ ${HEAD_SHA:0:7}" \
-              "**Contract failure:** no \`publish-lumogis-web\` digest in \`publish-digests\` artifact on run ${RUN_ID}."
+          # LUM-980: one entry per published image ({image, digest}), listed in
+          # "expected". Older artifacts (bare digest strings for orchestrator and
+          # web) are still read so a re-run of an old publish run works.
+          mapfile -t EXPECTED < <(jq -r '(.expected // ["publish-orchestrator","publish-lumogis-web"])[]' "${DIGEST_FILE}")
+          if [[ "${#EXPECTED[@]}" -eq 0 ]]; then
+            report_contract_failure "Attestation verify failed: empty expected list @ ${HEAD_SHA:0:7}" \
+              "**Contract failure:** \`publish-digests\` on run ${RUN_ID} lists no images."
           fi
 
           validate_digest() {
@@ -169,27 +166,39 @@ jobs:
             fi
           }
 
-          validate_digest "${ORCH}" "publish-orchestrator"
-          validate_digest "${WEB}" "publish-lumogis-web"
+          IMAGES=()
+          DIGESTS=()
+          for job in "${EXPECTED[@]}"; do
+            [[ "${job}" =~ ^publish-[a-z0-9-]+$ ]] || report_contract_failure \
+              "Attestation verify failed: bad job name @ ${HEAD_SHA:0:7}" "**Contract failure:** expected entry \`${job}\` is not a publish job name."
+            image="$(jq -r --arg j "${job}" '.[$j] | if type == "object" then .image else ("ghcr.io/lumogis/" + ($j | sub("^publish-orchestrator$"; "lumogis-orchestrator") | sub("^publish-"; ""))) end // empty' "${DIGEST_FILE}")"
+            digest="$(jq -r --arg j "${job}" '.[$j] | if type == "object" then .digest else . end // empty' "${DIGEST_FILE}")"
+            if [[ -z "${digest}" || -z "${image}" ]]; then
+              report_contract_failure "Attestation verify failed: missing digest for ${job} @ ${HEAD_SHA:0:7}" \
+                "**Contract failure:** no \`${job}\` image/digest in \`publish-digests\` artifact on run ${RUN_ID}."
+            fi
+            [[ "${image}" =~ ^ghcr\.io/lumogis/lumogis-[a-z0-9-]+$ ]] || report_contract_failure \
+              "Attestation verify failed: unexpected image @ ${HEAD_SHA:0:7}" "**Contract failure:** ${job} names image \`${image}\`."
+            validate_digest "${digest}" "${job}"
+            IMAGES+=("${image}")
+            DIGESTS+=("${digest}")
+          done
 
           VERIFY_ERR="$(mktemp)"
           FAIL=0
           FAIL_LINES=""
-          if ! gh attestation verify \
-            "oci://ghcr.io/lumogis/lumogis-orchestrator@${ORCH}" \
-            --repo lumogis/lumogis \
-            --predicate-type https://slsa.dev/provenance/v1 2>"${VERIFY_ERR}"; then
-            FAIL=1
-            FAIL_LINES+="lumogis-orchestrator: $(cat "${VERIFY_ERR}")"$'\n'
-          fi
-          : > "${VERIFY_ERR}"
-          if ! gh attestation verify \
-            "oci://ghcr.io/lumogis/lumogis-web@${WEB}" \
-            --repo lumogis/lumogis \
-            --predicate-type https://slsa.dev/provenance/v1 2>"${VERIFY_ERR}"; then
-            FAIL=1
-            FAIL_LINES+="lumogis-web: $(cat "${VERIFY_ERR}")"$'\n'
-          fi
+          FAILED_NAMES=()
+          for idx in "${!IMAGES[@]}"; do
+            ref="oci://${IMAGES[$idx]}@${DIGESTS[$idx]}"
+            : > "${VERIFY_ERR}"
+            if ! gh attestation verify "${ref}" \
+              --repo lumogis/lumogis \
+              --predicate-type https://slsa.dev/provenance/v1 2>"${VERIFY_ERR}"; then
+              FAIL=1
+              FAIL_LINES+="${IMAGES[$idx]##*/}: $(cat "${VERIFY_ERR}")"$'\n'
+              FAILED_NAMES+=("${IMAGES[$idx]##*/lumogis-}")
+            fi
+          done
           rm -f "${VERIFY_ERR}"
 
           if [[ "${FAIL}" -ne 0 ]]; then
@@ -200,21 +209,23 @@ jobs:
               echo "**Publish run:** ${HTML_URL}"
               echo
               echo "**Digests (OCI index):**"
-              echo "- lumogis-orchestrator: \`${ORCH}\`"
-              echo "- lumogis-web: \`${WEB}\`"
+              for idx in "${!IMAGES[@]}"; do
+                echo "- ${IMAGES[$idx]##*/}: \`${DIGESTS[$idx]}\`"
+              done
               echo
               echo "**Failures:**"
               printf '%s\n' "${FAIL_LINES}"
               echo
               echo "**Reproducer (plan canonical):**"
               echo "\`\`\`bash"
-              echo "gh attestation verify \"oci://ghcr.io/lumogis/lumogis-orchestrator@${ORCH}\" --repo lumogis/lumogis --predicate-type https://slsa.dev/provenance/v1"
-              echo "gh attestation verify \"oci://ghcr.io/lumogis/lumogis-web@${WEB}\" --repo lumogis/lumogis --predicate-type https://slsa.dev/provenance/v1"
+              for idx in "${!IMAGES[@]}"; do
+                echo "gh attestation verify \"oci://${IMAGES[$idx]}@${DIGESTS[$idx]}\" --repo lumogis/lumogis --predicate-type https://slsa.dev/provenance/v1"
+              done
               echo "\`\`\`"
             } > "${body}"
-            upsert_issue "Attestation verify failed: orchestrator, web @ ${HEAD_SHA:0:7}" "${body}"
+            upsert_issue "Attestation verify failed: $(IFS=', '; echo "${FAILED_NAMES[*]}") @ ${HEAD_SHA:0:7}" "${body}"
             rm -f "${body}"
             exit 1
           fi
 
-          echo "All attestations verified for run ${RUN_ID}"
+          echo "All ${#IMAGES[@]} attestations verified for run ${RUN_ID}"

@@ -1,6 +1,6 @@
 # First-run quickstart
 
-Self-contained path for a new self-hoster: clone, configure, start with Docker Compose, pull default models, and confirm the stack is healthy.
+Install Lumogis from the published images in an empty folder, start it with Docker Compose, and confirm it is healthy. Like Immich, you need two downloaded files and no source code. Updating later is two commands: see [Upgrading](upgrading.md).
 
 ---
 
@@ -8,7 +8,6 @@ Self-contained path for a new self-hoster: clone, configure, start with Docker C
 
 - Docker and Docker Compose installed (Docker Engine + Compose v2, or Docker Desktop). Intel/AMD (x86-64) and ARM (arm64, including Apple Silicon) machines both work.
 - 8 GB RAM minimum (default Ollama embedder + chat model). With Docker Desktop, give it at least 8 GB in **Settings → Resources**.
-- Git
 
 Before you start, open a **new** terminal and check that Docker answers:
 
@@ -21,43 +20,59 @@ Both should print version information, and `docker version` should show a **Serv
 
 ---
 
-## Quick start (5 steps)
+## Quick start (4 steps)
 
-1. **Clone the repo**
-
-   ```bash
-   git clone https://github.com/lumogis/lumogis
-   ```
-
-2. **Enter the directory**
+1. **Make a folder for Lumogis and go into it**
 
    ```bash
-   cd lumogis
+   mkdir lumogis && cd lumogis
    ```
 
-3. **Create `.env`**
+   Your documents, uploads and backups live in folders next to the two files (`lumogis-data/`, `ai-workspace/`), unless you point them elsewhere in `.env`.
+
+2. **Download the two files from the latest release**
 
    ```bash
-   cp .env.example .env
+   curl -fsSL -o docker-compose.yml https://github.com/lumogis/lumogis/releases/latest/download/docker-compose.yml
+   curl -fsSL -o .env https://github.com/lumogis/lumogis/releases/latest/download/example.env
    ```
 
-   No edits are required for a single-person trial. Sign-in stays off: Lumogis Web opens straight into Lumogis as its only user, with admin rights. Anyone who can reach this machine's address can do the same, so turn sign-in on (see [Turn on sign-in](#turn-on-sign-in)) before other people share the network or you publish Lumogis beyond it. To use **pre-built images** from GHCR instead of a local build, set **`COMPOSE_FILE=docker-compose.yml:docker-compose.ghcr.yml`** in `.env` (see comments at the top of `.env.example`).
+   (`wget -O docker-compose.yml …` works too, or download both from the [Releases page](https://github.com/lumogis/lumogis/releases/latest) and save `example.env` as `.env`.)
 
-4. **Start the stack**
+   No edits are required for a single-person trial. Sign-in stays off: Lumogis Web opens straight into Lumogis as its only user, with admin rights. Anyone who can reach this machine's address can do the same, so turn sign-in on (see [Turn on sign-in](#turn-on-sign-in)) before other people share the network or you publish Lumogis beyond it.
+
+3. **Start Lumogis**
 
    ```bash
    docker compose up -d
    ```
 
-   First boot can take several minutes (image build or pull, Postgres init, Ollama model downloads).
+   Compose pulls the published images; nothing is built. First boot can take several minutes (image pull, database set-up, Ollama model downloads). Run Compose from this folder: it tells the restart service where the install lives.
 
-5. **Open the UI**
+4. **Open the UI**
 
    Open **http://localhost/** (Caddy → Lumogis Web). Chat opens directly. A banner says that sign-in is off, and an empty chat links to adding your first documents.
 
    Orchestrator API/Swagger is also available at **http://localhost:8000/docs** if you need it, on the host only: port 8000 is published on `127.0.0.1` and is not reachable from other machines. Use the Caddy URL (port 80) from other devices.
 
-   **Runs as:** the orchestrator runs as the owner of the checkout folder, so files it writes in `.env`, `config/` and `ai-workspace/` belong to you. Set `LUMOGIS_RUN_UID` / `LUMOGIS_RUN_GID` in `.env` to choose another user (`0` keeps root). Under rootless Docker, Podman or a user-namespace remap nothing changes. `docker compose exec orchestrator ...` still enters as root.
+   **Runs as:** the orchestrator runs as the owner of the install folder, so files it writes in `.env` and `ai-workspace/` belong to you. Set `LUMOGIS_RUN_UID` / `LUMOGIS_RUN_GID` in `.env` to choose another user (`0` keeps root). Under rootless Docker, Podman or a user-namespace remap nothing changes. `docker compose exec orchestrator ...` still enters as root.
+
+**Updating:** `docker compose pull && docker compose up -d`, from the same folder. Take a backup first and read the release notes: [Upgrading](upgrading.md).
+
+**Staying on one version:** set `LUMOGIS_VERSION=0.13.0` (no leading `v`) in `.env`. The default, `release`, follows the latest release.
+
+### For contributors: run from a git checkout
+
+To change Lumogis, or to use LibreChat or the GPU, speech or LiteLLM overlays (not in the release files yet), run from the source instead. The repository's `docker-compose.yml` **builds** the Lumogis images from your checkout; it needs Git and, for `make`, GNU Make.
+
+```bash
+git clone https://github.com/lumogis/lumogis
+cd lumogis
+cp .env.example .env
+docker compose up -d
+```
+
+Update a checkout with `git pull && make update`. To pull the published images while keeping the checkout, set **`COMPOSE_FILE=docker-compose.yml:docker-compose.ghcr.yml`** in `.env` (see the comments at the top of `.env.example`).
 
 ---
 
@@ -65,8 +80,8 @@ Both should print version information, and `docker version` should show a **Serv
 
 On first start, the orchestrator entrypoint (`orchestrator/docker-entrypoint.sh`) waits for Ollama and pulls:
 
-- **`nomic-embed-text`** — embedding model (`EMBEDDING_MODEL` in `.env.example`)
-- **`llama3.2:3b`** — default chat model (`OLLAMA_EXTRA_MODELS` in `.env.example`)
+- **`nomic-embed-text`** — embedding model (`EMBEDDING_MODEL` in `.env`)
+- **`llama3.2:3b`** — default chat model (`OLLAMA_EXTRA_MODELS`; add it to `.env` to choose others, see `.env.example` on GitHub)
 
 Watch progress:
 
@@ -115,7 +130,7 @@ For reaching Lumogis safely from outside your network, see [Remote access](remot
 
 ## Verify Postgres migrations ran
 
-Fresh Postgres volumes are bootstrapped from **`postgres/init.sql`**. Further schema changes are applied **automatically** on orchestrator startup by **`python3 /app/db_migrations.py`** (idempotent; tracks applied files in `schema_migrations`).
+On a new, empty database the orchestrator creates the schema from **`postgres/init.sql`** (baked into its image), then applies every migration. Later schema changes are applied **automatically** on each orchestrator start by **`python3 /app/db_migrations.py`** (idempotent; tracks applied files in `schema_migrations`).
 
 Confirm in logs:
 
@@ -123,28 +138,20 @@ Confirm in logs:
 docker compose logs orchestrator | grep -i migration
 ```
 
-You should see `[entrypoint] Running Postgres migrations...` without a fatal error. If the migration runner exits non-zero, the entrypoint logs a WARNING and the service may be degraded — fix the DB state and restart; no separate manual migration step is needed on a clean first install.
+You should see `[entrypoint] Running Postgres migrations...` without a fatal error; a first start also logs `baseline_applied`. If a migration fails, the entrypoint logs a WARNING and the service may be degraded — fix the DB state and restart; no separate manual migration step is needed on a clean first install. If the schema cannot be created at all on an empty database, the orchestrator stops with `[entrypoint] FATAL: no database schema` instead of starting half-working.
 
 ---
 
 ## Smoke test
 
-From the repo root (requires GNU Make):
-
-```bash
-make health
-```
-
-This calls **`GET http://localhost:8000/health`** and pretty-prints JSON.
-
-Without Make:
+From the install folder:
 
 ```bash
 docker compose ps
 curl -fsS http://localhost:8000/health
 ```
 
-All core services should show **healthy** (or **running** for short-lived helpers). **`curl`** should return HTTP 200.
+All core services should show **healthy** (or **running** for short-lived helpers). **`curl`** should return HTTP 200. In a git checkout, `make health` does the same and pretty-prints the JSON.
 
 ---
 

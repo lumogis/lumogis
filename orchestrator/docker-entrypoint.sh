@@ -8,18 +8,22 @@
 # Seed from the tracked cold-start template so fresh clones and single-file mounts work.
 _LIBRECHAT_CFG="/project/config/librechat.yaml"
 _LIBRECHAT_TEMPLATE="/project/config/librechat.coldstart.yaml"
-# Docker can create `librechat.yaml` as an empty directory when the bind-mount
-# source path was missing on first boot; LibreChat then logs EISDIR / invalid YAML.
-if [ -d "$_LIBRECHAT_CFG" ]; then
-    rm -rf "$_LIBRECHAT_CFG"
-    echo "[entrypoint] Removed directory at ${_LIBRECHAT_CFG}; expected a regular file — re-seeding below"
-fi
-if [ ! -f "$_LIBRECHAT_CFG" ] || [ ! -s "$_LIBRECHAT_CFG" ]; then
-    if [ -f "$_LIBRECHAT_TEMPLATE" ]; then
-        cp "$_LIBRECHAT_TEMPLATE" "$_LIBRECHAT_CFG"
-        echo "[entrypoint] Seeded librechat.yaml from librechat.coldstart.yaml"
-    else
-        echo "[entrypoint] WARNING: missing $_LIBRECHAT_TEMPLATE — LibreChat may fail until config exists" >&2
+# An install from the two release files (LUM-980) has no config/ folder and no
+# LibreChat, so there is nothing to seed and nothing to warn about.
+if [ -d /project/config ]; then
+    # Docker can create `librechat.yaml` as an empty directory when the bind-mount
+    # source path was missing on first boot; LibreChat then logs EISDIR / invalid YAML.
+    if [ -d "$_LIBRECHAT_CFG" ]; then
+        rm -rf "$_LIBRECHAT_CFG"
+        echo "[entrypoint] Removed directory at ${_LIBRECHAT_CFG}; expected a regular file — re-seeding below"
+    fi
+    if [ ! -f "$_LIBRECHAT_CFG" ] || [ ! -s "$_LIBRECHAT_CFG" ]; then
+        if [ -f "$_LIBRECHAT_TEMPLATE" ]; then
+            cp "$_LIBRECHAT_TEMPLATE" "$_LIBRECHAT_CFG"
+            echo "[entrypoint] Seeded librechat.yaml from librechat.coldstart.yaml"
+        else
+            echo "[entrypoint] WARNING: missing $_LIBRECHAT_TEMPLATE — LibreChat may fail until config exists" >&2
+        fi
     fi
 fi
 
@@ -210,13 +214,22 @@ if [ "$_AUTH_ENABLED_NORM" = "true" ]; then
 fi
 
 # ── Apply Postgres migrations ────────────────────────────────────────────────
-# postgres/init.sql only runs on first init of an empty data volume; subsequent
-# schema changes live in postgres/migrations/*.sql and must be applied manually
-# unless something runs them. We do that here so existing installs heal on boot.
-# The runner is idempotent and tracks applied files in a schema_migrations table.
+# In a git checkout, Postgres runs postgres/init.sql itself on the first init of
+# an empty data volume (initdb mount). An install from the two release files has
+# no such mount, so on an empty database the runner applies init.sql from the
+# image first (LUM-980). Schema changes live in postgres/migrations/*.sql; the
+# runner is idempotent and tracks applied files in a schema_migrations table.
+# An ordinary migration failure warns and continues (ADR 059); exit 3 means no
+# schema is possible (empty database and no usable baseline, or no migrations at
+# all), and starting would only serve an empty database, so stop.
 if [ -f "/app/db_migrations.py" ]; then
     echo "[entrypoint] Running Postgres migrations..."
-    if ! python3 /app/db_migrations.py; then
+    _mig_rc=0
+    python3 /app/db_migrations.py || _mig_rc=$?
+    if [ "$_mig_rc" -eq 3 ]; then
+        echo "[entrypoint] FATAL: no database schema — see the migration log above." >&2
+        exit 3
+    elif [ "$_mig_rc" -ne 0 ]; then
         echo "[entrypoint] WARNING: migration runner exited non-zero — see logs above." >&2
         echo "[entrypoint] Continuing startup; orchestrator may run in degraded mode." >&2
     fi

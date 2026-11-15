@@ -27,3 +27,4 @@ Ship `docs/deployment/quickstart.md` as a **docs-only artefact** anchored on the
 
 - 2026-05-22: Draft created by `/explore --headless` (LUM-184) — `.cursor/adrs/LUM-184-first-run-quickstart.md`
 - 2026-05-22: Finalised by `/verify-plan --headless` — implementation confirmed; canonical copy this file
+- 2026-11-15: Amended by [ADR 262](262-lum-980-install-from-published-images.md) — the quickstart leads with the two release files (no checkout, nothing built); the overlay path moved under "For contributors". A migration failure still warns and continues, except that a database whose schema cannot be created now stops start-up (exit 3) (LUM-980).

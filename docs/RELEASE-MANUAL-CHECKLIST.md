@@ -40,7 +40,7 @@ Any skipped checklist row must be marked **N/A** with a **one-line reason** in t
 
 | Done | ID | Check | Preconditions | Pass | Fail | Notes (N/A reason) |
 | --- | --- | --- | --- | --- | --- | --- |
-| [ ] | **MS-001** | Published **GHCR** image boots on a **fresh** host | Clean VM/host; `COMPOSE_FILE=docker-compose.yml:docker-compose.ghcr.yml`; pull `ghcr.io/lumogis/lumogis-orchestrator` and `ghcr.io/lumogis/lumogis-web` at release tag/digest ([capabilities.md](capabilities.md)); `config/test.env.example` or operator `.env` | `docker compose up -d` healthy; services running | Image pull/boot errors, crash loop | |
+| [ ] | **MS-001** | The **two release files** install on a **fresh** host (LUM-980) | Clean VM/host, amd64 **and** arm64 (Apple Silicon); only Docker; in an empty folder download `docker-compose.yml` and `example.env` (as `.env`) from the Release ([quickstart](deployment/quickstart.md)), then `docker compose up -d` | Within 15 min every service healthy, `GET /health` 200, Lumogis Web 200; `up` printed no `Building`; every Lumogis container's image has `LUMOGIS_IMAGE_VERSION=X.Y.Z` and its image ID matches `image-digests.txt`; then `docker compose pull && docker compose up -d` changes nothing | Pull denied (package not public), a build, a crash loop, `compose_file_stale` | |
 | [ ] | **MS-002** | `docker compose up -d` on **macOS or Linux** | Compose files per release docs; sufficient disk/RAM | All required services **running** | Exit non-zero, missing service | |
 | [ ] | **MS-003** | `GET /health` returns **200** within **30s** of boot | Core URL known (Caddy/orchestrator) | 200 + healthy body | Timeout, 5xx, wrong routing | |
 | [ ] | **MS-004** | **First-run document ingest** on **clean volume** | Sample doc in ingest path; graph mode per release config | Ingest success; no fatal orchestrator errors | Stuck job, 5xx, corrupt index | |
@@ -50,6 +50,7 @@ Any skipped checklist row must be marked **N/A** with a **one-line reason** in t
 | [ ] | **MS-008** | **Admin dashboard** non-empty after ingest | Web UI reachable; MS-004 complete | Dashboard shows data | Blank/broken UI | |
 | [ ] | **MS-009** | **Backup/restore round-trip** preserves graph (**LUM-185** / **LUM-484**) | `make compose-test-backup` on maintainer machine (postgres+qdrant+falkordb volume wipe) | Restore after wipe; spot-check seeded entity + Qdrant point + FalkorDB `GRAPH.QUERY`; daily verify checks FalkorDB RDB envelope + checksum (not module load; functional graph proof is the round-trip). Bump `FALKORDB_IMAGE` together with backup sidecar build. | Data loss, broken graph | N/A if backup path not yet shipped |
 | [ ] | **MS-010** | `docker compose down && up` **preserves** state | Prior successful ingest; named volumes | Data still present after cycle | Wiped volumes / empty graph | |
+| [ ] | **MS-011** | **stack-control** Docker CLI still matches current Docker (LUM-980) | The published `lumogis-stack-control` image (`docker-ce-cli` and `docker-compose-plugin` pinned in `stack-control/Dockerfile`) | `docker compose exec stack-control docker version` shows a client the host Engine accepts, and `docker compose exec stack-control docker compose version` is a current major; a restart from **Settings** recreates the stack | API version too old / too new, compose errors from the restart | Bump the two pins when Docker moves on |
 
 ## Relationship to coverage matrices
 
@@ -61,4 +62,5 @@ Manual behaviours map to **MS-###** IDs cited in [TEST-COVERAGE-MATRIX-core.md](
 
 - [CONTRIBUTING.md](../CONTRIBUTING.md) — contributor testing and matrix maintenance
 - [automated-test-strategy.md](testing/automated-test-strategy.md) — automated layers and RC gates
-- [capabilities.md](capabilities.md) — GHCR pull deployment
+- [capabilities.md](capabilities.md) — GHCR images and the release install
+- [deployment/upgrading.md](deployment/upgrading.md) — updating, pinning, going back

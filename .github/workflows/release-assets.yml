@@ -1,0 +1,348 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Lumogis
+#
+# LUM-980 — attach the two install files to a GitHub Release and publish it.
+#
+# A household installs Lumogis like Immich: download docker-compose.yml and
+# example.env from the latest Release, then `docker compose up -d`. This workflow
+# is the only thing that publishes a Release, and it does so only after the files
+# and the five images they name have been checked as an anonymous user would see
+# them:
+#
+#   1. the draft Release v<version> exists (tag pushed, Publish image finished);
+#   2. each ghcr.io/lumogis/<image>:<version> resolves anonymously, for amd64 and
+#      arm64 (it polls while Publish image is still running);
+#   3. the generated compose pulls exactly those digests anonymously;
+#   4. the files are attested, uploaded in one call, `release` and `X.Y` move to
+#      the verified digests (stable versions only), and the Release is published.
+#
+# Until the last step the Release is a draft, so releases/latest/download/ keeps
+# serving the previous pair. A re-dispatch is idempotent and completes a run that
+# stopped part-way (for example while `release` was being moved).
+#
+# Dispatch only. Kept in lumogis-app for the export; every job is guarded on
+# github.repository (ADR 261). Third-party actions: immutable SHA pins (ADR 037).
+
+name: Release assets
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version without the leading v (e.g. 0.13.0 or 0.13.0-rc.1)
+        required: true
+        type: string
+      replace_published:
+        description: Replace the files on a Release that is already published
+        required: false
+        type: boolean
+        default: false
+      wait_minutes:
+        description: How long to wait for Publish image to push the version tags
+        required: false
+        type: string
+        default: "90"
+
+permissions: {}
+
+concurrency:
+  group: release-assets
+  cancel-in-progress: false
+
+jobs:
+  release-assets:
+    # From main only, like the publish jobs: a dispatch runs the workflow file of
+    # the chosen ref, so another branch could carry a different one.
+    if: github.repository == 'lumogis/lumogis' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    permissions:
+      contents: write
+      packages: write
+      attestations: write
+      id-token: write
+    env:
+      VERSION: ${{ inputs.version }}
+      REPLACE_PUBLISHED: ${{ inputs.replace_published }}
+      WAIT_MINUTES: ${{ inputs.wait_minutes }}
+      IMAGES: lumogis-web lumogis-stack-control lumogis-backup lumogis-caddy lumogis-orchestrator
+    steps:
+      - name: Validate inputs
+        id: input
+        run: |
+          set -euo pipefail
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::version must look like 1.2.3 or 1.2.3-rc.1 (no leading v); got '$VERSION'"
+            exit 1
+          fi
+          if [[ ! "$WAIT_MINUTES" =~ ^[0-9]+$ ]] || (( WAIT_MINUTES < 1 || WAIT_MINUTES > 120 )); then
+            echo "::error::wait_minutes must be a whole number from 1 to 120"
+            exit 1
+          fi
+          if [[ "$VERSION" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+          [[ "$VERSION" =~ ^([0-9]+\.[0-9]+)\. ]]
+          echo "minor=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: refs/tags/${{ steps.input.outputs.tag }}
+          persist-credentials: false
+
+      - name: Require a draft Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.input.outputs.tag }}
+          PRERELEASE: ${{ steps.input.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          if ! info="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease 2>&1)"; then
+            echo "::error::No GitHub Release $TAG. Create it as a draft first: gh release create $TAG --draft --verify-tag --notes-file …"
+            echo "$info"
+            exit 1
+          fi
+          draft="$(jq -r .isDraft <<<"$info")"
+          pre="$(jq -r .isPrerelease <<<"$info")"
+          if [[ "$draft" != "true" && "$REPLACE_PUBLISHED" != "true" ]]; then
+            echo "::error::Release $TAG is already published. Re-run with replace_published=true to replace its files."
+            exit 1
+          fi
+          if [[ "$PRERELEASE" == "true" && "$pre" != "true" ]]; then
+            echo "::error::$VERSION is a prerelease version, so the Release $TAG must be marked prerelease."
+            exit 1
+          fi
+          if [[ "$PRERELEASE" != "true" && "$pre" == "true" ]]; then
+            echo "::error::$VERSION is a stable version, but the Release $TAG is marked prerelease."
+            exit 1
+          fi
+          echo "Release $TAG: draft=$draft prerelease=$pre"
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Resolve the five images anonymously
+        run: |
+          set -euo pipefail
+          # An empty DOCKER_CONFIG means no credentials: we see what a household sees.
+          export DOCKER_CONFIG="$RUNNER_TEMP/anon-docker"
+          mkdir -p "$DOCKER_CONFIG"
+          echo '{}' > "$DOCKER_CONFIG/config.json"
+
+          deadline=$(( $(date +%s) + WAIT_MINUTES * 60 ))
+          : > image-digests.txt
+          declare -A RESOLVED=()
+          while :; do
+            denied=()
+            for image in $IMAGES; do
+              [[ -n "${RESOLVED[$image]:-}" ]] && continue
+              ref="ghcr.io/lumogis/${image}:${VERSION}"
+              if out="$(docker buildx imagetools inspect "$ref" --format '{{json .Manifest}}' 2>&1)"; then
+                digest="$(jq -r '.digest // empty' <<<"$out")"
+                if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+                  echo "::error::$ref: could not read the index digest"
+                  exit 1
+                fi
+                # Attestation manifests show as unknown/unknown; only real platforms count.
+                plats="$(jq -r '[.manifests[]? | .platform | select(. != null) | "\(.os)/\(.architecture)"] | join(" ")' <<<"$out")"
+                for want in linux/amd64 linux/arm64; do
+                  if [[ " $plats " != *" $want "* ]]; then
+                    echo "::error::$ref has no $want manifest (platforms: ${plats:-none})"
+                    exit 1
+                  fi
+                done
+                echo "ghcr.io/lumogis/${image} ${VERSION} ${digest}" >> image-digests.txt
+                RESOLVED[$image]=1
+                echo "resolved $ref -> $digest"
+              elif grep -qiE 'unauthorized|denied|401|403' <<<"$out"; then
+                denied+=("$image")
+              elif grep -qiE 'not found|manifest unknown|404' <<<"$out"; then
+                echo "waiting for $ref (not published yet)"
+              else
+                echo "::warning::$ref: $out"
+              fi
+            done
+            if (( ${#denied[@]} )); then
+              # ghcr answers 403 both for a private package and for one never pushed.
+              echo "::error::packages not public: ${denied[*]}. Make each package public in GitHub (package settings → visibility); if it does not exist yet, the push of main has not published it. Then dispatch again."
+              exit 1
+            fi
+            (( ${#RESOLVED[@]} == $(wc -w <<<"$IMAGES") )) && break
+            if (( $(date +%s) >= deadline )); then
+              echo "::error::Gave up after ${WAIT_MINUTES} min: not every image has the tag $VERSION. Check the Publish image run, then dispatch again."
+              exit 1
+            fi
+            sleep 60
+          done
+          sort -o image-digests.txt image-digests.txt
+          {
+            echo "### Image digests for $VERSION"
+            echo
+            echo '```'
+            cat image-digests.txt
+            echo '```'
+            echo
+            echo "The 0.12.0 Publish image run took 18 min for publish-orchestrator; wait_minutes defaults to 90."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Check each image's build provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Only images this repository's Publish image workflow built and attested
+          # are released (ADR 037 / 049).
+          while read -r repo _version digest; do
+            gh attestation verify "oci://${repo}@${digest}" --repo lumogis/lumogis \
+              --predicate-type https://slsa.dev/provenance/v1 >/dev/null
+            echo "attested: ${repo}@${digest}"
+          done < image-digests.txt
+
+      - name: Is this the newest stable release?
+        id: newest
+        if: steps.input.outputs.prerelease == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Re-running an older version (e.g. replace_published to fix its files)
+          # must not move `release` or the latest Release back: every household's
+          # next `docker compose pull` would downgrade onto a newer database.
+          newest="$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --exclude-pre-releases \
+            --limit 100 --json tagName -q '.[].tagName' | sed 's/^v//' \
+            | { grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' || true; } | { cat; echo "$VERSION"; } | sort -V | tail -1)"
+          if [[ "$newest" == "$VERSION" ]]; then
+            echo "newest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "newest=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::$VERSION is older than $newest: its files are updated, but release, ${VERSION%.*} and the latest Release stay where they are."
+          fi
+
+      - name: Generate the install files
+        env:
+          PRERELEASE: ${{ steps.input.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          # PyYAML ships on GitHub's Ubuntu runners; install it only if missing.
+          python3 -c 'import yaml' 2>/dev/null || python3 -m pip install --quiet --break-system-packages 'PyYAML>=6,<7'
+          python3 scripts/release/build_release_compose.py --version "$VERSION" --check --out dist/release
+          if [[ "$PRERELEASE" == "true" ]]; then
+            # `release` does not move for a prerelease, so an rc install must pin its
+            # own version or it would pull the previous stable images.
+            sed -i "s/^LUMOGIS_VERSION=release$/LUMOGIS_VERSION=${VERSION}/" dist/release/example.env
+            grep -qx "LUMOGIS_VERSION=${VERSION}" dist/release/example.env
+          fi
+          cp dist/release/example.env dist/release/.env
+
+          # The orchestrator compares this file's fingerprint with the one baked into
+          # its image (compose_file_stale). They come from two runs, so prove they agree.
+          export DOCKER_CONFIG="$RUNNER_TEMP/anon-docker"
+          read -r orch_repo _v orch_digest < <(grep "^ghcr.io/lumogis/lumogis-orchestrator " image-digests.txt)
+          baked="$(docker buildx imagetools inspect "${orch_repo}@${orch_digest}" --format '{{json .Image}}' \
+            | jq -r '(if has("linux/amd64") then .["linux/amd64"] else . end).config.Env[] | select(startswith("LUMOGIS_COMPOSE_FINGERPRINT=")) | sub("^[^=]*="; "")')"
+          file_fp="$(sed -n 's/^# lumogis-compose: //p' dist/release/docker-compose.yml)"
+          if [[ "$baked" != "$file_fp" ]]; then
+            echo "::error::The orchestrator image expects compose fingerprint '${baked:-none}', this file has '${file_fp}'. Rebuild the images from tag v${VERSION} (Publish image) before releasing."
+            exit 1
+          fi
+
+      - name: Free disk space for the test pull
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # main 2024-02-12
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: false
+          swap-storage: false
+
+      - name: Pull exactly those digests anonymously
+        working-directory: dist/release
+        run: |
+          set -euo pipefail
+          export DOCKER_CONFIG="$RUNNER_TEMP/anon-docker"
+          export LUMOGIS_VERSION="$VERSION"
+          # Pin each Lumogis service to its verified digest through a throwaway
+          # override, so the pull proves those exact images are public.
+          override="$RUNNER_TEMP/digest-pins.yml"
+          echo "services:" > "$override"
+          declare -A SERVICE=(
+            [lumogis-orchestrator]=orchestrator [lumogis-web]=lumogis-web
+            [lumogis-stack-control]=stack-control [lumogis-backup]=backup [lumogis-caddy]=caddy
+          )
+          while read -r repo _version digest; do
+            image="${repo##*/}"
+            printf '  %s:\n    image: %s@%s\n' "${SERVICE[$image]}" "$repo" "$digest" >> "$override"
+          done < ../../image-digests.txt
+          cat "$override"
+          docker compose -f docker-compose.yml -f "$override" config -q
+          docker compose -f docker-compose.yml -f "$override" pull \
+            orchestrator lumogis-web stack-control backup caddy
+          rm -f .env
+
+      - name: Write checksums
+        run: |
+          set -euo pipefail
+          cp image-digests.txt dist/release/image-digests.txt
+          (cd dist/release && sha256sum docker-compose.yml example.env image-digests.txt > SHA256SUMS)
+          cat dist/release/SHA256SUMS
+
+      - name: Attest the install files
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-path: |
+            dist/release/docker-compose.yml
+            dist/release/example.env
+
+      - name: Upload the files to the Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.input.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # One call, so the Release never holds a mixed pair. --clobber is safe:
+          # the Release is a draft here, or replace_published was asked for.
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+            dist/release/docker-compose.yml \
+            dist/release/example.env \
+            dist/release/SHA256SUMS \
+            dist/release/image-digests.txt
+
+      - name: Move the release and X.Y tags
+        if: steps.input.outputs.prerelease == 'false' && steps.newest.outputs.newest == 'true'
+        env:
+          MINOR: ${{ steps.input.outputs.minor }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+          # The orchestrator moves last: it runs the database migrations, so the
+          # other images are already at the new release when it starts.
+          for image in $IMAGES; do
+            read -r repo _v digest < <(grep "^ghcr.io/lumogis/${image} " image-digests.txt)
+            docker buildx imagetools create \
+              -t "${repo}:release" -t "${repo}:${MINOR}" "${repo}@${digest}"
+            echo "moved ${repo}:release and :${MINOR} -> ${digest}"
+          done
+          docker logout ghcr.io
+
+      - name: Publish the Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.input.outputs.tag }}
+          PRERELEASE: ${{ steps.input.outputs.prerelease }}
+          NEWEST: ${{ steps.newest.outputs.newest }}
+        run: |
+          set -euo pipefail
+          if [[ "$PRERELEASE" == "true" ]]; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease --latest=false
+          elif [[ "$NEWEST" != "true" ]]; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false
+          else
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          fi
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,isDraft,isPrerelease

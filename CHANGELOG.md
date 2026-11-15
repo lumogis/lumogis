@@ -11,6 +11,33 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.13.0] — 2026-11-15
+
+**Install Lumogis like Immich.** Download two files from this release into an empty folder and run `docker compose up -d`: every image is pulled ready-made, nothing is built, and you need no copy of the source. Update later with `docker compose pull && docker compose up -d`. This release's `docker-compose.yml` and `example.env` are new (the first release to carry them).
+
+### Added
+
+- **Install Lumogis from two downloaded files, like Immich.** Each release now carries a `docker-compose.yml` and an `example.env`. In an empty folder, save them (the second as `.env`) and run `docker compose up -d`: every image is pulled from `ghcr.io/lumogis/`, nothing is built, and no source checkout is needed. Update with `docker compose pull && docker compose up -d`. The quickstart leads with this, and the new [Upgrading](docs/deployment/upgrading.md) guide covers backups without `make`, pinning a version and going back.
+- **Five published images instead of two.** `lumogis-stack-control`, `lumogis-backup` and `lumogis-caddy` are published and attested like `lumogis-orchestrator` and `lumogis-web`. Each image records the version it was built as (`LUMOGIS_IMAGE_VERSION`), and backups record it too.
+- **A warning when your `docker-compose.yml` is older than your images.** If a release changes the compose file and you only pulled the images, **Admin → Diagnostics** shows `compose_file_stale` and says to download the new file (keep your `.env`).
+
+### Changed
+
+- **In a git checkout, `docker compose up -d` builds the Lumogis images every time.** The repo's `docker-compose.yml` now names them `ghcr.io/lumogis/<image>:dev-<compose project>` with `pull_policy: build`, so a checkout always runs its own code instead of a stale local image. The layer cache makes this quick when nothing changed. `make update` pulls the images it does not build, then rebuilds all Lumogis images (it used to rebuild only the backup image), and stops before touching the stack if the build fails.
+- **`LUMOGIS_VERSION` is now the image tag.** In a release install it chooses the version (`release` follows the latest release; `0.13.0` pins one). In a checkout leave it unset: a set value tags your local builds with that release name. With `docker-compose.ghcr.yml`, it replaces `IMAGE_TAG`, which is read for one more release; the overlay's `latest` is the head of public `main`, so a backup there records the short commit as its version.
+- **The orchestrator image creates the database schema itself on a new, empty database**, from the `postgres/init.sql` and migrations baked into it, so an install needs no files from the source. Existing databases are untouched. When the schema cannot be created, the orchestrator stops with `FATAL: no database schema` instead of starting half-working.
+- **Qdrant runs the stock `qdrant/qdrant:v1.14.1` image.** Lumogis built its own only to add `curl` for the health check, which now uses bash.
+- **`docker-compose.ghcr.yml` pulls all five Lumogis images**, and `docker compose pull` with it really fetches a new `latest` (it used to skip images already present).
+- **`make verify-public-rc` also runs the knowledge graph service's tests inside its own image** (`make compose-test-kg`). CI runs them only from the checkout, so a test that failed only in the image went unnoticed.
+
+### Fixed
+
+- **The capabilities and changelog pages on lumogis.ai link decision records and guides on GitHub.** They used repo-relative links, which do not exist on the site.
+- **The pre-built images on GHCR are published again.** The workflow that builds `ghcr.io/lumogis/lumogis-orchestrator` and `lumogis-web` (with SLSA provenance) was dropped from the public repo in 0.5.0, so `latest` stayed on a build from 2026-06-02 and no version tags were made. It is back, and each release is tagged (for example `IMAGE_TAG=0.12.0`). Installs that build locally, the default, were not affected.
+- **Chat History titles no longer show the model's raw JSON.** When the model wrapped its session summary in a Markdown code fence, Lumogis stored the whole answer, so a History title read like `` ```json { "summary": … ``. The fence is now removed before the summary is read, and an answer that is not a JSON object is stored as plain text.
+
+---
+
 ## [0.12.0] — 2026-11-14
 
 The first release with the **knowledge graph** back in the public source (AGPL-3.0-only), and the first with **email**: Lumogis reads, sorts, searches and sends mail from your own mailboxes, with every send approved by you.
@@ -346,8 +373,6 @@ The first release with the **knowledge graph** back in the public source (AGPL-3
 - **LUM-94:** CI adds a path-gated **`openapi-check`** job (alongside existing **`lint-and-test`**) plus **`make openapi-check`** as an alias of **`make web-codegen-check`**; contributor docs now describe offline OpenAPI snapshot / codegen drift checks (`dump_openapi`, not a live orchestrator). **`openapi.snapshot.json`** refreshed to match current **`dump_openapi`** output (schema emission deltas).
 - **`GRAPH_MODE` default is now `disabled`.** Fresh installs omit graph wiring until operators set `GRAPH_MODE=inprocess` (premium in-process plugin) or `GRAPH_MODE=service` (premium KG service overlay). Requests for `service`/`inprocess` degrade to `disabled` with a single structured WARNING when premium modules are absent (AGPL export / partial trees).
 - **`LUMOGIS_TOOL_CATALOG_ENABLED`** defaults to **on** when unset: operators running capability services no longer need to set this flag for the LLM to merge eligible tools. Operators who want the previous behaviour (**no** merged capability tools / OOP dispatch) must set **`LUMOGIS_TOOL_CATALOG_ENABLED=false`** explicitly.
-
----
 
 ---
 

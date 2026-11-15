@@ -306,6 +306,19 @@ def _tasks_block(
         ]
 
 
+def _compose_freshness_warnings() -> list[AdminDiagnosticsWarning]:
+    """LUM-980: an install whose docker-compose.yml is older than its images."""
+    try:
+        from services.compose_freshness import STALE_MESSAGE
+        from services.compose_freshness import startup_result
+
+        if startup_result().status == "stale":
+            return [AdminDiagnosticsWarning(code="compose_file_stale", message=STALE_MESSAGE)]
+    except Exception:  # noqa: BLE001 - advisory; diagnostics must still render
+        _log.exception("compose freshness check failed")
+    return []
+
+
 def build_admin_diagnostics_response(
     admin_user_id: str,
     *,
@@ -370,6 +383,7 @@ def build_admin_diagnostics_response(
         ),
     ]
     warnings.extend(_foundation_extra_warnings(foundation_signals))
+    warnings.extend(_compose_freshness_warnings())
     tasks, task_warnings = _tasks_block(admin_user_id)
     warnings.extend(task_warnings)
 

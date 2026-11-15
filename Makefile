@@ -408,6 +408,20 @@ compose-policy-check:
 	  --project-directory "$(CURDIR)" \
 	  --core-file docker-compose.yml \
 	  --core-file docker-compose.ghcr.yml
+	@# LUM-980: the compose file users install from, generated with its .env.
+	@$(MAKE) --no-print-directory release-compose RELEASE_COMPOSE_OUT=$(CURDIR)/dist/release-policy
+	@cp dist/release-policy/example.env dist/release-policy/.env
+	@python3 scripts/check_compose_policy.py \
+	  --project-directory "$(CURDIR)/dist/release-policy" \
+	  --core-file "$(CURDIR)/dist/release-policy/docker-compose.yml"
+	@rm -rf dist/release-policy
+
+# LUM-980: the two files a household installs from (docker-compose.yml and
+# example.env), as the release-assets workflow attaches them to a GitHub Release.
+RELEASE_COMPOSE_OUT ?= dist/release
+RELEASE_VERSION ?= dev
+release-compose: ## Generate the release docker-compose.yml + example.env into dist/release (LUM-980)
+	@python3 scripts/release/build_release_compose.py --check --version "$(RELEASE_VERSION)" --out "$(RELEASE_COMPOSE_OUT)"
 
 # ─── RC verification gates (LUM-225) ─────────────────────────────────────────
 # verify-public-rc: smoke gate — run before /publish-private-main-to-public.
@@ -437,6 +451,9 @@ verify-public-rc: ## RC gate (smoke) — run before /publish-private-main-to-pub
 	$(MAKE) compose-policy-check
 	$(MAKE) graph-relates-to-merge-policy-check
 	$(MAKE) compose-test
+	@# The graph service's tests in its own image: CI runs them in the checkout
+	@# layout only, so a test that broke in the image shipped in 0.12.0 unseen.
+	$(MAKE) compose-test-kg
 	@if [ -z "$${VERIFY_PUBLIC_RC_SKIP_WEB_CODEGEN_CHECK:-}" ]; then \
 	  $(MAKE) web-codegen-check; \
 	else \

@@ -29,6 +29,7 @@ import hooks
 from auth import UserContext
 from events import Event
 from models.entities import ExtractedEntity
+from services.llm_json import strip_code_fence
 from visibility import visible_filter
 
 import config
@@ -128,14 +129,7 @@ def extract_entities(session_text: str, *, user_id: str | None = None) -> list[E
             ),
             max_tokens=1024,
         )
-        raw = response.text.strip()
-
-        # Strip markdown code fences if the model wrapped the JSON
-        if raw.startswith("```"):
-            lines = raw.splitlines()
-            raw = "\n".join(line for line in lines if not line.startswith("```"))
-
-        data = json.loads(raw)
+        data = json.loads(strip_code_fence(response.text))
         if not isinstance(data, list):
             _log.warning("Entity extraction returned non-list JSON, skipping")
             return []

@@ -30,3 +30,9 @@ COPY --from=build /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]
+
+# LUM-980: the version this image was built as: dev for a local build, X.Y.Z for a
+# release, the short commit for main. Last in the file so a new version rebuilds
+# no other layer. Backups record it, and checks use it to tell pulled from built.
+ARG LUMOGIS_IMAGE_VERSION=dev
+ENV LUMOGIS_IMAGE_VERSION=$LUMOGIS_IMAGE_VERSION

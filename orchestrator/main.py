@@ -706,6 +706,15 @@ async def lifespan(app: FastAPI):
         except Exception:  # noqa: BLE001 - audit-layer wiring must not break startup
             _log.exception("email-IMAP egress allow-file listener registration failed")
 
+    # LUM-980: warn when an install from the release files runs an image newer than
+    # its docker-compose.yml. Read-only and advisory.
+    try:
+        from services.compose_freshness import startup_result as compose_freshness
+
+        compose_freshness()
+    except Exception:  # noqa: BLE001 - advisory check must not break startup
+        _log.exception("compose freshness check failed")
+
     # LUM-728 — notice the reverse ordering: paperless connected AFTER a mailbox
     # already has filing rules, which the rule-creation gate can never catch.
     try:

@@ -32,6 +32,9 @@ docker compose version >/dev/null 2>&1 || die "docker compose v2 required"
 
 # --- Require a recent backup (LUM-185) ------------------------------------
 log "checking for a backup snapshot within ${BACKUP_MAX_AGE_HOURS}h"
+# In a checkout `run` builds the image first (pull_policy: build, LUM-980), and
+# with some Compose versions the build progress goes to stdout. Read only the
+# marked line, so any output around it cannot be mistaken for the age.
 newest_age_min="$(
   docker compose run --rm -T backup sh -c '
     d=/backups/snapshots
@@ -39,14 +42,15 @@ newest_age_min="$(
     [ -n "$latest" ] || exit 3
     now=$(date +%s)
     mt=$(date -r "$d/$latest" +%s 2>/dev/null || stat -c %Y "$d/$latest")
-    echo $(( (now - mt) / 60 ))
-  ' 2>/dev/null
+    echo "LUMOGIS_BACKUP_AGE_MIN=$(( (now - mt) / 60 ))"
+  ' 2>/dev/null | sed -n 's/^LUMOGIS_BACKUP_AGE_MIN=\([0-9][0-9]*\)$/\1/p'
 )" || die "no backup snapshot found — run 'make backup' before rolling back (or set LUMOGIS_BACKUP_MAX_AGE_HOURS to override window)"
 
-if [[ -n "$newest_age_min" ]] && (( newest_age_min > BACKUP_MAX_AGE_HOURS * 60 )); then
+[[ -n "$newest_age_min" ]] || die "could not read the age of the newest backup snapshot — run 'make backup' before rolling back"
+if (( newest_age_min > BACKUP_MAX_AGE_HOURS * 60 )); then
   die "newest backup is ${newest_age_min}min old (> ${BACKUP_MAX_AGE_HOURS}h). Run 'make backup' first."
 fi
-log "backup OK (newest snapshot ${newest_age_min:-?}min old)"
+log "backup OK (newest snapshot ${newest_age_min}min old)"
 
 # --- Confirmation ---------------------------------------------------------
 if [[ "${LUMOGIS_ASSUME_YES:-}" != "1" ]]; then

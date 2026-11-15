@@ -131,19 +131,22 @@ First-party SPA: **[`clients/lumogis-web/`](clients/lumogis-web/)**, served behi
 
 ## Getting started
 
-**Prerequisites:** Docker with Compose v2, Git, and at least 8 GB RAM.
+**Prerequisites:** Docker with Compose v2 and at least 8 GB RAM.
 
-Three commands from clone to a running instance, then open **http://localhost/**:
+Like Immich: download two files from the latest release into an empty folder and start it. Nothing is built.
 
 ```bash
-git clone https://github.com/lumogis/lumogis.git && cd lumogis
-cp .env.example .env
+mkdir lumogis && cd lumogis
+curl -fsSL -o docker-compose.yml https://github.com/lumogis/lumogis/releases/latest/download/docker-compose.yml
+curl -fsSL -o .env https://github.com/lumogis/lumogis/releases/latest/download/example.env
 docker compose up -d
 ```
 
+Then open **http://localhost/**. Update later with **`docker compose pull && docker compose up -d`** ([Upgrading](docs/deployment/upgrading.md): backups, pinning a version, going back).
+
 The full first-run guide — Ollama model pulls, migration checks, smoke test, and common errors — is in **[`docs/deployment/quickstart.md`](docs/deployment/quickstart.md)**.
 
-**Pre-built images (optional):** set **`COMPOSE_FILE=docker-compose.yml:docker-compose.ghcr.yml`** in `.env` and use **`docker compose up -d --pull always`** to run from **`ghcr.io/lumogis/`** without a local build (see the quickstart doc and **`.env.example`** comments).
+**From source (contributors):** `git clone https://github.com/lumogis/lumogis.git && cd lumogis && cp .env.example .env && docker compose up -d` builds the Lumogis images from the checkout; update it with `git pull && make update`. To pull the published images in a checkout instead, set **`COMPOSE_FILE=docker-compose.yml:docker-compose.ghcr.yml`** in `.env` (see **`.env.example`**).
 
 ---
 
@@ -177,7 +180,7 @@ Lumogis is reachable on your local network by default (**http://localhost/** or 
 
 ## Composition: required vs optional
 
-**Base `docker compose up -d`** (from **`docker-compose.yml`**) pulls up **Orchestrator + Qdrant + Postgres + Ollama + Lumogis Web + Caddy + stack-control** (internal restart helper)—see service list in **`docker-compose.yml`**.
+**Base `docker compose up -d`** (from **`docker-compose.yml`**) brings up **Orchestrator + Qdrant + Postgres + Ollama + Lumogis Web + Caddy + stack-control** (internal restart helper)—see service list in **`docker-compose.yml`**.
 
 | Add-on | How | Notes |
 |---|---|---|

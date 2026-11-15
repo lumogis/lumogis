@@ -587,6 +587,51 @@ def test_export_tree_includes_search_overlay_workflow(tmp_path):
     assert check.returncode == 0, check.stdout + check.stderr
 
 
+# GHCR publish workflows (ADR 037, amended by ADR 261). They live in lumogis-app so the
+# export carries them: a public-only copy was deleted by the export's rsync --delete in
+# 0.5.0, and no image was published for five months.
+GHCR_PUBLISH_WORKFLOWS: tuple[str, ...] = (
+    ".github/workflows/publish-image.yml",
+    ".github/workflows/attestation-guard.yml",
+    ".github/workflows/attestation-verify.yml",
+    ".github/workflows/release-assets.yml",  # LUM-980: attaches the install files
+)
+_PUBLIC_REPO_GUARD = "github.repository == 'lumogis/lumogis'"
+
+
+def test_ghcr_publish_workflows_disjoint_from_strip_list():
+    overlap = _all_strip_entries().intersection(GHCR_PUBLISH_WORKFLOWS)
+    assert not overlap, f"strip list must not list the GHCR publish workflows: {overlap}"
+
+
+def test_ghcr_publish_workflow_jobs_run_only_in_the_public_repo():
+    """ADR 037: one publisher. Every job is guarded, so none runs in lumogis-app."""
+    yaml = pytest.importorskip("yaml")
+    for rel in GHCR_PUBLISH_WORKFLOWS:
+        path = REPO / rel
+        assert path.is_file(), f"{rel} is missing; the export would drop it from the public repo"
+        jobs = yaml.safe_load(path.read_text(encoding="utf-8"))["jobs"]
+        for name, job in jobs.items():
+            assert _PUBLIC_REPO_GUARD in str(job.get("if", "")), (
+                f"{rel} job {name!r} lacks the {_PUBLIC_REPO_GUARD!r} guard"
+            )
+
+
+def test_export_tree_includes_ghcr_publish_workflows(tmp_path):
+    _skip_unless_export_source_repo()
+    out = tmp_path / "export"
+    export_script = REPO / "scripts" / "create-upstream-export-tree.sh"
+    proc = subprocess.run(
+        ["bash", str(export_script), str(out)],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO),
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    for rel in GHCR_PUBLISH_WORKFLOWS:
+        assert (out / rel).is_file(), f"{rel} missing from the export tree"
+
+
 def test_export_tree_includes_layered_requirements(tmp_path):
     """LUM-460: public export must ship orchestrator/requirements-core.txt for layered profiles."""
     _skip_unless_export_source_repo()

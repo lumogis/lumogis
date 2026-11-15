@@ -15,11 +15,10 @@
 #     joins it and sees nothing but these three services);
 #   * all data lives in tmpfs, so nothing survives the run.
 #
-# Images are the production pins: postgres in docker-compose.yml, FalkorDB in
-# docker-compose.falkordb.yml, and the Qdrant base of docker/qdrant/Dockerfile
-# (the stock image: the lumogis-qdrant wrapper only adds curl for an
-# in-container healthcheck, and docker/test-env/prepare_dbs.py waits on
-# /readyz from the runner instead). Keep them in step when those move.
+# Images are the production pins: postgres and qdrant in docker-compose.yml
+# (stock qdrant since LUM-980; docker/test-env/prepare_dbs.py waits on /readyz
+# from the runner), FalkorDB in docker-compose.falkordb.yml. Keep them in step
+# when those move.
 
 name: lumogis-testenv
 

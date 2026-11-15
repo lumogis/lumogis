@@ -1,5 +1,12 @@
 services:
   orchestrator:
+    # LUM-980: the published name of this image, and always build it here, so a
+    # checkout never runs a released image by accident. The tag is per Compose
+    # project (dev-lumogis, dev-lumogis-test, …), so a test stack's build never
+    # replaces the image a running stack recreates from. The release compose file
+    # (scripts/release/build_release_compose.py) drops build: and pulls instead.
+    image: ghcr.io/lumogis/lumogis-orchestrator:${LUMOGIS_VERSION:-dev-${COMPOSE_PROJECT_NAME}}
+    pull_policy: build
     build:
       context: .
       dockerfile: orchestrator/Dockerfile
@@ -89,12 +96,9 @@ services:
     restart: unless-stopped
 
   qdrant:
-    build:
-      context: ./docker/qdrant
-    image: lumogis-qdrant:v1.14.1
-    # Built here, never in a registry: without this, `docker compose up` first asks a
-    # registry for it and prints "pull access denied" on every new install (LUM-310).
-    pull_policy: never
+    # Stock upstream image (LUM-980). The old local build only added curl for the
+    # health check; bash's /dev/tcp does the same with nothing installed.
+    image: qdrant/qdrant:v1.14.1
     # Loopback-only host publish — Qdrant HTTP API has no auth (ADR-053 FalkorDB precedent).
     ports:
       - "127.0.0.1:${QDRANT_HOST_PORT:-6334}:6333"
@@ -107,7 +111,7 @@ services:
         soft: 65536
         hard: 65536
     healthcheck:
-      test: ["CMD", "curl", "-sf", "-o", "/dev/null", "http://127.0.0.1:6333/readyz"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/6333 && printf 'GET /readyz HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q ' 200 '"]
       interval: 10s
       timeout: 5s
       retries: 8
@@ -122,6 +126,9 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-lumogis}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # Development and test stacks: Postgres runs init.sql on a new volume. The
+      # release compose drops this mount; the orchestrator then applies the same
+      # file from its image to an empty database (LUM-980).
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-lumogis}"]
@@ -196,6 +203,8 @@ services:
     restart: unless-stopped
 
   stack-control:
+    image: ghcr.io/lumogis/lumogis-stack-control:${LUMOGIS_VERSION:-dev-${COMPOSE_PROJECT_NAME}}
+    pull_policy: build
     build:
       context: ./stack-control
     env_file: .env
@@ -217,6 +226,8 @@ services:
   # Lumogis Web SPA (nginx static) + Caddy reverse proxy — Phase 1 Pass 1.5.
   # http://localhost/ → SPA; /api/* /events /v1/* /mcp/* /health → orchestrator.
   lumogis-web:
+    image: ghcr.io/lumogis/lumogis-web:${LUMOGIS_VERSION:-dev-${COMPOSE_PROJECT_NAME}}
+    pull_policy: build
     build:
       context: ./clients/lumogis-web
       dockerfile: Dockerfile
@@ -234,7 +245,12 @@ services:
       retries: 3
 
   caddy:
-    image: caddy:2-alpine
+    image: ghcr.io/lumogis/lumogis-caddy:${LUMOGIS_VERSION:-dev-${COMPOSE_PROJECT_NAME}}
+    pull_policy: build
+    # Stock Caddy plus the Caddyfile and preflight (docker/caddy/Dockerfile). The
+    # two file mounts below override the baked copies in a checkout.
+    build:
+      context: ./docker/caddy
     restart: unless-stopped
     # The preflight warns in this container's log when sign-in is off and
     # CADDY_DOMAIN is a public hostname, then runs Caddy (LUM-916).
@@ -261,6 +277,7 @@ services:
       # CIDRs). Default trusts none. See .env.example (LUM-887 / ID-007).
       LUMOGIS_CADDY_TRUSTED_PROXIES: ${LUMOGIS_CADDY_TRUSTED_PROXIES:-127.0.0.1/32}
     volumes:
+      # Development only: the release compose drops these, the image has them.
       - ./docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./docker/caddy/preflight.sh:/etc/caddy/preflight.sh:ro
       - caddy_data:/data
@@ -308,6 +325,8 @@ services:
 
   backup:
     init: true
+    image: ghcr.io/lumogis/lumogis-backup:${LUMOGIS_VERSION:-dev-${COMPOSE_PROJECT_NAME}}
+    pull_policy: build
     build:
       context: .
       dockerfile: docker/backup/Dockerfile
@@ -329,7 +348,6 @@ services:
       QDRANT_URL: http://qdrant:6333
       GRAPH_MODE: ${GRAPH_MODE:-disabled}
       FALKORDB_URL: ${FALKORDB_URL:-}
-      LUMOGIS_VERSION: ${LUMOGIS_VERSION:-dev}
       TZ: ${TZ:-UTC}
     volumes:
       - ${BACKUP_HOST_DIR:-./ai-workspace/backups}:/backups

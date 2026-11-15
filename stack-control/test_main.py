@@ -247,3 +247,61 @@ class TestStatus:
         monkeypatch.setattr(main, "_current_restart_secret", lambda: "")
         resp = client.get("/status")
         assert resp.status_code == 503
+
+
+class TestProjectDir:
+    """LUM-980: HOST_PROJECT_DIR is only usable when that path exists in the container."""
+
+    def test_unset_uses_project(self, monkeypatch):
+        monkeypatch.delenv("HOST_PROJECT_DIR", raising=False)
+        assert main._project_dir() == "/project"
+
+    def test_mounted_host_dir_is_used(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("HOST_PROJECT_DIR", str(tmp_path))
+        assert main._project_dir() == str(tmp_path)
+
+    def test_unmounted_host_dir_falls_back_and_warns(self, monkeypatch, tmp_path, caplog):
+        missing = tmp_path / "home" / "anna" / "lumogis"
+        monkeypatch.setenv("HOST_PROJECT_DIR", str(missing))
+        with caplog.at_level("WARNING", logger=main._log.name):
+            assert main._project_dir() == "/project"
+        assert "host_project_dir_not_mounted" in caplog.text
+
+    def test_restart_runs_in_fallback_dir_when_unmounted(self, client, monkeypatch, tmp_path):
+        """Without the fallback, subprocess.run(cwd=<missing>) raised and the route 500'd."""
+        monkeypatch.setenv("HOST_PROJECT_DIR", str(tmp_path / "not-mounted"))
+        ok = MagicMock(returncode=0, stdout="", stderr="")
+        with patch("main.subprocess.run", return_value=ok) as mock_run:
+            resp = client.post(
+                "/restart", json={"services": ["orchestrator"]}, headers=_auth_headers()
+            )
+        assert resp.status_code == 200
+        assert mock_run.call_args[1]["cwd"] == "/project"
+
+
+class TestDefaultOverride:
+    """LUM-980: with no COMPOSE_FILE in .env, restarts read the override like Compose does."""
+
+    def _files(self, cmd: list[str]) -> list[str]:
+        return [cmd[i + 1] for i, a in enumerate(cmd) if a == "-f"]
+
+    def test_override_added_when_present(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("HOST_PROJECT_DIR", str(tmp_path))
+        (tmp_path / "docker-compose.override.yml").write_text("services: {}\n")
+        with patch("main._PROJECT_ENV_FILE", tmp_path / ".env"):  # no .env
+            files = self._files(main._compose_cmd(["ps"]))
+        assert files == ["docker-compose.yml", "docker-compose.override.yml"]
+
+    def test_no_override_file_keeps_default(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("HOST_PROJECT_DIR", str(tmp_path))
+        with patch("main._PROJECT_ENV_FILE", tmp_path / ".env"):
+            assert self._files(main._compose_cmd(["ps"])) == ["docker-compose.yml"]
+
+    def test_explicit_compose_file_is_used_as_written(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("HOST_PROJECT_DIR", str(tmp_path))
+        (tmp_path / "docker-compose.override.yml").write_text("services: {}\n")
+        env = tmp_path / ".env"
+        env.write_text("COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml\n")
+        with patch("main._PROJECT_ENV_FILE", env):
+            files = self._files(main._compose_cmd(["ps"]))
+        assert files == ["docker-compose.yml", "docker-compose.gpu.yml"]

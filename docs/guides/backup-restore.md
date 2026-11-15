@@ -40,6 +40,8 @@ The card also warns when documents or captures the database knows about are **mi
 | `make backup-prune` | Apply retention (7 daily + 4 weekly successful snapshots) |
 | `make restore SNAPSHOT=YYYYMMDD-HHMMSS` | Restore a snapshot (interactive `--yes` required) |
 
+Without `make` (an install from the release files), the same commands are `docker compose run --rm backup /scripts/backup/backup.sh run` and `docker compose run --rm -it backup /scripts/backup/restore.sh YYYYMMDD-HHMMSS --yes`, with the orchestrator and Lumogis Web stopped for a restore: see [Upgrading](../deployment/upgrading.md#backup-and-restore).
+
 ## Layout
 
 Host path (default `./ai-workspace/backups`, override with `BACKUP_HOST_DIR`):
@@ -71,7 +73,7 @@ Inside containers:
 - **Filesystems.** The backup folder must support hard links. On CIFS/NTFS shares (and some Docker Desktop binds) the copy is retried without owner and permission changes; if hard links are missing too, each snapshot is a full copy and the log says so (`hard links unavailable`). If the copy still fails, the snapshot keeps the databases and the card shows the files as missing from the backup.
 - **Where to put the backup folder.** The default `ai-workspace/backups`, or a folder **outside** the workspace. Never another folder inside it: the backup excludes it, but the orchestrator's ownership repair walks it on every boot.
 - **The first backup after upgrading** copies and hashes the whole library and can take longer than the 900 s warning once.
-- **The backup image carries the backup scripts.** `make update` rebuilds it. After updating a source install any other way, run `docker compose build backup` once, or backups stay database-only (the card says "The latest backup has no copy of uploaded documents or captures"). Rolling the backup image back to a version before schema 2 cannot verify or restore schema-2 snapshots.
+- **The backup image carries the backup scripts.** An install from the release files gets the new ones with `docker compose pull`. In a git checkout `make update` rebuilds every Lumogis image, the backup image included; after updating a checkout any other way, run `docker compose build` once, or backups may stay database-only (the card says "The latest backup has no copy of uploaded documents or captures"). Rolling the backup image back to a version before schema 2 cannot verify or restore schema-2 snapshots.
 - **Avoid updating at the backup hour** (03:00 by default): `make update` recreates the backup container, which stops a backup that is running at that moment.
 
 ## Configuration (.env)

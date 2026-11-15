@@ -398,8 +398,11 @@ def test_reconcile_note_with_invalid_scope_is_failed_and_unstamped(monkeypatch, 
 # AST ratchet: every create_node call site is accounted for
 # ---------------------------------------------------------------------------
 
-_REPO = Path(__file__).resolve().parents[3]
-_KG_ROOT = Path(__file__).resolve().parents[1]
+# In the graph-service test image this file is /app/tests/…, which has no
+# parents[3]; the orchestrator checks then skip (see _orchestrator_root).
+_HERE = Path(__file__).resolve()
+_REPO = _HERE.parents[3] if len(_HERE.parents) > 3 else _HERE.parents[-1]
+_KG_ROOT = _HERE.parents[1]
 _ORCH_ROOT = _REPO / "orchestrator"
 _SKIP_DIRS = {"tests", "adapters", "ports", "__pycache__"}
 

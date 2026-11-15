@@ -444,23 +444,25 @@ def _line_index(lines: list[str], needle: str) -> int:
     raise AssertionError(f"{needle!r} not found")
 
 
-def test_update_flow_rebuilds_backup_and_rescues_before_recreate():
+def test_update_flow_builds_and_rescues_before_recreate():
     update = (_ROOT / "scripts" / "update" / "update.sh").read_text().splitlines()
     pull = _line_index(update, "docker compose pull")
-    build = _line_index(update, "docker compose build --pull backup")
+    build = _line_index(update, "docker compose build --pull")
     rescue = _line_index(update, "rescue-captures.sh")
     rescue_stop = _line_index(update, "rescue-stop-entities.sh")  # LUM-922
     up = _line_index(update, "docker compose up -d")
     assert pull < build < rescue < rescue_stop < up
-    # LUM-900: qdrant has `image: lumogis-qdrant:…` *and* `build:`, so a plain
-    # `docker compose pull` asks a registry for it and exits non-zero
-    # ("pull access denied"), aborting every default-install update.
+    # LUM-900 / LUM-980: the Lumogis images are built here (pull_policy: build) and
+    # have no tag to pull, so a plain `docker compose pull` would fail.
     assert "--ignore-buildable" in update[pull], (
         "update.sh must pull with --ignore-buildable: locally built images have no registry"
     )
+    # LUM-980: the whole stack is rebuilt (backup included, LUM-892), not one service
+    assert update[build].strip().split("\\")[0].strip() == "docker compose build --pull"
+    assert not any("build --pull backup" in line for line in update), "no separate backup build"
+    # A failed build stops before anything is stopped; so does a failed rescue.
+    assert "|| die" in update[build + 1], "a failed build must stop the update"
     assert "|| die" in update[rescue_stop + 1], "a failed stop-entities rescue must stop the update"
-    # a failed backup-image build warns; it must not block an image update
-    assert "|| warn" in update[build + 1], "the backup image build must be followed by `|| warn`"
 
     make = (_ROOT / "Makefile").read_text()
     build_recipe = re.search(r"^build:\n((?:\t.*\n)+)", make, re.M)
@@ -499,6 +501,66 @@ def test_rescue_script_is_host_portable(script):
 
 def test_backup_image_installs_rsync():
     assert re.search(r"^\s+rsync\b", (_ROOT / "docker" / "backup" / "Dockerfile").read_text(), re.M)
+
+
+# LUM-980: in a checkout `docker compose run` builds first (pull_policy: build),
+# and Compose can print the build progress on stdout, which rollback.sh read as the
+# backup's age. It now reads only a marked line.
+_BUILD_NOISE = (
+    "#1 [internal] load build definition from Dockerfile\n#1 DONE 0.0s\n#6 naming to x done\n"
+)
+
+
+def _run_rollback_backup_check(tmp_path, run_stdout: str, run_rc: int = 0):
+    import subprocess
+
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    out = tmp_path / "run_stdout.txt"
+    out.write_text(run_stdout)
+    docker = bindir / "docker"
+    docker.write_text(
+        "#!/usr/bin/env bash\n"
+        'if [[ "$1 $2" == "compose version" ]]; then exit 0; fi\n'
+        f'if [[ "$1 $2" == "compose run" ]]; then cat {out}; exit {run_rc}; fi\n'
+        'echo unexpected docker call: "$*" >&2; exit 99\n'
+    )
+    docker.chmod(0o755)
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "previous-images.txt").write_text("orchestrator\timg\timg@sha256:abc\n")
+    env = {
+        "PATH": f"{bindir}:/usr/bin:/bin",
+        "LUMOGIS_ASSUME_YES": "1",
+        "LUMOGIS_UPDATE_STATE_DIR": str(state),
+        "LUMOGIS_BACKUP_MAX_AGE_HOURS": "1",
+        "HOME": str(tmp_path),
+    }
+    return subprocess.run(
+        ["bash", str(_ROOT / "scripts" / "update" / "rollback.sh")],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+
+def test_rollback_reads_backup_age_through_build_noise(tmp_path):
+    res = _run_rollback_backup_check(tmp_path, _BUILD_NOISE + "LUMOGIS_BACKUP_AGE_MIN=999\n")
+    assert res.returncode != 0
+    assert "newest backup is 999min old" in res.stderr + res.stdout, res.stderr
+
+
+def test_rollback_without_age_marker_stops(tmp_path):
+    res = _run_rollback_backup_check(tmp_path, _BUILD_NOISE)
+    assert res.returncode != 0
+    assert "could not read the age" in res.stderr + res.stdout, res.stderr
+
+
+def test_rollback_without_snapshot_stops(tmp_path):
+    res = _run_rollback_backup_check(tmp_path, _BUILD_NOISE, run_rc=3)
+    assert res.returncode != 0
+    assert "no backup snapshot found" in res.stderr + res.stdout, res.stderr
 
 
 # LUM-900: update/rollback waited on a hard-coded :8000, so `make update` failed
@@ -543,14 +605,32 @@ def test_orchestrator_health_url_uses_the_published_port(tmp_path, published, en
     assert out == expected
 
 
-# LUM-310: a service with both `image:` and `build:` is built here and has no
-# registry. Without `pull_policy: never`, `docker compose up` first asks a registry
-# for it, and every new install prints "pull access denied".
-def test_locally_built_images_are_never_pulled():
-    built_here = {n: s for n, s in _services().items() if "image" in s and "build" in s}
-    assert "qdrant" in built_here, "expected the locally built qdrant image"
+# LUM-980: every image the repo builds carries its published name and always
+# builds, so a checkout (developers, CI, the release checks) never runs a released
+# image by accident. The release compose drops build: and pulls these names.
+_PUBLISHED_IMAGE = {
+    "orchestrator": "lumogis-orchestrator",
+    "lumogis-web": "lumogis-web",
+    "stack-control": "lumogis-stack-control",
+    "backup": "lumogis-backup",
+    "caddy": "lumogis-caddy",
+}
+
+
+def test_repo_compose_builds_lumogis_images():
+    built_here = {n: s for n, s in _services().items() if "build" in s}
+    assert set(built_here) == set(_PUBLISHED_IMAGE), "a built service is missing a published name"
     for name, svc in built_here.items():
-        assert svc.get("pull_policy") == "never", f"{name}: set pull_policy: never"
+        tag = "${LUMOGIS_VERSION:-dev-${COMPOSE_PROJECT_NAME}}"  # per-project local tag
+        assert svc.get("image") == f"ghcr.io/lumogis/{_PUBLISHED_IMAGE[name]}:{tag}", name
+        assert svc.get("pull_policy") == "build", f"{name}: set pull_policy: build"
+
+
+def test_qdrant_is_the_stock_image_without_curl():
+    qdrant = _services()["qdrant"]
+    assert qdrant["image"] == "qdrant/qdrant:v1.14.1"
+    assert "build" not in qdrant
+    assert "curl" not in " ".join(qdrant["healthcheck"]["test"])
 
 
 # LUM-310: the orchestrator never gets a GPU (docker-compose.gpu.yml reserves one

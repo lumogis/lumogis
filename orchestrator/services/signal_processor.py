@@ -28,6 +28,7 @@ from models.signals import Signal
 from services.context_budget import get_budget
 from services.context_budget import truncate_text
 from services.injection_sanitiser import neutralize_wrapper_breakout_literals
+from services.llm_json import strip_code_fence
 
 import config
 from services import email_quote_strip
@@ -555,11 +556,7 @@ def _call_llm(
             system="You are a concise content analyst. Always respond with valid JSON only.",
             max_tokens=512,
         )
-        raw = response.text.strip()
-        # Strip markdown code fences if present.
-        if raw.startswith("```"):
-            raw = "\n".join(line for line in raw.splitlines() if not line.startswith("```"))
-        return json.loads(raw)
+        return json.loads(strip_code_fence(response.text))
     except json.JSONDecodeError as exc:
         _log.warning("LLM returned non-JSON for signal %r: %s", title[:60], exc)
     except ConnectorNotConfigured as exc:

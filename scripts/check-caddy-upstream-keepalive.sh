@@ -78,7 +78,9 @@ print(" ".join(argv[2:]))
 ' "$ROOT/orchestrator/Dockerfile")"
 fi
 
-ORCH_IMAGE="${ORCH_IMAGE:-$(docker images --format '{{.Repository}}:{{.Tag}}' | grep -E '(^|-)orchestrator:latest$' | head -1 || true)}"
+# A checkout builds ghcr.io/lumogis/lumogis-orchestrator:dev-<project> (LUM-980);
+# older local builds were named <project>-orchestrator:latest.
+ORCH_IMAGE="${ORCH_IMAGE:-$(docker images --format '{{.Repository}}:{{.Tag}}' | grep -E '(^|/|-)orchestrator:(dev(-[a-z0-9_-]+)?|latest)$' | head -1 || true)}"
 CADDY_IMAGE="${CADDY_IMAGE:-caddy:2-alpine}"
 if [ -z "$ORCH_IMAGE" ]; then
   echo "check-caddy-upstream-keepalive: no orchestrator image; set ORCH_IMAGE or run 'docker compose build orchestrator'" >&2

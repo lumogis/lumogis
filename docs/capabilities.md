@@ -224,10 +224,12 @@ Extensions split between **in-process plugins** and **out-of-process capabilitie
 
 ## Deployment
 
-Pre-built multi-platform images (amd64/arm64) are published to `ghcr.io/lumogis/` on every release. Use `docker-compose.ghcr.yml` for pull-based deployment without building from source:
+Lumogis installs from published images, like Immich. Each GitHub Release carries a `docker-compose.yml` and an `example.env`; in an empty folder, save them (the second as `.env`) and run `docker compose up -d`. Nothing is built and no source checkout is needed. Update with `docker compose pull && docker compose up -d` (**[Upgrading](deployment/upgrading.md)**).
+
+The five Lumogis images (`lumogis-orchestrator`, `lumogis-web`, `lumogis-stack-control`, `lumogis-backup`, `lumogis-caddy`) are multi-platform (amd64/arm64) on `ghcr.io/lumogis/`, tagged `X.Y.Z`, `X.Y` and `release` (the latest release, the default `LUMOGIS_VERSION`), plus `latest` for the head of public `main`. A release is published only after its files and images have been pulled anonymously by digest; its `image-digests.txt` lists those digests. In a git checkout, `docker-compose.ghcr.yml` pulls the same images instead of building:
 
 ```
-COMPOSE_FILE=docker-compose.yml:docker-compose.ghcr.yml docker compose up -d --pull always
+COMPOSE_FILE=docker-compose.yml:docker-compose.ghcr.yml docker compose up -d
 ```
 
 ### Verifying image provenance
@@ -239,9 +241,11 @@ gh attestation verify oci://ghcr.io/lumogis/lumogis-orchestrator@sha256:<digest>
 gh attestation verify oci://ghcr.io/lumogis/lumogis-web@sha256:<digest> -R lumogis/lumogis
 ```
 
+The same works for `lumogis-stack-control`, `lumogis-backup` and `lumogis-caddy`. The release's `docker-compose.yml` and `example.env` are attested too: `gh attestation verify docker-compose.yml -R lumogis/lumogis`.
+
 For convenience you can substitute a tag for the `@sha256:…` suffix (for example `@v0.4.0`); prefer digests when you need a stable verifier subject. Advanced consumers may also inspect in-manifest BuildKit provenance with **`cosign`** or **`docker buildx imagetools`**; this section focuses on **`gh attestation verify`**.
 
-Build-from-source deployment (the default developer flow) remains fully supported via `docker compose up --build`.
+Build-from-source deployment (the developer flow) remains fully supported: in a git checkout, `docker compose up -d` builds the Lumogis images.
 
 ### Disaster-recovery backups
 

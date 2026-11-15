@@ -20,6 +20,7 @@ from models.memory import ContextHit
 from models.memory import SessionSummary
 from services.context_budget import truncate_messages
 from services.context_budget import truncate_text
+from services.llm_json import strip_code_fence
 from services.point_ids import session_conversation_point_id
 from visibility import visible_filter
 from visibility import visible_qdrant_filter
@@ -141,17 +142,23 @@ def summarize_session(
         )
         return SessionSummary(session_id=sid, summary="")
 
+    # Small local models often fence their JSON (```json … ```). Without the strip
+    # the parse failed and the fallback stored the fenced JSON as the summary, so
+    # History titles read "``` { \"summary\": …".
+    text = strip_code_fence(response.text)
     try:
-        data = json.loads(response.text)
+        data = json.loads(text)
+        if not isinstance(data, dict):
+            raise ValueError("summary JSON is not an object")
         return SessionSummary(
             session_id=sid,
-            summary=data.get("summary", response.text),
+            summary=data.get("summary", text),
             topics=data.get("topics", []),
             entities=data.get("entities", []),
         )
-    except (json.JSONDecodeError, KeyError):
+    except (json.JSONDecodeError, KeyError, ValueError):
         _log.warning("LLM returned non-JSON summary, using raw text")
-        return SessionSummary(session_id=sid, summary=response.text)
+        return SessionSummary(session_id=sid, summary=text)
 
 
 # The keys retrieve_context reads. A writer may not override them through **extra.

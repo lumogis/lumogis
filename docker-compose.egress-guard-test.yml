@@ -56,9 +56,9 @@ services:
     networks: [guard-net]
 
   qdrant:
-    image: ${QDRANT_IMAGE:-lumogis-qdrant:v1.14.1}
+    image: ${QDRANT_IMAGE:-qdrant/qdrant:v1.14.1}
     healthcheck:
-      test: ["CMD", "curl", "-sf", "-o", "/dev/null", "http://127.0.0.1:6333/readyz"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/6333 && printf 'GET /readyz HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q ' 200 '"]
       interval: 3s
       timeout: 5s
       retries: 20
@@ -89,7 +89,7 @@ services:
 
   # The real orchestrator image, real merged environment, no server.
   guard-probe:
-    image: ${ORCHESTRATOR_IMAGE:-lumogis-orchestrator:latest}
+    image: ${ORCHESTRATOR_IMAGE:-ghcr.io/lumogis/lumogis-orchestrator:dev-lumogis}
     entrypoint: ["sleep", "infinity"]
     environment:
       # These are the values under test: the allowlist must be derived from THESE,

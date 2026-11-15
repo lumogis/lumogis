@@ -43,3 +43,4 @@ Operators need a **pull-based** install path for **`orchestrator`** and **`lumog
 
 - **2026-05-11:** Draft from `/explore` (`.cursor/adrs/docker_image_ci_ghcr.md`).
 - **2026-05-11:** Finalised by `/verify-plan` — implementation matched decision; deviations documented inline above.
+- **2026-11-15:** Amended by [ADR 262](262-lum-980-install-from-published-images.md) — households install from the release's `docker-compose.yml` + `example.env`, which pull all five Lumogis images; `docker-compose.ghcr.yml` remains the pull path inside a git checkout (LUM-980).

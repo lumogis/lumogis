@@ -99,10 +99,26 @@ _ALLOWED_SERVICES: set[str] = {
 }
 
 
+def _with_default_override(compose_file: str) -> str:
+    """Add docker-compose.override.yml as Compose itself would (LUM-980).
+
+    On the host, `docker compose` with no COMPOSE_FILE reads docker-compose.yml and,
+    when present, docker-compose.override.yml. This container always has COMPOSE_FILE
+    set (the compose default), so without this a restart from Settings would drop the
+    override a household put its local changes in. Only for the default file list: an
+    explicit COMPOSE_FILE in .env is used exactly as written.
+    """
+    if compose_file != "docker-compose.yml":
+        return compose_file
+    if os.path.isfile(os.path.join(_project_dir(), "docker-compose.override.yml")):
+        return "docker-compose.yml:docker-compose.override.yml"
+    return compose_file
+
+
 def _compose_cmd(args: list[str]) -> list[str]:
     """Build a `docker compose` command with optional project flags."""
     cmd = ["docker", "compose"]
-    compose_file = _current_compose_file()
+    compose_file = _with_default_override(_current_compose_file())
     if compose_file:
         for f in compose_file.split(":"):
             f = f.strip()
@@ -136,8 +152,23 @@ class RestartRequest(BaseModel):
 # at that same absolute host path), compose runs from there and relative sources resolve to
 # real host paths. Unset (production default) preserves the historical /project behaviour.
 # Read at call time — HOST_PROJECT_DIR may be injected after module import in RC overlays.
+#
+# LUM-980: HOST_PROJECT_DIR only works when that host path is also mounted at the same
+# path in this container (the release compose and the RC overlay both do this). Without
+# the mount `cwd=` would not exist and every restart would fail, so fall back to /project
+# (the historical behaviour) and say so.
 def _project_dir() -> str:
-    return os.environ.get("HOST_PROJECT_DIR", "").strip() or "/project"
+    host_dir = os.environ.get("HOST_PROJECT_DIR", "").strip()
+    if not host_dir:
+        return "/project"
+    if not os.path.isdir(host_dir):
+        _log.warning(
+            "host_project_dir_not_mounted: HOST_PROJECT_DIR=%s is not a directory in this "
+            "container; using /project (relative mounts may be empty on recreate)",
+            host_dir,
+        )
+        return "/project"
+    return host_dir
 
 
 @app.post("/restart")

@@ -104,10 +104,28 @@ The 013 chunk also wires `db_default_user_remap.py` from
 SQL migration (it depends on env vars and the live `users` table) and is
 intentionally separate to keep this runner pure-SQL.
 
+Where the SQL comes from (LUM-980):
+  1. ``LUMOGIS_MIGRATIONS_DIR`` when set (test environments, the bundled launcher);
+  2. ``/project/postgres/migrations`` when it exists (git checkouts: the repo is
+     mounted at ``/project``);
+  3. ``/opt/lumogis/postgres/migrations``, baked into the image (installs from the
+     two release files, which mount only the install folder at ``/project``).
+
+Baseline on a fresh database (LUM-980): when the ``file_index`` table does not
+exist, nobody has initialised the database, so ``init.sql`` (beside the
+migrations directory, or ``LUMOGIS_BASELINE_SQL``) is applied first in one
+transaction. Checkouts and test stacks initialise Postgres through the initdb
+mount, so ``file_index`` exists and the baseline never runs there; it never runs
+on an initialised database, so later ``init.sql`` edits cannot reach a live
+database outside the migration ledger.
+
 Exit codes:
   0  success (or nothing to apply)
   1  could not reach Postgres after the boot timeout
   2  a migration file failed to apply
+  3  no schema is possible: no migrations directory could be resolved, or the
+     database is empty and the baseline could not be applied. The entrypoint
+     stops instead of starting on an empty schema.
 """
 
 from __future__ import annotations
@@ -121,7 +139,8 @@ from pathlib import Path
 
 import psycopg2
 
-MIGRATIONS_DIR = Path(os.environ.get("LUMOGIS_MIGRATIONS_DIR", "/project/postgres/migrations"))
+PROJECT_MIGRATIONS_DIR = Path("/project/postgres/migrations")
+BAKED_MIGRATIONS_DIR = Path("/opt/lumogis/postgres/migrations")
 WAIT_TIMEOUT_S = int(os.environ.get("LUMOGIS_DB_WAIT_TIMEOUT_S", "120"))
 
 
@@ -153,6 +172,61 @@ def _wait_for_postgres() -> None:
         file=sys.stderr,
     )
     sys.exit(1)
+
+
+def resolve_migrations_dir(
+    env: dict[str, str] | None = None,
+    project_dir: Path | None = None,
+    baked_dir: Path | None = None,
+) -> tuple[Path | None, bool]:
+    """Return ``(directory, explicit)``; ``directory`` is None when nothing resolves.
+
+    ``explicit`` is True when ``LUMOGIS_MIGRATIONS_DIR`` chose it, whether or not
+    it exists (an explicit missing directory keeps the old "skipping" behaviour).
+    """
+    env = os.environ if env is None else env
+    explicit = env.get("LUMOGIS_MIGRATIONS_DIR")
+    if explicit:
+        return Path(explicit), True
+    project_dir = PROJECT_MIGRATIONS_DIR if project_dir is None else project_dir
+    baked_dir = BAKED_MIGRATIONS_DIR if baked_dir is None else baked_dir
+    for candidate in (project_dir, baked_dir):
+        if candidate.is_dir():
+            return candidate, False
+    return None, False
+
+
+def resolve_baseline(migrations_dir: Path, env: dict[str, str] | None = None) -> Path:
+    env = os.environ if env is None else env
+    override = env.get("LUMOGIS_BASELINE_SQL")
+    return Path(override) if override else migrations_dir.parent / "init.sql"
+
+
+def _database_is_empty(conn) -> bool:
+    with conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('public.file_index') IS NULL")
+        return bool(cur.fetchone()[0])
+
+
+def _apply_baseline(conn, baseline: Path) -> bool:
+    """Apply ``init.sql`` to an empty database in one transaction; True on success."""
+    if not baseline.is_file():
+        print(
+            f"[migrations] ERROR: baseline_missing: the database is empty and there is "
+            f"no baseline at {baseline}",
+            file=sys.stderr,
+        )
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute(baseline.read_text(encoding="utf-8"))
+        conn.commit()
+    except Exception as exc:
+        conn.rollback()
+        print(f"[migrations] ERROR: baseline_failed: {baseline}: {exc}", file=sys.stderr)
+        return False
+    print(f"[migrations] baseline_applied from {baseline}")
+    return True
 
 
 def _ensure_table(conn) -> None:
@@ -189,19 +263,33 @@ def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     dry_run = "--dry-run" in args
 
-    if not MIGRATIONS_DIR.is_dir():
-        print(f"[migrations] no migrations directory at {MIGRATIONS_DIR}; skipping")
+    migrations_dir, _explicit = resolve_migrations_dir()
+    if migrations_dir is None:
+        print(
+            "[migrations] ERROR: migrations_dir_missing: neither "
+            f"{PROJECT_MIGRATIONS_DIR} nor {BAKED_MIGRATIONS_DIR} exists",
+            file=sys.stderr,
+        )
+        return 3
+    if not migrations_dir.is_dir():
+        # Only reachable when LUMOGIS_MIGRATIONS_DIR was set explicitly.
+        print(f"[migrations] no migrations directory at {migrations_dir}; skipping")
         return 0
 
-    files = sorted(glob.glob(str(MIGRATIONS_DIR / "*.sql")))
+    files = sorted(glob.glob(str(migrations_dir / "*.sql")))
     if not files:
-        print(f"[migrations] no .sql files in {MIGRATIONS_DIR}; skipping")
+        print(f"[migrations] no .sql files in {migrations_dir}; skipping")
         return 0
 
     _wait_for_postgres()
 
     with _conn() as conn:
         conn.autocommit = False
+        if _database_is_empty(conn):
+            if dry_run:
+                print("[migrations] DRY RUN: baseline would be applied (empty database)")
+            elif not _apply_baseline(conn, resolve_baseline(migrations_dir)):
+                return 3
         _ensure_table(conn)
         conn.commit()
         applied = _applied(conn)

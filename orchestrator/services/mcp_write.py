@@ -30,6 +30,7 @@ from models.mcp_write import ExtractedRelation
 from services.banks import MCP_MEMORY_SOURCE
 from services.entities import extract_entities
 from services.entities import store_entities
+from services.llm_json import strip_code_fence
 
 import config
 from services import entity_edges
@@ -180,10 +181,7 @@ def extract_relations(
             system="You are a precise relation extractor. Respond only with a valid JSON array.",
             max_tokens=512,
         )
-        raw = response.text.strip()
-        if raw.startswith("```"):
-            raw = "\n".join(line for line in raw.splitlines() if not line.startswith("```"))
-        data = json.loads(raw)
+        data = json.loads(strip_code_fence(response.text))
         if not isinstance(data, list):
             return []
         out: list[ExtractedRelation] = []

@@ -182,7 +182,7 @@ run_backup() {
   local manifest
   manifest="$(jq -n \
     --arg created "$(iso_now_utc)" \
-    --arg version "$(env_default LUMOGIS_VERSION dev)" \
+    --arg version "$(env_default LUMOGIS_IMAGE_VERSION dev)" \
     --arg compose "$(env_default COMPOSE_PROJECT_NAME lumogis)" \
     --arg graph "$(env_default GRAPH_MODE disabled)" \
     --arg pg_sha "$pg_sha" \

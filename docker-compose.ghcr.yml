@@ -1,22 +1,42 @@
-# docker-compose.ghcr.yml — merge AFTER docker-compose.yml for pre-built
-# Core + Web images from ghcr.io/lumogis/.
-# Compose v2 merge: use `build: !reset null` to drop inherited `build:` from
-# docker-compose.yml so Compose pulls the published image instead of building.
+# docker-compose.ghcr.yml — merge AFTER docker-compose.yml in a git checkout to
+# pull the published Lumogis images from ghcr.io/lumogis/ instead of building them.
 #
-# Quickstart:
-#   cp .env.example .env
-#   COMPOSE_FILE=docker-compose.yml:docker-compose.ghcr.yml \
-#     docker compose up -d --pull always
+# Installing Lumogis? You do not need this file or a checkout: download
+# docker-compose.yml and example.env from the latest GitHub Release
+# (docs/deployment/quickstart.md, LUM-980).
 #
-# Pin to a specific release (no leading v — matches metadata-action
-# type=semver output e.g. 1.2.3 not v1.2.3):
-#   IMAGE_TAG=1.2.3 COMPOSE_FILE=docker-compose.yml:docker-compose.ghcr.yml \
-#     docker compose up -d --pull always
+# In a checkout:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.ghcr.yml docker compose up -d
+#
+# The default tag is `latest`, the head of public main (which only moves at
+# releases). Pin a release with LUMOGIS_VERSION=1.2.3 (no leading v); IMAGE_TAG is
+# still read for one release, then removed.
+#
+# Compose v2 merge: `build: !reset null` drops the inherited build so Compose pulls,
+# and `pull_policy: !reset null` drops the base file's `pull_policy: build`. Reset,
+# not `missing`: with `missing`, `docker compose pull` skips an image that is
+# already present, so `make update` would never fetch a new `latest`.
+#
+# Update: docker compose pull && docker compose up -d   (or `make update`)
 
 services:
   orchestrator:
-    image: ghcr.io/lumogis/lumogis-orchestrator:${IMAGE_TAG:-latest}
+    image: ghcr.io/lumogis/lumogis-orchestrator:${LUMOGIS_VERSION:-${IMAGE_TAG:-latest}}
     build: !reset null
+    pull_policy: !reset null
   lumogis-web:
-    image: ghcr.io/lumogis/lumogis-web:${IMAGE_TAG:-latest}
+    image: ghcr.io/lumogis/lumogis-web:${LUMOGIS_VERSION:-${IMAGE_TAG:-latest}}
     build: !reset null
+    pull_policy: !reset null
+  stack-control:
+    image: ghcr.io/lumogis/lumogis-stack-control:${LUMOGIS_VERSION:-${IMAGE_TAG:-latest}}
+    build: !reset null
+    pull_policy: !reset null
+  backup:
+    image: ghcr.io/lumogis/lumogis-backup:${LUMOGIS_VERSION:-${IMAGE_TAG:-latest}}
+    build: !reset null
+    pull_policy: !reset null
+  caddy:
+    image: ghcr.io/lumogis/lumogis-caddy:${LUMOGIS_VERSION:-${IMAGE_TAG:-latest}}
+    build: !reset null
+    pull_policy: !reset null

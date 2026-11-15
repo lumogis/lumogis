@@ -56,8 +56,8 @@ jobs:
     # Qdrant is required too: paperless/live store fixtures (and other *_live
     # modules) call require_postgres on a combined "Postgres/Qdrant" ping when
     # LUMOGIS_REQUIRE_INTEGRATION_DB=1 — Postgres alone still reds the job.
-    # Official image (not lumogis-qdrant): GHA service healthchecks run in-container
-    # and the stock image has no curl, so readiness is waited from the host below.
+    # Stock image, as in docker-compose.yml: it has no curl, and GHA service
+    # healthchecks run in-container, so readiness is waited from the host below.
     #
     # FalkorDB is required too (LUM-720): the *_falkordb_live modules treat an
     # unset or unreachable FALKORDB_URL as a failure under
@@ -494,7 +494,9 @@ jobs:
         with:
           context: .
           file: orchestrator/Dockerfile
-          tags: lumogis-orchestrator:latest
+          # The name docker-compose.yml gives a local build in project `lumogis`
+          # (LUM-980), which docker-compose.egress-guard-test.yml defaults to.
+          tags: ghcr.io/lumogis/lumogis-orchestrator:dev-lumogis
           load: true
 
       - name: Scoped egress guard (real allowlist / blocked off-list / reachable control)

@@ -1,8 +1,8 @@
 {
   "schema": "lumogis-feature-ids/v1",
-  "generated_at": "2026-11-12T02:05:07.853Z",
+  "generated_at": "2026-11-15T09:37:00.023Z",
   "generator": "scripts/check-coverage-matrix.mjs --write-catalog",
-  "row_count": 369,
+  "row_count": 372,
   "matrices": {
     "core": "docs/testing/TEST-COVERAGE-MATRIX-core.md",
     "web": "docs/testing/TEST-COVERAGE-MATRIX-web.md",
@@ -21,6 +21,9 @@
     "1.1.9",
     "1.1.10",
     "1.1.11",
+    "1.1.12",
+    "1.1.13",
+    "1.1.14",
     "1.2.1",
     "1.2.2",
     "1.2.3",

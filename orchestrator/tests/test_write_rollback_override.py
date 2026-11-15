@@ -47,6 +47,7 @@ def test_render_override_yaml_pins_services_and_resets_build():
     assert "  orchestrator:" in yaml
     assert "    image: ghcr.io/lumogis/lumogis-orchestrator@sha256:abc" in yaml
     assert "    build: !reset null" in yaml
+    assert "    pull_policy: !reset null" in yaml  # LUM-980: else a pinned image never pulls
     assert "  lumogis-web:" in yaml
     assert "    image: ghcr.io/lumogis/lumogis-web@sha256:def" in yaml
 

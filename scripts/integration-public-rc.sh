@@ -224,6 +224,27 @@ _wait_web_smoke_ready() {
   return 1
 }
 
+# LUM-980: docker-compose.yml names every Lumogis image by its published name, so a
+# slip (an overlay that drops `pull_policy: build`, a stale local tag) could make this
+# check test a released image instead of this branch. Every Lumogis image must be a
+# local build: the image env says LUMOGIS_IMAGE_VERSION=dev. (RepoDigests cannot tell
+# built from pulled: with the containerd image store a local build has one too.)
+_assert_lumogis_images_built_locally() {
+  local svc cid img ver bad=0
+  for svc in orchestrator lumogis-web stack-control backup caddy; do
+    cid="$(compose ps -q "$svc" 2>/dev/null | head -1)"
+    [[ -n "$cid" ]] || continue
+    img="$(docker inspect --format '{{.Image}}' "$cid")"
+    ver="$(docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$img" \
+      | sed -n 's/^LUMOGIS_IMAGE_VERSION=//p')"
+    if [[ "$ver" != "dev" ]]; then
+      echo "[integration-public-rc] ERROR: $svc runs an image with LUMOGIS_IMAGE_VERSION=${ver:-<unset>}; expected a local build (dev)" >&2
+      bad=1
+    fi
+  done
+  return "$bad"
+}
+
 cmd_up() {
   (cd "$ROOT" && test -f .env || cp config/test.env.example .env)
   # Create the default filesystem root on the host as the invoking user *before* compose up.
@@ -233,6 +254,7 @@ cmd_up() {
   eval "$(python3 "$ROOT/scripts/rc_test_env_defaults.py" "$ROOT/$ENV_FILE")"
   _rc_preflight_host_ports
   compose up -d --wait
+  _assert_lumogis_images_built_locally || exit 1
   if [[ "${COMPOSE_PROJECT_NAME:-}" == "lumogis-test" ]]; then
     bash "$ROOT/scripts/seed-public-rc-approvals-fixture.sh"
     bash "$ROOT/scripts/seed-public-rc-ingest-owner.sh"

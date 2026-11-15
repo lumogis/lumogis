@@ -51,3 +51,9 @@ COPY docker/backup/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh /scripts/backup/*.sh /scripts/backup/lib/*.sh /scripts/backup/falkordb-dump-restore.sh
 
 ENTRYPOINT ["/entrypoint.sh"]
+
+# LUM-980: the version this image was built as: dev for a local build, X.Y.Z for a
+# release, the short commit for main. Last in the file so a new version rebuilds
+# no other layer. Backups record it, and checks use it to tell pulled from built.
+ARG LUMOGIS_IMAGE_VERSION=dev
+ENV LUMOGIS_IMAGE_VERSION=$LUMOGIS_IMAGE_VERSION

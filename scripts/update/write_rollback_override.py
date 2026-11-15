@@ -99,6 +99,9 @@ def render_override_yaml(
         lines.append(f"  {service}:")
         lines.append(f"    image: {ref}")
         lines.append("    build: !reset null")
+        # The repo compose sets pull_policy: build (LUM-980); left in place, Compose
+        # would never pull a pinned image that is no longer on this host.
+        lines.append("    pull_policy: !reset null")
         if service == "orchestrator" and (pin_capture_root or pin_stop_entities):
             lines.append("    environment:")
             if pin_capture_root:
