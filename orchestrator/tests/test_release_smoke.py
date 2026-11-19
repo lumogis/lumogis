@@ -266,7 +266,8 @@ class World:
                 if self.search_empty
                 else [
                     {
-                        "file_path": "/data/uploads/abc/smoke-document.txt",
+                        # Core's real stored name: <file_id>_<basename> (LUM-997 rehearsal).
+                        "file_path": "/workspace/uploads/default/45ef52b4_smoke-document.txt",
                         "score": 0.9,
                         "chunk_text": "x",
                         "metadata": {},
@@ -1480,3 +1481,10 @@ def test_cloud_llm_restores_local_only_when_completion_fails(world, monkeypatch)
     res = results(world)["MS-006"]
     assert res["result"] == "fail" and res["required"] is False
     assert [p["privacy_mode"] for p in puts if "privacy_mode" in p][-1] == "local_only"
+
+
+def test_fixture_path_matches_core_upload_name():
+    assert smoke.is_fixture_path("/workspace/uploads/default/45ef52b4_smoke-document.txt")
+    assert smoke.is_fixture_path("/data/smoke-document.txt")
+    assert not smoke.is_fixture_path("/workspace/uploads/default/45ef52b4_other.txt")
+    assert not smoke.is_fixture_path("/workspace/uploads/default/xsmoke-document.txt")

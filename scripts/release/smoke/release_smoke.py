@@ -837,12 +837,22 @@ def ingest_fixture(ctx: Ctx) -> str:
     return f"job {job} done"
 
 
+def is_fixture_path(file_path: str) -> bool:
+    """True when a search hit's file_path is the uploaded fixture.
+
+    Core stores an upload as ``<file_id>_<basename>`` (routes/api_v1/ingest.py),
+    so the stored name is never the bare fixture name.
+    """
+    name = Path(file_path).name
+    return name == FIXTURE_DOC or name.endswith("_" + FIXTURE_DOC)
+
+
 def search_hits(ctx: Ctx) -> str:
     def hit() -> bool:
         status, data = ctx.api.get("/search?q=" + PHRASE.replace(" ", "%20"))
         if status != 200 or not isinstance(data, list):
             return False
-        return any(Path(str(r.get("file_path", ""))).name == FIXTURE_DOC
+        return any(is_fixture_path(str(r.get("file_path", "")))
                    for r in data if isinstance(r, dict))
 
     ctx.wait(hit, 120, 10, f"search hit for {FIXTURE_DOC}")
