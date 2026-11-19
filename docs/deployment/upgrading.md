@@ -99,8 +99,15 @@ Every image is signed with build provenance by the public repository's workflow.
 Database migrations only go forward, so going back to an older release needs the backup you took before updating.
 
 1. Set the previous version in `.env`, for example `LUMOGIS_VERSION=0.12.0`, and download that release's `docker-compose.yml` (`https://github.com/lumogis/lumogis/releases/download/v0.12.0/docker-compose.yml`) if the compose file changed in between.
-2. Restore the backup taken before the update (below).
-3. `docker compose pull && docker compose up -d`.
+2. Stop Lumogis and empty the database. The newer release added tables the older backup does not know about, and they would stop the restore:
+
+   ```bash
+   docker compose stop orchestrator lumogis-web falkordb
+   docker compose exec -T postgres sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"'
+   ```
+
+3. Restore the backup taken before the update: `docker compose run --rm --no-deps -it backup /scripts/backup/restore.sh <YYYYMMDD-HHMMSS> --yes` (see Backup and restore below).
+4. `docker compose pull && docker compose up -d`.
 
 Going back without a restore is not supported: an older orchestrator may not understand a database a newer one migrated.
 

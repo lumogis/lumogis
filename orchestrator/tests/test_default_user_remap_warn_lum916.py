@@ -101,6 +101,8 @@ def fake_db(monkeypatch):
 
     monkeypatch.setattr(remap, "_wait_for_postgres", lambda: None)
     monkeypatch.setattr(remap, "_conn", lambda: holder["db"])
+    # No Qdrant here; the Qdrant pass has its own tests (test_default_user_remap_qdrant.py).
+    monkeypatch.setattr(remap, "_remap_qdrant", lambda target: 0)
     monkeypatch.delenv("INBOX_OWNER_USER_ID", raising=False)
     monkeypatch.delenv("LUMOGIS_BOOTSTRAP_ADMIN_EMAIL", raising=False)
     monkeypatch.setenv("AUTH_ENABLED", "true")

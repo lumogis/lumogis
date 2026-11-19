@@ -43,6 +43,9 @@ HERE = Path(__file__).resolve().parent
 FIXTURES = HERE / "fixtures"
 ADMIN_EMAIL = "smoke@example.com"
 PHRASE = "marmalade lighthouse"
+# docs/deployment/upgrading.md § Going back, step 2 (keep the two in step).
+RESET_SCHEMA_SH = ('psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" '
+                   '-c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"')
 FIXTURE_DOC = "smoke-document.txt"
 VOICE_SENTENCE = "the quick brown fox jumps over the lazy dog"
 EGRESS_CHAIN = "LUMOGIS_SMOKE_EGRESS"
@@ -800,9 +803,10 @@ def steady_state(ctx: Ctx) -> str:
 
 
 def reachability(ctx: Ctx) -> str:
-    status, data = ctx.api.get("/health", auth=False)
+    # /healthz: runs before the claim, and /health needs a token with sign-in on.
+    status, data = ctx.api.get("/healthz", auth=False)
     if status != 200:
-        raise CheckFailed(f"/health answered {status}")
+        raise CheckFailed(f"/healthz answered {status}")
     req = urllib.request.Request(web_url() + "/")
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
@@ -812,7 +816,7 @@ def reachability(ctx: Ctx) -> str:
         raise CheckFailed(f"Caddy GET / failed: {exc}")
     if code != 200 or "<html" not in body:
         raise CheckFailed(f"Caddy GET / gave {code} without HTML")
-    return "/health 200; Caddy serves HTML"
+    return "/healthz 200; Caddy serves HTML"
 
 
 def ingest_fixture(ctx: Ctx) -> str:
@@ -860,7 +864,8 @@ def search_hits(ctx: Ctx) -> str:
 
 
 def health_counts(ctx: Ctx) -> dict:
-    status, data = ctx.api.get("/health", auth=False)
+    # /health needs a token when sign-in is on; Api sends one only if it has one.
+    status, data = ctx.api.get("/health")
     if status != 200 or not isinstance(data, dict):
         raise CheckFailed(f"/health answered {status}")
     return data
@@ -1095,11 +1100,11 @@ def restart_check(ctx: Ctx) -> str:
         now = compose.container_map().get("orchestrator")
         if not now or now == before:
             return False
-        st, _ = ctx.api.get("/health", auth=False)
+        st, _ = ctx.api.get("/healthz", auth=False)
         return st == 200
 
     ctx.wait(recreated, 300, 5, "orchestrator recreated and healthy")
-    return f"stack-control: Compose {cv.stdout.strip()}; orchestrator recreated, /health 200"
+    return f"stack-control: Compose {cv.stdout.strip()}; orchestrator recreated, /healthz 200"
 
 
 def stop_start(ctx: Ctx) -> str:
@@ -1472,6 +1477,11 @@ def suite_upgrade(ctx: Ctx) -> None:
             s = compose.compose("stop", "orchestrator", "lumogis-web", "falkordb", timeout=300)
             if s.returncode != 0:
                 raise CheckFailed("documented stop failed (doc bug): " + tail(s.stderr))
+            # upgrading.md § Going back step 2: the newer release's tables would
+            # otherwise stop the older restore (found by the 0.14.0-rc.1 smoke).
+            e = compose.compose("exec", "-T", "postgres", "sh", "-c", RESET_SCHEMA_SH, timeout=120)
+            if e.returncode != 0:
+                raise CheckFailed("documented schema reset failed (doc bug): " + tail(e.stderr))
             restore_stamp(compose, stamp)
             u = compose.up()
             ctx.refresh_env_secrets()

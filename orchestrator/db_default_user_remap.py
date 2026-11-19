@@ -390,6 +390,49 @@ def run_post_bootstrap_safely(context: str) -> int:
     return rc
 
 
+def _remap_qdrant(target: str) -> int:
+    """Re-tag Qdrant points whose payload says ``user_id='default'``.
+
+    The Postgres remap alone leaves every indexed chunk, conversation, entity,
+    signal and memory vector under ``default``. Search shows personal points
+    only to their owner, so after the claim an updating household's whole
+    library disappeared from search (found by the 0.14.0-rc.1 release smoke,
+    LUM-997). Every collection is covered, not a fixed list, so a collection
+    added later cannot be missed. Best effort and idempotent: Qdrant down at
+    the entrypoint pass is logged, and the in-app pass or the next boot retries.
+    """
+    if os.environ.get("VECTOR_STORE_BACKEND", "qdrant") != "qdrant":
+        return 0
+    try:
+        from qdrant_client import QdrantClient
+        from qdrant_client.models import FieldCondition
+        from qdrant_client.models import Filter
+        from qdrant_client.models import MatchValue
+
+        client = QdrantClient(url=os.environ.get("QDRANT_URL", "http://qdrant:6333"))
+        legacy = Filter(must=[FieldCondition(key="user_id", match=MatchValue(value="default"))])
+        total = 0
+        for coll in client.get_collections().collections:
+            name = coll.name
+            try:
+                n = client.count(collection_name=name, count_filter=legacy, exact=True).count
+                if n:
+                    client.set_payload(
+                        collection_name=name,
+                        payload={"user_id": target},
+                        points=legacy,
+                        wait=True,
+                    )
+                    _log.info("qdrant %-25s %s points", name, n)
+                    total += n
+            except Exception as exc:  # noqa: BLE001
+                _log.error("qdrant remap of %s failed: %s — next run will retry", name, exc)
+        return total
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("qdrant remap skipped (%s) — next run will retry", exc)
+        return -1
+
+
 def main(post_bootstrap: bool = False) -> int:
     """Run the remap. ``post_bootstrap`` is True for the orchestrator's second pass."""
     _wait_for_postgres()
@@ -455,6 +498,9 @@ def main(post_bootstrap: bool = False) -> int:
             _log.info("%-32s %s rows", table, count if count >= 0 else "ERROR")
 
         _log.info("remap target user_id=%s; total rows updated = %d", target, total)
+        points = _remap_qdrant(target)
+        if points > 0:
+            _log.info("remap target user_id=%s; qdrant points re-tagged = %d", target, points)
         return 0
 
 

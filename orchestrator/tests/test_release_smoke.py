@@ -103,6 +103,7 @@ class World:
         self.out = tmp_path / "out" / "install-amd64.json"
         self.core = fakes.FakeCore()
         self.claimed = False
+        self.auth_on = auth_on
         self.password = ""
         self.entities = 3
         self.search_empty = False
@@ -235,15 +236,20 @@ class World:
             return 200, {"access_token": "tok2", "token_type": "bearer", "expires_in": 900}
 
         r[("POST", "/api/v1/auth/login")] = login
-        r[("GET", "/health")] = lambda q: (
-            200,
-            {
+
+        def health(q):
+            # Like Core: /health needs a token when sign-in is on; /healthz never does.
+            if (self.auth_on or self.claimed) and not q["auth"]:
+                return 401, {"detail": "not authenticated"}
+            return 200, {
                 "status": "ok",
                 "qdrant_doc_count": 1,
                 "total_chunks_indexed": 3,
                 "entity_count": self.entities,
-            },
-        )
+            }
+
+        r[("GET", "/health")] = authed(health)
+        r[("GET", "/healthz")] = lambda q: (200, {"status": "ok"})
         r[("GET", "/")] = lambda q: (200, "<html><body>Lumogis</body></html>")
         r[("POST", "/api/v1/ingest/upload")] = authed(
             lambda q: (202, {"status": "queued", "file_id": "f", "job_id": 7})
@@ -1226,6 +1232,12 @@ def test_upgrade_from_auth_off_runs_the_whole_path(tmp_path, monkeypatch):
         assert stop[2:] == ["orchestrator", "lumogis-web", "falkordb"]
         restore = next(a for a in argv if "/scripts/backup/restore.sh" in a)
         assert {"--no-deps", "-T", "--rm"} <= set(restore) and "-it" not in restore
+        # upgrading.md § Going back: empty the schema between the stop and the restore.
+        reset = next(
+            i for i, a in enumerate(argv) if a[:4] == ["compose", "exec", "-T", "postgres"]
+        )
+        assert "DROP SCHEMA public CASCADE" in argv[reset][-1]
+        assert argv.index(stop) < reset < argv.index(restore)
         # Going back restores the kept .env copy: previous version pinned, sign-in off.
         env = smoke.read_env(w.work / ".env")
         assert env["LUMOGIS_VERSION"] == "0.13.1" and env["AUTH_ENABLED"] == "false"
@@ -1488,3 +1500,8 @@ def test_fixture_path_matches_core_upload_name():
     assert smoke.is_fixture_path("/data/smoke-document.txt")
     assert not smoke.is_fixture_path("/workspace/uploads/default/45ef52b4_other.txt")
     assert not smoke.is_fixture_path("/workspace/uploads/default/xsmoke-document.txt")
+
+
+def test_going_back_schema_reset_matches_the_upgrade_doc():
+    doc = (_ROOT / "docs/deployment/upgrading.md").read_text()
+    assert smoke.RESET_SCHEMA_SH in doc
