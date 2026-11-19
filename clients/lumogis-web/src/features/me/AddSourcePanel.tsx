@@ -15,6 +15,12 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useReducer, useState } from "react";
 
 import { ApiError } from "../../api/client";
+import { PageSection } from "../../components/page/PageSection";
+import { Alert, AlertDescription } from "../../components/ui/alert";
+import { Button } from "../../components/ui/button";
+import { Input } from "../../components/ui/input";
+import { Label } from "../../components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
 import { useAuth } from "../../auth/AuthProvider";
 import { listMyCredentials } from "../../api/connectorCredentials";
 import { createSource, previewSource, type SourcePreview } from "../../api/sources";
@@ -39,6 +45,11 @@ const CREDENTIALS_KEY = ["me", "connector-credentials"] as const;
 // The Literal is misleading and this UI does not trust it.
 type SourceKind = "detect" | "paperless";
 
+const KIND_LABEL: Record<SourceKind, string> = {
+  detect: "Detect automatically",
+  paperless: "Paperless",
+};
+
 /** Where a paperless credential is actually written and read.
  *
  *  NOT `/admin/connector-credentials`: that page's Household and System tabs
@@ -46,10 +57,10 @@ type SourceKind = "detect" | "paperless";
  *  `ccs.get_payload(user_id, PAPERLESS)` and nothing else. Saving there produces
  *  a credential the badge cannot see and the poller can never load.
  *
- *  `MeConnectorsView` is a nested route under `/me`, so the mounted path is
- *  `/me/connectors`. Bare `/connectors` matches nothing and falls through to the
- *  catch-all, which redirects to `/chat`. */
-const CREDENTIALS_PATH = "/me/connectors";
+ *  `MeConnectorsView` is the Mine view of Settings → Connected services
+ *  (LUM-993), mounted at `/settings/connections`. Bare `/connectors` matches
+ *  nothing and falls through to the catch-all, which redirects to `/chat`. */
+const CREDENTIALS_PATH = "/settings/connections";
 
 export function AddSourcePanel({ onAdded }: { onAdded: () => void }): JSX.Element {
   const { client } = useAuth();
@@ -174,114 +185,123 @@ export function AddSourcePanel({ onAdded }: { onAdded: () => void }): JSX.Elemen
   const card = consent.shown;
 
   return (
-    <section aria-labelledby="add-source-heading">
-      <h2 id="add-source-heading">Add a source</h2>
+    <PageSection
+      title="Add a source"
+      description="Give Lumogis the address of a document archive, a feed or a web page."
+    >
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="source-kind">What are you adding?</Label>
+          <Select
+            value={kind}
+            onValueChange={(v) => {
+              setKind(v as SourceKind);
+              resetInputs();
+            }}
+          >
+            <SelectTrigger id="source-kind" className="w-full">
+              <SelectValue>{(v: string) => KIND_LABEL[v as SourceKind] ?? v}</SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {/* Two options, never three. See the note on `SourceKind`. */}
+              <SelectItem value="detect">{KIND_LABEL.detect}</SelectItem>
+              <SelectItem value="paperless">{KIND_LABEL.paperless}</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
 
-      <p>
-        <label htmlFor="source-kind">What are you adding?</label>{" "}
-        <select
-          id="source-kind"
-          value={kind}
-          onChange={(e) => {
-            setKind(e.target.value as SourceKind);
-            resetInputs();
-          }}
-        >
-          {/* Two options, never three. See the note on `SourceKind`. */}
-          <option value="detect">Detect automatically</option>
-          <option value="paperless">Paperless</option>
-        </select>
-      </p>
+        {kind === "paperless" ? <PaperlessCredentialStep credentialAt={credentialAt} /> : null}
 
-      {kind === "paperless" ? (
-        <PaperlessCredentialStep credentialAt={credentialAt} />
-      ) : null}
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="source-url">{kind === "paperless" ? "Paperless address" : "Address"}</Label>
+          <Input
+            id="source-url"
+            type="url"
+            value={url}
+            onChange={(e) => {
+              setUrl(e.target.value);
+              resetInputs();
+            }}
+            placeholder="https://…"
+          />
+        </div>
 
-      <p>
-        <label htmlFor="source-url">
-          {kind === "paperless" ? "Paperless address" : "Address"}
-        </label>{" "}
-        <input
-          id="source-url"
-          type="url"
-          value={url}
-          onChange={(e) => {
-            setUrl(e.target.value);
-            resetInputs();
-          }}
-          placeholder="https://…"
-        />
-      </p>
+        {/* Never on keystroke: the preview is a live outbound fetch that can probe
+            several paths off the site root, bounded only by httpx timeouts. */}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button type="button" variant="outline" onClick={() => previewM.mutate()} disabled={!url || busy}>
+            Check
+          </Button>
+          {previewM.isPending ? (
+            <>
+              <span role="status" aria-label="Source check progress" className="text-sm text-muted-foreground">
+                Checking…
+              </span>
+              <Button type="button" variant="ghost" onClick={() => previewM.reset()}>
+                Cancel
+              </Button>
+            </>
+          ) : null}
+        </div>
 
-      {/* Never on keystroke: the preview is a live outbound fetch that can probe
-          several paths off the site root, bounded only by httpx timeouts. */}
-      <p>
-        <button type="button" onClick={() => previewM.mutate()} disabled={!url || busy}>
-          Check
-        </button>{" "}
-        {previewM.isPending ? (
+        {preview ? <PreviewPanel preview={preview} kind={kind} /> : null}
+
+        {preview ? (
           <>
-            <span role="status" aria-label="Source check progress">Checking…</span>{" "}
-            <button type="button" onClick={() => previewM.reset()}>
-              Cancel
-            </button>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="source-name">Name (optional)</Label>
+              <Input id="source-name" value={name} onChange={(e) => setName(e.target.value)} />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="source-category">Category (optional)</Label>
+              <Input
+                id="source-category"
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {/* "Add" pays the same N-probe cost as "Check": POST /sources is
+                  stateless and re-runs detection before it looks at `confirm`. */}
+              <Button type="button" onClick={() => addM.mutate()} disabled={busy}>
+                Add
+              </Button>
+              {addM.isPending ? (
+                <>
+                  <span role="status" aria-label="Source add progress" className="text-sm text-muted-foreground">
+                    Adding…
+                  </span>
+                  <Button type="button" variant="ghost" onClick={() => addM.reset()}>
+                    Cancel
+                  </Button>
+                </>
+              ) : null}
+            </div>
           </>
         ) : null}
-      </p>
 
-      {preview ? (
-        <PreviewPanel preview={preview} kind={kind} />
-      ) : null}
-
-      {preview ? (
-        <>
-          <p>
-            <label htmlFor="source-name">Name (optional)</label>{" "}
-            <input id="source-name" value={name} onChange={(e) => setName(e.target.value)} />
+        {msg ? (
+          <p role="status" aria-label="Source add result" className="m-0 text-sm">
+            {msg}
           </p>
-          <p>
-            <label htmlFor="source-category">Category (optional)</label>{" "}
-            <input
-              id="source-category"
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
-            />
-          </p>
-          <p>
-            {/* "Add" pays the same N-probe cost as "Check": POST /sources is
-                stateless and re-runs detection before it looks at `confirm`. */}
-            <button type="button" onClick={() => addM.mutate()} disabled={busy}>
-              Add
-            </button>{" "}
-            {addM.isPending ? (
-              <>
-                <span role="status" aria-label="Source add progress">Adding…</span>{" "}
-                <button type="button" onClick={() => addM.reset()}>
-                  Cancel
-                </button>
-              </>
-            ) : null}
-          </p>
-        </>
-      ) : null}
+        ) : null}
 
-      {msg ? <p role="status" aria-label="Source add result">{msg}</p> : null}
-
-      {card ? (
-        <ConsentCard
-          card={card}
-          busy={busy}
-          onAcknowledge={() => {
-            dispatch({ type: "acknowledged" });
-            // The acknowledgement is a mutation parameter, not state read at
-            // call time — the re-post is what sends it, and only this press
-            // causes one. A component that always sent `true` would turn the
-            // gate into a dismissible banner in JSON.
-            setTimeout(() => addM.mutate(), 0);
-          }}
-        />
-      ) : null}
-    </section>
+        {card ? (
+          <ConsentCard
+            card={card}
+            busy={busy}
+            onAcknowledge={() => {
+              dispatch({ type: "acknowledged" });
+              // The acknowledgement is a mutation parameter, not state read at
+              // call time — the re-post is what sends it, and only this press
+              // causes one. A component that always sent `true` would turn the
+              // gate into a dismissible banner in JSON.
+              setTimeout(() => addM.mutate(), 0);
+            }}
+          />
+        ) : null}
+      </div>
+    </PageSection>
   );
 }
 
@@ -299,7 +319,7 @@ function PaperlessCredentialStep({
 
   const present = credentialAt !== null;
   return (
-    <p>
+    <p className="m-0 text-sm">
       <strong>{present ? "Paperless credentials saved." : "No paperless credentials yet."}</strong>{" "}
       {present ? null : (
         <>Without them this source will be created but cannot poll. </>
@@ -308,11 +328,23 @@ function PaperlessCredentialStep({
           unmounts this panel and takes the form, the preview and any
           acknowledgements with it — and fires no window-focus event to refetch
           with afterwards. */}
-      <a href={CREDENTIALS_PATH} target="_blank" rel="noopener">
+      <a
+        href={CREDENTIALS_PATH}
+        target="_blank"
+        rel="noopener"
+        className="text-accent-text underline underline-offset-2"
+      >
         {present ? "Change them" : "Add them"}
       </a>
     </p>
   );
+}
+
+function detectedLabel(sourceType: string): string {
+  if (sourceType === "rss") return "a feed";
+  if (sourceType === "page") return "a web page";
+  if (sourceType === "paperless") return "a Paperless archive";
+  return sourceType;
 }
 
 function PreviewPanel({
@@ -329,9 +361,9 @@ function PreviewPanel({
     // "connected", not "verified", not "working" — and an empty list here is the
     // expected state, never rendered as "no items found".
     return (
-      <div>
-        <p>The address looks valid. We haven&apos;t contacted your Paperless server yet.</p>
-        <p>Adding it will start polling; the sources list will show if it can&apos;t connect.</p>
+      <div className="flex flex-col gap-1 text-sm">
+        <p className="m-0">The address looks valid. We haven&apos;t contacted your Paperless server yet.</p>
+        <p className="m-0">Adding it will start polling; the sources list will show if it can&apos;t connect.</p>
       </div>
     );
   }
@@ -342,27 +374,29 @@ function PreviewPanel({
     // Add stays available: a host can be briefly down and the user may know
     // better than the probe.
     return (
-      <div role="alert">
-        <p>We couldn&apos;t reach that address. Check it for a typo.</p>
-        <p>
-          You can still add it — if the server was just temporarily down, it will start
-          working on its own. The sources list shows anything that keeps failing.
-        </p>
-      </div>
+      <Alert variant="destructive">
+        <AlertDescription>
+          <p>We couldn&apos;t reach that address. Check it for a typo.</p>
+          <p>
+            You can still add it — if the server was just temporarily down, it will start
+            working on its own. The sources list shows anything that keeps failing.
+          </p>
+        </AlertDescription>
+      </Alert>
     );
   }
   return (
-    <div>
-      <p>
-        Detected: <strong>{preview.source_type}</strong>
+    <div className="flex flex-col gap-1 text-sm">
+      <p className="m-0">
+        Detected: <strong>{detectedLabel(preview.source_type)}</strong>
         {preview.url && preview.url !== "" ? <> — {preview.url}</> : null}
       </p>
       {preview.source_type === "page" && preview.preview_items.length === 0 ? (
         // Reachable, but nothing extractable: a page IS a valid source, and
         // this really is the "no feed found" case the copy claims.
-        <p>No feed found, so we&apos;ll watch the page itself for changes.</p>
+        <p className="m-0">No feed found, so we&apos;ll watch the page itself for changes.</p>
       ) : (
-        <ul>
+        <ul className="m-0 list-disc pl-5">
           {preview.preview_items.slice(0, 3).map((item, i) => (
             <li key={i}>{item.title ?? item.url ?? "(untitled)"}</li>
           ))}
@@ -388,23 +422,29 @@ function ConsentCard({
   const isOverlap = card.arm === "overlap";
   const message = card.warning.message || (isOverlap ? OVERLAP_FALLBACK : "");
   return (
-    <div role="alert">
-      <h3>{isOverlap ? "Paperless may file these twice" : "Paperless may miss some mail"}</h3>
-      <p>{message}</p>
-      {isOverlap && card.warning.mailboxes.length > 0 ? (
-        <ul>
-          {card.warning.mailboxes.map((m) => (
-            <li key={m.source_name}>
-              {m.source_name} — {m.rule_count} {m.rule_count === 1 ? "rule" : "rules"}
-            </li>
-          ))}
-        </ul>
-      ) : null}
-      {card.warning.alternative ? <p>{card.warning.alternative}</p> : null}
-      {card.warning.recovery ? <p>{card.warning.recovery}</p> : null}
-      <button type="button" onClick={onAcknowledge} disabled={busy}>
-        Connect anyway
-      </button>
-    </div>
+    <Alert variant="destructive">
+      <AlertDescription className="flex flex-col gap-2">
+        <h3 className="m-0 text-sm font-semibold text-foreground">
+          {isOverlap ? "Paperless may file these twice" : "Paperless may miss some mail"}
+        </h3>
+        <p className="m-0">{message}</p>
+        {isOverlap && card.warning.mailboxes.length > 0 ? (
+          <ul className="m-0 list-disc pl-5">
+            {card.warning.mailboxes.map((m) => (
+              <li key={m.source_name}>
+                {m.source_name} — {m.rule_count} {m.rule_count === 1 ? "rule" : "rules"}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {card.warning.alternative ? <p className="m-0">{card.warning.alternative}</p> : null}
+        {card.warning.recovery ? <p className="m-0">{card.warning.recovery}</p> : null}
+        <div>
+          <Button type="button" variant="outline" onClick={onAcknowledge} disabled={busy}>
+            Connect anyway
+          </Button>
+        </div>
+      </AlertDescription>
+    </Alert>
   );
 }

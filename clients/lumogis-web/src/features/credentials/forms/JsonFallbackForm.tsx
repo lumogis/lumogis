@@ -34,6 +34,11 @@
 // to create with and explicit about what editing costs.
 import { useCallback, useState, type FormEvent } from "react";
 
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+
+import { FormError } from "./FormParts";
+
 /* eslint-disable react-refresh/only-export-components -- helper is intentionally co-located for the fallback form tests. */
 
 const PAYLOAD_MAX = 64 * 1024;
@@ -93,29 +98,28 @@ export function JsonFallbackForm({
   };
 
   return (
-    <form onSubmit={submit}>
-      {hint && <p style={{ fontSize: "0.85rem" }}>{hint}</p>}
+    <form onSubmit={submit} className="grid gap-3">
+      {hint && <p className="m-0 text-sm text-muted-foreground">{hint}</p>}
       {isEdit && (
-        <p style={{ fontSize: "0.85rem" }}>
+        <p className="m-0 text-sm text-muted-foreground">
           This box does not show the saved credential — it is never sent back to the browser. Saving
           replaces the whole payload, so enter every field, including any secret.
         </p>
       )}
-      <textarea
+      <Textarea
+        aria-label="Credential payload"
         value={text}
         onChange={(e) => {
           setText(e.target.value);
         }}
         onBlur={onBlur}
         rows={8}
-        style={{ width: "100%", fontFamily: "monospace" }}
+        className="w-full font-mono"
       />
-      {err && (
-        <p role="alert" style={{ color: "salmon" }}>
-          {err}
-        </p>
-      )}
-      <button type="submit">Apply</button>
+      {err && <FormError>{err}</FormError>}
+      <Button type="submit" className="justify-self-start">
+        Apply
+      </Button>
     </form>
   );
 }

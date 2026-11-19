@@ -6,9 +6,9 @@ Security audit #2 AUTH-002: the graph service verifies Core access tokens under
 the same ``AUTH_SECRET``. A refresh JWT signed with a shared secret, or a token
 with no ``typ``, must not authenticate here either.
 
-PyJWT is a KG dev/test dependency (``requirements-dev.txt`` and the Dockerfile
-``test`` stage). It is imported at module level on purpose: a lane without it
-must fail, not skip.
+PyJWT is a KG runtime dependency (``requirements.txt``, LUM-915). It is imported
+at module level on purpose: a lane without it must fail, not skip. Tokens carry
+``tv=0`` and the autouse fixture seeds a matching ``users`` row (the ``tv`` check).
 """
 
 from __future__ import annotations
@@ -24,14 +24,17 @@ SECRET = "kg-test-access-secret-0123456789abcdef"
 
 
 @pytest.fixture(autouse=True)
-def _auth_on(monkeypatch):
+def _auth_on(monkeypatch, mock_metadata_store):
     monkeypatch.setenv("AUTH_ENABLED", "true")
     monkeypatch.setenv("AUTH_SECRET", SECRET)
+    mock_metadata_store.token_versions = {"admin-1": 0}
 
 
-def _token(**extra) -> str:
+def _token(tv: int | None = 0, **extra) -> str:
     now = int(time.time())
     payload = {"sub": "admin-1", "role": "admin", "iat": now, "exp": now + 300, **extra}
+    if tv is not None:
+        payload["tv"] = tv
     return jwt.encode(payload, SECRET, algorithm="HS256")
 
 
@@ -107,6 +110,7 @@ def test_graph_assets_require_admin():
 
 
 def test_requires_admin_covers_graph_assets():
+    # Superseded in breadth by test_requires_admin_real_paths (LUM-915).
     import auth
 
     class _Url:

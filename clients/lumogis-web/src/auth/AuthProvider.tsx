@@ -30,17 +30,14 @@
 // previous member writes into nothing instead of the next member's cache. This provider
 // itself keeps the raw client (`['auth','me']`, the wipes, persistence).
 //
-// LUM-853 — single-user mode: when the boot refresh fails, the provider asks Core once,
-// without a credential, who it serves (`probeSingleUser`). Core with sign-in off answers with
-// its single admin; Core with sign-in on answers 401. The mode is the server's answer on this
-// load and is never stored, so turning sign-in on takes effect at the next load, and in an
-// open tab at its next 401 (`onAuthExpired`). It is UI only: the server authorises every
-// request. A stale `lumogis_refresh` cookie is inert with sign-in off (refresh answers 503
-// before reading it).
-// Known edge (LUM-853 review, P2): sign-in turned OFF under a tab that holds a live session
-// member's token — the next /auth/me focus refetch answers as `default`, the tab stays on gate
-// "probing" (singleUser false), so it shows no banner and the member-mode controls until a
-// reload re-derives the mode. The server authorises nothing differently; a reload fixes it.
+// LUM-981 — first-admin setup: when the boot refresh fails, the provider asks Core once,
+// without a credential, whether the install still waits for its first admin
+// (`GET /api/v1/setup/status`). `needed` → gate `needs_setup` (RequireAuth sends the visitor to
+// /setup); `not_needed` → the sign-in form; `unreachable` (Core still starting, a 5xx, a timeout)
+// → gate `starting`, a splash that asks again every 5 s and never shows the sign-in form or the
+// setup page on a guess. Lumogis Web needs sign-in on: with it off Core answers the
+// sign-in 503 and the form says so (SIGN_IN_OFF_LOGIN_COPY). The setup answer is the server's
+// on this load and is never stored.
 
 import {
   createContext,
@@ -53,6 +50,7 @@ import {
   type ReactNode,
 } from "react";
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Navigate } from "react-router-dom";
 import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
 import {
   isCrossTabSignOut,
@@ -63,11 +61,16 @@ import {
   wipeMemberClientState,
 } from "./clientStateBoundary";
 
-import { ApiClient, ApiError } from "../api/client";
+import { ApiClient } from "../api/client";
 import { AUTH_ERROR_LITERALS, type LoginResponse, type UserPublic } from "../api/auth";
+import { getSetupStatus } from "../api/setup";
 import { AccessTokenStore } from "../api/tokens";
-import { Button } from "../components/Button";
-import { TURN_ON_SIGN_IN_DOC_URL } from "../components/SingleUserBanner";
+import { Alert, AlertDescription } from "../components/ui/alert";
+import { Button } from "../components/ui/button";
+import { Input } from "../components/ui/input";
+import { Label } from "../components/ui/label";
+import { AUTH_LINK_CLASS, AuthCard } from "../features/auth/AuthCard";
+import { SIGN_IN_DOC_URL } from "./docLinks";
 import {
   createQueryPersistenceOptions,
   isQueryPersistenceRuntimeEnabled,
@@ -78,13 +81,17 @@ export type AuthStatus = "loading" | "anonymous" | "authenticated";
 export interface AuthValue {
   status: AuthStatus;
   user: UserPublic | null;
-  /** true only while the provider runs in single-user mode and `status` is `authenticated`; never persisted. */
-  singleUser: boolean;
+  /** The install still waits for its first admin (boot asked Core; never persisted). */
+  needsSetup: boolean;
+  /** Core did not answer the setup question properly (still starting); the provider re-asks. */
+  starting: boolean;
   client: ApiClient;
   tokens: AccessTokenStore;
   login(email: string, password: string): Promise<LoginAttemptResult>;
   adoptSession(response: LoginResponse): void;
   logout(): Promise<void>;
+  /** The setup page calls this on a 409: setup is over, show the sign-in form. */
+  leaveSetup(): void;
 }
 
 export type LoginAttemptResult =
@@ -140,55 +147,13 @@ export function AuthProvider({
   return <QueryClientProvider client={queryClient}>{inner}</QueryClientProvider>;
 }
 
-type Gate = "booting" | "no_session" | "probing" | "single_user";
+type Gate = "booting" | "no_session" | "needs_setup" | "starting" | "probing";
 
 /** D16: the server half of logout is bounded so a hung Core cannot leave "Sign out" dead. */
 const LOGOUT_POST_TIMEOUT_MS = 3000;
 
-/** LUM-853: a well-formed single-user identity, as Core's /auth/me returns it with sign-in off. */
-export function isSingleUserIdentity(body: unknown): body is UserPublic {
-  if (typeof body !== "object" || body === null) return false;
-  const u = body as Record<string, unknown>;
-  return (
-    typeof u.id === "string" &&
-    u.id.length > 0 &&
-    typeof u.email === "string" &&
-    // Core with sign-in off always answers `admin`; a `user` answer cannot come from that branch.
-    u.role === "admin"
-  );
-}
-
-/** Same idea as LOGOUT_POST_TIMEOUT_MS: a hung Core must not leave the splash up forever. */
-const SINGLE_USER_PROBE_TIMEOUT_MS = 5000;
-
-/**
- * LUM-853: one unauthenticated GET /api/v1/auth/me, without the refresh-and-retry of
- * ApiClient.fetch. Returns the identity only for a 200 with a well-formed admin; null for
- * anything else (401, any other status, network error, timeout, malformed body), including
- * when a token is stored (then this is not an unauthenticated ask).
- */
-async function probeSingleUser(client: ApiClient, tokens: AccessTokenStore): Promise<UserPublic | null> {
-  // Unreachable by construction (the failed refresh cleared the store); defensive.
-  if (tokens.get() !== null) return null;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), SINGLE_USER_PROBE_TIMEOUT_MS);
-  let res: Response;
-  try {
-    res = await client.fetchOnce("/api/v1/auth/me", { method: "GET", signal: controller.signal });
-  } catch {
-    return null; // network error or timeout
-  } finally {
-    clearTimeout(timer);
-  }
-  if (res.status !== 200) return null;
-  let body: unknown;
-  try {
-    body = await res.json();
-  } catch {
-    return null;
-  }
-  return isSingleUserIdentity(body) ? body : null;
-}
+/** While `starting`, how often Core is asked again. */
+const STARTING_POLL_MS = 5000;
 
 function AuthProviderCore({
   children,
@@ -204,8 +169,6 @@ function AuthProviderCore({
   const queryClient = useQueryClient();
 
   const [gate, setGate] = useState<Gate>(() => (skipRefreshOnMount ? "probing" : "booting"));
-  const gateRef = useRef<Gate>(gate);
-  gateRef.current = gate;
 
   const [reconciledUserId, setReconciledUserId] = useState<string | null>(null);
   const [signOutSeq, setSignOutSeq] = useState(0);
@@ -302,25 +265,47 @@ function AuthProviderCore({
         setGate("probing");
         return;
       }
-      const single = await probeSingleUser(client, tokens);
+      const setup = await getSetupStatus();
       if (cancelled) return;
-      if (single) {
-        // Seed before the gate flips so meQuery starts with data (no second /auth/me at boot).
-        queryClient.setQueryData(ME_KEY, single);
-        setGate("single_user");
-      } else {
-        setGate("no_session");
-      }
+      setGate(setup === "needed" ? "needs_setup" : setup === "not_needed" ? "no_session" : "starting");
     })();
     return () => {
       cancelled = true;
     };
-  }, [client, tokens, queryClient, skipRefreshOnMount]);
+  }, [client, skipRefreshOnMount]);
+
+  // `starting`: Core did not answer the setup question. Ask again (refresh first, in case a
+  // session exists after all) until it answers, then leave.
+  useEffect(() => {
+    if (gate !== "starting") return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const tick = async (): Promise<void> => {
+      const ok = await client.tryRefresh();
+      if (cancelled) return;
+      if (ok) {
+        setGate("probing");
+        return;
+      }
+      const setup = await getSetupStatus();
+      if (cancelled) return;
+      if (setup === "unreachable") {
+        timer = setTimeout(() => void tick(), STARTING_POLL_MS);
+        return;
+      }
+      setGate(setup === "needed" ? "needs_setup" : "no_session");
+    };
+    timer = setTimeout(() => void tick(), STARTING_POLL_MS);
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) clearTimeout(timer);
+    };
+  }, [gate, client]);
 
   const meQuery = useQuery({
     queryKey: ME_KEY,
     queryFn: () => client.getJson<UserPublic>("/api/v1/auth/me"),
-    enabled: gate === "probing" || gate === "single_user",
+    enabled: gate === "probing",
     staleTime: 30_000,
     refetchOnWindowFocus: "always",
   });
@@ -331,7 +316,7 @@ function AuthProviderCore({
   // Sign-in reconcile: covers login, adoptSession and boot-refresh success, because all
   // three resolve through ['auth','me']. Children do not render until it has finished.
   useEffect(() => {
-    if ((gate !== "probing" && gate !== "single_user") || meId === null || meId === reconciledUserId) return;
+    if (gate !== "probing" || meId === null || meId === reconciledUserId) return;
     const run = ++reconcileRunRef.current;
     let cancelled = false;
     void (async () => {
@@ -355,28 +340,19 @@ function AuthProviderCore({
   }, [gate, meId, reconciledUserId, queryClient, client, markReconciled]);
 
   const status: AuthStatus = useMemo(() => {
-    if (gate === "booting") return "loading";
-    if (gate === "no_session") return "anonymous";
+    if (gate === "booting" || gate === "starting") return "loading";
+    if (gate === "needs_setup" || gate === "no_session") return "anonymous";
     if (meQuery.isPending) return "loading";
-    if (meQuery.isError) {
-      const e = meQuery.error;
-      if (e instanceof ApiError && e.status === 401) return "anonymous";
-      // LUM-853: in single-user mode a slow or restarting Core (non-401) keeps the last good
-      // identity; the alternative is a sign-in form that cannot sign in. A 401 never lands
-      // here: ApiClient.fetch already ran onAuthExpired, which set the gate to no_session.
-      if (gate === "single_user" && meQuery.data && reconciledUserId === meQuery.data.id) {
-        return "authenticated";
-      }
-      return "anonymous";
-    }
+    if (meQuery.isError) return "anonymous";
     if (meQuery.data) return reconciledUserId === meQuery.data.id ? "authenticated" : "loading";
     return "anonymous";
-  }, [gate, meQuery.isPending, meQuery.isError, meQuery.error, meQuery.data, reconciledUserId]);
+  }, [gate, meQuery.isPending, meQuery.isError, meQuery.data, reconciledUserId]);
 
   // Exposed only once reconciled, so nothing sees a member before the previous one's
   // state is gone.
   const user = status === "authenticated" && meQuery.data ? meQuery.data : null;
-  const singleUser = gate === "single_user" && status === "authenticated";
+  const needsSetup = gate === "needs_setup";
+  const starting = gate === "starting";
 
   // D17: a new session never starts while a sign-out wipe is pending, and the previous
   // member's id is never the session id while the new member's token is live (D14).
@@ -431,10 +407,6 @@ function AuthProviderCore({
   );
 
   const logout = useCallback<AuthValue["logout"]>(() => {
-    // Single-user mode has no session to end: a sign-out would show a sign-in form that
-    // cannot sign in. Turning sign-in on is the way out (banner). `beginSignOut` is not
-    // guarded: it is the path `onAuthExpired` takes when sign-in is turned on under an open tab.
-    if (gateRef.current === "single_user") return Promise.resolve();
     if (logoutInFlightRef.current) return logoutInFlightRef.current;
     const p = (async () => {
       // Push teardown first: the access token is still in memory, and it never goes
@@ -462,9 +434,24 @@ function AuthProviderCore({
     return p;
   }, [client, beginSignOut]);
 
+  const leaveSetup = useCallback<AuthValue["leaveSetup"]>(() => {
+    setGate("no_session");
+  }, []);
+
   const value = useMemo<AuthValue>(
-    () => ({ status, user, singleUser, client, tokens, login, adoptSession, logout }),
-    [status, user, singleUser, client, tokens, login, adoptSession, logout],
+    () => ({
+      status,
+      user,
+      needsSetup,
+      starting,
+      client,
+      tokens,
+      login,
+      adoptSession,
+      logout,
+      leaveSetup,
+    }),
+    [status, user, needsSetup, starting, client, tokens, login, adoptSession, logout, leaveSetup],
   );
 
   return (
@@ -485,7 +472,9 @@ export function useUser(): UserPublic | null {
 }
 
 export function RequireAuth({ children }: { children: ReactNode }): JSX.Element {
-  const { status, login } = useAuth();
+  const { status, login, needsSetup, starting } = useAuth();
+  if (needsSetup) return <Navigate to="/setup" replace />;
+  if (starting) return <StartingSplash />;
   if (status === "loading") return <LoadingSplash />;
   if (status === "anonymous") return <LoginForm onSubmit={login} />;
   return <>{children}</>;
@@ -495,6 +484,14 @@ function LoadingSplash(): JSX.Element {
   return (
     <main role="status" aria-live="polite" style={{ padding: "2rem", textAlign: "center" }}>
       Loading…
+    </main>
+  );
+}
+
+function StartingSplash(): JSX.Element {
+  return (
+    <main role="status" aria-live="polite" className="p-8 text-center">
+      Lumogis is still starting. This page will continue on its own.
     </main>
   );
 }
@@ -509,8 +506,7 @@ function LoginForm({ onSubmit }: LoginFormProps): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
-  // LUM-853: set when Core answered the sign-in with "sign-in is off" (for example Core was
-  // still starting when the page loaded, so the boot probe could not see it).
+  // Set when Core answered the sign-in with "sign-in is off" (a developer or test setup).
   const [signInOff, setSignInOff] = useState(false);
 
   useEffect(() => {
@@ -525,87 +521,90 @@ function LoginForm({ onSubmit }: LoginFormProps): JSX.Element {
     }
   }, []);
 
+  // LUM-993 Pass 8: on the shared sign-in card, like the other signed-out pages.
+  // Ids, roles and messages are unchanged (tests and password managers use them).
   return (
-    <form
-      className="lumogis-login"
-      aria-labelledby="lumogis-login-title"
-      onSubmit={async (e) => {
-        e.preventDefault();
-        if (busy) return;
-        setBusy(true);
-        setError(null);
-        setSignInOff(false);
-        const result = await onSubmit(email, password);
-        if (!result.ok) {
-          setError(humaniseLoginError(result.status, result.detail));
-          setSignInOff(
-            result.status === 503 && result.detail === AUTH_ERROR_LITERALS.LOGIN_DISABLED_DEV_MODE,
-          );
-        }
-        setBusy(false);
-      }}
-    >
-      <h1 id="lumogis-login-title" style={{ margin: 0 }}>
-        Sign in
-      </h1>
-      {flash !== null && (
-        <p role="status" className="lumogis-login__flash">
-          {flash}
-        </p>
-      )}
-      <label htmlFor="lumogis-login-email">
-        Email
-        <input
-          id="lumogis-login-email"
-          type="email"
-          autoComplete="username"
-          required
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          disabled={busy}
-        />
-      </label>
-      <label htmlFor="lumogis-login-password">
-        Password
-        <input
-          id="lumogis-login-password"
-          type="password"
-          autoComplete="current-password"
-          required
-          minLength={12}
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          disabled={busy}
-        />
-      </label>
-      {error !== null && (
-        <p role="alert" className="lumogis-login__error">
-          {error}
-        </p>
-      )}
-      {signInOff && (
-        <p className="lumogis-login__recovery">
-          <a href={TURN_ON_SIGN_IN_DOC_URL} target="_blank" rel="noopener noreferrer">
-            How to turn on sign-in
+    <AuthCard title="Sign in" titleId="lumogis-login-title">
+      <form
+        className="flex flex-col gap-4"
+        aria-labelledby="lumogis-login-title"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          if (busy) return;
+          setBusy(true);
+          setError(null);
+          setSignInOff(false);
+          const result = await onSubmit(email, password);
+          if (!result.ok) {
+            setError(humaniseLoginError(result.status, result.detail));
+            setSignInOff(
+              result.status === 503 && result.detail === AUTH_ERROR_LITERALS.LOGIN_DISABLED_DEV_MODE,
+            );
+          }
+          setBusy(false);
+        }}
+      >
+        {flash !== null && (
+          <p role="status" className="m-0 text-sm text-muted-foreground">
+            {flash}
+          </p>
+        )}
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="lumogis-login-email">Email</Label>
+          <Input
+            id="lumogis-login-email"
+            type="email"
+            autoComplete="username"
+            required
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            disabled={busy}
+          />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="lumogis-login-password">Password</Label>
+          <Input
+            id="lumogis-login-password"
+            type="password"
+            autoComplete="current-password"
+            required
+            minLength={12}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            disabled={busy}
+          />
+        </div>
+        {error !== null && (
+          <Alert variant="destructive">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+        {signInOff && (
+          <p className="m-0 text-sm">
+            <a href={SIGN_IN_DOC_URL} target="_blank" rel="noopener noreferrer" className={AUTH_LINK_CLASS}>
+              About sign-in
+            </a>
+          </p>
+        )}
+        <Button type="submit" disabled={busy}>
+          {busy ? "Signing in…" : "Sign in"}
+        </Button>
+        {/* LUM-65 Pass 1: the login screen used to offer no recovery path at all.
+            The link always renders — the page itself decides whether it can offer
+            an email reset or only the ask-an-admin / operator-CLI guidance. */}
+        <p className="m-0 text-sm">
+          <a href="/forgot-password" className={AUTH_LINK_CLASS}>
+            Forgot password?
           </a>
         </p>
-      )}
-      <Button type="submit" variant="primary" disabled={busy}>
-        {busy ? "Signing in…" : "Sign in"}
-      </Button>
-      {/* LUM-65 Pass 1: the login screen used to offer no recovery path at all.
-          The link always renders — the page itself decides whether it can offer
-          an email reset or only the ask-an-admin / operator-CLI guidance. */}
-      <p className="lumogis-login__recovery">
-        <a href="/forgot-password">Forgot password?</a>
-      </p>
-    </form>
+      </form>
+    </AuthCard>
   );
 }
 
-/** LUM-853: display copy only; no mode decision reads the 503 detail. */
+/** Display copy only; no mode decision reads the 503 detail. */
 export const SIGN_IN_OFF_LOGIN_COPY =
-  "Sign-in is turned off on this Lumogis, so there is no account to sign in to. Reload this page to open Lumogis.";
+  "Sign-in is turned off on this Lumogis server, and Lumogis Web needs it. Set AUTH_ENABLED=true in .env, then run docker compose up -d.";
 
 export function humaniseLoginError(status: number, detail: string): string {
   if (status === 401 && detail === "invalid credentials") {

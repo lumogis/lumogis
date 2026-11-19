@@ -145,9 +145,15 @@ describe("EmailMailboxSetupForm (guided)", () => {
   it("shows Outlook disabled-with-reason when OAuth is not configured on the server", async () => {
     renderForm(makeFetch({ providers: PROVIDERS_OUTLOOK_DISABLED }));
     await waitFor(() => expect(screen.getByRole("button", { name: /^Gmail/ })).toBeInTheDocument());
-    const outlook = screen.getByRole("button", { name: /Outlook/ });
+    const outlook = screen.getByRole("button", { name: /^Outlook/ });
     expect(outlook).toBeDisabled();
-    expect(outlook).toHaveTextContent(/one-time OAuth app setup/i);
+    // The reason holds a docs path, so it is not main text: a plain sentence is,
+    // and the path sits behind the (i).
+    expect(outlook).not.toHaveTextContent(/oauth-email-setup/i);
+    expect(screen.getByText(/needs a one-time setup by the household admin/i)).toBeInTheDocument();
+    expect(screen.queryByText(/oauth-email-setup\.md/)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /About Outlook\.com/i }));
+    expect(await screen.findByText(/oauth-email-setup\.md/)).toBeInTheDocument();
   });
 
   it("gates Save behind a successful test", async () => {
@@ -178,7 +184,7 @@ describe("EmailMailboxSetupForm (guided)", () => {
     const u = await pickGmailAndFill();
     await u.click(screen.getByRole("button", { name: /test connection/i }));
     await waitFor(() => expect(screen.getByRole("status")).toBeInTheDocument());
-    await u.click(screen.getByLabelText(/custom date range/i));
+    await u.click(screen.getByRole("radio", { name: /custom date range/i }));
     expect(screen.getByLabelText(/import from date/i)).toBeInTheDocument();
     expect(screen.getByText(/already-imported emails in this range are skipped/i)).toBeInTheDocument();
   });
@@ -196,16 +202,16 @@ describe("EmailMailboxSetupForm (guided)", () => {
   it("send opt-in is off by default and reveals reuse-password + provider host when enabled", async () => {
     renderForm(makeFetch());
     const u = await pickGmailAndFill();
-    const optIn = screen.getByLabelText(/let lumogis send as me/i) as HTMLInputElement;
+    const optIn = screen.getByRole("checkbox", { name: /let lumogis send as me/i });
     expect(optIn).not.toBeChecked();
     // The separate-password field is hidden until the opt-in is on.
     expect(screen.queryByLabelText(/smtp app password/i)).not.toBeInTheDocument();
     await u.click(optIn);
-    expect(screen.getByLabelText(/use my mailbox password/i)).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /use my mailbox password/i })).toBeChecked();
     // Known provider → host shown from the registry, not asked for.
     expect(screen.getByText(/smtp\.gmail\.com/)).toBeInTheDocument();
     // Switching off reuse reveals the separate app-password field.
-    await u.click(screen.getByLabelText(/use my mailbox password/i));
+    await u.click(screen.getByRole("checkbox", { name: /use my mailbox password/i }));
     expect(screen.getByLabelText(/smtp app password/i)).toBeInTheDocument();
   });
 
@@ -230,7 +236,7 @@ describe("EmailMailboxSetupForm (guided)", () => {
     const u = await pickGmailAndFill();
     await u.click(screen.getByRole("button", { name: /test connection/i }));
     await waitFor(() => expect(screen.getByRole("status")).toBeInTheDocument());
-    await u.click(screen.getByLabelText(/let lumogis send as me/i));
+    await u.click(screen.getByRole("checkbox", { name: /let lumogis send as me/i }));
     await u.click(screen.getByRole("button", { name: /add mailbox/i }));
     await waitFor(() =>
       expect(calls.some((c) => c.url.endsWith("/src-1/smtp") && c.method === "PUT")).toBe(true),
@@ -252,8 +258,8 @@ describe("EmailMailboxSetupForm (guided)", () => {
     it("picking Outlook shows the email+label step, not an app-password field", async () => {
       renderForm(makeFetch());
       const u = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-      await waitFor(() => expect(screen.getByRole("button", { name: /Outlook/ })).toBeInTheDocument());
-      await u.click(screen.getByRole("button", { name: /Outlook/ }));
+      await waitFor(() => expect(screen.getByRole("button", { name: /^Outlook/ })).toBeInTheDocument());
+      await u.click(screen.getByRole("button", { name: /^Outlook/ }));
       expect(screen.getByLabelText(/email address/i)).toBeInTheDocument();
       // No app-password field on the OAuth path.
       expect(screen.queryByLabelText(/app password/i)).not.toBeInTheDocument();
@@ -266,8 +272,8 @@ describe("EmailMailboxSetupForm (guided)", () => {
     it("shows the import-scope picker on the OAuth path, defaulting to last 30 days", async () => {
       renderForm(makeFetch());
       const u = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-      await waitFor(() => expect(screen.getByRole("button", { name: /Outlook/ })).toBeInTheDocument());
-      await u.click(screen.getByRole("button", { name: /Outlook/ }));
+      await waitFor(() => expect(screen.getByRole("button", { name: /^Outlook/ })).toBeInTheDocument());
+      await u.click(screen.getByRole("button", { name: /^Outlook/ }));
       expect(screen.getByText(/how much history to import/i)).toBeInTheDocument();
       expect(screen.getByRole("radio", { name: /last 30 days/i })).toBeChecked();
     });
@@ -275,10 +281,10 @@ describe("EmailMailboxSetupForm (guided)", () => {
     it("custom scope without a start date blocks Continue with an error", async () => {
       renderForm(makeFetch());
       const u = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-      await waitFor(() => expect(screen.getByRole("button", { name: /Outlook/ })).toBeInTheDocument());
-      await u.click(screen.getByRole("button", { name: /Outlook/ }));
+      await waitFor(() => expect(screen.getByRole("button", { name: /^Outlook/ })).toBeInTheDocument());
+      await u.click(screen.getByRole("button", { name: /^Outlook/ }));
       await u.type(screen.getByLabelText(/email address/i), "me@outlook.com");
-      await u.click(screen.getByLabelText(/custom date range/i));
+      await u.click(screen.getByRole("radio", { name: /custom date range/i }));
       await u.click(screen.getByRole("button", { name: /continue to outlook\.com sign-in/i }));
       expect(screen.getByRole("alert")).toHaveTextContent(/custom date range needs a start date/i);
       // Never started the device flow.
@@ -305,10 +311,10 @@ describe("EmailMailboxSetupForm (guided)", () => {
       }) as unknown as typeof fetch;
       renderForm(fetchImpl);
       const u = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-      await waitFor(() => expect(screen.getByRole("button", { name: /Outlook/ })).toBeInTheDocument());
-      await u.click(screen.getByRole("button", { name: /Outlook/ }));
+      await waitFor(() => expect(screen.getByRole("button", { name: /^Outlook/ })).toBeInTheDocument());
+      await u.click(screen.getByRole("button", { name: /^Outlook/ }));
       await u.type(screen.getByLabelText(/email address/i), "me@outlook.com");
-      await u.click(screen.getByLabelText(/custom date range/i));
+      await u.click(screen.getByRole("radio", { name: /custom date range/i }));
       await u.type(screen.getByLabelText(/import from date/i), "2026-01-01");
       await u.click(screen.getByRole("button", { name: /continue to outlook\.com sign-in/i }));
       await screen.findByLabelText(/device code/i);
@@ -321,8 +327,8 @@ describe("EmailMailboxSetupForm (guided)", () => {
     it("continues to the device panel and shows the user code", async () => {
       renderForm(makeFetch({ pollStatus: "pending" }));
       const u = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-      await waitFor(() => expect(screen.getByRole("button", { name: /Outlook/ })).toBeInTheDocument());
-      await u.click(screen.getByRole("button", { name: /Outlook/ }));
+      await waitFor(() => expect(screen.getByRole("button", { name: /^Outlook/ })).toBeInTheDocument());
+      await u.click(screen.getByRole("button", { name: /^Outlook/ }));
       await u.type(screen.getByLabelText(/email address/i), "me@outlook.com");
       await u.click(screen.getByRole("button", { name: /continue to outlook\.com sign-in/i }));
       expect(await screen.findByLabelText(/device code/i)).toHaveTextContent("WXYZ-1234");
@@ -338,8 +344,8 @@ describe("EmailMailboxSetupForm (guided)", () => {
         </AuthProvider>,
       );
       const u = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-      await waitFor(() => expect(screen.getByRole("button", { name: /Outlook/ })).toBeInTheDocument());
-      await u.click(screen.getByRole("button", { name: /Outlook/ }));
+      await waitFor(() => expect(screen.getByRole("button", { name: /^Outlook/ })).toBeInTheDocument());
+      await u.click(screen.getByRole("button", { name: /^Outlook/ }));
       await u.type(screen.getByLabelText(/email address/i), "me@outlook.com");
       await u.click(screen.getByRole("button", { name: /continue to outlook\.com sign-in/i }));
       await screen.findByLabelText(/device code/i);
@@ -438,7 +444,7 @@ describe("LUM-759 send opt-in failure notice", () => {
     const u = await pickGmailAndFill();
     await u.click(screen.getByRole("button", { name: /test connection/i }));
     await waitFor(() => expect(screen.getByRole("status")).toBeInTheDocument());
-    await u.click(screen.getByLabelText(/let lumogis send as me/i));
+    await u.click(screen.getByRole("checkbox", { name: /let lumogis send as me/i }));
     await u.click(screen.getByRole("button", { name: /add mailbox/i }));
     return screen.findByTestId("send-optin-notice");
   }
@@ -525,7 +531,7 @@ describe("LUM-759 send opt-in failure notice", () => {
     const u = await pickGmailAndFill();
     await u.click(screen.getByRole("button", { name: /test connection/i }));
     await waitFor(() => expect(screen.getByRole("status")).toBeInTheDocument());
-    await u.click(screen.getByLabelText(/let lumogis send as me/i));
+    await u.click(screen.getByRole("checkbox", { name: /let lumogis send as me/i }));
     await u.click(screen.getByRole("button", { name: /add mailbox/i }));
     await waitFor(() => expect(onCreated).toHaveBeenCalled());
     expect(screen.queryByTestId("send-optin-notice")).toBeNull();
@@ -607,7 +613,7 @@ describe("LUM-759 send opt-in failure notice", () => {
     const u = await pickGmailAndFill();
     await u.click(screen.getByRole("button", { name: /test connection/i }));
     await waitFor(() => expect(screen.getByRole("status")).toBeInTheDocument());
-    await u.click(screen.getByLabelText(/let lumogis send as me/i));
+    await u.click(screen.getByRole("checkbox", { name: /let lumogis send as me/i }));
     await u.click(screen.getByRole("button", { name: /add mailbox/i }));
     await screen.findByTestId("send-optin-notice");
 
@@ -661,7 +667,7 @@ describe("LUM-759 send opt-in failure notice", () => {
     const u = await pickGmailAndFill();
     await u.click(screen.getByRole("button", { name: /test connection/i }));
     await waitFor(() => expect(screen.getByRole("status")).toBeInTheDocument());
-    await u.click(screen.getByLabelText(/let lumogis send as me/i));
+    await u.click(screen.getByRole("checkbox", { name: /let lumogis send as me/i }));
     await u.click(screen.getByRole("button", { name: /add mailbox/i }));
     const notice = await screen.findByTestId("send-optin-notice");
     // LUM-769: the fallback string is now a standalone sentence. Every string in
@@ -727,7 +733,7 @@ describe("LUM-775 the sending fields are actually required", () => {
     await u.type(screen.getByLabelText(/app password/i), "app-pw");
     await u.click(screen.getByRole("button", { name: /test connection/i }));
     await waitFor(() => expect(screen.getByRole("status")).toBeInTheDocument());
-    await u.click(screen.getByLabelText(/let lumogis send as me/i));
+    await u.click(screen.getByRole("checkbox", { name: /let lumogis send as me/i }));
     return u;
   }
 
@@ -753,7 +759,7 @@ describe("LUM-775 the sending fields are actually required", () => {
     const u = await fillOtherWithSend(fetchImpl);
 
     await u.type(screen.getByLabelText(/smtp host/i), "smtp.selfhosted.example");
-    await u.click(screen.getByLabelText(/use my mailbox password/i)); // untick → field appears
+    await u.click(screen.getByRole("checkbox", { name: /use my mailbox password/i })); // untick → field appears
     await u.click(screen.getByRole("button", { name: /add mailbox/i }));
 
     const posts = (fetchImpl as unknown as Mock).mock.calls.filter(

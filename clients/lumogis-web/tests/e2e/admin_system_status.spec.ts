@@ -27,25 +27,24 @@ test.describe("LUM-178 admin system status", () => {
   test("system-status panel loads for admin", async ({ page }) => {
     await loginWithSmokeCredentials(page);
 
-    await page.goto("/admin/system-status");
-    await expect(page).toHaveURL(/\/admin\/system-status/);
+    await page.goto("/settings/health");
+    await expect(page).toHaveURL(/\/settings\/health$/);
+    await expect(page.getByRole("heading", { level: 1, name: "Health and backups" })).toBeVisible();
 
-    const section = page.locator("section").filter({
-      has: page.getByRole("heading", { name: /^system status$/i, level: 2 }),
-    });
+    const section = page.getByTestId("system-status");
     await expect(section).toBeVisible();
 
     await expect(section.getByText(/^loading/i)).toHaveCount(0, { timeout: 60_000 });
 
     await expect(
-      section.getByRole("heading", { name: /^services$/i, level: 3 }).or(section.getByRole("alert")),
+      section.getByRole("heading", { name: /^services$/i, level: 2 }).or(section.getByRole("alert")),
     ).toBeVisible({ timeout: 5_000 });
 
     const hasAlert = (await section.getByRole("alert").count()) > 0;
     if (!hasAlert) {
-      await expect(section.getByRole("heading", { name: /^storage$/i, level: 3 })).toBeVisible();
+      await expect(section.getByRole("heading", { name: /^disk space$/i, level: 2 })).toBeVisible();
       await expect(
-        section.getByRole("heading", { name: /^ollama models$/i, level: 3 }),
+        section.getByRole("heading", { name: /^ollama models$/i, level: 2 }),
       ).toBeVisible();
       await expect(section.getByRole("table").first()).toBeVisible();
     }
@@ -54,41 +53,41 @@ test.describe("LUM-178 admin system status", () => {
   test("shows DR backup panel for admin", async ({ page }) => {
     await loginWithSmokeCredentials(page);
 
-    await page.goto("/admin/system-status");
-    await expect(page).toHaveURL(/\/admin\/system-status/);
+    await page.goto("/settings/health");
+    await expect(page).toHaveURL(/\/settings\/health$/);
+    await expect(page.getByRole("heading", { level: 1, name: "Health and backups" })).toBeVisible();
 
-    const section = page.locator("section").filter({
-      has: page.getByRole("heading", { name: /^system status$/i, level: 2 }),
-    });
+    const section = page.getByTestId("system-status");
     await expect(section).toBeVisible();
 
     await expect(section.getByText(/^loading/i)).toHaveCount(0, { timeout: 60_000 });
 
     await expect(
-      section.getByRole("heading", { name: /^disaster recovery backup$/i, level: 3 }),
+      section.getByRole("heading", { name: /^backups$/i, level: 2 }),
     ).toBeVisible({ timeout: 15_000 });
 
-    await expect(section.getByText(/^enabled:/i)).toBeVisible();
+    await expect(section.getByText(/^last backup$/i)).toBeVisible();
 
     // LUM-892: the card lists what the backup covers and what it does not. Which
     // items sit in which list is computed by Core (vacuous to assert here, see the
     // Vitest cases and test_backup_status_service.py), so only the headings are
     // checked. The DR card is not in the mobile Playwright project's matrix today.
-    await expect(section.getByRole("heading", { name: /^covered$/i, level: 4 })).toBeVisible();
-    await expect(section.getByRole("heading", { name: /^not covered$/i, level: 4 })).toBeVisible();
+    await expect(section.getByRole("heading", { name: /^covered$/i, level: 3 })).toBeVisible();
+    await expect(section.getByRole("heading", { name: /^not covered$/i, level: 3 })).toBeVisible();
   });
 
-  test("admin nav links to system status", async ({ page }) => {
+  test("the Settings menu links to health and backups", async ({ page }) => {
     await loginWithSmokeCredentials(page);
 
-    await page.goto("/admin/users");
-    await expect(page).toHaveURL(/\/admin\/users/);
+    await page.goto("/settings/members");
+    await expect(page).toHaveURL(/\/settings\/members$/);
 
-    await page.getByRole("navigation", { name: /^administration$/i }).getByRole("link", {
-      name: /^system status$/i,
-    }).click();
+    await page
+      .getByRole("navigation", { name: "Settings" })
+      .getByRole("link", { name: "Health and backups" })
+      .click();
 
-    await expect(page).toHaveURL(/\/admin\/system-status/);
-    await expect(page.getByRole("heading", { name: /^system status$/i, level: 2 })).toBeVisible();
+    await expect(page).toHaveURL(/\/settings\/health$/);
+    await expect(page.getByRole("heading", { level: 1, name: "Health and backups" })).toBeVisible();
   });
 });

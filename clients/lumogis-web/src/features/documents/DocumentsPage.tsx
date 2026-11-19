@@ -8,10 +8,16 @@ import { Link } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthProvider";
 import { isShared, type DocumentSummary } from "../../api/documents";
-import { EmptyState } from "../_shared/EmptyState";
-import { ErrorState } from "../_shared/ErrorState";
-import { LoadingPlaceholder, Skeleton } from "../_shared/Skeleton";
-import { originLabel, originOf } from "./documentOrigin";
+import { EmptyState } from "../../components/page/EmptyState";
+import { ErrorState } from "../../components/page/ErrorState";
+import { LoadingPlaceholder, SkeletonText } from "../../components/page/LoadingState";
+import { PageHeader } from "../../components/page/PageHeader";
+import { Badge } from "../../components/ui/badge";
+import { Checkbox } from "../../components/ui/checkbox";
+import { Label } from "../../components/ui/label";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
+import { formatDateTime } from "../../util/formatTimestamp";
+import { originLabel } from "./documentOrigin";
 import { humanizeStoredName } from "../../util/humanizeStoredName";
 import { useDocuments, shareStatusLabel, statusLabel } from "./useDocuments";
 import { useDocumentsSseInvalidation } from "./useDocumentsSseInvalidation";
@@ -32,7 +38,19 @@ function shareBadge(doc: DocumentSummary): string {
   return doc.scope === "shared" ? "Shared" : "Personal";
 }
 
-const DOCUMENT_COLUMNS = ["Name", "Type", "Entities", "Scope", "Status", "Indexed"] as const;
+const HEADER_PROPS = {
+  title: "Library",
+  description: "Your documents, what Lumogis found in them, and who can see them.",
+};
+
+// On a phone each row stacks: the name takes the full width, the rest wrap below.
+const ROW = "max-sm:flex max-sm:flex-wrap max-sm:items-center max-sm:gap-x-3";
+
+function statusVariant(status: DocumentSummary["status"]): "secondary" | "destructive" | "outline" {
+  if (status === "failed") return "destructive";
+  if (status === "indexing") return "outline";
+  return "secondary";
+}
 
 export function DocumentsPage(): JSX.Element {
   const { client, tokens } = useAuth();
@@ -47,32 +65,11 @@ export function DocumentsPage(): JSX.Element {
 
   if (isLoading) {
     return (
-      <section className="lumogis-documents" data-testid="documents-page">
-        <h1>Library</h1>
+      <section data-testid="documents-page">
+        <PageHeader {...HEADER_PROPS} />
         <LoadingPlaceholder label="Loading documents…">
-          <div className="lumogis-table-scroll">
-          <table className="lumogis-documents__table lumogis-responsive-table">
-            <thead>
-              <tr>
-                {DOCUMENT_COLUMNS.map((c) => (
-                  <th scope="col" key={c}>
-                    {c}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody data-testid="documents-skeleton">
-              {Array.from({ length: 6 }, (_, r) => (
-                <tr key={r}>
-                  {DOCUMENT_COLUMNS.map((c, i) => (
-                    <td key={c}>
-                      <Skeleton width={i === 0 ? "70%" : "45%"} />
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div data-testid="documents-skeleton">
+            <SkeletonText lines={6} />
           </div>
         </LoadingPlaceholder>
       </section>
@@ -91,95 +88,95 @@ export function DocumentsPage(): JSX.Element {
 
   if (allDocuments.length === 0) {
     return (
-      <section className="lumogis-documents" data-testid="documents-page">
-        <h1>Library</h1>
+      <section data-testid="documents-page">
+        <PageHeader {...HEADER_PROPS} />
         <DocumentUploadPanel client={client} />
         <EmptyState
-        title="No documents yet"
-        helperText="Upload a file via Capture or ingest to build your library."
-        actions={[
-          { label: "Open Capture", href: "/capture", primary: true },
-        ]}
+          title="No documents yet"
+          helperText="Upload a file via Capture or ingest to build your library."
+          actions={[
+            { label: "Open Capture", href: "/capture", primary: true },
+          ]}
         />
       </section>
     );
   }
 
   return (
-    <section className="lumogis-documents" data-testid="documents-page">
-      <h1>Library</h1>
+    <section data-testid="documents-page">
+      <PageHeader {...HEADER_PROPS} />
       <DocumentUploadPanel client={client} />
-      <div className="lumogis-documents__filter-row">
-        <label className="lumogis-documents__filter">
-          <input
-            type="checkbox"
-            checked={sharedOnly}
-            onChange={(e) => setSharedOnly(e.target.checked)}
-            data-testid="documents-shared-filter"
-          />
-          <span>Shared with household</span>
-        </label>
+      <div className="mb-3 flex items-center gap-2">
+        <Checkbox
+          id="documents-shared-only"
+          checked={sharedOnly}
+          onCheckedChange={(checked) => setSharedOnly(checked === true)}
+          data-testid="documents-shared-filter"
+        />
+        <Label htmlFor="documents-shared-only" className="font-normal">
+          Shared with household
+        </Label>
       </div>
       {documents.length === 0 ? (
-        <p data-testid="documents-shared-empty">
+        <p data-testid="documents-shared-empty" className="text-sm text-muted-foreground">
           No documents shared with your household yet.
         </p>
       ) : (
-      <div className="lumogis-table-scroll">
-      <table className="lumogis-documents__table lumogis-responsive-table">
-        <thead>
-          <tr>
-            <th scope="col">Name</th>
-            <th scope="col">Type</th>
-            <th scope="col">Entities</th>
-            <th scope="col">Scope</th>
-            <th scope="col">Status</th>
-            <th scope="col">Indexed</th>
-          </tr>
-        </thead>
-        <tbody>
-          {documents.map((doc) => {
-            const key = doc.document_id ?? `inflight-${doc.in_flight_job_id}`;
-            const detailHref =
-              doc.document_id !== null ? `/documents/${doc.document_id}` : undefined;
-            const label = humanizeStoredName(doc.display_name, doc.file_path);
-            return (
-              <tr key={key} data-document-id={doc.document_id ?? undefined}>
-                <td data-label="Name">
-                  {detailHref ? (
-                    <Link to={detailHref}>{label}</Link>
-                  ) : (
-                    label
-                  )}
-                  {/* LUM-724: the library now spans three stores. The badge is
-                      what keeps one list honest — it answers "where do I go to
-                      work with this?", which differs per origin. Uploads get no
-                      badge: they are the unremarkable case, and badging every
-                      row would make the badge worthless. */}
-                  {originLabel(doc.file_path) ? (
-                    <span
-                      className={`lumogis-documents__origin lumogis-documents__origin--${originOf(doc.file_path)}`}
-                      data-testid="document-origin"
-                    >
-                      {originLabel(doc.file_path)}
-                    </span>
-                  ) : null}
-                </td>
-                <td data-label="Type">{doc.file_type || "—"}</td>
-                <td data-label="Entities">{doc.entity_count}</td>
-                <td data-label="Scope">{shareBadge(doc)}</td>
-                <td data-label="Status">
-                  <span className={`lumogis-documents__status lumogis-documents__status--${doc.status}`}>
-                    {statusLabel(doc.status)}
-                  </span>
-                </td>
-                <td data-label="Indexed">{doc.indexed_at ? new Date(doc.indexed_at).toLocaleString() : "—"}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-      </div>
+        <Table>
+          <TableHeader className="max-sm:hidden">
+            <TableRow>
+              <TableHead>Name</TableHead>
+              <TableHead>Type</TableHead>
+              <TableHead>Entities</TableHead>
+              <TableHead>Scope</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Indexed</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {documents.map((doc) => {
+              const key = doc.document_id ?? `inflight-${doc.in_flight_job_id}`;
+              const detailHref =
+                doc.document_id !== null ? `/documents/${doc.document_id}` : undefined;
+              const label = humanizeStoredName(doc.display_name, doc.file_path);
+              return (
+                <TableRow key={key} data-document-id={doc.document_id ?? undefined} className={ROW}>
+                  <TableCell className="whitespace-normal font-medium max-sm:w-full">
+                    {detailHref ? (
+                      <Link to={detailHref} className="text-accent-text underline underline-offset-2">
+                        {label}
+                      </Link>
+                    ) : (
+                      label
+                    )}
+                    {/* LUM-724: the library now spans three stores. The badge is
+                        what keeps one list honest — it answers "where do I go to
+                        work with this?", which differs per origin. Uploads get no
+                        badge: they are the unremarkable case, and badging every
+                        row would make the badge worthless. */}
+                    {originLabel(doc.file_path) ? (
+                      <Badge variant="outline" className="ml-2" data-testid="document-origin">
+                        {originLabel(doc.file_path)}
+                      </Badge>
+                    ) : null}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">{doc.file_type || "—"}</TableCell>
+                  <TableCell className="text-muted-foreground">
+                    <span className="sm:hidden">Entities: </span>
+                    {doc.entity_count}
+                  </TableCell>
+                  <TableCell>{shareBadge(doc)}</TableCell>
+                  <TableCell>
+                    <Badge variant={statusVariant(doc.status)}>{statusLabel(doc.status)}</Badge>
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap text-muted-foreground">
+                    {formatDateTime(doc.indexed_at)}
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
       )}
     </section>
   );

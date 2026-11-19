@@ -190,3 +190,54 @@ def generate_librechat_yaml() -> bool:
     except Exception:
         _log.exception("Failed to generate librechat.yaml")
         return False
+
+
+# ---------------------------------------------------------------------------
+# Only when LibreChat runs (LUM-1002)
+# ---------------------------------------------------------------------------
+
+LIBRECHAT_PROFILE = "librechat"
+
+
+def librechat_enabled() -> bool:
+    """True when the ``librechat`` Compose profile is on.
+
+    LibreChat was retired as the chat front end (LUM-95) and is an opt-in profile on
+    git checkouts only; Release installs have no ``librechat`` service. The live
+    ``.env`` decides (an admin may have changed it since Core started); Core's own
+    environment is the fallback when the file cannot be read.
+    """
+    from services import host_env
+
+    profiles = host_env.read_key("COMPOSE_PROFILES")
+    if profiles is None:
+        profiles = os.environ.get("COMPOSE_PROFILES", "")
+    return LIBRECHAT_PROFILE in host_env.split_list(profiles)
+
+
+def sync_librechat(reason: str) -> None:
+    """Regenerate ``librechat.yaml`` and restart LibreChat, only when it runs.
+
+    Before LUM-1002 this ran on every Core start and every model change: stack-control
+    answered 500 ("no such service: librechat") on installs without LibreChat, and
+    Core logged a restart that never happened.
+    """
+    if not librechat_enabled():
+        return
+    if not generate_librechat_yaml():
+        return
+    from services import stack_control
+
+    try:
+        response = stack_control.post("/restart", json={"services": ["librechat"]}, timeout=30)
+    except Exception as exc:  # noqa: BLE001 - LibreChat is optional; Core carries on
+        _log.warning("Could not restart LibreChat (%s): %s", reason, exc)
+        return
+    if response.status_code == 200:
+        _log.info("LibreChat restarted with the generated config (%s)", reason)
+    else:
+        _log.warning(
+            "LibreChat restart failed (%s): stack-control answered HTTP %s",
+            reason,
+            response.status_code,
+        )

@@ -37,6 +37,7 @@ the same event is always safe — no duplicates can result.
 import logging
 import os
 import re
+import threading
 import uuid
 from datetime import datetime
 from datetime import timezone
@@ -57,6 +58,8 @@ from graph.temporal import to_graph_ts
 _log = logging.getLogger(__name__)
 
 _PREVIEW_LEN = 80
+
+_SHARED_ENTITY_LABEL = NodeLabel.SHARED_ENTITY
 
 # Transfer-Cypher interpolation guards (entity-merge edge transfer): rel_type
 # comes back from `type(r)` and property keys from `properties(r)` — both are
@@ -83,18 +86,97 @@ def _preview(text: str | None) -> str:
     return s + "…" if len(text) > _PREVIEW_LEN else s
 
 
-def _memory_props_from_postgres(store, entity_id: str, user_id: str) -> dict[str, object]:
+def _entity_row_for_projection(store, entity_id: str, user_id: str) -> dict | None:
+    """The ``entities`` row the projection labels and stamps from.
+
+    The stored row is the **label authority** (LUM-967): an ``ENTITY_CREATED``
+    event that left extraction before a kind change committed carries the old
+    kind, and must not relabel the node back. Returns ``None`` only when there is
+    no row. **Raises** on a read failure — the label authority fails closed, so
+    ``project_entity`` stops before any graph write, the row stays stale and
+    reconcile retries.
+    """
+    row = store.fetch_one(
+        "SELECT memory_type, last_verified_at, entity_type, graph_projected_at, version "
+        "FROM entities WHERE entity_id = %s AND user_id = %s",
+        (entity_id, user_id),
+    )
+    return row or None
+
+
+# Per-entity projection lock (LUM-967). FalkorDB serialises single queries, not
+# the read-label → converge → MERGE *sequence*: two projectors of one entry (the
+# graph service's webhook worker threads and the reconcile scheduler; in
+# ``inprocess`` the hooks executor and the reconcile thread) could otherwise
+# interleave as "A reads PERSON → B reads ORG, converges, MERGEs :Organisation →
+# A MERGEs :Person", leaving two nodes — and the converge only moves labels, it
+# cannot merge two nodes afterwards. Striped (bounded memory, no dict growth).
+#
+# Scope: ONE process. Core refuses ``WEB_CONCURRENCY > 1`` and the graph service
+# runs a single uvicorn process; ``GRAPH_MODE`` selects exactly one of them as
+# the writer. If the graph service ever runs several workers, this lock is not
+# enough and needs a cross-process guard.
+_ENTITY_PROJECTION_LOCKS: tuple[threading.Lock, ...] = tuple(threading.Lock() for _ in range(64))
+
+
+def _entity_projection_lock(user_id: str, entity_id: str) -> threading.Lock:
+    return _ENTITY_PROJECTION_LOCKS[hash((user_id, entity_id)) % len(_ENTITY_PROJECTION_LOCKS)]
+
+
+def _entity_deleted(store, entity_id: str, user_id: str) -> bool:
+    """Did a member delete this entry (LUM-966)? Reads the ``entity_deletions`` tombstone.
+
+    Failure semantics: ``UndefinedTable`` (migration 084 not applied, so no delete
+    can exist) → ``False``. Any other error → ``True`` with a WARNING: fail closed,
+    skip the write — the entity row is already missing, so nothing is lost, while a
+    wrongly *written* node for a deleted entry would be a privacy leak.
+    """
     try:
         row = store.fetch_one(
-            "SELECT memory_type, last_verified_at FROM entities "
-            "WHERE entity_id = %s AND user_id = %s",
+            # SCOPE-EXEMPT: entity_deletions is an ids-only per-member tombstone table.
+            "SELECT 1 AS x FROM entity_deletions WHERE entity_id = %s AND user_id = %s",
             (entity_id, user_id),
         )
-    except Exception:
-        return {}
-    if not row:
-        return {}
-    return {"memory_type": row.get("memory_type"), "last_verified_at": row.get("last_verified_at")}
+    except Exception as exc:  # noqa: BLE001
+        if getattr(exc, "pgcode", None) == "42P01" or type(exc).__name__ == "UndefinedTable":
+            return False
+        _log.warning(
+            "Graph writer: tombstone lookup failed entity_id=%s (%s); skipping the write",
+            entity_id,
+            type(exc).__name__,
+        )
+        return True
+    return row is not None
+
+
+def _converge_entity_label(gs, *, entity_id: str, user_id: str, label: str) -> None:
+    """Move an existing entity node onto ``label`` in place (LUM-967).
+
+    ``create_node`` MERGEs on label + ``lumogis_id`` + ``user_id``, so projecting
+    a kind-corrected entry under its new label would create a **second** node the
+    orphan GC cannot see. This runs first and relabels the existing node
+    (``REMOVE n:Old SET n:New``), which keeps ``id(n)`` and every edge (spiked on
+    FalkorDB v4.18.1); the MERGE that follows then reuses it. Idempotent, and a
+    no-op on a node already under ``label``.
+
+    One label-scoped statement per *other* entity label (≤ 3 today), never one
+    unlabelled ``MATCH (n)``: FalkorDB has no indexes here, so an unlabelled match
+    scans every node (documents, sessions, notes). Labels come only from
+    :attr:`NodeLabel.ENTITY_LABELS`; ids travel only as parameters. If projection
+    time regresses, collapse these into one statement behind a cheap existence
+    check. If LUM-533 adds labels the statement count grows with them.
+    """
+    if label not in NodeLabel.ENTITY_LABELS:
+        raise ValueError(f"not an entity label: {label!r}")
+    params = {"lid": entity_id, "uid": user_id}
+    for other in NodeLabel.ENTITY_LABELS:
+        if other == label:
+            continue
+        gs.query(
+            f"MATCH (n:{other}) WHERE n.lumogis_id = $lid AND n.user_id = $uid "
+            f"REMOVE n:{other} SET n:{label}",
+            params,
+        )
 
 
 def _last_verified_at_graph_string(val: object) -> str | None:
@@ -164,12 +246,25 @@ def project_entity(
     ms=None,
     is_staged: bool = False,
     update_cooccurrence: bool = True,
+    converge_label: bool = True,
 ) -> None:
     """Project an entity row into FalkorDB and stamp graph_projected_at.
 
     Merges entity node, creates MENTIONS edge from evidence object, updates
     RELATES_TO co-occurrence edges.  Stamps entities.graph_projected_at only
     after all steps succeed.  Raises on failure.
+
+    LUM-967: the stored row's ``entity_type`` (not the event's) labels the node,
+    so a stale ``ENTITY_CREATED`` cannot undo a kind correction; the event kind
+    is only the fallback when there is no row.  When ``converge_label`` is true
+    and the row is stale (``graph_projected_at IS NULL``: new entries and
+    kind-corrected ones) an existing node under another entity label is
+    relabelled in place before the node is merged (:func:`_converge_entity_label`); a
+    projected, unchanged entry pays nothing extra.  The row read, converge and
+    merge run under a per-entity lock (:func:`_entity_projection_lock`).  The
+    stamp only lands if the stored kind is still the one projected, so a kind
+    change that commits mid-projection leaves the row stale for reconcile.
+    A row-read failure raises before any graph write.
 
     Staged entities (is_staged=True) are skipped entirely — no node, no edges,
     no graph_projected_at stamp.  The reconciliation cycle will project them
@@ -179,29 +274,41 @@ def project_entity(
         _log.debug("Graph writer: skipping staged entity entity_id=%s (is_staged=True)", entity_id)
         return
 
-    label = NodeLabel.for_entity_type(entity_type)
     store = ms or config.get_metadata_store()
-    mem = _memory_props_from_postgres(store, entity_id, user_id)
-    props: dict[str, object] = {
-        "lumogis_id": entity_id,
-        "name": name,
-        "entity_type": entity_type,
-        "user_id": user_id,
-        # LUM-961: shared/system entity nodes are written only by
-        # projection.project_entity_into_graph.
-        "scope": PERSONAL_SCOPE,
-    }
-    mt = mem.get("memory_type")
-    if isinstance(mt, str) and mt.strip():
-        props["memory_type"] = mt.strip()
-    lva_iso = _last_verified_at_graph_string(mem.get("last_verified_at"))
-    if lva_iso:
-        props["last_verified_at"] = lva_iso
+    with _entity_projection_lock(user_id, entity_id):
+        row = _entity_row_for_projection(store, entity_id, user_id)
+        if row is None and _entity_deleted(store, entity_id, user_id):
+            # LUM-966: a late ENTITY_CREATED for an entry the member deleted. With
+            # no row the fallback below would write the node the delete just
+            # removed, so write nothing — no node, no edges, no stamp.
+            _log.debug("Graph writer: skipping tombstoned entity entity_id=%s", entity_id)
+            return
+        mem = row or {}
+        effective_type = mem.get("entity_type") or entity_type
+        expect_version = mem.get("version")
+        label = NodeLabel.for_entity_type(effective_type)
+        if converge_label and row is not None and row.get("graph_projected_at") is None:
+            _converge_entity_label(gs, entity_id=entity_id, user_id=user_id, label=label)
+        props: dict[str, object] = {
+            "lumogis_id": entity_id,
+            "name": name,
+            "entity_type": effective_type,
+            "user_id": user_id,
+            # LUM-961: shared/system entity nodes are written only by
+            # projection.project_entity_into_graph.
+            "scope": PERSONAL_SCOPE,
+        }
+        mt = mem.get("memory_type")
+        if isinstance(mt, str) and mt.strip():
+            props["memory_type"] = mt.strip()
+        lva_iso = _last_verified_at_graph_string(mem.get("last_verified_at"))
+        if lva_iso:
+            props["last_verified_at"] = lva_iso
 
-    entity_node_id = gs.create_node(
-        labels=[label],
-        properties=props,
-    )
+        entity_node_id = gs.create_node(
+            labels=[label],
+            properties=props,
+        )
 
     source_node_id = _ensure_source_node(gs, evidence_id, evidence_type, user_id)
     if source_node_id is not None:
@@ -234,10 +341,18 @@ def project_entity(
     _log.debug(
         "Graph: entity node merged entity_id=%s type=%s evidence_id=%r",
         entity_id,
-        entity_type,
+        effective_type,
         _preview(evidence_id),
     )
-    _stamp_graph_projected_at("entities", "entity_id", entity_id, user_id, ms=ms)
+    _stamp_graph_projected_at(
+        "entities",
+        "entity_id",
+        entity_id,
+        user_id,
+        ms=ms,
+        expect_entity_type=effective_type,
+        expect_version=expect_version,
+    )
 
 
 def project_session(
@@ -579,6 +694,11 @@ def on_document_shared(
         etype = _f(ent, "entity_type") or ""
         if not src_id or not proj_id:
             continue
+        # LUM-966: a source the member deleted since the share was queued. NOTE:
+        # DOCUMENT_SHARED has no in-process handler, so this guard runs in
+        # GRAPH_MODE=service only.
+        if _entity_deleted(ms, str(src_id), user_id):
+            continue
         try:
             ok = shared_projection.project_entity_into_graph(
                 src_entity_id=str(src_id),
@@ -713,6 +833,57 @@ def on_entity_merged(*, winner_id: str, loser_id: str, user_id: str, **_kw) -> N
             winner_id,
             loser_id,
         )
+
+
+def on_entity_deleted(*, entity_id: str, user_id: str, projection_ids=(), **_kw) -> None:
+    """Remove a deleted entry's node and its household copy's node (LUM-966).
+
+    Consumes :attr:`models.webhook.WebhookEvent.ENTITY_DELETED`. The Postgres rows
+    are already gone and ``entity_deletions`` holds the tombstone. For each label
+    in :attr:`NodeLabel.ENTITY_LABELS` it deletes the personal node by
+    ``lumogis_id`` + ``user_id`` (never one unlabelled ``MATCH (n)``: FalkorDB has
+    no indexes here, so that would scan every node), then the shared ``:Entity``
+    nodes (``lumogis_id`` in the projection ids, or ``published_from`` the source),
+    then stamps ``graph_cleared_at``. Any failure is logged and leaves the stamp
+    unset, so the sweep re-fires. Idempotent: DETACH DELETE on a missing node is a
+    no-op. Labels come only from constants; ids travel only as parameters. One
+    label-scoped scan per label per delete is fine at household scale.
+
+    This runs under the per-entity projection lock, so it cannot interleave with
+    the node read/converge/create part of a concurrent :func:`project_entity` of
+    the same entry. The lock does **not** cover ``project_entity``'s MENTIONS /
+    co-occurrence edge writes, which run after it is released and address nodes by
+    internal id; an edge write racing this delete can fail or, in the worst case,
+    touch a reused id. Not closed here: the window is one projection's edge loop,
+    and the orphan GC (``reconcile.garbage_collect_orphan_nodes``) re-checks user,
+    id and label.
+    """
+    gs = config.get_graph_store()
+    if gs is None:
+        return
+    try:
+        with _entity_projection_lock(user_id, entity_id):
+            params = {"lid": entity_id, "uid": user_id}
+            for label in NodeLabel.ENTITY_LABELS:
+                gs.query(
+                    f"MATCH (n:{label}) WHERE n.lumogis_id = $lid AND n.user_id = $uid "
+                    "DETACH DELETE n",
+                    params,
+                )
+            gs.query(
+                f"MATCH (n:{_SHARED_ENTITY_LABEL}) WHERE n.user_id = $uid "
+                "AND (n.lumogis_id IN $pids OR n.published_from = $lid) DETACH DELETE n",
+                {**params, "pids": [str(p) for p in (projection_ids or ())]},
+            )
+        config.get_metadata_store().execute(
+            "UPDATE entity_deletions SET graph_cleared_at = NOW() "
+            # SCOPE-EXEMPT: entity_deletions is an ids-only per-member tombstone table.
+            "WHERE entity_id = %s AND user_id = %s",
+            (entity_id, user_id),
+        )
+        _log.info("Graph: entity delete complete entity_id=%s", entity_id)
+    except Exception:
+        _log.exception("Graph writer: ENTITY_DELETED failed entity_id=%s", entity_id)
 
 
 def on_entity_merged_unknown_loser(
@@ -906,6 +1077,41 @@ def _ensure_source_node(gs, evidence_id: str, evidence_type: str, user_id: str) 
     return gs.create_node(labels=[label], properties=props)
 
 
+def _cooccurrence_siblings(
+    ms, entity_id: str, user_id: str, evidence_id: str | None = None
+) -> tuple[list[dict], bool]:
+    """The entities that share evidence with ``entity_id``, with their shared counts.
+
+    Returns ``(rows, capped)``: ``rows`` are ``{sibling_id, shared, last_shared_at}``
+    (strongest pairs first, ties by id, at most MAX_COOCCURRENCE_PAIRS) and
+    ``capped`` is true when the cap was hit, so the list may be incomplete.
+    Raises whatever the store raises. Shared by :func:`_update_cooccurrence_edges`
+    and the reconcile prune (LUM-965), which must agree on what "co-occurs" means.
+    """
+    max_pairs = config.get_graph_max_cooccurrence_pairs()
+    sql = (
+        "SELECT b.source_id AS sibling_id, count(DISTINCT b.evidence_id) AS shared, "
+        "       max(least(a.created_at, b.created_at)) AS last_shared_at "
+        "FROM entity_relations a "
+        "JOIN entity_relations b ON b.evidence_id = a.evidence_id AND b.user_id = a.user_id "
+        "JOIN entities e ON e.entity_id = b.source_id "
+        "WHERE a.source_id = %s AND a.user_id = %s AND b.source_id <> %s "
+        "  AND (e.is_staged IS NOT TRUE) "
+    )
+    params: tuple = (entity_id, user_id, entity_id)
+    if evidence_id is not None:
+        sql += (
+            "  AND b.source_id IN (SELECT DISTINCT source_id FROM entity_relations "
+            "                      WHERE evidence_id = %s AND user_id = %s AND source_id <> %s) "
+        )
+        params += (evidence_id, user_id, entity_id)
+    # Deterministic under the pair cap: keep the strongest pairs, ties by id.
+    sql += "GROUP BY b.source_id ORDER BY shared DESC, b.source_id LIMIT %s"
+    params += (max_pairs,)
+    rows = ms.fetch_all(sql, params)
+    return rows, len(rows) >= max_pairs
+
+
 def _update_cooccurrence_edges(gs, entity_id: str, user_id: str, evidence_id: str | None) -> None:
     """Write RELATES_TO co_occurrence_count = distinct shared evidence (LUM-952).
 
@@ -927,27 +1133,8 @@ def _update_cooccurrence_edges(gs, entity_id: str, user_id: str, evidence_id: st
     """
     ms = config.get_metadata_store()
     max_pairs = config.get_graph_max_cooccurrence_pairs()
-    sql = (
-        "SELECT b.source_id AS sibling_id, count(DISTINCT b.evidence_id) AS shared, "
-        "       max(least(a.created_at, b.created_at)) AS last_shared_at "
-        "FROM entity_relations a "
-        "JOIN entity_relations b ON b.evidence_id = a.evidence_id AND b.user_id = a.user_id "
-        "JOIN entities e ON e.entity_id = b.source_id "
-        "WHERE a.source_id = %s AND a.user_id = %s AND b.source_id <> %s "
-        "  AND (e.is_staged IS NOT TRUE) "
-    )
-    params: tuple = (entity_id, user_id, entity_id)
-    if evidence_id is not None:
-        sql += (
-            "  AND b.source_id IN (SELECT DISTINCT source_id FROM entity_relations "
-            "                      WHERE evidence_id = %s AND user_id = %s AND source_id <> %s) "
-        )
-        params += (evidence_id, user_id, entity_id)
-    # Deterministic under the pair cap: keep the strongest pairs, ties by id.
-    sql += "GROUP BY b.source_id ORDER BY shared DESC, b.source_id LIMIT %s"
-    params += (max_pairs,)
     try:
-        siblings = ms.fetch_all(sql, params)
+        siblings, _capped = _cooccurrence_siblings(ms, entity_id, user_id, evidence_id)
     except Exception:
         _log.exception(
             "Graph writer: failed to fetch co-occurring entities for entity_id=%s evidence_id=%r",
@@ -1307,19 +1494,44 @@ def _transfer_incoming_edges(gs, winner_id: str, loser_id: str, user_id: str) ->
             )
 
 
-def _stamp_graph_projected_at(table: str, id_col: str, id_val: str, user_id: str, ms=None) -> None:
-    """UPDATE graph_projected_at = NOW() on the source Postgres row after a successful write."""
+def _stamp_graph_projected_at(
+    table: str,
+    id_col: str,
+    id_val: str,
+    user_id: str,
+    ms=None,
+    *,
+    expect_entity_type: str | None = None,
+    expect_version: int | None = None,
+) -> None:
+    """UPDATE graph_projected_at = NOW() on the source Postgres row after a successful write.
+
+    ``expect_entity_type`` (``entities`` only, LUM-967): stamp only while the
+    stored kind is still the one that was projected, so a kind change that commits
+    between the row read and this stamp leaves the row stale and reconcile
+    re-projects it under the new kind. ``expect_version`` closes the change-and-
+    change-back (ABA) case the kind check alone cannot see: every kind change bumps
+    ``version``, so a projection that read the row before either change cannot stamp
+    after both.
+    """
     allowed_tables = {"entities", "file_index", "sessions", "notes", "audio_memos"}
     if table not in allowed_tables:
         _log.error("Graph writer: _stamp called with unexpected table=%r", table)
         return
     try:
         store = ms if ms is not None else config.get_metadata_store()
-        store.execute(
+        sql = (
             f"UPDATE {table} SET graph_projected_at = NOW() "  # noqa: S608 (table is allowlisted)
-            f"WHERE {id_col} = %s AND user_id = %s",
-            (id_val, user_id),
+            f"WHERE {id_col} = %s AND user_id = %s"
         )
+        params: tuple = (id_val, user_id)
+        if expect_entity_type is not None and table == "entities":
+            sql += " AND entity_type IS NOT DISTINCT FROM %s"
+            params = (id_val, user_id, expect_entity_type)
+            if expect_version is not None:
+                sql += " AND version = %s"
+                params += (expect_version,)
+        store.execute(sql, params)
     except Exception:
         _log.exception(
             "Graph writer: failed to stamp graph_projected_at on %s where %s=%r",

@@ -8,8 +8,6 @@ import { ApiClient } from "../../../src/api/client";
 import { AccessTokenStore } from "../../../src/api/tokens";
 import { AuthProvider } from "../../../src/auth/AuthProvider";
 import { MeProfileView } from "../../../src/features/me/MeProfileView";
-import { __resetClientStateBoundaryForTests } from "../../../src/auth/clientStateBoundary";
-import { TURN_ON_SIGN_IN_DOC_URL } from "../../../src/components/SingleUserBanner";
 import { jsonResponse } from "../../helpers/jsonResponse";
 
 describe("MeProfileView", () => {
@@ -157,44 +155,5 @@ describe("MeProfileView", () => {
       expect(el).toHaveTextContent(/revokes any MCP tokens you hold/i);
     });
     expect(el.textContent).not.toMatch(/\d/);
-  });
-});
-
-describe("MeProfileView — single-user mode (LUM-853)", () => {
-  let originalFetch: typeof fetch;
-  beforeEach(() => {
-    originalFetch = globalThis.fetch;
-    localStorage.clear();
-    sessionStorage.clear();
-    __resetClientStateBoundaryForTests();
-  });
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
-    vi.restoreAllMocks();
-  });
-
-  it("C6 shows no password controls and says why", async () => {
-    const fetchImpl = vi.fn(async (input: RequestInfo) => {
-      const path = new URL(String(input), "http://x").pathname;
-      if (path === "/api/v1/auth/refresh")
-        return jsonResponse(503, { detail: "refresh is disabled in single-user dev mode" });
-      if (path === "/api/v1/auth/me")
-        return jsonResponse(200, { id: "default", email: "dev@local.lan", role: "admin" });
-      return jsonResponse(404, {});
-    });
-    const store = new AccessTokenStore();
-    const client = new ApiClient({ tokens: store, fetchImpl: fetchImpl as unknown as typeof fetch });
-    render(
-      <AuthProvider client={client} tokens={store}>
-        <MeProfileView />
-      </AuthProvider>,
-    );
-    await screen.findByText("None — sign-in is off");
-    expect(screen.queryByRole("button", { name: /change password/i })).toBeNull();
-    expect(screen.queryByText("dev@local.lan")).toBeNull();
-    expect(screen.getByText(/so this account has no password/i)).toBeTruthy();
-    expect(screen.getByRole("link", { name: "How to turn on sign-in" }).getAttribute("href")).toBe(
-      TURN_ON_SIGN_IN_DOC_URL,
-    );
   });
 });

@@ -11,6 +11,10 @@ import { useState } from "react";
 import { ApiError } from "../../api/client";
 import { useAuth } from "../../auth/AuthProvider";
 import type { CaptureStatus } from "../../api/captures";
+import { EmptyState } from "../../components/page/EmptyState";
+import { ErrorState } from "../../components/page/ErrorState";
+import { LoadingPlaceholder, SkeletonText } from "../../components/page/LoadingState";
+import { Button } from "../../components/ui/button";
 import { CaptureArchiveDetail } from "./CaptureArchiveDetail";
 import { CaptureCard } from "./CaptureCard";
 import { CAPTURE_PAGE_SIZE, useCaptureList } from "./useCaptureList";
@@ -24,7 +28,13 @@ export function CaptureArchiveView(): JSX.Element {
 
   const q = useCaptureList(client, ARCHIVE_STATUSES, limit);
 
-  if (q.isPending) return <p>Loading archive…</p>;
+  if (q.isPending) {
+    return (
+      <LoadingPlaceholder label="Loading archive…">
+        <SkeletonText lines={4} />
+      </LoadingPlaceholder>
+    );
+  }
   if (q.isError) {
     const detail =
       q.error instanceof ApiError
@@ -32,14 +42,14 @@ export function CaptureArchiveView(): JSX.Element {
           ? "You are signed out or your session expired."
           : q.error.detail
         : "Archive unavailable.";
-    return <p role="alert">{detail}</p>;
+    return <ErrorState title="Could not load the archive" message={detail} onRetry={() => void q.refetch()} />;
   }
 
   const { captures, total } = q.data;
 
   return (
-    <div>
-      <p style={{ opacity: 0.85, maxWidth: "40rem" }}>
+    <div className="max-w-2xl">
+      <p className="mt-0 mb-4 text-sm text-muted-foreground">
         Captures you've committed to memory. This is a read-only receipt — committed notes can't be
         edited or deleted here (removing something from memory is a separate action).
       </p>
@@ -49,22 +59,24 @@ export function CaptureArchiveView(): JSX.Element {
       ) : null}
 
       {captures.length === 0 ? (
-        <p style={{ opacity: 0.8 }}>
-          Nothing committed yet. Notes you commit to memory from the Inbox appear here.
-        </p>
+        <EmptyState
+          title="Nothing committed yet"
+          helperText="Notes you commit to memory from the Inbox appear here."
+        />
       ) : (
         <>
           {captures.map((item) => (
             <CaptureCard key={item.id} item={item} onOpen={setOpenId} />
           ))}
           {captures.length < total ? (
-            <button
+            <Button
               type="button"
+              variant="outline"
               onClick={() => setLimit((n) => n + CAPTURE_PAGE_SIZE)}
               disabled={q.isFetching}
             >
               Load more ({captures.length} of {total})
-            </button>
+            </Button>
           ) : null}
         </>
       )}

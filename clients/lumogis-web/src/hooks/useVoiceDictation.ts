@@ -9,6 +9,7 @@
 
 import { useCallback, useState } from "react";
 
+import { dictationErrorMessage } from "../api/voice";
 import { useAudioRecorder } from "./useAudioRecorder";
 
 export type DictationStatus = "idle" | "recording" | "transcribing" | "error";
@@ -16,6 +17,10 @@ export type DictationStatus = "idle" | "recording" | "transcribing" | "error";
 export interface UseVoiceDictation {
   status: DictationStatus;
   supported: boolean;
+  /** Plain-HTTP page: the browser withholds the microphone (LUM-995). */
+  insecureContext: boolean;
+  /** The live microphone stream while recording (for a level meter), else null. */
+  stream: MediaStream | null;
   start: () => Promise<void>;
   stop: () => Promise<void>;
   cancel: () => void;
@@ -38,6 +43,12 @@ export function useVoiceDictation(opts: {
     },
   });
 
+  const { start: recorderStart } = recorder;
+  const start = useCallback(async () => {
+    setError(null); // a new attempt clears the last failure's message
+    await recorderStart();
+  }, [recorderStart]);
+
   const stop = useCallback(async () => {
     const blob = await recorder.stop();
     if (!blob) return; // nothing captured — back to idle
@@ -46,8 +57,8 @@ export function useVoiceDictation(opts: {
     try {
       const text = await transcribe(blob);
       if (text.length > 0) onTranscript(text);
-    } catch {
-      const msg = "Transcription failed. Try again.";
+    } catch (err) {
+      const msg = dictationErrorMessage(err);
       setError(msg);
       onError?.(msg);
     } finally {
@@ -66,7 +77,9 @@ export function useVoiceDictation(opts: {
   return {
     status,
     supported: recorder.supported,
-    start: recorder.start,
+    insecureContext: recorder.insecureContext,
+    stream: recorder.stream,
+    start,
     stop,
     cancel: recorder.cancel,
     error: error ?? recorder.error,

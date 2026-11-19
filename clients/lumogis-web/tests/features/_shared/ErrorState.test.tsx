@@ -25,12 +25,12 @@ describe("ErrorState (LUM-211)", () => {
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
-  it("shows the lumogis doctor hint by default and hides it when disabled", () => {
+  it("shows the keeps-happening hint by default and hides it when disabled", () => {
     const { rerender } = render(<ErrorState message="x" />);
-    expect(screen.getByText(/lumogis doctor/i)).toBeInTheDocument();
+    expect(screen.getByText(/keeps happening/i)).toBeInTheDocument();
 
     rerender(<ErrorState message="x" doctorHint={false} />);
-    expect(screen.queryByText(/lumogis doctor/i)).toBeNull();
+    expect(screen.queryByText(/keeps happening/i)).toBeNull();
   });
 
   it("renders extra actions alongside retry", () => {

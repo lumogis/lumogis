@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Lumogis
 
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -55,6 +55,14 @@ const BASE_DOC = {
   source_available: true,
 };
 
+// Delete is last in the "…" menu and confirmed in an AlertDialog.
+async function deleteViaMenu(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(await screen.findByRole("button", { name: "More actions for notes.txt" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Delete document" }));
+  const dialog = await screen.findByRole("alertdialog");
+  await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+}
+
 function renderDetail() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -75,7 +83,6 @@ describe("DocumentDetailView", () => {
     shareMutate.mockReset();
     unshareMutate.mockReset();
     deleteMutationIsPending = false;
-    vi.spyOn(globalThis, "confirm").mockReturnValue(true);
     vi.mocked(useDocument).mockReturnValue({
       data: BASE_DOC,
       isLoading: false,
@@ -89,8 +96,81 @@ describe("DocumentDetailView", () => {
     const user = userEvent.setup();
     renderDetail();
 
-    await user.click(await screen.findByRole("button", { name: "Delete document" }));
+    await deleteViaMenu(user);
     expect(deleteMutate).toHaveBeenCalledWith(5);
+  });
+
+  it("Cancel in the delete confirm does nothing", async () => {
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(await screen.findByRole("button", { name: "More actions for notes.txt" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Delete document" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveTextContent("deleted permanently");
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(deleteMutate).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  });
+
+  it("Delete is the last item in the menu and 'Force re-ingest' is now 'Read again'", async () => {
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(await screen.findByRole("button", { name: "More actions for notes.txt" }));
+    const items = (await screen.findAllByRole("menuitem")).map((el) => el.textContent);
+    expect(items).toEqual(["Check for changes", "Read again", "Delete document"]);
+    expect(screen.queryByText(/force re-ingest/i)).toBeNull();
+  });
+
+  it("'Read again' forces a re-ingest; 'Check for changes' does not", async () => {
+    reingestMutate.mockResolvedValue({ job_id: 9 });
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(await screen.findByRole("button", { name: "More actions for notes.txt" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Read again" }));
+    expect(reingestMutate).toHaveBeenCalledWith({ documentId: 5, force: true });
+
+    await user.click(screen.getByRole("button", { name: "More actions for notes.txt" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Check for changes" }));
+    expect(reingestMutate).toHaveBeenLastCalledWith({ documentId: 5, force: false });
+  });
+
+  it("keeps the raw file path in a collapsed Details", async () => {
+    const user = userEvent.setup();
+    renderDetail();
+
+    await screen.findByRole("heading", { name: "notes.txt" });
+    expect(screen.queryByText(/\/uploads\/u\/notes\.txt/)).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Details" }));
+    expect(await screen.findByTitle("#5 · /uploads/u/notes.txt")).toBeTruthy();
+  });
+
+  it("explains instead of offering a re-read when the source file is gone", async () => {
+    vi.mocked(useDocument).mockReturnValue({
+      data: { ...BASE_DOC, source_available: false },
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof useDocument>);
+    const user = userEvent.setup();
+    renderDetail();
+
+    expect(await screen.findByText(/no longer on disk/)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "More actions for notes.txt" }));
+    const items = (await screen.findAllByRole("menuitem")).map((el) => el.textContent);
+    expect(items).toEqual(["Delete document"]);
+  });
+
+  it("shows an error state when the document is not found", async () => {
+    vi.mocked(useDocument).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      error: new Error("nope"),
+    } as unknown as ReturnType<typeof useDocument>);
+    renderDetail();
+    expect(await screen.findByText("Document not found")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Back to library" })).toBeTruthy();
   });
 
   it("shows failed status and error message", async () => {
@@ -117,7 +197,7 @@ describe("DocumentDetailView", () => {
 
     const user = userEvent.setup();
     renderDetail();
-    await user.click(await screen.findByRole("button", { name: "Delete document" }));
+    await deleteViaMenu(user);
 
     expect(await screen.findByRole("alert")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Retry cleanup" })).toBeTruthy();
@@ -135,7 +215,7 @@ describe("DocumentDetailView", () => {
 
     const user = userEvent.setup();
     renderDetail();
-    await user.click(await screen.findByRole("button", { name: "Delete document" }));
+    await deleteViaMenu(user);
 
     expect(
       await screen.findByText("Search index copies of this document may still exist."),
@@ -152,7 +232,7 @@ describe("DocumentDetailView", () => {
 
     const user = userEvent.setup();
     renderDetail();
-    await user.click(await screen.findByRole("button", { name: "Delete document" }));
+    await deleteViaMenu(user);
 
     expect(
       await screen.findByText("Knowledge graph entries for this document may still exist."),
@@ -171,7 +251,7 @@ describe("DocumentDetailView", () => {
 
     const user = userEvent.setup();
     renderDetail();
-    await user.click(await screen.findByRole("button", { name: "Delete document" }));
+    await deleteViaMenu(user);
     await screen.findByRole("button", { name: "Retry cleanup" });
 
     await user.click(screen.getByRole("button", { name: "Retry cleanup" }));
@@ -217,7 +297,7 @@ describe("DocumentDetailView", () => {
 
     const user = userEvent.setup();
     renderDetail();
-    await user.click(await screen.findByRole("button", { name: "Delete document" }));
+    await deleteViaMenu(user);
     await screen.findByRole("button", { name: "Retry cleanup" });
     await user.click(screen.getByRole("button", { name: "Retry cleanup" }));
 

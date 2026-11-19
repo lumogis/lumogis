@@ -18,6 +18,22 @@ import {
   patchCapture,
   type CaptureListItem,
 } from "../../api/captures";
+import { Alert, AlertDescription } from "../../components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "../../components/ui/alert-dialog";
+import { Button } from "../../components/ui/button";
+import { Card, CardContent } from "../../components/ui/card";
+import { Input } from "../../components/ui/input";
+import { Label } from "../../components/ui/label";
+import { Textarea } from "../../components/ui/textarea";
 
 function errMsg(e: unknown): string {
   if (e instanceof ApiError) return formatCaptureErrorMessage(e.status, e.detail);
@@ -41,6 +57,7 @@ export function CaptureDetailPanel({
   const [text, setText] = useState(item.text ?? "");
   const [url, setUrl] = useState(item.url ?? "");
   const [error, setError] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const isFailed = item.status === "failed";
   // Unsaved edits: commit indexes the *server* row, so block committing until
@@ -92,75 +109,87 @@ export function CaptureDetailPanel({
   const busy = save.isPending || commit.isPending || remove.isPending;
 
   return (
-    <section
-      aria-label="Capture detail"
-      style={{ border: "1px solid #bdbdbd", borderRadius: 8, padding: "1rem", marginBottom: "1rem" }}
-    >
-      <label style={{ display: "block", marginBottom: "0.5rem" }}>
-        Title
-        <input
-          type="text"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          style={{ display: "block", width: "100%" }}
-        />
-      </label>
-      <label style={{ display: "block", marginBottom: "0.5rem" }}>
-        Note
-        <textarea
-          value={text}
-          rows={4}
-          onChange={(e) => setText(e.target.value)}
-          style={{ display: "block", width: "100%" }}
-        />
-      </label>
-      <label style={{ display: "block", marginBottom: "0.75rem" }}>
-        Link
-        <input
-          type="text"
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          style={{ display: "block", width: "100%" }}
-        />
-      </label>
+    <section aria-label="Capture detail" className="mb-4">
+      <Card>
+        <CardContent className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor={`cap-title-${item.id}`}>Title</Label>
+            <Input id={`cap-title-${item.id}`} type="text" value={title} onChange={(e) => setTitle(e.target.value)} />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor={`cap-note-${item.id}`}>Note</Label>
+            <Textarea id={`cap-note-${item.id}`} value={text} rows={4} onChange={(e) => setText(e.target.value)} />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor={`cap-link-${item.id}`}>Link</Label>
+            <Input id={`cap-link-${item.id}`} type="text" value={url} onChange={(e) => setUrl(e.target.value)} />
+          </div>
 
-      {isFailed && item.last_error ? (
-        <p role="note" style={{ color: "#c62828", fontSize: "0.9rem" }}>
-          Last attempt failed: {item.last_error}
-        </p>
-      ) : null}
+          {isFailed && item.last_error ? (
+            <Alert variant="destructive" role="note">
+              <AlertDescription>Last attempt failed: {item.last_error}</AlertDescription>
+            </Alert>
+          ) : null}
 
-      {error ? (
-        <p role="alert" style={{ color: "#c62828" }}>
-          {error}
-        </p>
-      ) : null}
+          {error ? (
+            <Alert variant="destructive" role="alert">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          ) : null}
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
-        <button type="button" disabled={busy} onClick={() => save.mutate()}>
-          Save
-        </button>
-        <button
-          type="button"
-          disabled={busy || !hasContent || dirty}
-          title={
-            dirty
-              ? "Save your changes first, then commit"
-              : hasContent
-                ? undefined
-                : "Add a note, link, title, or attachment first"
-          }
-          onClick={() => commit.mutate()}
-        >
-          {isFailed ? "Retry — add to memory" : "Commit to memory"}
-        </button>
-        <button type="button" disabled={busy} onClick={() => remove.mutate()}>
-          Delete
-        </button>
-        <button type="button" disabled={busy} onClick={onClose}>
-          Close
-        </button>
-      </div>
+          {/* One main action at a time: Save while there are unsaved edits, otherwise Commit.
+              Delete is last and asks first. */}
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant={dirty ? "default" : "outline"} disabled={busy} onClick={() => save.mutate()}>
+              Save
+            </Button>
+            <Button
+              type="button"
+              variant={dirty ? "outline" : "default"}
+              disabled={busy || !hasContent || dirty}
+              title={
+                dirty
+                  ? "Save your changes first, then commit"
+                  : hasContent
+                    ? undefined
+                    : "Add a note, link, title, or attachment first"
+              }
+              onClick={() => commit.mutate()}
+            >
+              {isFailed ? "Retry — add to memory" : "Commit to memory"}
+            </Button>
+            <Button type="button" variant="ghost" disabled={busy} onClick={onClose}>
+              Close
+            </Button>
+            <Button type="button" variant="destructive" disabled={busy} onClick={() => setConfirmDelete(true)}>
+              Delete
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this capture?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The note and any photos or audio saved with it are removed from your inbox. This can't be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructiveSolid"
+              onClick={() => {
+                setConfirmDelete(false);
+                remove.mutate();
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   );
 }

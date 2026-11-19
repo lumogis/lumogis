@@ -83,6 +83,12 @@ def run_block(
     # generated secret comes back empty.
     if "LD_LIBRARY_PATH" in os.environ:
         env["LD_LIBRARY_PATH"] = os.environ["LD_LIBRARY_PATH"]
+    # LUM-981: the section also generates AUTH_SECRET and LUMOGIS_CREDENTIAL_KEY.
+    # These LUM-885 tests are about the refresh secret only, so they run with both
+    # already real in the process env (the new generation is covered by
+    # test_entrypoint_generated_secrets.py).
+    env["AUTH_SECRET"] = "cd34" * 16
+    env["LUMOGIS_CREDENTIAL_KEY"] = "OlGLYckGIbBSt54y8XVmgb441LgKJWvvYoHnpQ_cv9A="
     env.update(process_env or {})
     # The extracted text starts after the HOST_ENV assignment, so ours is used.
     proc = subprocess.run(

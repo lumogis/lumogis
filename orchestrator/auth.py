@@ -755,6 +755,10 @@ _AUTH_BYPASS_PREFIXES: tuple[str, ...] = (
     "/api/v1/auth/refresh",
     "/api/v1/auth/logout",
     "/api/v1/invites",
+    # LUM-981: first-admin setup. Reachable only by someone with no account;
+    # the claim route guards itself (Host allow-list, same-origin, rate limit,
+    # a database-level single-claim guarantee).
+    "/api/v1/setup",
     # LUM-65: forgot-password is by definition reachable only by someone who
     # cannot authenticate. Both routes do their own gating — the reset pair is
     # Altcha + rate-limited and 503s unless an admin has proven SMTP, and the

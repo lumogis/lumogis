@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Lumogis
 //
-// LUM-450 — admin Ollama pull/delete via async pull (LUM-449) on /admin/system-status.
+// LUM-450 — admin Ollama pull/delete via async pull (LUM-449) on /settings/health.
 // Hermetic: pull ephemeral model, wait for async job UI, delete same model.
 //
 //   export LUMOGIS_WEB_SMOKE_EMAIL=...
@@ -43,12 +43,10 @@ test.describe("LUM-450 admin Ollama mutations", () => {
 
     await loginWithSmokeCredentials(page);
 
-    await page.goto("/admin/system-status");
-    await expect(page).toHaveURL(/\/admin\/system-status/);
+    await page.goto("/settings/health");
+    await expect(page).toHaveURL(/\/settings\/health$/);
 
-    const section = page.locator("section").filter({
-      has: page.getByRole("heading", { name: /^system status$/i, level: 2 }),
-    });
+    const section = page.getByTestId("system-status");
     await expect(section).toBeVisible();
 
     await expect(section.getByText(/^loading/i)).toHaveCount(0, { timeout: 60_000 });
@@ -87,12 +85,10 @@ test.describe("LUM-450 admin Ollama mutations", () => {
 
     await expect(modelRow()).toBeVisible({ timeout: 60_000 });
 
-    page.once("dialog", (dialog) => {
-      expect(dialog.message()).toContain(`Remove "${pullModel}"`);
-      void dialog.accept();
-    });
-
-    await modelRow().getByRole("button", { name: /^delete$/i }).click();
+    await modelRow().getByRole("button", { name: /^delete /i }).click();
+    const confirm = page.getByRole("alertdialog");
+    await expect(confirm).toContainText(`Remove "${pullModel}"`);
+    await confirm.getByRole("button", { name: "Delete model" }).click();
 
     await expect(modelRow()).toHaveCount(0, { timeout: 60_000 });
     // LUM-792 — scoped to the Ollama panel, NOT the whole System status section. The

@@ -17,7 +17,29 @@ import {
   type CaptureDetail,
 } from "../../api/captures";
 import { useAuth } from "../../auth/AuthProvider";
-import { Button } from "../../components/Button";
+import { ChevronDown } from "lucide-react";
+
+import { EmptyState } from "../../components/page/EmptyState";
+import { PageHeader } from "../../components/page/PageHeader";
+import { PageSection } from "../../components/page/PageSection";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "../../components/ui/alert-dialog";
+import { Alert, AlertDescription } from "../../components/ui/alert";
+import { Badge } from "../../components/ui/badge";
+import { Button } from "../../components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../../components/ui/collapsible";
+import { Input } from "../../components/ui/input";
+import { Label } from "../../components/ui/label";
+import { Tabs, TabsList, TabsTrigger } from "../../components/ui/tabs";
+import { Textarea } from "../../components/ui/textarea";
 import { CaptureInboxView } from "./CaptureInboxView";
 import { CaptureArchiveView } from "./CaptureArchiveView";
 import {
@@ -37,6 +59,8 @@ import {
 import { getDraft, makeCaptureDraftKey, setDraft } from "../../pwa/drafts";
 import { useOnlineStatus } from "../../pwa/useOnlineStatus";
 import { pickAudioMimeType } from "../../hooks/useAudioRecorder";
+import { formatDateTime } from "../../util/formatTimestamp";
+import { randomUuid } from "../../util/uuid";
 
 const DRAFT_KEY = makeCaptureDraftKey("__quickcapture__");
 
@@ -107,14 +131,14 @@ export function QuickCapturePage(): JSX.Element {
   const online = useOnlineStatus();
   // LUM-606: Compose · Inbox · Outbox tabs. The device-only outbox stays a
   // separate surface from the server-backed inbox.
-  const [captureTab, setCaptureTab] = useState<"compose" | "inbox" | "archive" | "outbox">(
-    "compose",
-  );
+  const [captureTab, setCaptureTab] = useState<CaptureTab>("compose");
+  /** Outbox item waiting for the "Discard this item?" confirmation. */
+  const [discardId, setDiscardId] = useState<string | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
 
   const clientIdRef = useRef<string | null>(null);
   if (clientIdRef.current === null) {
-    clientIdRef.current = globalThis.crypto?.randomUUID?.() ?? `cap-${Date.now()}`;
+    clientIdRef.current = randomUuid();
   }
 
   const [title, setTitle] = useState("");
@@ -412,7 +436,7 @@ export function QuickCapturePage(): JSX.Element {
     const file = files[0]!;
     setBusy(true);
     try {
-      await uploadCaptureAttachment(client, captureId, file, globalThis.crypto?.randomUUID?.());
+      await uploadCaptureAttachment(client, captureId, file, randomUuid());
       await refreshDetail(captureId);
       setInfo("Audio uploaded. You can transcribe below.");
     } catch (e) {
@@ -527,7 +551,7 @@ export function QuickCapturePage(): JSX.Element {
           setBusy(false);
           return;
         }
-        await uploadCaptureAttachment(client, captureId, file, globalThis.crypto?.randomUUID?.());
+        await uploadCaptureAttachment(client, captureId, file, randomUuid());
         await refreshDetail(captureId);
         setInfo("Recording uploaded. You can transcribe below.");
       }
@@ -623,36 +647,105 @@ export function QuickCapturePage(): JSX.Element {
   ]);
 
   const audioMiB = (outboxStats.audioBytes / (1024 * 1024)).toFixed(2);
+  const recorderSupported = typeof MediaRecorder !== "undefined" && !!recorderMime;
+  const nothingOnDevice = outboxItems.length === 0 && legacyItems.length === 0;
+
+  // One recorder control for whichever place it shows in: local while offline, the
+  // saved capture while online (same gating as before).
+  const recorderUi = !recorderSupported ? (
+    <p data-testid="quick-capture-recorder-disabled" className="m-0 text-sm text-muted-foreground">
+      Recording is not supported in this browser. Use an audio file instead.
+    </p>
+  ) : !online ? (
+    <div className="flex flex-wrap items-center gap-3">
+      {!recording ? (
+        <Button
+          type="button"
+          variant="outline"
+          data-testid="quick-capture-record-local-start"
+          onClick={() => void startRecording(true)}
+          disabled={busy}
+        >
+          Start recording (local)
+        </Button>
+      ) : (
+        <Button
+          type="button"
+          variant="outline"
+          data-testid="quick-capture-record-local-stop"
+          onClick={() => void stopRecording(true)}
+          disabled={busy}
+        >
+          Stop &amp; save locally
+        </Button>
+      )}
+      <span className="text-sm text-muted-foreground">
+        {recording ? "Recording…" : "Stored only on this device until Sync now."}
+      </span>
+    </div>
+  ) : (
+    <div className="flex flex-wrap items-center gap-3">
+      {!recording ? (
+        <Button type="button" variant="outline" onClick={() => void startRecording(false)} disabled={busy || !online}>
+          Start recording
+        </Button>
+      ) : (
+        <Button type="button" variant="outline" onClick={() => void stopRecording(false)} disabled={busy}>
+          Stop &amp; upload
+        </Button>
+      )}
+      <span className="text-sm text-muted-foreground">
+        {recording ? "Recording…" : "Starts only when you tap; uploads to the server."}
+      </span>
+    </div>
+  );
+
+  const addToMemoryTitle = !online
+    ? "Requires a connection"
+    : !detail || detail.status === "indexed"
+      ? detail?.status === "indexed"
+        ? "Already in memory"
+        : "Save a capture first"
+      : !canAddToMemory
+        ? "Add text, a link, or finish transcription for audio"
+        : "Add this capture to searchable memory";
 
   return (
-    <div className="lumogis-capture-page" data-testid="quick-capture-page">
-      <h1 style={{ fontSize: "1.5rem" }}>Quick capture</h1>
+    <div data-testid="quick-capture-page" className="pb-8">
+      <PageHeader
+        title="Quick capture"
+        description="Jot something down. It stays in your inbox until you add it to memory."
+      />
 
-      <nav
-        aria-label="Capture views"
-        data-testid="capture-tabs"
-        style={{ display: "flex", gap: "0.5rem", margin: "0.75rem 0" }}
-      >
-        {(["compose", "inbox", "archive", "outbox"] as const).map((t) => (
-          <button
-            key={t}
-            type="button"
-            aria-pressed={captureTab === t}
-            data-testid={`capture-tab-${t}`}
-            onClick={() => setCaptureTab(t)}
-            style={{ fontWeight: captureTab === t ? 700 : 400, textTransform: "capitalize" }}
-          >
-            {t}
-          </button>
-        ))}
-      </nav>
+      <Tabs value={captureTab} onValueChange={(v) => setCaptureTab(v as CaptureTab)} className="mb-4">
+        <TabsList aria-label="Capture views" data-testid="capture-tabs">
+          {CAPTURE_TABS.map((t) => (
+            <TabsTrigger key={t.id} value={t.id} data-testid={`capture-tab-${t.id}`}>
+              {t.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
 
       {/* Connectivity indicator stays global across tabs (LUM-606). */}
       {!online && (
-        <p role="status" data-testid="quick-capture-offline" className="lumogis-capture-page__outbox">
-          You seem offline or unreachable. Server save is disabled; use the Outbox tab to save
-          locally. Photo upload stays disabled until you are online.
-        </p>
+        <Alert role="status" data-testid="quick-capture-offline" className="mb-4 max-w-2xl">
+          <AlertDescription>
+            You seem offline or unreachable. Saving to the server is off; save on this device and
+            sync from the Outbox tab later. Photo upload stays off until you are online.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {error && (
+        <Alert variant="destructive" role="alert" data-testid="quick-capture-error" className="mb-4 max-w-2xl">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+      {info && (
+        <Alert role="status" data-testid="quick-capture-info" className="mb-4 max-w-2xl">
+          <AlertDescription>{info}</AlertDescription>
+        </Alert>
       )}
 
       {captureTab === "inbox" && <CaptureInboxView />}
@@ -661,360 +754,408 @@ export function QuickCapturePage(): JSX.Element {
 
       {captureTab === "outbox" && (
         <>
+          <div data-testid="capture-outbox-panel">
+            <PageSection
+              title="On this device"
+              description={
+                <>
+                  Nothing leaves this device until you tap <strong>Sync now</strong>.
+                </>
+              }
+            >
+              <div className="flex flex-col gap-3">
+                <p data-testid="capture-outbox-stats" className="m-0 text-sm">
+                  Pending: <strong>{outboxStats.pendingCount}</strong> · Voice clips:{" "}
+                  <strong>{outboxStats.pendingAudioCount}</strong> · Local voice ~ <strong>{audioMiB}</strong> MiB /{" "}
+                  {MAX_LOCAL_VOICE_BYTES_TOTAL / 1024 / 1024} MiB
+                </p>
+                <div>
+                  <Button
+                    type="button"
+                    data-testid="quick-capture-sync-outbox"
+                    disabled={busy || !online || outboxStats.pendingCount === 0}
+                    onClick={() => void handleSyncOutbox()}
+                  >
+                    Sync now
+                  </Button>
+                </div>
+                {outboxItems.length > 0 && (
+                  <ul data-testid="capture-outbox-list" className="m-0 flex list-none flex-col p-0">
+                    {outboxItems.map((item) => (
+                      <li
+                        key={item.local_capture_id}
+                        className="flex flex-wrap items-center justify-between gap-2 border-b py-2 last:border-b-0"
+                      >
+                        <OutboxItemSummary item={item} />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          disabled={busy}
+                          onClick={() => setDiscardId(item.local_capture_id)}
+                        >
+                          Discard
+                        </Button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {nothingOnDevice && (
+                  <EmptyState
+                    className="py-6"
+                    title="Nothing waiting on this device"
+                    helperText="Notes and voice clips you save while offline wait here until you sync them."
+                    actions={[{ label: "Write a note", onClick: () => setCaptureTab("compose") }]}
+                  />
+                )}
+              </div>
+            </PageSection>
+          </div>
 
-      <section data-testid="capture-outbox-panel" className="lumogis-capture-page__outbox">
-        <h2 style={{ fontSize: "1.15rem", marginTop: 0 }}>Local outbox</h2>
-        <p data-testid="capture-outbox-stats" style={{ margin: "0.25rem 0" }}>
-          Pending: <strong>{outboxStats.pendingCount}</strong> · Voice clips: <strong>{outboxStats.pendingAudioCount}</strong> ·
-          Local voice ~ <strong>{audioMiB}</strong> MiB / {MAX_LOCAL_VOICE_BYTES_TOTAL / 1024 / 1024} MiB
-        </p>
-        <Button
-          type="button"
-          variant="secondary"
-          data-testid="quick-capture-sync-outbox"
-          disabled={busy || !online || outboxStats.pendingCount === 0}
-          onClick={() => void handleSyncOutbox()}
-        >
-          Sync now
-        </Button>
-        {outboxItems.length > 0 && (
-          <ul data-testid="capture-outbox-list" style={{ paddingLeft: "1.2rem", marginTop: "0.75rem" }}>
-            {outboxItems.map((item) => (
-              <li key={item.local_capture_id} style={{ marginBottom: "0.5rem" }}>
-                <strong>{item.kind}</strong> · {new Date(item.created_at).toLocaleString()} · {item.status}
-                {item.kind === "audio" ? ` · ${(item.size_bytes / 1024).toFixed(0)} KiB` : ""}
-                {item.last_error ? ` — ${item.last_error}` : ""}
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  disabled={busy}
-                  onClick={() => void handleDiscardOutbox(item.local_capture_id)}
+          {legacyItems.length > 0 && (
+            <div data-testid="capture-outbox-legacy-panel">
+              <PageSection
+                title="Saved on this device before an update"
+                description="These were saved before Lumogis recorded who saved them, so anyone who signs in on this device can see them. Sync one to your account only if it is yours."
+              >
+                <ul data-testid="capture-outbox-legacy-list" className="m-0 flex list-none flex-col p-0">
+                  {legacyItems.map((item) => (
+                    <li
+                      key={item.local_capture_id}
+                      className="flex flex-wrap items-center justify-between gap-2 border-b py-2 last:border-b-0"
+                    >
+                      <OutboxItemSummary item={item} preview={legacyPreview(item)} />
+                      <span className="flex flex-wrap gap-2">
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          disabled={busy || !online}
+                          onClick={() => void handleClaimLegacy(item.local_capture_id)}
+                        >
+                          Sync to my account
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          disabled={busy}
+                          onClick={() => setDiscardId(item.local_capture_id)}
+                        >
+                          Discard
+                        </Button>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </PageSection>
+            </div>
+          )}
+
+          <Collapsible className="max-w-2xl">
+            <CollapsibleTrigger
+              render={<Button type="button" variant="ghost" size="sm" className="group/trigger -ml-2" />}
+            >
+              <ChevronDown
+                aria-hidden="true"
+                className="transition-transform group-aria-expanded/trigger:rotate-180"
+              />
+              Why does the outbox wait for me?
+            </CollapsibleTrigger>
+            <CollapsibleContent className="pt-2 text-sm text-muted-foreground">
+              <p className="m-0">
+                Pending captures can live only on this device until you choose to sync. Local voice clips use storage (
+                {MAX_PENDING_VOICE_CLIPS} clips max, {MAX_LOCAL_VOICE_BYTES_TOTAL / 1024 / 1024} MiB total). Nothing
+                uploads automatically when you go online — no background sync. Add to memory runs only when you tap it.
+              </p>
+            </CollapsibleContent>
+          </Collapsible>
+
+          <AlertDialog open={discardId !== null} onOpenChange={(open) => (open ? undefined : setDiscardId(null))}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Discard this item?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  It is stored only on this device and has not been uploaded. Discarding it deletes it for good.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  variant="destructiveSolid"
+                  onClick={() => {
+                    const id = discardId;
+                    setDiscardId(null);
+                    if (id) void handleDiscardOutbox(id);
+                  }}
                 >
                   Discard
-                </Button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      {legacyItems.length > 0 && (
-        <section data-testid="capture-outbox-legacy-panel" className="lumogis-capture-page__outbox">
-          <h2 style={{ fontSize: "1.15rem", marginTop: 0 }}>Saved on this device before an update</h2>
-          <p style={{ margin: "0.25rem 0" }}>
-            These were saved before Lumogis recorded who saved them, so anyone who signs in on this device can see
-            them. Sync one to your account only if it is yours.
-          </p>
-          <ul data-testid="capture-outbox-legacy-list" style={{ paddingLeft: "1.2rem", marginTop: "0.75rem" }}>
-            {legacyItems.map((item) => (
-              <li key={item.local_capture_id} style={{ marginBottom: "0.5rem" }}>
-                <strong>{item.kind}</strong> “{legacyPreview(item)}” · {new Date(item.created_at).toLocaleString()} ·{" "}
-                {item.status}
-                {item.kind === "audio" ? ` · ${(item.size_bytes / 1024).toFixed(0)} KiB` : ""}
-                {item.last_error ? ` — ${item.last_error}` : ""}
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  disabled={busy || !online}
-                  onClick={() => void handleClaimLegacy(item.local_capture_id)}
-                >
-                  Sync to my account
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  disabled={busy}
-                  onClick={() => void handleDiscardOutbox(item.local_capture_id)}
-                >
-                  Discard
-                </Button>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      <p className="lumogis-prose-mono" style={{ marginTop: "1rem" }}>
-        Nothing leaves this device until you tap <strong>Sync now</strong>.
-        <details className="lumogis-capture-page__disclosure">
-          <summary>Why?</summary>
-          <p style={{ margin: "0.5rem 0 0" }}>
-            Pending captures can live only on this device until you choose to sync. Local voice clips use storage
-            ({MAX_PENDING_VOICE_CLIPS} clips max, {MAX_LOCAL_VOICE_BYTES_TOTAL / 1024 / 1024} MiB total).
-            Nothing uploads automatically when you go online — no background sync. Add to memory runs only when you tap it.
-          </p>
-        </details>
-      </p>
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </>
       )}
 
-      {error && (
-        <p role="alert" data-testid="quick-capture-error" style={{ color: "var(--lumogis-danger, #f66)", marginTop: "0.75rem" }}>
-          {error}
-        </p>
-      )}
-      {info && (
-        <p role="status" data-testid="quick-capture-info" style={{ marginTop: "0.5rem" }}>
-          {info}
-        </p>
-      )}
-
       {captureTab === "compose" && (
-      <section className="lumogis-capture-page__form">
-        <label style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
-          Title (optional)
-          <input
-            type="text"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            disabled={busy}
-            style={{ fontSize: "1rem", padding: "0.65rem", minHeight: "2.75rem" }}
-          />
-        </label>
-        <label style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
-          Note
-          <textarea
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            disabled={busy}
-            rows={5}
-            placeholder="Short note (required unless you add a URL below)"
-            style={{ fontSize: "1rem", padding: "0.65rem", minHeight: "8rem" }}
-          />
-        </label>
-        <label style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
-          URL (optional)
-          <input
-            type="url"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            disabled={busy}
-            placeholder="https://…"
-            style={{ fontSize: "1rem", padding: "0.65rem", minHeight: "2.75rem" }}
-          />
-        </label>
-        <label style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
-          Tags (optional, comma-separated)
-          <input
-            type="text"
-            value={tagsRaw}
-            onChange={(e) => setTagsRaw(e.target.value)}
-            disabled={busy}
-            style={{ fontSize: "1rem", padding: "0.65rem", minHeight: "2.75rem" }}
-          />
-        </label>
-
-        <div className="lumogis-form-actions">
-          <Button
-            type="button"
-            variant="primary"
-            data-testid="quick-capture-save-server"
-            onClick={() => void handleCreate()}
-            disabled={busy || !online}
-          >
-            Save capture (server)
-          </Button>
-          <Button
-            type="button"
-            variant="secondary"
-            data-testid="quick-capture-save-local"
-            onClick={() => void handleSaveLocalOutbox()}
-            disabled={busy || online}
-          >
-            Save locally to outbox
-          </Button>
-        </div>
-
-        <hr style={{ margin: "1rem 0", opacity: 0.3 }} />
-
-        <h2 style={{ fontSize: "1.2rem" }}>Attachments (online)</h2>
-        {!captureId ? (
-          <p data-testid="quick-capture-attachments-locked">Save the capture to the server first to attach files here.</p>
-        ) : (
-          <>
-            <label style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
-              Image (JPEG, PNG, WebP) {(!online || !captureId) && <span style={{ fontSize: "0.85rem" }}>— requires connection</span>}
-              <input
-                type="file"
-                data-testid="quick-capture-image-input"
-                accept="image/jpeg,image/png,image/webp"
-                disabled={busy || !online}
-                onChange={(e) => void handleImagePick(e.target.files)}
-                style={{ fontSize: "1rem" }}
-              />
-            </label>
-            <label style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
-              Audio file → server
-              <input
-                type="file"
-                accept="audio/*,audio/webm,video/webm"
-                disabled={busy || !online || !captureId}
-                onChange={(e) => void handleAudioFilePick(e.target.files)}
-                style={{ fontSize: "1rem" }}
-              />
-            </label>
-          </>
-        )}
-        {!online && (
-          <label style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
-            Audio file → this device only
-            <input
-              type="file"
-              data-testid="quick-capture-offline-audio-file"
-              accept="audio/*,audio/webm,video/webm"
-              disabled={busy}
-              onChange={(e) => void handleOfflineAudioFile(e.target.files)}
-              style={{ fontSize: "1rem" }}
-            />
-          </label>
-        )}
-
-        <div data-testid="quick-capture-recorder-ui" style={{ marginTop: "0.5rem" }}>
-          {typeof MediaRecorder === "undefined" || !recorderMime ? (
-            <p data-testid="quick-capture-recorder-disabled">
-              Recording is not supported in this browser. Use an audio file instead.
-            </p>
-          ) : online && !captureId ? (
-            <p data-testid="quick-capture-recorder-needs-save">Save the capture to the server first to record into that capture.</p>
-          ) : !online ? (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", alignItems: "center" }}>
-              {!recording ? (
-                <button
-                  type="button"
-                  data-testid="quick-capture-record-local-start"
-                  onClick={() => void startRecording(true)}
+        <>
+          <PageSection title="New capture">
+            <div className="flex flex-col gap-4">
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="qc-title">Title (optional)</Label>
+                <Input id="qc-title" type="text" value={title} onChange={(e) => setTitle(e.target.value)} disabled={busy} />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="qc-note">Note</Label>
+                <Textarea
+                  id="qc-note"
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
                   disabled={busy}
-                  style={{ padding: "0.75rem 1rem", fontSize: "1rem" }}
-                >
-                  Start recording (local)
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  data-testid="quick-capture-record-local-stop"
-                  onClick={() => void stopRecording(true)}
+                  rows={5}
+                  placeholder="Short note (required unless you add a URL below)"
+                  className="min-h-32"
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="qc-url">URL (optional)</Label>
+                <Input
+                  id="qc-url"
+                  type="url"
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
                   disabled={busy}
-                  style={{ padding: "0.75rem 1rem", fontSize: "1rem" }}
-                >
-                  Stop &amp; save locally
-                </button>
+                  placeholder="https://…"
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="qc-tags">Tags (optional, comma-separated)</Label>
+                <Input id="qc-tags" type="text" value={tagsRaw} onChange={(e) => setTagsRaw(e.target.value)} disabled={busy} />
+              </div>
+
+              {/* One Save. Online it saves to the server; offline the same button keeps the
+                  capture on this device. The other route can never work in the current state
+                  (the handlers refuse it), so it is not offered as a second button. */}
+              <div className="flex flex-wrap items-center gap-3">
+                {online ? (
+                  <Button
+                    type="button"
+                    variant={captureId ? "outline" : "default"}
+                    data-testid="quick-capture-save-server"
+                    onClick={() => void handleCreate()}
+                    disabled={busy}
+                  >
+                    Save capture
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    data-testid="quick-capture-save-local"
+                    onClick={() => void handleSaveLocalOutbox()}
+                    disabled={busy}
+                  >
+                    Save on this device
+                  </Button>
+                )}
+                <span className="text-sm text-muted-foreground">
+                  {online
+                    ? "Saves to your household server."
+                    : "Stays on this device until you tap Sync now in the Outbox tab."}
+                </span>
+              </div>
+
+              {online && !captureId && (
+                <div className="flex flex-col gap-2 text-sm text-muted-foreground">
+                  <p data-testid="quick-capture-attachments-locked" className="m-0">
+                    Save the capture first to add photos or voice recordings to it.
+                  </p>
+                  {!recorderSupported && recorderUi}
+                </div>
               )}
-              <span style={{ opacity: 0.8, fontSize: "0.9rem" }}>
-                {recording ? "Recording…" : "Stored only on this device until Sync now."}
-              </span>
             </div>
-          ) : (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", alignItems: "center" }}>
-              {!recording ? (
-                <button
-                  type="button"
-                  onClick={() => void startRecording(false)}
-                  disabled={busy || !online}
-                  style={{ padding: "0.75rem 1rem", fontSize: "1rem" }}
-                >
-                  Start recording
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => void stopRecording(false)}
-                  disabled={busy}
-                  style={{ padding: "0.75rem 1rem", fontSize: "1rem" }}
-                >
-                  Stop &amp; upload
-                </button>
-              )}
-              <span style={{ opacity: 0.8, fontSize: "0.9rem" }}>
-                {recording ? "Recording…" : "Gesture-gated; uploads to the server."}
-              </span>
-            </div>
+          </PageSection>
+
+          {(captureId || !online) && (
+            <PageSection title="Photos and audio">
+              <div className="flex flex-col gap-4">
+                {captureId && (
+                  <>
+                    <div className="flex flex-col gap-1.5">
+                      <Label htmlFor="qc-image">
+                        Photo (JPEG, PNG, WebP)
+                        {!online && <span className="text-xs font-normal text-muted-foreground"> — needs a connection</span>}
+                      </Label>
+                      <Input
+                        id="qc-image"
+                        type="file"
+                        data-testid="quick-capture-image-input"
+                        accept="image/jpeg,image/png,image/webp"
+                        disabled={busy || !online}
+                        onChange={(e) => void handleImagePick(e.target.files)}
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <Label htmlFor="qc-audio">Upload an audio file</Label>
+                      <Input
+                        id="qc-audio"
+                        type="file"
+                        accept="audio/*,audio/webm,video/webm"
+                        disabled={busy || !online}
+                        onChange={(e) => void handleAudioFilePick(e.target.files)}
+                      />
+                    </div>
+                  </>
+                )}
+                {!online && (
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor="qc-audio-local">Audio file for this device only</Label>
+                    <Input
+                      id="qc-audio-local"
+                      type="file"
+                      data-testid="quick-capture-offline-audio-file"
+                      accept="audio/*,audio/webm,video/webm"
+                      disabled={busy}
+                      onChange={(e) => void handleOfflineAudioFile(e.target.files)}
+                    />
+                  </div>
+                )}
+
+                <div data-testid="quick-capture-recorder-ui">{recorderUi}</div>
+
+                {detail && detail.attachments.length > 0 && (
+                  <ul data-testid="quick-capture-attachment-list" className="m-0 flex list-none flex-col p-0">
+                    {detail.attachments.map((a) => (
+                      <li
+                        key={a.id}
+                        className="flex flex-wrap items-center justify-between gap-2 border-b py-2 text-sm last:border-b-0"
+                      >
+                        <span className="font-medium">{a.original_filename ?? attachmentLabel(a.attachment_type)}</span>
+                        <span className="text-muted-foreground">
+                          {attachmentLabel(a.attachment_type)} · {a.mime_type} · {(a.size_bytes / 1024).toFixed(1)} KiB
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </PageSection>
           )}
-        </div>
 
-        <h2 style={{ fontSize: "1.2rem" }}>Transcription</h2>
-        {!captureId ? (
-          <p>Save a server capture and upload audio first, or sync local voice then open the capture.</p>
-        ) : (
-          <>
-            <button
-              type="button"
-              onClick={() => void handleTranscribe(lastAudioAttachment?.id)}
-              disabled={busy || !online || !lastAudioAttachment}
-              data-testid="quick-capture-transcribe-btn"
-              style={{ padding: "0.85rem", fontSize: "1.05rem" }}
-            >
-              Transcribe audio
-            </button>
-            {!lastAudioAttachment && <p>No audio attachment yet.</p>}
-          </>
-        )}
+          {captureId && (lastAudioAttachment || transcripts.length > 0) && (
+            <PageSection title="Transcript">
+              <div className="flex flex-col gap-3">
+                {lastAudioAttachment && (
+                  <div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => void handleTranscribe(lastAudioAttachment.id)}
+                      disabled={busy || !online}
+                      data-testid="quick-capture-transcribe-btn"
+                    >
+                      Transcribe audio
+                    </Button>
+                  </div>
+                )}
+                {transcripts.length > 0 && (
+                  <ul data-testid="quick-capture-transcript-list" className="m-0 flex list-none flex-col gap-2 p-0 text-sm">
+                    {transcripts.map((tr) => (
+                      <li key={tr.id}>
+                        {tr.transcript_text ? tr.transcript_text : `Transcription ${tr.transcript_status}`}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </PageSection>
+          )}
 
-        <h2 style={{ fontSize: "1.2rem" }}>Transcripts</h2>
-        {transcripts.length === 0 ? (
-          <p data-testid="quick-capture-no-transcript">No transcript yet</p>
-        ) : (
-          <ul data-testid="quick-capture-transcript-list" style={{ paddingLeft: "1.2rem" }}>
-            {transcripts.map((tr) => (
-              <li key={tr.id} style={{ marginBottom: "0.75rem" }}>
-                <strong>{tr.transcript_status}</strong>
-                {tr.transcript_text ? ` — ${tr.transcript_text}` : null}
-              </li>
-            ))}
-          </ul>
-        )}
-
-        <h2 style={{ fontSize: "1.2rem" }}>Capture detail</h2>
-        {!detail ? (
-          <p data-testid="quick-capture-detail-empty">No server capture loaded.</p>
-        ) : (
-          <div data-testid="quick-capture-detail">
-            <p>
-              <strong>Status:</strong> {detail.status} · <strong>Type:</strong> {detail.capture_type}
-              {detail.note_id ? (
-                <>
-                  {" "}
-                  · <strong>Note:</strong> {detail.note_id}
-                </>
-              ) : null}
-            </p>
-            <p>
-              <strong>Attachments:</strong> {detail.attachments.length}
-            </p>
-            <ul data-testid="quick-capture-attachment-list" style={{ paddingLeft: "1.2rem" }}>
-              {detail.attachments.map((a) => (
-                <li key={a.id}>
-                  {a.attachment_type} · {a.mime_type} · {(a.size_bytes / 1024).toFixed(1)} KiB
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        <Button
-          type="button"
-          variant="primary"
-          disabled={busy || !canAddToMemory}
-          data-testid="quick-capture-add-memory"
-          title={
-            !online
-              ? "Requires a connection"
-              : !detail || detail.status === "indexed"
-                ? detail?.status === "indexed"
-                  ? "Already in memory"
-                  : "Save a capture first"
-                : !canAddToMemory
-                  ? "Add text, a link, or finish transcription for audio"
-                  : "Add this capture to searchable memory"
-          }
-          onClick={() => void handleAddToMemory()}
-        >
-          Add to memory
-        </Button>
-      </section>
+          {captureId && detail && (
+            <PageSection title="Saved capture">
+              <div data-testid="quick-capture-detail" className="flex flex-col gap-3">
+                <p className="m-0 text-sm">
+                  <Badge variant={detail.status === "indexed" ? "default" : detail.status === "failed" ? "destructive" : "secondary"}>
+                    {captureStatusLabel(detail.status)}
+                  </Badge>
+                </p>
+                <div>
+                  <Button
+                    type="button"
+                    disabled={busy || !canAddToMemory}
+                    data-testid="quick-capture-add-memory"
+                    title={addToMemoryTitle}
+                    onClick={() => void handleAddToMemory()}
+                  >
+                    Add to memory
+                  </Button>
+                </div>
+                <Collapsible>
+                  <CollapsibleTrigger
+                    render={<Button type="button" variant="ghost" size="sm" className="group/trigger -ml-2" />}
+                  >
+                    <ChevronDown
+                      aria-hidden="true"
+                      className="transition-transform group-aria-expanded/trigger:rotate-180"
+                    />
+                    Details
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="pt-2 text-sm text-muted-foreground">
+                    <p className="m-0">
+                      Type: {detail.capture_type}
+                      {detail.note_id ? ` · Note: ${detail.note_id}` : ""} · Attachments: {detail.attachments.length}
+                    </p>
+                  </CollapsibleContent>
+                </Collapsible>
+              </div>
+            </PageSection>
+          )}
+        </>
       )}
     </div>
+  );
+}
+
+type CaptureTab = "compose" | "inbox" | "archive" | "outbox";
+
+const CAPTURE_TABS: { id: CaptureTab; label: string }[] = [
+  { id: "compose", label: "Compose" },
+  { id: "inbox", label: "Inbox" },
+  { id: "archive", label: "Archive" },
+  { id: "outbox", label: "Outbox" },
+];
+
+function attachmentLabel(type: string): string {
+  if (type === "image") return "Photo";
+  if (type === "audio") return "Audio";
+  return type;
+}
+
+function captureStatusLabel(status: string): string {
+  if (status === "indexed") return "In memory";
+  if (status === "failed") return "Adding to memory failed";
+  return "Saved, not in memory yet";
+}
+
+const OUTBOX_KIND_LABEL: Record<string, string> = { text: "Note", url: "Link", audio: "Voice clip" };
+const OUTBOX_STATUS_LABEL: Record<string, string> = {
+  local_pending: "On this device",
+  syncing: "Syncing",
+  synced: "Synced",
+  failed: "Failed",
+};
+
+function OutboxItemSummary({ item, preview }: { item: CaptureOutboxItemMeta; preview?: string }): JSX.Element {
+  return (
+    <span className="flex min-w-0 flex-col gap-0.5 text-sm">
+      <span className="font-medium">
+        {OUTBOX_KIND_LABEL[item.kind] ?? item.kind}
+        {preview ? ` “${preview}”` : ""}
+        {item.kind === "audio" ? ` · ${(item.size_bytes / 1024).toFixed(0)} KiB` : ""}
+      </span>
+      <span className="text-muted-foreground">
+        {formatDateTime(item.created_at)} · {OUTBOX_STATUS_LABEL[item.status] ?? item.status}
+        {item.last_error ? ` — ${item.last_error}` : ""}
+      </span>
+    </span>
   );
 }

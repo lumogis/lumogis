@@ -10,8 +10,9 @@
 # 0.5.0. Every job is guarded on github.repository, so it never runs in
 # lumogis-app (ADR 037, amended 2026-11-14).
 #
-# LUM-980: five images, everything a household's docker compose pulls:
-# orchestrator, lumogis-web, stack-control, backup and caddy. Tags:
+# LUM-980 / LUM-989: six images, everything a household's docker compose pulls
+# (lumogis-graph only once its Compose profile is switched on):
+# orchestrator, lumogis-web, stack-control, backup, caddy and lumogis-graph. Tags:
 #   * push to main          -> latest, main  (the build rehearsal before a release)
 #   * push of tag vX.Y.Z     -> X.Y.Z         (also X.Y.Z-rc.N for prereleases)
 #   * manual run on main     -> X.Y.Z when release_version is set
@@ -546,6 +547,104 @@ jobs:
           subject-digest: ${{ steps.push_image.outputs.digest }}
           push-to-registry: true
 
+  publish-lumogis-graph:
+    name: publish-lumogis-graph
+    runs-on: ubuntu-latest
+    if: >-
+      github.repository == 'lumogis/lumogis'
+      && (
+        (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+        || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+      )
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+      packages: write
+    outputs:
+      image_digest: ${{ steps.push_image.outputs.digest }}
+      image_ref: ${{ steps.push_image.outputs.imageid }}
+    steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # main 2024-02-12
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Resolve the image version
+        id: version
+        env:
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          re='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
+          if [[ -n "${RELEASE_VERSION:-}" && ! "$RELEASE_VERSION" =~ $re ]]; then
+            echo "::error::release_version must look like 0.12.0 (got '${RELEASE_VERSION}')"
+            exit 1
+          fi
+          if [[ "$EVENT_NAME" == "push" && "$REF_TYPE" == "tag" ]]; then
+            version="${REF_NAME#v}"
+          elif [[ -n "${RELEASE_VERSION:-}" ]]; then
+            version="$RELEASE_VERSION"
+          else
+            version="${SHA:0:7}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ghcr.io/lumogis/lumogis-graph
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=main,enable=${{ github.ref == 'refs/heads/main' }}
+            type=semver,pattern={{version}}
+            type=raw,value=${{ inputs.release_version }},enable=${{ github.event_name == 'workflow_dispatch' && inputs.release_version != '' }}
+
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        id: push_image
+        with:
+          context: .
+          file: services/lumogis-graph/Dockerfile
+          target: runtime
+          platforms: linux/amd64,linux/arm64
+          provenance: mode=max
+          push: true
+          build-args: |
+            LUMOGIS_IMAGE_VERSION=${{ steps.version.outputs.version }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Attest GHCR image (SLSA L2 build provenance)
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-name: ghcr.io/lumogis/lumogis-graph
+          subject-digest: ${{ steps.push_image.outputs.digest }}
+          push-to-registry: true
+
   # Job outputs are not exposed on the Actions jobs REST API; attestation-verify.yml
   # downloads this artifact from the publish run (LUM-276). Each key carries its
   # image name, so the verifier needs no hand-written mapping (LUM-980).
@@ -557,6 +656,7 @@ jobs:
       - publish-stack-control
       - publish-backup
       - publish-caddy
+      - publish-lumogis-graph
     if: >-
       github.repository == 'lumogis/lumogis'
       && needs.publish-orchestrator.result == 'success'
@@ -564,6 +664,7 @@ jobs:
       && needs.publish-stack-control.result == 'success'
       && needs.publish-backup.result == 'success'
       && needs.publish-caddy.result == 'success'
+      && needs.publish-lumogis-graph.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       actions: write
@@ -578,7 +679,8 @@ jobs:
             --arg stack_control '${{ needs.publish-stack-control.outputs.image_digest }}' \
             --arg backup '${{ needs.publish-backup.outputs.image_digest }}' \
             --arg caddy '${{ needs.publish-caddy.outputs.image_digest }}' \
-            '{ "publish-orchestrator": { "image": "ghcr.io/lumogis/lumogis-orchestrator", "digest": $orchestrator }, "publish-lumogis-web": { "image": "ghcr.io/lumogis/lumogis-web", "digest": $lumogis_web }, "publish-stack-control": { "image": "ghcr.io/lumogis/lumogis-stack-control", "digest": $stack_control }, "publish-backup": { "image": "ghcr.io/lumogis/lumogis-backup", "digest": $backup }, "publish-caddy": { "image": "ghcr.io/lumogis/lumogis-caddy", "digest": $caddy }, "expected": ["publish-orchestrator", "publish-lumogis-web", "publish-stack-control", "publish-backup", "publish-caddy"] }' > publish-digests.json
+            --arg lumogis_graph '${{ needs.publish-lumogis-graph.outputs.image_digest }}' \
+            '{ "publish-orchestrator": { "image": "ghcr.io/lumogis/lumogis-orchestrator", "digest": $orchestrator }, "publish-lumogis-web": { "image": "ghcr.io/lumogis/lumogis-web", "digest": $lumogis_web }, "publish-stack-control": { "image": "ghcr.io/lumogis/lumogis-stack-control", "digest": $stack_control }, "publish-backup": { "image": "ghcr.io/lumogis/lumogis-backup", "digest": $backup }, "publish-caddy": { "image": "ghcr.io/lumogis/lumogis-caddy", "digest": $caddy }, "publish-lumogis-graph": { "image": "ghcr.io/lumogis/lumogis-graph", "digest": $lumogis_graph }, "expected": ["publish-orchestrator", "publish-lumogis-web", "publish-stack-control", "publish-backup", "publish-caddy", "publish-lumogis-graph"] }' > publish-digests.json
           test -s publish-digests.json
           cat publish-digests.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

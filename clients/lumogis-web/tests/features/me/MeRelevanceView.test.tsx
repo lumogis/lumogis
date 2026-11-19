@@ -61,4 +61,16 @@ describe("MeRelevanceView", () => {
     );
     expect(screen.getByText(/Nothing tuned yet/)).toBeInTheDocument();
   });
+
+  it("shows an error with a retry when the learned weights cannot be loaded", async () => {
+    renderView(
+      vi.fn(async (input: RequestInfo) => {
+        const u = String(input);
+        if (u.includes("/auth/me")) return jsonResponse(200, { id: "u1", email: "u@home.lan", role: "user" });
+        return jsonResponse(500, { detail: "boom" });
+      }) as unknown as typeof fetch,
+    );
+    expect(await screen.findByText("Lumogis couldn't load what it has learned.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+  });
 });

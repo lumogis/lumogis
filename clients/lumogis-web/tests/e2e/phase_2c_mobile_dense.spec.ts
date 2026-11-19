@@ -15,7 +15,7 @@ async function expectNoPageHorizontalOverflow(page: import("@playwright/test").P
   expect(scrollW).toBeLessThanOrEqual(clientW + 1);
 }
 
-test.describe("Phase 2C mobile dense tables (/admin/users, /me/llm-providers)", () => {
+test.describe("Phase 2C mobile dense tables (/settings/members, /settings/ai-services)", () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
   test.skip(!hasSmokeCreds, smokeCredsSkipMessage);
@@ -23,19 +23,21 @@ test.describe("Phase 2C mobile dense tables (/admin/users, /me/llm-providers)", 
   test("main content visible; no document-level horizontal overflow", async ({ page }) => {
     await loginWithSmokeCredentials(page);
 
-    await page.goto("/admin/users");
-    await page.waitForURL(/\/admin\/|\/chat/, { timeout: 60_000 });
-    if (!page.url().includes("/admin")) {
-      test.skip(true, "Smoke user is not admin — skip /admin/users dense table check.");
+    await page.goto("/settings/members");
+    await page.waitForURL(/\/settings\/(members|profile)$/, { timeout: 60_000 });
+    // A non-admin is sent on to Profile once the user loads; wait for a title so it has settled.
+    await page.getByRole("heading", { level: 1 }).waitFor({ timeout: 60_000 });
+    if (!page.url().includes("/settings/members")) {
+      test.skip(true, "Smoke user is not admin — skip /settings/members dense table check.");
     }
     await expect(page.locator("#lumogis-main")).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Users" })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1, name: "Members and invites" })).toBeVisible();
     await expectNoPageHorizontalOverflow(page);
 
-    await page.goto("/me/llm-providers");
-    await expect(page).toHaveURL(/\/me\/llm-providers/);
+    await page.goto("/settings/ai-services");
+    await expect(page).toHaveURL(/\/settings\/ai-services$/);
     await expect(page.locator("#lumogis-main")).toBeVisible();
-    await expect(page.getByRole("heading", { name: /^llm providers$/i })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1, name: "AI services" })).toBeVisible();
     await expectNoPageHorizontalOverflow(page);
   });
 });

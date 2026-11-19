@@ -904,6 +904,23 @@ def _read_bootstrap_admin_password() -> str:
     return os.environ.get("LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD") or ""
 
 
+def bootstrap_env_intended() -> bool:
+    """True when any bootstrap-admin setting is present (LUM-981).
+
+    Email, password or password file: any one of them means the operator meant
+    to create the admin from the environment, so setup must not open, even if
+    the set is incomplete and the bootstrap failed.
+    """
+    return any(
+        (os.environ.get(name) or "").strip()
+        for name in (
+            "LUMOGIS_BOOTSTRAP_ADMIN_EMAIL",
+            "LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD",
+            "LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD_FILE",
+        )
+    )
+
+
 def bootstrap_if_empty() -> InternalUser | None:
     """Seed the bootstrap admin from env/file if the table is empty.
 
@@ -912,8 +929,9 @@ def bootstrap_if_empty() -> InternalUser | None:
     by ``LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD_FILE`` (native server) and falls back
     to the raw ``LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD`` env var (Docker/CI). Logs a
     ``CRITICAL`` warning and returns ``None`` when the table is empty AND no
-    password/email is available: ``main.py`` is responsible for refusing to
-    boot in that situation when ``AUTH_ENABLED=true``.
+    password/email is available (an INFO instead, with sign-in on and neither
+    set: the first visitor creates the admin, LUM-981). ``main.py`` decides
+    whether the empty table is a refusal when ``AUTH_ENABLED=true``.
 
     Idempotent: if the table already has any user, this is a no-op.
     """
@@ -921,12 +939,23 @@ def bootstrap_if_empty() -> InternalUser | None:
         return None
     email = (os.environ.get("LUMOGIS_BOOTSTRAP_ADMIN_EMAIL") or "").strip()
     password = _read_bootstrap_admin_password()
+    if not email and not password:
+        from auth import auth_enabled
+
+        if auth_enabled():
+            # LUM-981: nothing is wrong. With sign-in on and no bootstrap env,
+            # the first visitor creates the admin (services/instance_setup).
+            _log.info(
+                "No bootstrap admin is set. Lumogis will wait for the first "
+                "visitor to create the admin account."
+            )
+            return None
     if not email or not password:
         _log.critical(
             "Users table is empty and bootstrap admin credentials not set "
             "(LUMOGIS_BOOTSTRAP_ADMIN_EMAIL + LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD "
-            "or LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD_FILE). Set them and restart, "
-            "or set AUTH_ENABLED=false for single-user dev."
+            "or LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD_FILE). Set both and restart, "
+            "or remove them all so the first visitor creates the admin."
         )
         return None
     try:

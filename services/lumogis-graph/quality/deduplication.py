@@ -154,20 +154,23 @@ def _build_ann_blocks(
             _log.debug("dedup ANN: embed failed for entity_id=%s", eid)
             continue
 
-        # Search with explicit user_id filter — cross-user data leakage prevention
-        # KNOWN DRIFT (LUM-855 FU-1): Core's copy (orchestrator/services/deduplication.py)
-        # also filters scope == "personal" here, to keep shared projections out of the
-        # candidate set. That clause is missing in this copy. It is inert only because the
-        # entity_map guard below drops the same rows, and no test asserts it on either side.
-        # Fix it when the four forked quality modules are converged; spec:
-        # .cursor/reviews/kg-agpl-relicence/fu1-convergence-spec.md.
+        # Per plan §185: ANN candidates restricted to (user_id=me,
+        # scope='personal') so dedup never proposes merging a personal
+        # row with a shared/system projection.  The owner-filter still
+        # protects against cross-user leakage; the scope filter
+        # protects against projection-vs-source false positives.
         try:
             results = vs.search(
                 collection="entities",
                 vector=vec,
                 limit=_ANN_TOP_K,
                 threshold=0.0,
-                filter={"must": [{"key": "user_id", "match": {"value": user_id}}]},
+                filter={
+                    "must": [
+                        {"key": "user_id", "match": {"value": user_id}},
+                        {"key": "scope", "match": {"value": "personal"}},
+                    ]
+                },
             )
         except Exception:
             _log.debug("dedup ANN: search failed for entity_id=%s", eid, exc_info=True)
@@ -601,7 +604,9 @@ def _route_pair(
             try:
                 from services.entity_merge import merge_entities  # type: ignore[import-not-found]
 
-                merge_entities(winner_id=winner_id, loser_id=loser_id, user_id=user_id)
+                merge_entities(
+                    winner_id=winner_id, loser_id=loser_id, user_id=user_id, origin="auto_dedup"
+                )
                 _log.info(
                     "dedup: auto-merged winner=%s loser=%s prob=%.4f",
                     winner_id,

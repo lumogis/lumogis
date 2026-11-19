@@ -3,14 +3,17 @@
 // Admin system status — stack-status + Ollama pull/delete (LUM-423).
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 
 import { ApiClient } from "../../../src/api/client";
 import { AccessTokenStore } from "../../../src/api/tokens";
 import { AuthProvider } from "../../../src/auth/AuthProvider";
 import { AdminSystemStatusView } from "../../../src/features/admin/AdminSystemStatusView";
 import { jsonResponse } from "../../helpers/jsonResponse";
+import { kgStatus } from "../../helpers/knowledgeGraphStatus";
+import { formatDateTime } from "../../../src/util/formatTimestamp";
 import { seedSignedInDevice } from "../../helpers/signedInDevice";
 
 // LUM-886: this suite mounts a real AuthProvider; mark the device as already reconciled so the
@@ -257,7 +260,7 @@ describe("AdminSystemStatusView", () => {
     renderView(fetchImpl);
 
     await waitFor(() => expect(stackUrl).toContain("/api/v1/admin/diagnostics/stack-status"));
-    expect(await screen.findByText("System status")).toBeTruthy();
+    expect(await screen.findByText(/Everything is running/)).toBeTruthy();
     expect(screen.getByText("Postgres")).toBeTruthy();
     expect(screen.getByText("Host root partition")).toBeTruthy();
     expect(screen.getByText("llama3")).toBeTruthy();
@@ -362,7 +365,8 @@ describe("AdminSystemStatusView", () => {
 
     const user = userEvent.setup();
     await screen.findByLabelText("Ollama catalog model");
-    await user.selectOptions(screen.getByLabelText("Ollama catalog model"), "phi3");
+    await user.click(screen.getByRole("combobox", { name: "Ollama catalog model" }));
+    await user.click(await screen.findByRole("option", { name: "Phi 3" }));
     await user.click(screen.getByRole("button", { name: "Pull" }));
 
     await waitFor(() => expect(pullBodies.length).toBe(1));
@@ -412,7 +416,6 @@ describe("AdminSystemStatusView", () => {
 
   it("delete confirms then POST", async () => {
     const deleteBodies: unknown[] = [];
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     const fetchImpl = makeFetchImpl(async (input, init) => {
       const u = String(input);
       if (u.includes("/api/v1/auth/me")) return jsonResponse(200, adminUser);
@@ -436,7 +439,10 @@ describe("AdminSystemStatusView", () => {
 
     const user = userEvent.setup();
     await screen.findByText("llama3.2:3b");
-    await user.click(screen.getByRole("button", { name: "Delete" }));
+    await user.click(screen.getByRole("button", { name: "Delete llama3.2:3b" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(deleteBodies.length).toBe(0);
+    await user.click(within(dialog).getByRole("button", { name: "Delete model" }));
 
     await waitFor(() => expect(deleteBodies.length).toBe(1));
     expect(deleteBodies[0]).toEqual({ name: "llama3.2:3b" });
@@ -444,7 +450,6 @@ describe("AdminSystemStatusView", () => {
 
   it("delete cancelled skips POST", async () => {
     let deleteCalled = false;
-    vi.spyOn(window, "confirm").mockReturnValue(false);
     const fetchImpl = makeFetchImpl(async (input, _init) => {
       const u = String(input);
       if (u.includes("/api/v1/auth/me")) return jsonResponse(200, adminUser);
@@ -468,14 +473,16 @@ describe("AdminSystemStatusView", () => {
 
     const user = userEvent.setup();
     await screen.findByText("llama3.2:3b");
-    await user.click(screen.getByRole("button", { name: "Delete" }));
+    await user.click(screen.getByRole("button", { name: "Delete llama3.2:3b" }));
+    const dialog = await screen.findByRole("alertdialog");
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
 
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     await new Promise((r) => setTimeout(r, 50));
     expect(deleteCalled).toBe(false);
   });
 
   it("delete embedding adds warning", async () => {
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
     const fetchImpl = makeFetchImpl(async (input) => {
       const u = String(input);
       if (u.includes("/api/v1/auth/me")) return jsonResponse(200, adminUser);
@@ -495,14 +502,12 @@ describe("AdminSystemStatusView", () => {
 
     const user = userEvent.setup();
     await screen.findByText("nomic-embed-text");
-    await user.click(screen.getByRole("button", { name: "Delete" }));
+    await user.click(screen.getByRole("button", { name: "Delete nomic-embed-text" }));
 
-    expect(confirmSpy).toHaveBeenCalled();
-    expect(String(confirmSpy.mock.calls[0]?.[0])).toMatch(/embedding model/i);
+    expect((await screen.findByRole("alertdialog")).textContent).toMatch(/embedding model/i);
   });
 
   it("delete default chat adds warning", async () => {
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
     const fetchImpl = makeFetchImpl(async (input) => {
       const u = String(input);
       if (u.includes("/api/v1/auth/me")) return jsonResponse(200, adminUser);
@@ -522,10 +527,9 @@ describe("AdminSystemStatusView", () => {
 
     const user = userEvent.setup();
     await screen.findByText("llama3.2:3b");
-    await user.click(screen.getByRole("button", { name: "Delete" }));
+    await user.click(screen.getByRole("button", { name: "Delete llama3.2:3b" }));
 
-    expect(confirmSpy).toHaveBeenCalled();
-    expect(String(confirmSpy.mock.calls[0]?.[0])).toMatch(/default chat/i);
+    expect((await screen.findByRole("alertdialog")).textContent).toMatch(/default chat/i);
   });
 
   it("pull error surfaces detail", async () => {
@@ -696,7 +700,7 @@ describe("AdminSystemStatusView", () => {
     globalThis.fetch = fetchImpl;
     renderView(fetchImpl);
 
-    expect(await screen.findByText("Disaster recovery backup")).toBeTruthy();
+    expect(await screen.findByText("Backups")).toBeTruthy();
     expect(screen.getByRole("alert").textContent).toContain("30.0h old");
   });
 
@@ -735,8 +739,8 @@ describe("AdminSystemStatusView", () => {
       ],
     });
 
-    expect(await screen.findByRole("heading", { name: "Covered", level: 4 })).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "Not covered", level: 4 })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Covered", level: 3 })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Not covered", level: 3 })).toBeTruthy();
     expect(screen.getByText("Uploaded documents")).toBeTruthy();
     expect(
       screen.getByText(
@@ -759,7 +763,7 @@ describe("AdminSystemStatusView", () => {
       ],
     });
 
-    expect(await screen.findByText("Disaster recovery backup")).toBeTruthy();
+    expect(await screen.findByText("Backups")).toBeTruthy();
     const alert = screen.getByRole("alert");
     expect(alert.textContent).toContain("30.0h old");
     expect(alert.textContent).toContain("3 uploaded documents or capture files are not on disk");
@@ -767,15 +771,15 @@ describe("AdminSystemStatusView", () => {
 
   it("renders no coverage lists when coverage is empty", async () => {
     backupFetch({ coverage: [] });
-    expect(await screen.findByText("Disaster recovery backup")).toBeTruthy();
-    expect(screen.queryByRole("heading", { name: "Covered", level: 4 })).toBeNull();
-    expect(screen.queryByRole("heading", { name: "Not covered", level: 4 })).toBeNull();
+    expect(await screen.findByText("Backups")).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Covered", level: 3 })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Not covered", level: 3 })).toBeNull();
   });
 
   it("does not crash when an older Core omits coverage and files_missing entirely", async () => {
     backupFetch({}, ["coverage", "files_missing"]);
-    expect(await screen.findByText("Disaster recovery backup")).toBeTruthy();
-    expect(screen.queryByRole("heading", { name: "Covered", level: 4 })).toBeNull();
+    expect(await screen.findByText("Backups")).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Covered", level: 3 })).toBeNull();
     expect(screen.getByText(/Stores:/)).toBeTruthy();
   });
 
@@ -821,7 +825,7 @@ describe("AdminSystemStatusView", () => {
 
     expect(await screen.findByText(/latest release/i)).toBeTruthy();
     expect(screen.getByText(/0\.8\.0/)).toBeTruthy();
-    expect(screen.getByText(/Last checked: 2026-06-30T12:00:00Z/)).toBeTruthy();
+    expect(screen.getByText(/Last checked: 30 Jun 2026, /)).toBeTruthy();
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
@@ -966,7 +970,7 @@ describe("AdminSystemStatusView", () => {
     renderView(fetchImpl);
 
     await screen.findByText("Software updates");
-    const updateSection = screen.getByText("Software updates").parentElement;
+    const updateSection = screen.getByRole("heading", { name: "Software updates" }).closest("[data-slot=card]");
     expect(updateSection?.textContent).toContain(compareError);
     expect(updateSection?.textContent).toContain("vNext");
     expect(screen.queryByRole("alert")).toBeNull();
@@ -1002,7 +1006,95 @@ describe("AdminSystemStatusView", () => {
     globalThis.fetch = fetchImpl;
     renderView(fetchImpl);
 
-    await screen.findByText("System status");
+    await screen.findByText(/Everything is running/);
     expect(screen.queryByTestId("reranker-active-chip")).toBeNull();
+  });
+
+  // LUM-989 — the knowledge-graph offer line sits in System status, once, for admins.
+  it("shows the knowledge-graph offer line when the server says Turn on is available", async () => {
+    const base = standardAdminHandler();
+    const fetchImpl = makeFetchImpl(async (input, init) => {
+      if (String(input).includes("/api/v1/admin/knowledge-graph")) {
+        return jsonResponse(200, kgStatus("off", { install: "release" }));
+      }
+      return base(input, init);
+    });
+    globalThis.fetch = fetchImpl;
+    const store = new AccessTokenStore();
+    const client = new ApiClient({ tokens: store, fetchImpl });
+    render(
+      <MemoryRouter>
+        <AuthProvider client={client} tokens={store} skipRefreshOnMount>
+          <AdminSystemStatusView />
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByTestId("graph-offer-line")).toBeTruthy();
+    expect(screen.getAllByTestId("graph-offer-line")).toHaveLength(1);
+    expect(screen.getByRole("link", { name: "Open Knowledge graph" }).getAttribute("href")).toBe(
+      "/settings/knowledge-graph",
+    );
+  });
+
+  it("shows no offer line on a checkout", async () => {
+    const base = standardAdminHandler();
+    const fetchImpl = makeFetchImpl(async (input, init) => {
+      if (String(input).includes("/api/v1/admin/knowledge-graph")) {
+        return jsonResponse(200, kgStatus("off", { install: "checkout" }));
+      }
+      return base(input, init);
+    });
+    globalThis.fetch = fetchImpl;
+    renderView(fetchImpl);
+    await screen.findByText(/Everything is running/);
+    expect(screen.queryByTestId("graph-offer-line")).toBeNull();
+  });
+
+  // ── LUM-993 Pass 6: plain words first, developer rows in Details ──────────
+
+  it("summarises in one plain line, naming the services that need attention", async () => {
+    const stack = stackPayload();
+    stack.meta.overall_status = "degraded" as never;
+    stack.services[0].state = "down" as never;
+    const fetchImpl = makeFetchImpl(standardAdminHandler({ stack }));
+    globalThis.fetch = fetchImpl;
+    renderView(fetchImpl);
+
+    expect(await screen.findByText(/some parts need attention: Postgres\./)).toBeTruthy();
+    expect(screen.getByText("Not running")).toBeTruthy();
+  });
+
+  it("shows each service as a row with a status badge, no raw state or runtime kind in the main view", async () => {
+    const fetchImpl = makeFetchImpl(standardAdminHandler());
+    globalThis.fetch = fetchImpl;
+    renderView(fetchImpl);
+
+    expect(await screen.findByText("Running")).toBeTruthy();
+    expect(screen.queryByText("healthy")).toBeNull();
+    expect(screen.queryByText("docker_compose")).toBeNull();
+  });
+
+  it("keeps shell commands and raw detail in the collapsed Details, not the main view", async () => {
+    backupFetch({});
+    const trigger = await screen.findByRole("button", { name: "Details" });
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    const make = screen.getByText(/make backup/);
+    // Mounted but inside the collapsed region.
+    expect(make.closest("[data-slot=collapsible-content]")).toBeTruthy();
+    // The main view says the last backup in a plain date.
+    expect(await screen.findByText("Last backup")).toBeTruthy();
+    expect(screen.getByText(formatDateTime("2026-01-02T03:00:00Z"))).toBeTruthy();
+  });
+
+  it("shows an error state with a retry when the status cannot load", async () => {
+    const fetchImpl = makeFetchImpl(async (input) => {
+      const u = String(input);
+      if (u.includes("/api/v1/auth/me")) return jsonResponse(200, adminUser);
+      return jsonResponse(500, { detail: "boom" });
+    });
+    globalThis.fetch = fetchImpl;
+    renderView(fetchImpl);
+
+    expect(await screen.findByRole("button", { name: /try again/i })).toBeTruthy();
   });
 });

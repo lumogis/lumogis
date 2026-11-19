@@ -4,6 +4,15 @@
 // guidance, a live connection test before save, import scopes, and opt-in
 // folder-derived (Lumogis-internal) labels.
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { InfoTip } from "@/components/page/InfoTip";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { ChevronDown } from "lucide-react";
 import { useAuth } from "../../auth/AuthProvider";
 import { describeMailboxSaveFailure } from "./mailboxSaveMessage";
 import { describeSendOptInFailure, SEND_OPT_IN_PREFIX } from "./sendOptInMessage";
@@ -69,67 +78,47 @@ function ImportScopePicker({
   onSince: (v: string) => void;
   onBefore: (v: string) => void;
 }): JSX.Element {
+  const options: { value: ImportScope; label: string }[] = [
+    { value: "just_new", label: "Just new mail" },
+    { value: "last_7d", label: "Last 7 days" },
+    { value: "last_30d", label: "Last 30 days" },
+    { value: "custom", label: "Custom date range" },
+  ];
   return (
-    <fieldset>
-      <legend>How much history to import</legend>
-      <label style={{ display: "block" }}>
-        <input
-          type="radio"
-          name="import-scope"
-          checked={scope === "just_new"}
-          onChange={() => onScope("just_new")}
-        />{" "}
-        Just new mail
-      </label>
-      <label style={{ display: "block" }}>
-        <input
-          type="radio"
-          name="import-scope"
-          checked={scope === "last_7d"}
-          onChange={() => onScope("last_7d")}
-        />{" "}
-        Last 7 days
-      </label>
-      <label style={{ display: "block" }}>
-        <input
-          type="radio"
-          name="import-scope"
-          checked={scope === "last_30d"}
-          onChange={() => onScope("last_30d")}
-        />{" "}
-        Last 30 days
-      </label>
-      <label style={{ display: "block" }}>
-        <input
-          type="radio"
-          name="import-scope"
-          checked={scope === "custom"}
-          onChange={() => onScope("custom")}
-        />{" "}
-        Custom date range
-      </label>
+    <fieldset className="m-0 grid gap-2 rounded-lg border p-3">
+      <legend className="px-1 text-sm font-medium">How much history to import</legend>
+      <RadioGroup value={scope} onValueChange={(v) => onScope(v as ImportScope)}>
+        {options.map((o) => (
+          <Label key={o.value}>
+            <RadioGroupItem value={o.value} />
+            {o.label}
+          </Label>
+        ))}
+      </RadioGroup>
       {scope === "custom" ? (
-        <div>
-          <label>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Label className="grid gap-1.5">
             From
-            <input
+            <Input
               type="date"
               aria-label="Import from date"
               value={since}
               onChange={(e) => onSince(e.target.value)}
               required
             />
-          </label>
-          <label>
+          </Label>
+          <Label className="grid gap-1.5">
             To
-            <input
+            <Input
               type="date"
               aria-label="Import to date"
               value={before}
               onChange={(e) => onBefore(e.target.value)}
             />
-          </label>
-          <p>Already-imported emails in this range are skipped — no duplicates.</p>
+          </Label>
+          <p className="m-0 text-sm text-muted-foreground sm:col-span-2">
+            Already-imported emails in this range are skipped — no duplicates.
+          </p>
         </div>
       ) : null}
     </fieldset>
@@ -364,32 +353,50 @@ export function EmailMailboxSetupForm({ onCreated }: { onCreated?: () => void })
   // Step 1 — provider pick.
   if (!provider) {
     return (
-      <div className="lumogis-email-mailbox-setup" style={{ display: "grid", gap: "0.5rem" }}>
-        <h3>Connect a mailbox</h3>
-        <p>Pick your email provider to get set-up steps.</p>
-        {operatorReason !== null ? (
-          <p role="status" data-testid="operator-action-notice">
-            {operatorReason === "ceiling"
-              ? "Heads up: this system restricts outbound connections at start-up, " +
-                "so a new mailbox won't sync until an admin restarts Lumogis. You can " +
-                "finish setting it up now — ask an admin to restart when you're done."
-              : "Heads up: automatic updates to the outbound connection rules are " +
-                "switched off on this system, so a new mailbox won't sync until an " +
-                "admin applies the change. You can finish setting it up now."}
+      <div className="mb-4 grid max-w-2xl gap-3">
+        <div>
+          <h3 className="m-0 text-base font-semibold">Connect a mailbox</h3>
+          <p className="m-0 mt-1 text-sm text-muted-foreground">
+            Pick your email provider to get set-up steps.
           </p>
+        </div>
+        {operatorReason !== null ? (
+          <Alert data-testid="operator-action-notice" role="status">
+            <AlertDescription>
+              {operatorReason === "ceiling"
+                ? "Heads up: this system restricts outbound connections at start-up, " +
+                  "so a new mailbox won't sync until an admin restarts Lumogis. You can " +
+                  "finish setting it up now — ask an admin to restart when you're done."
+                : "Heads up: automatic updates to the outbound connection rules are " +
+                  "switched off on this system, so a new mailbox won't sync until an " +
+                  "admin applies the change. You can finish setting it up now."}
+            </AlertDescription>
+          </Alert>
         ) : null}
-        <div style={{ display: "grid", gap: "0.5rem" }}>
+        <div className="grid gap-2 sm:grid-cols-2">
           {allProviders.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              disabled={!p.enabled}
-              title={p.enabled ? p.notes : (p.disabled_reason ?? "")}
-              onClick={() => pickProvider(p)}
-            >
-              {p.display_name}
-              {!p.enabled && p.disabled_reason ? ` — ${p.disabled_reason}` : ""}
-            </button>
+            <div key={p.id} className="grid content-start gap-1">
+              <Button
+                type="button"
+                variant="outline"
+                className="h-auto w-full justify-start py-2"
+                disabled={!p.enabled}
+                title={p.enabled ? p.notes : undefined}
+                onClick={() => pickProvider(p)}
+              >
+                {p.display_name}
+              </Button>
+              {/* The reason (a docs path) is not main text: the plain sentence is,
+                  and the path sits behind the (i) for whoever does the setup. */}
+              {!p.enabled ? (
+                <p className="m-0 flex items-center gap-1 text-sm text-muted-foreground">
+                  Needs a one-time setup by the household admin.
+                  {p.disabled_reason ? (
+                    <InfoTip about={p.display_name}>{p.disabled_reason}</InfoTip>
+                  ) : null}
+                </p>
+              ) : null}
+            </div>
           ))}
         </div>
       </div>
@@ -415,15 +422,20 @@ export function EmailMailboxSetupForm({ onCreated }: { onCreated?: () => void })
       setOauthConnecting(true);
     };
     return (
-      <div className="lumogis-email-mailbox-setup" style={{ display: "grid", gap: "0.5rem" }}>
-        <h3>Connect {provider.display_name}</h3>
-        <button
-          type="button"
-          onClick={() => { setProvider(null); setOauthConnecting(false); }}
-          style={{ justifySelf: "start" }}
-        >
-          ← Change provider
-        </button>
+      <div className="mb-4 grid max-w-2xl gap-3">
+        <h3 className="m-0 text-base font-semibold">Connect {provider.display_name}</h3>
+        <div>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => {
+              setProvider(null);
+              setOauthConnecting(false);
+            }}
+          >
+            ← Change provider
+          </Button>
+        </div>
         {oauthConnecting ? (
           <OAuthDevicePanel
             client={client}
@@ -439,30 +451,34 @@ export function EmailMailboxSetupForm({ onCreated }: { onCreated?: () => void })
           />
         ) : (
           <>
-            <p>
+            <p className="m-0 text-sm text-muted-foreground">
               Sign in to {provider.display_name} in your browser — no app password needed.
               Enter your mailbox address and a label, then continue.
             </p>
-            <label>
+            <Label className="grid gap-1.5">
               Email address
-              <input
+              <Input
                 type="email"
                 aria-label="Email address"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 required
               />
-            </label>
-            <label>
+            </Label>
+            <Label className="grid gap-1.5">
               Mailbox label
-              <input
+              <Input
                 aria-label="Mailbox label"
                 value={mailboxLabel}
                 onChange={(e) => setMailboxLabel(e.target.value)}
                 required
               />
-            </label>
-            {labelError ? <p role="alert" className="lumogis-form-error">{labelError}</p> : null}
+            </Label>
+            {labelError ? (
+              <Alert variant="destructive">
+                <AlertDescription>{labelError}</AlertDescription>
+              </Alert>
+            ) : null}
             <ImportScopePicker
               scope={importScope}
               since={since}
@@ -471,9 +487,11 @@ export function EmailMailboxSetupForm({ onCreated }: { onCreated?: () => void })
               onSince={setSince}
               onBefore={setBefore}
             />
-            <button type="button" onClick={startOAuth} disabled={!username.trim()}>
-              Continue to {provider.display_name} sign-in
-            </button>
+            <div>
+              <Button type="button" onClick={startOAuth} disabled={!username.trim()}>
+                Continue to {provider.display_name} sign-in
+              </Button>
+            </div>
           </>
         )}
       </div>
@@ -482,26 +500,29 @@ export function EmailMailboxSetupForm({ onCreated }: { onCreated?: () => void })
 
   // Step 2 — credentials, test, options.
   return (
-    <form
-      className="lumogis-email-mailbox-setup"
-      onSubmit={(e) => void submit(e)}
-      style={{ display: "grid", gap: "0.5rem" }}
-    >
-      <h3>Connect {provider.display_name}</h3>
-      <button type="button" onClick={() => setProvider(null)} style={{ justifySelf: "start" }}>
-        ← Change provider
-      </button>
+    <form className="mb-4 grid max-w-2xl gap-3" onSubmit={(e) => void submit(e)}>
+      <h3 className="m-0 text-base font-semibold">Connect {provider.display_name}</h3>
+      <div>
+        <Button type="button" variant="ghost" onClick={() => setProvider(null)}>
+          ← Change provider
+        </Button>
+      </div>
 
       {provider.help_steps.length > 0 ? (
-        <div>
-          <p>To connect {provider.display_name}, create an app password:</p>
-          <ol>
+        <div className="grid gap-2 text-sm">
+          <p className="m-0">To connect {provider.display_name}, create an app password:</p>
+          <ol className="m-0 grid gap-1 pl-5">
             {provider.help_steps.map((s, i) => (
               <li key={i}>{s}</li>
             ))}
           </ol>
           {provider.app_password_url ? (
-            <a href={provider.app_password_url} target="_blank" rel="noreferrer noopener">
+            <a
+              className="text-accent-text underline-offset-4 hover:underline"
+              href={provider.app_password_url}
+              target="_blank"
+              rel="noreferrer noopener"
+            >
               Open {provider.display_name} app passwords
             </a>
           ) : null}
@@ -509,87 +530,114 @@ export function EmailMailboxSetupForm({ onCreated }: { onCreated?: () => void })
       ) : null}
 
       {provider.id === "other" ? (
-        <label>
+        <Label className="grid gap-1.5">
           IMAP host
-          <input value={host} onChange={(e) => { setHost(e.target.value); invalidateTest(); }} required />
-        </label>
+          <Input
+            value={host}
+            onChange={(e) => {
+              setHost(e.target.value);
+              invalidateTest();
+            }}
+            required
+          />
+        </Label>
       ) : null}
 
-      <label>
+      <Label className="grid gap-1.5">
         Mailbox label
-        <input
+        <Input
           aria-label="Mailbox label"
           value={mailboxLabel}
           onChange={(e) => setMailboxLabel(e.target.value)}
           required
         />
-      </label>
-      {labelError ? <p role="alert" className="lumogis-form-error">{labelError}</p> : null}
-      <label>
+      </Label>
+      {labelError ? (
+        <Alert variant="destructive">
+          <AlertDescription>{labelError}</AlertDescription>
+        </Alert>
+      ) : null}
+      <Label className="grid gap-1.5">
         Display name (optional)
-        <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
-      </label>
-      <label>
+        <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
+      </Label>
+      <Label className="grid gap-1.5">
         Username
-        <input value={username} onChange={(e) => { setUsername(e.target.value); invalidateTest(); }} required />
-      </label>
-      <label>
+        <Input
+          value={username}
+          onChange={(e) => {
+            setUsername(e.target.value);
+            invalidateTest();
+          }}
+          required
+        />
+      </Label>
+      <Label className="grid gap-1.5">
         App password
-        <input
+        <Input
           value={password}
-          onChange={(e) => { setPassword(e.target.value); invalidateTest(); }}
+          onChange={(e) => {
+            setPassword(e.target.value);
+            invalidateTest();
+          }}
           type="password"
           autoComplete="new-password"
           required
           minLength={1}
         />
-      </label>
+      </Label>
 
-      <button type="button" onClick={() => void runTest()} disabled={testing || !username || !password}>
-        {testing ? "Testing…" : "Test connection"}
-      </button>
+      <div>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => void runTest()}
+          disabled={testing || !username || !password}
+        >
+          {testing ? "Testing…" : "Test connection"}
+        </Button>
+      </div>
 
       {probe && probe.ok ? (
-        <p role="status">
+        <p role="status" className="m-0 text-sm">
           Connected
           {probe.message_count != null ? ` — ${probe.message_count} messages in your inbox` : ""}.
         </p>
       ) : null}
       {probe && probe.proxy_unverified ? (
-        <p role="status">
+        <p role="status" className="m-0 text-sm">
           Couldn't verify on this deployment; your mailbox will be verified on the first
           sync. You can still save.
         </p>
       ) : null}
-      {testError ? <p role="alert" className="lumogis-form-error">{testError}</p> : null}
+      {testError ? (
+        <Alert variant="destructive">
+          <AlertDescription>{testError}</AlertDescription>
+        </Alert>
+      ) : null}
 
       {probe && probe.ok && seedFolders.length > 0 ? (
-        <fieldset>
-          <legend>Start my labels from my mailbox folders</legend>
-          <label>
-            <input
-              type="checkbox"
-              checked={seedLabels}
-              onChange={(e) => setSeedLabels(e.target.checked)}
-            />{" "}
+        <fieldset className="m-0 grid gap-2 rounded-lg border p-3">
+          <legend className="px-1 text-sm font-medium">Start my labels from my mailbox folders</legend>
+          <Label>
+            <Checkbox checked={seedLabels} onCheckedChange={(on: boolean) => setSeedLabels(on)} />
             Use my folder names as a starting point
-          </label>
-          <p>
+          </Label>
+          <p className="m-0 text-sm text-muted-foreground">
             These are <strong>Lumogis labels</strong> — Lumogis's own view. Editing them
             won't change your mailbox.
           </p>
           {seedLabels
             ? seedFolders.map((f: ProbeFolder) => (
-                <label key={f.name} style={{ display: "block" }}>
-                  <input
-                    type="checkbox"
+                <Label key={f.name}>
+                  <Checkbox
                     checked={!!selectedFolders[f.name]}
-                    onChange={(e) =>
-                      setSelectedFolders((s) => ({ ...s, [f.name]: e.target.checked }))
+                    onCheckedChange={(on: boolean) =>
+                      setSelectedFolders((s) => ({ ...s, [f.name]: on }))
                     }
-                  />{" "}
+                  />
                   {f.name}
-                </label>
+                </Label>
               ))
             : null}
         </fieldset>
@@ -604,34 +652,29 @@ export function EmailMailboxSetupForm({ onCreated }: { onCreated?: () => void })
         onBefore={setBefore}
       />
 
-      <fieldset>
-        <legend>Sending</legend>
-        <label style={{ display: "block" }}>
-          <input
-            type="checkbox"
-            checked={sendEnabled}
-            onChange={(e) => setSendEnabled(e.target.checked)}
-          />{" "}
+      <fieldset className="m-0 grid gap-3 rounded-lg border p-3">
+        <legend className="px-1 text-sm font-medium">Sending</legend>
+        <Label>
+          <Checkbox checked={sendEnabled} onCheckedChange={(on: boolean) => setSendEnabled(on)} />
           Let Lumogis send as me (reply &amp; compose)
-        </label>
+        </Label>
         {sendEnabled ? (
-          <div>
-            <p>
+          <div className="grid gap-3">
+            <p className="m-0 text-sm text-muted-foreground">
               Emails are sent from <strong>{username.trim() || "this mailbox"}</strong> through
               your provider — never a Lumogis address. A send to a new address always asks first.
             </p>
-            <label style={{ display: "block" }}>
-              <input
-                type="checkbox"
+            <Label>
+              <Checkbox
                 checked={sendReusePassword}
-                onChange={(e) => setSendReusePassword(e.target.checked)}
-              />{" "}
+                onCheckedChange={(on: boolean) => setSendReusePassword(on)}
+              />
               Use my mailbox password for sending
-            </label>
+            </Label>
             {!sendReusePassword ? (
-              <label style={{ display: "block" }}>
+              <Label className="grid gap-1.5">
                 Separate app password for sending
-                <input
+                <Input
                   type="password"
                   aria-label="SMTP app password"
                   value={sendPassword}
@@ -643,13 +686,13 @@ export function EmailMailboxSetupForm({ onCreated }: { onCreated?: () => void })
                      may legitimately contain spaces. */
                   required
                 />
-              </label>
+              </Label>
             ) : null}
             {provider?.id === "other" ? (
-              <div>
-                <label style={{ display: "block" }}>
+              <div className="grid gap-3 sm:grid-cols-[1fr_8rem]">
+                <Label className="grid gap-1.5">
                   SMTP host
-                  <input
+                  <Input
                     type="text"
                     aria-label="SMTP host"
                     value={sendSmtpHost}
@@ -662,47 +705,62 @@ export function EmailMailboxSetupForm({ onCreated }: { onCreated?: () => void })
                     placeholder="smtp.example.com"
                     required
                   />
-                </label>
-                <label style={{ display: "block" }}>
+                </Label>
+                <Label className="grid gap-1.5">
                   SMTP port
-                  <input
+                  <Input
                     type="number"
                     aria-label="SMTP port"
                     value={sendSmtpPort}
                     onChange={(e) => setSendSmtpPort(e.target.value)}
                     required
                   />
-                </label>
+                </Label>
               </div>
             ) : (
-              <p>
-                Using {provider?.smtp_host || "your provider's server"} (port{" "}
-                {provider?.smtp_port ?? 587}).
-              </p>
+              // Developer detail (host, port) stays available, one click away.
+              <Collapsible>
+                <CollapsibleTrigger render={<Button type="button" variant="ghost" size="sm" />}>
+                  <ChevronDown aria-hidden="true" />
+                  Details
+                </CollapsibleTrigger>
+                <CollapsibleContent keepMounted>
+                  <p className="m-0 mt-2 text-sm text-muted-foreground">
+                    Using {provider?.smtp_host || "your provider's server"} (port{" "}
+                    {provider?.smtp_port ?? 587}).
+                  </p>
+                </CollapsibleContent>
+              </Collapsible>
             )}
           </div>
         ) : null}
       </fieldset>
 
-      <p>
+      <p className="m-0 text-sm text-muted-foreground">
         Lumogis reads message headers only (never message bodies unless you enable it),
         and never sends anything without asking.
       </p>
 
-      {error ? <p role="alert" className="lumogis-form-error">{error}</p> : null}
+      {error ? (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
       {/* LUM-759 — the send opt-in used to fail into an empty `catch {}`, so a
           user who ticked "let Lumogis send as me" got a connected mailbox with
           sending silently off and no message. Still non-blocking (`role=status`,
           not `alert`) — the mailbox IS connected either way, which is what the
           empty catch was protecting. Matches the LUM-758 operator notice above. */}
       {sendNotice ? (
-        <p role="status" data-testid="send-optin-notice">
+        <p role="status" data-testid="send-optin-notice" className="m-0 text-sm">
           {sendNotice}
         </p>
       ) : null}
-      <button type="submit" disabled={busy || !canSave}>
-        {busy ? "Adding…" : "Add mailbox"}
-      </button>
+      <div>
+        <Button type="submit" disabled={busy || !canSave}>
+          {busy ? "Adding…" : "Add mailbox"}
+        </Button>
+      </div>
     </form>
   );
 }

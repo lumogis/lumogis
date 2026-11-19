@@ -1,0 +1,114 @@
+/*
+ * Lumogis Web stylesheet entry (LUM-993).
+ *
+ * Layer order, lowest first:
+ *   theme        Tailwind's tokens
+ *   base         Tailwind's Preflight reset, then tokens.css (the Lumogis tokens,
+ *                the html/body/heading/link base and the app shell layout)
+ *   components   shadcn/ui component styles
+ *   utilities    Tailwind utilities
+ *
+ * Until LUM-993 plan B Pass 8 there was a fourth layer, "legacy", holding every
+ * page's hand-written CSS, and Preflight was left out because ~190 old buttons
+ * and ~130 old inputs relied on browser defaults. Every page now uses the shared
+ * components, so Preflight is back for the whole app and the old page CSS is gone.
+ * Do not add component CSS to tokens.css: style with the components and utilities.
+ */
+@layer theme, base, components, utilities;
+
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/preflight.css" layer(base);
+@import "./tokens.css" layer(base);
+@import "tailwindcss/utilities.css" layer(utilities);
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+/* Lumogis dark mode is data-theme on <html>, or the system setting when unset. */
+@custom-variant dark {
+  &:where([data-theme="dark"], [data-theme="dark"] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme="light"]), :root:not([data-theme="light"]) *) {
+      @slot;
+    }
+  }
+}
+
+/*
+ * shadcn's semantic colours point at the Lumogis tokens, which already switch for
+ * dark mode and are locked to WCAG AA by tests/design/contrast.test.ts.
+ */
+:root {
+  --background: var(--lumogis-bg);
+  --foreground: var(--lumogis-fg);
+  --card: var(--lumogis-surface);
+  --card-foreground: var(--lumogis-fg);
+  --popover: var(--lumogis-surface);
+  --popover-foreground: var(--lumogis-fg);
+  --primary: var(--lumogis-accent);
+  --primary-foreground: var(--lumogis-accent-fg);
+  --secondary: var(--lumogis-surface-alt);
+  --secondary-foreground: var(--lumogis-fg);
+  --muted: var(--lumogis-surface-alt);
+  --muted-foreground: var(--lumogis-fg-muted);
+  --accent: var(--lumogis-surface-alt);
+  --accent-foreground: var(--lumogis-fg);
+  --destructive: var(--lumogis-danger);
+  --destructive-foreground: var(--lumogis-danger-fg);
+  --border: var(--lumogis-border);
+  --input: var(--lumogis-field-border);
+  --ring: var(--lumogis-accent-ink);
+  --accent-text: var(--lumogis-accent-text);
+  /* The current place in navigation: soft amber behind accent-text (tokenContrast pair). */
+  --accent-soft: var(--lumogis-accent-soft);
+  --field: var(--lumogis-surface);
+  --success: var(--lumogis-success);
+  --warning: var(--lumogis-warn);
+  --radius: var(--lumogis-radius-md);
+}
+
+@theme inline {
+  --font-sans: var(--lumogis-font-ui);
+  --font-heading: var(--lumogis-font-display);
+  --font-mono: var(--lumogis-font-mono);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-accent-text: var(--accent-text);
+  --color-accent-soft: var(--accent-soft);
+  --color-field: var(--field);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --shadow-popover: 0 8px 24px -6px rgb(0 0 0 / 0.18), 0 2px 6px -2px rgb(0 0 0 / 0.12);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+}
+
+@layer base {
+  /* shadcn's base: every element's border and outline take the theme colours. */
+  *,
+  ::before,
+  ::after {
+    @apply border-border outline-ring/50;
+  }
+}
+

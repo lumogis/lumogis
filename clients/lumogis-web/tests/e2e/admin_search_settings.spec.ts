@@ -5,7 +5,7 @@
 // Read-only smoke: load panel, nav link, RAM warning on BGE select, save disabled when clean.
 // Does not save or restart the stack.
 // Live-proven 2026-07-10 on lumogis-test stack (4/4); matrix row 2.2.16.
-// LUM-852: the "Reranking mode" legend is visually hidden (1px clip box).
+// LUM-993 Pass 6: the radio pair became one on/off switch (no legend any more).
 //
 //   export LUMOGIS_WEB_SMOKE_EMAIL=...
 //   export LUMOGIS_WEB_SMOKE_PASSWORD='...'   # ≥12 chars
@@ -29,67 +29,52 @@ test.describe("LUM-159 admin search & retrieval settings", () => {
   test("search-settings panel loads for admin", async ({ page }) => {
     await loginWithSmokeCredentials(page);
 
-    await page.goto("/admin/search-settings");
-    await expect(page).toHaveURL(/\/admin\/search-settings/);
+    await page.goto("/settings/search-ranking");
+    await expect(page).toHaveURL(/\/settings\/search-ranking$/);
 
     const section = page.getByTestId("retrieval-settings-page");
     await expect(section).toBeVisible();
 
     await expect(section.getByText(/^loading/i)).toHaveCount(0, { timeout: 60_000 });
 
-    await expect(section.getByRole("heading", { name: /^search & retrieval$/i, level: 1 })).toBeVisible();
-    await expect(section.getByRole("radio", { name: /off — default, lower ram/i })).toBeVisible();
-    await expect(section.getByRole("radio", { name: /bge reranker/i })).toBeVisible();
-
-    // LUM-852: the legend names the fieldset but must not render (1px clip box).
-    // boundingBox() is null for a non-rendered element, so display:none fails the
-    // not-null check; the group-name assertion below is a second guard on the name.
-    const legend = section.locator("fieldset legend", { hasText: "Reranking mode" });
-    await expect(legend).toHaveCount(1);
-    const box = await legend.boundingBox();
-    expect(box).not.toBeNull();
-    expect(box!.width).toBeLessThanOrEqual(1);
-    expect(box!.height).toBeLessThanOrEqual(1);
-    await expect(section.getByRole("group", { name: "Reranking mode" })).toHaveCount(1);
+    await expect(page.getByRole("heading", { name: "Better search ranking", level: 1 })).toBeVisible();
+    await expect(section.getByRole("switch", { name: /better search ranking/i })).toBeVisible();
 
     await expect(section.getByRole("button", { name: /^save retrieval settings$/i })).toBeVisible();
   });
 
-  test("admin nav links to search & retrieval", async ({ page }) => {
+  test("the Settings menu links to better search ranking (Advanced group)", async ({ page }) => {
     await loginWithSmokeCredentials(page);
 
-    await page.goto("/admin/users");
-    await expect(page).toHaveURL(/\/admin\/users/);
+    await page.goto("/settings/members");
+    await expect(page).toHaveURL(/\/settings\/members$/);
 
-    await page
-      .getByRole("navigation", { name: /^administration$/i })
-      .getByRole("link", { name: /^search & retrieval$/i })
-      .click();
+    const menu = page.getByRole("navigation", { name: "Settings" });
+    // Advanced is collapsed unless the current page is inside it.
+    await menu.getByRole("button", { name: "Advanced" }).click();
+    await menu.getByRole("link", { name: "Better search ranking" }).click();
 
-    await expect(page).toHaveURL(/\/admin\/search-settings/);
+    await expect(page).toHaveURL(/\/settings\/search-ranking$/);
     await expect(page.getByTestId("retrieval-settings-page")).toBeVisible();
-    await expect(
-      page.getByRole("heading", { name: /^search & retrieval$/i, level: 1 }),
-    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Better search ranking", level: 1 })).toBeVisible();
   });
 
   test("selecting BGE shows RAM warning without saving", async ({ page }) => {
     await loginWithSmokeCredentials(page);
 
-    await page.goto("/admin/search-settings");
+    await page.goto("/settings/search-ranking");
     const section = page.getByTestId("retrieval-settings-page");
     await expect(section.getByText(/^loading/i)).toHaveCount(0, { timeout: 60_000 });
 
-    const bgeRadio = section.getByRole("radio", { name: /bge reranker/i });
-    const offRadio = section.getByRole("radio", { name: /off — default, lower ram/i });
+    const sw = section.getByRole("switch", { name: /better search ranking/i });
 
-    if (await bgeRadio.isChecked()) {
-      await offRadio.check();
+    if ((await sw.getAttribute("aria-checked")) === "true") {
+      await sw.click();
       await expect(section.getByRole("note")).toHaveCount(0);
     }
 
-    await bgeRadio.check();
-    await expect(bgeRadio).toBeChecked();
+    await sw.click();
+    await expect(sw).toHaveAttribute("aria-checked", "true");
 
     await expect(section.getByRole("note")).toContainText(/memory-constrained host/i);
     await expect(section.getByText(/unsaved change/i)).toBeVisible();
@@ -98,29 +83,19 @@ test.describe("LUM-159 admin search & retrieval settings", () => {
   test("save is disabled until settings are dirty", async ({ page }) => {
     await loginWithSmokeCredentials(page);
 
-    await page.goto("/admin/search-settings");
+    await page.goto("/settings/search-ranking");
     const section = page.getByTestId("retrieval-settings-page");
     await expect(section.getByText(/^loading/i)).toHaveCount(0, { timeout: 60_000 });
 
     const saveButton = section.getByRole("button", { name: /^save retrieval settings$/i });
     await expect(saveButton).toBeDisabled();
 
-    const bgeRadio = section.getByRole("radio", { name: /bge reranker/i });
-    const offRadio = section.getByRole("radio", { name: /off — default, lower ram/i });
+    const sw = section.getByRole("switch", { name: /better search ranking/i });
 
-    if (await bgeRadio.isChecked()) {
-      await offRadio.check();
-    } else {
-      await bgeRadio.check();
-    }
-
+    await sw.click();
     await expect(saveButton).toBeEnabled();
 
-    if (await bgeRadio.isChecked()) {
-      await offRadio.check();
-    } else {
-      await bgeRadio.check();
-    }
+    await sw.click();
 
     await expect(saveButton).toBeDisabled();
   });

@@ -16,6 +16,9 @@
 import { useState } from "react";
 
 import type { SourcePatch, SourceRow } from "../../api/sources";
+import { Button } from "../../components/ui/button";
+import { Input } from "../../components/ui/input";
+import { Label } from "../../components/ui/label";
 
 export function EditSourceRow({
   row,
@@ -44,42 +47,52 @@ export function EditSourceRow({
     });
 
   return (
-    <tr>
-      <td>
-        <label>
-          <span className="lumogis-visually-hidden">Name</span>
-          <input
+    <li className="py-3">
+      <form
+        className="grid gap-3 sm:grid-cols-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          submit();
+        }}
+      >
+        <div className="flex flex-col gap-1.5 sm:col-span-2">
+          <Label htmlFor={`source-name-${row.id}`}>Name</Label>
+          <Input
+            id={`source-name-${row.id}`}
             aria-label={`Name for ${row.name}`}
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
-        </label>
-      </td>
-      <td>{row.source_type}</td>
-      <td>
-        <input
-          aria-label={`Category for ${row.name}`}
-          value={category}
-          onChange={(e) => setCategory(e.target.value)}
-        />
-      </td>
-      <td>
-        <input
-          aria-label={`Poll interval for ${row.name}`}
-          type="number"
-          min={60}
-          value={interval}
-          onChange={(e) => setInterval(e.target.value)}
-        />
-      </td>
-      <td>
-        <button type="button" onClick={submit} disabled={busy}>
-          Save {row.name}
-        </button>{" "}
-        <button type="button" onClick={onCancel} disabled={busy}>
-          Cancel
-        </button>
-      </td>
-    </tr>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor={`source-category-${row.id}`}>Category</Label>
+          <Input
+            id={`source-category-${row.id}`}
+            aria-label={`Category for ${row.name}`}
+            value={category}
+            onChange={(e) => setCategory(e.target.value)}
+          />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor={`source-interval-${row.id}`}>Check every (seconds, at least 60)</Label>
+          <Input
+            id={`source-interval-${row.id}`}
+            aria-label={`Poll interval for ${row.name}`}
+            type="number"
+            min={60}
+            value={interval}
+            onChange={(e) => setInterval(e.target.value)}
+          />
+        </div>
+        <div className="flex gap-2 sm:col-span-2">
+          <Button type="submit" disabled={busy}>
+            Save {row.name}
+          </Button>
+          <Button type="button" variant="ghost" onClick={onCancel} disabled={busy}>
+            Cancel
+          </Button>
+        </div>
+      </form>
+    </li>
   );
 }

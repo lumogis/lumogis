@@ -87,6 +87,10 @@ _SCOPED_TABLES: tuple[str, ...] = (
     "relevance_profiles",
     "edge_scores",
     "known_distinct_entity_pairs",
+    "entity_name_rules",  # LUM-967
+    "entity_merges",  # LUM-965: undo records (user_id column only; JSONB copies re-keyed at undo)
+    "entity_hidden",  # LUM-966: a member's Hide of another member's shared entry
+    "entity_deletions",  # LUM-966: ids-only delete retry tombstones
     # KG quality / review
     "review_queue",
     "review_decisions",
@@ -199,6 +203,26 @@ def _users_is_empty(conn) -> bool:
         return cur.fetchone() is None
 
 
+def _setup_admin_user_id(conn) -> str | None:
+    """The enabled admin recorded in ``instance_setup`` (LUM-981), or ``None``.
+
+    ``to_regclass`` guards the query because the remap also runs on databases
+    where migration 085 has not applied yet.
+    """
+    with conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('public.instance_setup')")
+        row = cur.fetchone()
+        if not row or row[0] is None:
+            return None
+        cur.execute(
+            "SELECT s.admin_user_id FROM instance_setup s "
+            "JOIN users u ON u.id = s.admin_user_id "
+            "WHERE s.id = 1 AND NOT u.disabled"
+        )
+        row = cur.fetchone()
+    return row[0] if row and row[0] else None
+
+
 def _resolve_target_user_id(conn) -> str | None:
     """Resolve the target user_id per the documented precedence order.
 
@@ -256,6 +280,13 @@ def _resolve_target_user_id(conn) -> str | None:
             )
 
     auth_enabled = os.environ.get("AUTH_ENABLED", "false").strip().lower() == "true"
+    if auth_enabled:
+        # LUM-981: the admin created at first-visit setup. After the env tiers,
+        # so a set bootstrap email still wins; parity with bootstrap-env installs.
+        setup_admin = _setup_admin_user_id(conn)
+        if setup_admin:
+            _log.info("Resolved target via instance_setup admin → user_id=%s", setup_admin)
+            return setup_admin
     if not auth_enabled:
         if not _users_table_exists(conn) or _users_is_empty(conn):
             _log.info(
@@ -316,6 +347,49 @@ def _bootstrap_admin_pending(conn) -> bool:
     return _users_table_exists(conn) and _users_is_empty(conn)
 
 
+def _setup_pending(conn) -> bool:
+    """True with sign-in on, no users and no bootstrap setting: setup will create the admin.
+
+    Mirrors ``services.users.bootstrap_env_intended`` (this script runs before
+    the app and keeps its imports minimal): any of email, password or password
+    file means the admin comes from the environment, not from setup.
+    """
+    if os.environ.get("AUTH_ENABLED", "false").strip().lower() != "true":
+        return False
+    if any(
+        os.environ.get(name, "").strip()
+        for name in (
+            "LUMOGIS_BOOTSTRAP_ADMIN_EMAIL",
+            "LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD",
+            "LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD_FILE",
+        )
+    ):
+        return False
+    return _users_table_exists(conn) and _users_is_empty(conn)
+
+
+def run_post_bootstrap_safely(context: str) -> int:
+    """Run the in-app remap pass without ever raising (main.py and the setup claim).
+
+    ``main()`` can end in ``sys.exit`` (``_wait_for_postgres``) and can return 2;
+    both are logged here, once, with ``context`` naming the caller. Returns the
+    exit code, or 1 when it raised.
+    """
+    try:
+        rc = main(post_bootstrap=True)
+    except (Exception, SystemExit):  # _wait_for_postgres() ends in sys.exit(1)
+        _log.exception("%s: default-user remap failed", context)
+        return 1
+    if rc != 0:
+        _log.warning(
+            "%s: default-user remap exited %d — legacy 'default' rows may remain "
+            "until the next restart",
+            context,
+            rc,
+        )
+    return rc
+
+
 def main(post_bootstrap: bool = False) -> int:
     """Run the remap. ``post_bootstrap`` is True for the orchestrator's second pass."""
     _wait_for_postgres()
@@ -335,6 +409,14 @@ def main(post_bootstrap: bool = False) -> int:
                 _log.info(
                     "%d legacy user_id='default' rows wait for the bootstrap admin. "
                     "The orchestrator remaps them after it creates the admin.",
+                    leftover,
+                )
+                return 0
+            if _setup_pending(conn):
+                conn.commit()
+                _log.info(
+                    "%d legacy user_id='default' rows wait for the admin created at "
+                    "setup. The claim moves them as soon as the account exists.",
                     leftover,
                 )
                 return 0

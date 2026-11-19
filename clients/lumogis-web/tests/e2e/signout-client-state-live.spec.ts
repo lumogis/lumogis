@@ -93,7 +93,7 @@ test.describe("LUM-886 sign-out client state (live)", () => {
       // write is ChatPage's unmount write racing the wipe (D8 in a real browser).
       await page.goto("/chat");
       await expect(page.getByTestId("chat-page")).toBeVisible();
-      await page.getByPlaceholder("Ask Lumogis…").fill("admin half-typed secret");
+      await page.getByLabel("Message", { exact: true }).fill("admin half-typed secret");
       await signOut(page);
 
       // --- on the login form, before the next sign-in
@@ -105,7 +105,7 @@ test.describe("LUM-886 sign-out client state (live)", () => {
       // --- the member signs in
       await loginAs(page, memberCreds.email, memberCreds.password);
       await expect(page.getByTestId("chat-page")).toBeVisible({ timeout: 30_000 });
-      await expect(page.getByPlaceholder("Ask Lumogis…")).toHaveValue("");
+      await expect(page.getByLabel("Message", { exact: true })).toHaveValue("");
       const memberThreads = await threadIds(page);
       for (const id of adminThreadIds) expect(memberThreads).not.toContain(id);
       const markerB = await page.evaluate((k) => localStorage.getItem(k), MARKER_KEY);

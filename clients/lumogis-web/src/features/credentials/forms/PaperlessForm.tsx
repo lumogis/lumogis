@@ -26,6 +26,10 @@
 
 import { useState, type FormEvent } from "react";
 
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+
+import { Field, FormError } from "./FormParts";
 import { REPLACE_NOTICE, isSecretEntered, secretRequiredMessage } from "./secrets";
 
 /** Ties the token-provenance hint to the token input via `aria-describedby`. */
@@ -72,31 +76,35 @@ export function PaperlessForm({
   };
 
   return (
-    <form onSubmit={submit} style={{ display: "grid", gap: "0.5rem" }}>
-      <label>
-        Server address
-        <input
-          value={base}
-          onChange={(e) => setBase(e.target.value)}
-          type="url"
-          placeholder="https://paperless.example"
-        />
-      </label>
-      <label>
-        API token
-        <input
-          value={token}
-          onChange={(e) => setToken(e.target.value)}
-          type="password"
-          autoComplete="new-password"
-          maxLength={1024}
-          // LUM-282. `aria-describedby`, not a bare sibling <span>: the hint
-          // exists for the person setting this up for the first time, and a
-          // screen-reader user meets the field before they meet anything
-          // sitting after it. Described-by announces it WITH the field.
-          aria-describedby={TOKEN_HINT_ID}
-        />
-      </label>
+    <form onSubmit={submit} className="grid gap-3">
+      <Field label="Server address">
+        {({ id }) => (
+          <Input
+            id={id}
+            value={base}
+            onChange={(e) => setBase(e.target.value)}
+            type="url"
+            placeholder="https://paperless.example"
+          />
+        )}
+      </Field>
+      <Field label="API token">
+        {({ id }) => (
+          <Input
+            id={id}
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            type="password"
+            autoComplete="new-password"
+            maxLength={1024}
+            // LUM-282. `aria-describedby`, not a bare sibling <span>: the hint
+            // exists for the person setting this up for the first time, and a
+            // screen-reader user meets the field before they meet anything
+            // sitting after it. Described-by announces it WITH the field.
+            aria-describedby={TOKEN_HINT_ID}
+          />
+        )}
+      </Field>
       {/* Deliberately NOT behind `isEdit`, unlike REPLACE_NOTICE below. The
           audience for "where do I find this?" is whoever has never had a token
           — exactly the `isEdit === false` case. Copying the guard along with
@@ -104,19 +112,15 @@ export function PaperlessForm({
 
           No external link: the user's paperless lives at an address only they
           know, and a generic docs URL is a second thing to keep current. */}
-      <span id={TOKEN_HINT_ID} style={{ fontSize: "0.8rem" }}>
+      <p id={TOKEN_HINT_ID} className="m-0 text-xs text-muted-foreground">
         Paperless issues this from your profile menu → <strong>My Profile</strong> →{" "}
         <strong>API Auth Token</strong>.
-      </span>
-      {isEdit && (
-        <span style={{ fontSize: "0.8rem" }}>{REPLACE_NOTICE}</span>
-      )}
-      {error && (
-        <p role="alert" style={{ fontSize: "0.85rem" }}>
-          {error}
-        </p>
-      )}
-      <button type="submit">Apply</button>
+      </p>
+      {isEdit && <p className="m-0 text-xs text-muted-foreground">{REPLACE_NOTICE}</p>}
+      {error && <FormError>{error}</FormError>}
+      <Button type="submit" className="justify-self-start">
+        Apply
+      </Button>
     </form>
   );
 }

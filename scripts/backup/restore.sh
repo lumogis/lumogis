@@ -65,6 +65,9 @@ if [[ "${RESTORE_SKIP_QUIESCE:-}" != "1" ]]; then
   if restore_quiesce_violation; then
     exit 2
   fi
+  if restore_falkordb_violation "$manifest"; then
+    exit 2
+  fi
 fi
 
 # Does the snapshot hold a file tree? Schema 1 snapshots and snapshots whose file
@@ -131,7 +134,7 @@ if [[ "$falkor_skipped" != "true" ]]; then
   if [[ -d "$dest_dir" || -d /falkordb-data ]]; then
     mkdir -p "$dest_dir"
     cp "$src" "$dump_dest"
-    log_info "falkordb dump copied to ${dump_dest} — restart falkordb to load"
+    log_info "falkordb dump copied to ${dump_dest} — start falkordb to load it (it must have been stopped before the restore)"
   elif ! "${SCRIPT_DIR}/falkordb-dump-restore.sh" import "$src"; then
     log_error "partial restore: postgres+qdrant ok; falkordb failed — restart falkordb after fixing dump"
     exit 1

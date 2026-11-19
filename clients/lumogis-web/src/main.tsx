@@ -7,7 +7,7 @@ import { App } from "./App";
 import { initTheme } from "./design/theme";
 import { initSidebarCollapsed } from "./design/sidebarCollapse";
 import { registerLumogisServiceWorker } from "./pwa/registerServiceWorker";
-import "./design/tokens.css";
+import "./design/ui.css";
 
 initTheme();
 initSidebarCollapsed();

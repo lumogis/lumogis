@@ -11,6 +11,7 @@ from unittest.mock import patch
 from models.entities import ExtractedEntity
 from models.llm import LLMResponse
 from services.entities import extract_entities
+from services.entities import personal_entity_point
 from services.entities import resolve_entity
 from services.entities import store_entities
 from tests.conftest import MockEmbedder
@@ -238,6 +239,75 @@ class TestStoreEntities:
         assert "Diana Prince" in merged_aliases
         assert "leadership" in merged_tags
         assert "strategy" in merged_tags
+
+    def _alias_merge_setup(self, *, stored_type="PERSON"):
+        existing = {
+            "entity_id": str(uuid.uuid4()),
+            "name": "Dr. Meier",
+            "entity_type": stored_type,
+            "aliases": ["Meier"],
+            "context_tags": ["clinic", "hospital"],
+            "mention_count": 2,
+        }
+        ms, vs = self._setup(existing_entity=existing)
+        return existing, ms, vs
+
+    @patch("services.entities.hooks.fire_background")
+    def test_alias_match_fires_canonical_name(self, mock_fire):
+        _, _, _ = self._alias_merge_setup()
+        entity = ExtractedEntity(
+            name="Meier", entity_type="PERSON", context_tags=["clinic", "hospital"]
+        )
+
+        store_entities([entity], evidence_id="d1", evidence_type="DOCUMENT", user_id="u")
+
+        assert mock_fire.call_args.kwargs["name"] == "Dr. Meier"
+
+    @patch("services.entities.hooks.fire_background")
+    def test_new_entity_fires_surface_name(self, mock_fire):
+        self._setup(existing_entity=None)
+        entity = ExtractedEntity(name="Meier", entity_type="PERSON", context_tags=["clinic"])
+
+        store_entities([entity], evidence_id="d1", evidence_type="DOCUMENT", user_id="u")
+
+        assert mock_fire.call_args.kwargs["name"] == "Meier"
+
+    @patch("services.entities.hooks.fire_background")
+    def test_alias_match_point_carries_canonical_name(self, mock_fire):
+        _, _, vs = self._alias_merge_setup()
+        entity = ExtractedEntity(
+            name="Meier", entity_type="PERSON", context_tags=["clinic", "hospital", "ward"]
+        )
+
+        store_entities([entity], evidence_id="d1", evidence_type="DOCUMENT", user_id="u")
+
+        point = vs._collections["entities"][0]
+        assert point["id"] == str(uuid.uuid5(uuid.NAMESPACE_URL, "entity::u::meier"))
+        assert point["payload"]["name"] == "Dr. Meier"
+        assert "Meier" in point["payload"]["aliases"]
+        assert "ward" in point["payload"]["context_tags"]
+
+    @patch("services.entities.hooks.fire_background")
+    def test_alias_match_uses_stored_type(self, mock_fire):
+        _, _, vs = self._alias_merge_setup(stored_type="ORG")
+        entity = ExtractedEntity(
+            name="Meier", entity_type="PROJECT", context_tags=["clinic", "hospital"]
+        )
+
+        store_entities([entity], evidence_id="d1", evidence_type="DOCUMENT", user_id="u")
+
+        assert mock_fire.call_args.kwargs["entity_type"] == "ORG"
+        assert vs._collections["entities"][0]["payload"]["entity_type"] == "ORG"
+
+    @patch("services.entities.hooks.fire_background")
+    def test_new_path_uses_incoming_type(self, mock_fire):
+        _, vs = self._setup(existing_entity=None)
+        entity = ExtractedEntity(name="Zed", entity_type="PROJECT", context_tags=["a"])
+
+        store_entities([entity], evidence_id="d1", evidence_type="DOCUMENT", user_id="u")
+
+        assert mock_fire.call_args.kwargs["entity_type"] == "PROJECT"
+        assert vs._collections["entities"][0]["payload"]["entity_type"] == "PROJECT"
 
     @patch("services.entities.hooks.fire_background")
     def test_relation_type_document(self, mock_fire):
@@ -932,3 +1002,71 @@ class TestGetEntitiesEndpoint:
             resp = client.get("/entities?limit=0")
 
         assert resp.status_code == 422
+
+
+def test_personal_entity_point_payload_and_id():
+    point_id, embed_text, payload = personal_entity_point(
+        entity_id="e1",
+        point_name="Alex",
+        name="Alex",
+        entity_type="PERSON",
+        aliases=["Al"],
+        context_tags=["a", "b"],
+        user_id="u",
+    )
+    assert point_id == str(uuid.uuid5(uuid.NAMESPACE_URL, "entity::u::alex"))
+    assert embed_text == "Alex (PERSON): a, b"
+    assert set(payload) == {
+        "entity_id",
+        "name",
+        "entity_type",
+        "aliases",
+        "context_tags",
+        "user_id",
+        "scope",
+    }
+    assert payload["scope"] == "personal"
+
+
+def test_personal_entity_point_name_vs_point_name():
+    point_id, embed_text, payload = personal_entity_point(
+        entity_id="e1",
+        point_name="Meier",
+        name="Dr. Meier",
+        entity_type="PERSON",
+        aliases=[],
+        context_tags=[],
+        user_id="u",
+    )
+    assert point_id == str(uuid.uuid5(uuid.NAMESPACE_URL, "entity::u::meier"))
+    assert embed_text == "Dr. Meier (PERSON)"
+    assert payload["name"] == "Dr. Meier"
+
+
+class TestAliasKeptOnMatch:
+    def teardown_method(self):
+        _config._instances.clear()
+
+    @patch("services.entities.hooks.fire_background")
+    def test_lowercase_alias_survives_the_mention_that_matched_it(self, mock_fire):
+        """A renamed entry keeps its old (lowercase) name as an alias; the next
+        mention under that name must not delete it, or the one after creates a
+        second entry (LUM-161 review)."""
+        existing = {
+            "entity_id": str(uuid.uuid4()),
+            "name": "Alexander",
+            "entity_type": "PERSON",
+            "aliases": ["alex"],
+            "context_tags": ["a", "b"],
+            "mention_count": 2,
+        }
+        ms = TrackingMetadataStore(existing_entity=existing)
+        _config._instances.update(
+            {"metadata_store": ms, "vector_store": MockVectorStore(), "embedder": MockEmbedder()}
+        )
+        entity = ExtractedEntity(name="alex", entity_type="PERSON", context_tags=["a", "b"])
+
+        store_entities([entity], evidence_id="d", evidence_type="DOCUMENT", user_id="u")
+
+        update_params = next(p for q, p in ms.executed if "UPDATE entities" in q)
+        assert update_params[0] == ["alex"]

@@ -7,8 +7,10 @@
 // demonstrably delivered a message, and that verb has nowhere to live in a
 // generic key/value credential form.
 
+import { ChevronDown } from "lucide-react";
 import { useEffect, useState, type FormEvent, type JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 
 import { ApiError } from "../../api/client";
 import {
@@ -19,9 +21,29 @@ import {
   type SystemMailPublic,
 } from "../../api/systemMail";
 import { useAuth } from "../../auth/AuthProvider";
+import { ErrorState } from "../../components/page/ErrorState";
+import { LoadingPlaceholder, SkeletonText } from "../../components/page/LoadingState";
+import { PageSection } from "../../components/page/PageSection";
+import { Alert, AlertDescription } from "../../components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "../../components/ui/alert-dialog";
+import { Badge } from "../../components/ui/badge";
+import { Button } from "../../components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../../components/ui/collapsible";
+import { Input } from "../../components/ui/input";
+import { Label } from "../../components/ui/label";
+import { formatDateTime } from "../../util/formatTimestamp";
 
 function errMsg(e: unknown): string {
-  if (e instanceof ApiError) return e.detail;
+  if (e instanceof ApiError) return typeof e.detail === "string" ? e.detail : JSON.stringify(e.detail);
   if (e instanceof Error) return e.message;
   return "Request failed";
 }
@@ -39,8 +61,8 @@ export function AdminSystemMailView(): JSX.Element {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [fromAddr, setFromAddr] = useState("");
-  const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState(false);
 
   useEffect(() => {
     const d = q.data;
@@ -69,46 +91,45 @@ export function AdminSystemMailView(): JSX.Element {
       qc.setQueryData(["admin", "system-mail"], data);
       setPassword("");
       setError(null);
-      setNotice(
+      toast(
         data.email_reset_enabled
           ? "Saved."
-          : "Saved. Run Send test to enable email password reset.",
+          : "Saved. Send a test message to turn on email password reset.",
       );
     },
-    onError: (e) => {
-      setNotice(null);
-      setError(errMsg(e));
-    },
+    onError: (e) => setError(errMsg(e)),
   });
 
   const test = useMutation({
     mutationFn: () => testSystemMail(client),
     onSuccess: async () => {
       setError(null);
-      setNotice("Test message sent. Check the inbox for your admin account.");
+      toast("Test message sent. Check the inbox for your admin account.");
       await qc.invalidateQueries({ queryKey: ["admin", "system-mail"] });
     },
-    onError: (e) => {
-      setNotice(null);
-      setError(errMsg(e));
-    },
+    onError: (e) => setError(errMsg(e)),
   });
 
   const remove = useMutation({
     mutationFn: () => deleteSystemMail(client),
     onSuccess: async () => {
       setError(null);
-      setNotice("System mail removed. Email password reset is off.");
+      toast("Email settings removed. Email password reset is off.");
       await qc.invalidateQueries({ queryKey: ["admin", "system-mail"] });
     },
-    onError: (e) => {
-      setNotice(null);
-      setError(errMsg(e));
-    },
+    onError: (e) => setError(errMsg(e)),
   });
 
-  if (q.isLoading) return <p>Loading system mail…</p>;
-  if (q.isError) return <p role="alert">{errMsg(q.error)}</p>;
+  if (q.isLoading) {
+    return (
+      <LoadingPlaceholder label="Loading email settings…" className="max-w-2xl">
+        <SkeletonText lines={5} />
+      </LoadingPlaceholder>
+    );
+  }
+  if (q.isError || !q.data) {
+    return <ErrorState message="Lumogis couldn't load these email settings." onRetry={() => void q.refetch()} />;
+  }
 
   const data = q.data as SystemMailPublic;
   const busy = save.isPending || test.isPending || remove.isPending;
@@ -119,9 +140,8 @@ export function AdminSystemMailView(): JSX.Element {
   }
 
   return (
-    <section data-testid="admin-system-mail">
-      <h1>System mail</h1>
-      <p>
+    <section data-testid="admin-system-mail" className="flex flex-col gap-2">
+      <p className="m-0 max-w-2xl text-sm text-muted-foreground">
         The mailbox Lumogis sends from as itself — password-reset links today. This is
         not a household member’s mailbox: using one would be circular, since the
         account most likely to need a reset email is the one whose credentials would
@@ -130,94 +150,140 @@ export function AdminSystemMailView(): JSX.Element {
 
       <EnablementSummary data={data} />
 
-      <form onSubmit={onSubmit} className="lumogis-auth-recovery" style={{ margin: "1rem 0" }}>
-        <label htmlFor="system-mail-host">
-          SMTP host
-          <input
-            id="system-mail-host"
-            required
-            value={host}
-            onChange={(e) => setHost(e.target.value)}
-            disabled={busy}
-          />
-        </label>
-        <label htmlFor="system-mail-port">
-          Port
-          <input
-            id="system-mail-port"
-            type="number"
-            min={1}
-            max={65535}
-            required
-            value={port}
-            onChange={(e) => setPort(Number(e.target.value))}
-            disabled={busy}
-          />
-        </label>
-        <p className="lumogis-auth-recovery__hint">
-          Port 465 uses implicit TLS; anything else uses STARTTLS.
-        </p>
-        <label htmlFor="system-mail-username">
-          Username
-          <input
-            id="system-mail-username"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            disabled={busy}
-          />
-        </label>
-        <label htmlFor="system-mail-password">
-          Password
-          <input
-            id="system-mail-password"
-            type="password"
-            autoComplete="new-password"
-            placeholder={data.password_set ? "•••••••• (leave blank to keep)" : ""}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            disabled={busy}
-          />
-        </label>
-        <label htmlFor="system-mail-from">
-          From address
-          <input
-            id="system-mail-from"
-            type="email"
-            required
-            value={fromAddr}
-            onChange={(e) => setFromAddr(e.target.value)}
-            disabled={busy}
-          />
-        </label>
-        {notice !== null && <p role="status">{notice}</p>}
-        {error !== null && (
-          <p role="alert" className="lumogis-auth-recovery__error">
-            {error}
-          </p>
-        )}
-        <button type="submit" disabled={busy} data-testid="system-mail-save">
-          {save.isPending ? "Saving…" : "Save"}
-        </button>
-      </form>
+      {error !== null ? (
+        <Alert variant="destructive" className="max-w-2xl">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
 
-      <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-        <button
-          type="button"
-          onClick={() => test.mutate()}
-          disabled={busy || !data.configured}
-          data-testid="system-mail-test"
+      <PageSection title="Sending account" description="The mail server Lumogis signs in to.">
+        <form onSubmit={onSubmit} className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="system-mail-host">Mail server</Label>
+            <Input
+              id="system-mail-host"
+              required
+              value={host}
+              onChange={(e) => setHost(e.target.value)}
+              disabled={busy}
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="system-mail-port">Port</Label>
+            <Input
+              id="system-mail-port"
+              type="number"
+              min={1}
+              max={65535}
+              required
+              value={port}
+              onChange={(e) => setPort(Number(e.target.value))}
+              disabled={busy}
+              className="max-w-32"
+            />
+            <p className="m-0 text-xs text-muted-foreground">
+              Port 465 uses implicit TLS; anything else uses STARTTLS.
+            </p>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="system-mail-username">Username</Label>
+            <Input
+              id="system-mail-username"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              disabled={busy}
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="system-mail-password">Password</Label>
+            <Input
+              id="system-mail-password"
+              type="password"
+              autoComplete="new-password"
+              placeholder={data.password_set ? "•••••••• (leave blank to keep)" : ""}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              disabled={busy}
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="system-mail-from">From address</Label>
+            <Input
+              id="system-mail-from"
+              type="email"
+              required
+              value={fromAddr}
+              onChange={(e) => setFromAddr(e.target.value)}
+              disabled={busy}
+            />
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="submit" disabled={busy} data-testid="system-mail-save">
+              {save.isPending ? "Saving…" : "Save"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => test.mutate()}
+              disabled={busy || !data.configured}
+              data-testid="system-mail-test"
+            >
+              {test.isPending ? "Sending…" : "Send test"}
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => setConfirmRemove(true)}
+              disabled={busy || !data.configured}
+              data-testid="system-mail-delete"
+            >
+              Remove
+            </Button>
+          </div>
+        </form>
+      </PageSection>
+
+      <AlertDialog open={confirmRemove} onOpenChange={setConfirmRemove}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove these email settings?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Lumogis forgets the mail server and password, and email password reset turns off until you
+              set them up and send a test message again.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructiveSolid"
+              onClick={() => {
+                setConfirmRemove(false);
+                remove.mutate();
+              }}
+            >
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <Collapsible className="max-w-2xl">
+        <CollapsibleTrigger
+          render={<Button type="button" variant="ghost" size="sm" className="-ml-2 group/trigger" />}
         >
-          {test.isPending ? "Sending…" : "Send test"}
-        </button>
-        <button
-          type="button"
-          onClick={() => remove.mutate()}
-          disabled={busy || !data.configured}
-          data-testid="system-mail-delete"
-        >
-          Remove
-        </button>
-      </div>
+          <ChevronDown aria-hidden="true" className="transition-transform group-aria-expanded/trigger:rotate-180" />
+          Details
+        </CollapsibleTrigger>
+        <CollapsibleContent keepMounted className="flex flex-col gap-2 pt-2 text-sm text-muted-foreground">
+          <p className="m-0">
+            For whoever runs the server. Reset links are built from the public origin only, so it must be set
+            as <code>LUMOGIS_PUBLIC_ORIGIN</code>.
+          </p>
+          <p className="m-0">
+            The public request page needs the verification key <code>LUMOGIS_ALTCHA_HMAC_KEY</code>.
+          </p>
+        </CollapsibleContent>
+      </Collapsible>
     </section>
   );
 }
@@ -226,50 +292,59 @@ export function AdminSystemMailView(): JSX.Element {
  * Enablement is a conjunction, so an operator staring at a disabled feature
  * needs to see which conjunct is missing. The public status endpoint refuses to
  * say — that is deployment information, and this is where it belongs.
+ * Env var names live in the page's collapsed Details, not in these hints.
  */
 function EnablementSummary({ data }: { data: SystemMailPublic }): JSX.Element {
   const rows: { label: string; ok: boolean; hint: string }[] = [
     {
-      label: "SMTP configured",
+      label: "Mail server set up",
       ok: data.configured,
       hint: "Fill in the form below and save.",
     },
     {
-      label: "Send test passed",
+      label: "Test message delivered",
       ok: Boolean(data.last_test_ok_at),
-      hint: "Use Send test — changing the host, port, username, password, or From address clears this.",
+      hint: "Use Send test. Changing the server, port, username, password or From address clears this.",
     },
     {
-      label: "Public origin set",
+      label: "Public address set",
       ok: data.public_origin_set,
-      hint: "Set LUMOGIS_PUBLIC_ORIGIN — reset links are built from it and nothing else.",
+      hint: "The server needs to know its public address, because reset links are built from it (see Details).",
     },
     {
       label: "Verification key set",
       ok: data.altcha_hmac_set,
-      hint: "Set LUMOGIS_ALTCHA_HMAC_KEY — the public request page needs it.",
+      hint: "The public request page needs a verification key on the server (see Details).",
     },
   ];
 
   return (
-    <div data-testid="system-mail-enablement">
-      <p>
-        <strong>
-          Email password reset:{" "}
-          {data.email_reset_enabled ? "enabled" : "not enabled"}
-        </strong>
-        {data.last_test_ok_at !== null && (
-          <> · last successful test {new Date(data.last_test_ok_at).toLocaleString()}</>
-        )}
-      </p>
-      <ul>
+    <PageSection
+      title="Email password reset"
+      description={
+        <>
+          <Badge variant={data.email_reset_enabled ? "default" : "outline"}>
+            {data.email_reset_enabled ? "On" : "Not on yet"}
+          </Badge>
+          {data.last_test_ok_at !== null ? (
+            <> Last successful test {formatDateTime(data.last_test_ok_at)}</>
+          ) : null}
+        </>
+      }
+    >
+      <ul role="list" data-testid="system-mail-enablement" className="m-0 flex list-none flex-col gap-1 p-0 text-sm">
+        <li className="sr-only">
+          Email password reset: {data.email_reset_enabled ? "enabled" : "not enabled"}
+        </li>
         {rows.map((r) => (
           <li key={r.label}>
-            {r.ok ? "✓" : "✗"} {r.label}
-            {!r.ok && <> — {r.hint}</>}
+            <span aria-hidden="true">{r.ok ? "✓" : "✗"}</span>{" "}
+            <span className="sr-only">{r.ok ? "Done: " : "Missing: "}</span>
+            {r.label}
+            {!r.ok && <span className="text-muted-foreground"> — {r.hint}</span>}
           </li>
         ))}
       </ul>
-    </div>
+    </PageSection>
   );
 }

@@ -7,6 +7,8 @@
 // (primary) / [Save to Drafts] (secondary), and live Sending→Sent✓/Failed with a
 // Retry + Save-to-Drafts fallback that never loses the composed text.
 
+import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { formatBytes } from "../../api/emailAttachments";
 
 export type SendStatus = "idle" | "sending" | "sent" | "failed";
@@ -81,26 +83,29 @@ export function SendConfirmCard({
   const saveDraftUnavailable = failureCode === "no_drafts_folder";
 
   return (
-    <div className="lumogis-send-confirm" role="group" aria-label="Confirm send">
-      <p className="lumogis-send-confirm__prompt">
+    <div className="flex flex-col gap-3" role="group" aria-label="Confirm send">
+      <p className="text-base">
         {verb} this to <strong>{to}</strong>, from <strong>{fromLabel}</strong>?
       </p>
 
       {/* LUM-698: cc/bcc are real recipients of an irreversible send — showing
           only `to` would under-represent who receives this. */}
       {ccList.length > 0 ? (
-        <p className="lumogis-send-confirm__recipients" data-testid="confirm-cc">
+        <p className="text-sm" data-testid="confirm-cc">
           Cc: <strong>{ccList.join(", ")}</strong>
         </p>
       ) : null}
       {bccList.length > 0 ? (
-        <p className="lumogis-send-confirm__recipients" data-testid="confirm-bcc">
+        <p className="text-sm" data-testid="confirm-bcc">
           Bcc: <strong>{bccList.join(", ")}</strong>
         </p>
       ) : null}
 
       {firstContact ? (
-        <p className="lumogis-send-confirm__first-contact" role="note">
+        <p
+          className="rounded-lg border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-sm"
+          role="note"
+        >
           {/* Deliberately recipient-AGNOSTIC (LUM-698). The flag can be raised by
               any recipient incl. a cc/bcc, so naming `to` actively misattributed
               it. The backend returns only a boolean by design (_annotate_send
@@ -112,68 +117,55 @@ export function SendConfirmCard({
 
       {/* LUM-695: sending a file is not something to discover after the fact. */}
       {(attachmentCount ?? 0) > 0 ? (
-        <p className="lumogis-send-confirm__attachments" data-testid="confirm-attachments">
+        <p className="text-sm text-muted-foreground" data-testid="confirm-attachments">
           {attachmentCount} {attachmentCount === 1 ? "file" : "files"}
           {attachmentBytes ? `, ${formatBytes(attachmentBytes)}` : ""} attached
         </p>
       ) : null}
 
-      <div className="lumogis-send-confirm__preview">
-        <div className="lumogis-send-confirm__subject">{subject}</div>
+      <div className="flex flex-col gap-2 rounded-lg border bg-muted/40 p-3">
+        <div className="font-medium">{subject}</div>
         {/* The exact body is re-displayed — the read-checkpoint before sending.
             LUM-698: this is the COMPOSED body (note + quoted original), threaded
             in by the parent, so the preview cannot drift from the payload. */}
-        <pre className="lumogis-send-confirm__body">{body}</pre>
+        <pre className="max-h-64 overflow-y-auto font-sans text-sm whitespace-pre-wrap break-words">
+          {body}
+        </pre>
       </div>
 
       {status === "sent" ? (
-        <p className="lumogis-send-confirm__status" role="status">
+        <p className="text-sm font-medium" role="status">
           {savedDraft ? "Saved to Drafts ✓" : "Sent ✓"}
         </p>
       ) : null}
 
       {status === "failed" ? (
-        <p className="lumogis-send-confirm__status lumogis-send-confirm__status--error" role="alert">
+        <Alert variant="destructive">
           {saveDraftUnavailable
             ? "This mailbox has no Drafts folder."
             : `Couldn’t send${failureMessage ? `: ${failureMessage}` : "."}`}
-        </p>
+        </Alert>
       ) : null}
 
       {status === "sending" ? (
-        <p className="lumogis-send-confirm__status" role="status">
+        <p className="text-sm text-muted-foreground" role="status">
           Sending…
         </p>
       ) : null}
 
       {status !== "sent" ? (
-        <div className="lumogis-send-confirm__actions">
-          <button
-            type="button"
-            className="lumogis-send-confirm__send"
-            disabled={busy}
-            onClick={onSend}
-          >
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" disabled={busy} onClick={onSend}>
             {status === "failed" ? "Retry" : "Send"}
-          </button>
+          </Button>
           {!saveDraftUnavailable ? (
-            <button
-              type="button"
-              className="lumogis-send-confirm__save-draft"
-              disabled={busy}
-              onClick={onSaveDraft}
-            >
+            <Button type="button" variant="outline" disabled={busy} onClick={onSaveDraft}>
               Save to Drafts
-            </button>
+            </Button>
           ) : null}
-          <button
-            type="button"
-            className="lumogis-send-confirm__back"
-            disabled={busy}
-            onClick={onBack}
-          >
+          <Button type="button" variant="ghost" disabled={busy} onClick={onBack}>
             Back
-          </button>
+          </Button>
         </div>
       ) : null}
     </div>

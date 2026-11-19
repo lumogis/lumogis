@@ -30,10 +30,12 @@ from models.mcp_write import ExtractedRelation
 from services.banks import MCP_MEMORY_SOURCE
 from services.entities import extract_entities
 from services.entities import store_entities
+from services.entity_name_rules import NameRulesUnavailable
 from services.llm_json import strip_code_fence
 
 import config
 from services import entity_edges
+from services import entity_name_rules
 from services import memories
 from services import task_models
 
@@ -79,17 +81,30 @@ def add_memory(
 
     # Entity half — LLM-extracted, so the quality gate stays ON.
     extracted = extract_entities(content, user_id=user_id)
-    entity_ids = store_entities(
-        extracted, evidence_id=memory_id, evidence_type=_EVIDENCE_TYPE, user_id=user_id
-    )
+    try:
+        entity_ids = store_entities(
+            extracted, evidence_id=memory_id, evidence_type=_EVIDENCE_TYPE, user_id=user_id
+        )
+    except NameRulesUnavailable:
+        # LUM-966: the member's name rules could not be read, so entities are
+        # not stored (fail closed). The memory itself IS stored, so return it
+        # without an error: a client retry would duplicate it.
+        _log.warning("add_memory: entities deferred: name rules unavailable")
+        return {"memory_id": memory_id, "entity_ids": [], "relation_ids": []}
 
     # Relation half — NEW lightweight prompt; fail-soft.
     relation_ids: list[str] = []
     relations = extract_relations(content, extracted, user_id=user_id)
     for rel in relations:
         try:
-            src_id = _resolve_or_create_entity(rel.src_name, user_id=user_id, evidence_id=memory_id)
-            dst_id = _resolve_or_create_entity(rel.dst_name, user_id=user_id, evidence_id=memory_id)
+            # LLM-chosen endpoints go through the member's name rules (LUM-966);
+            # the explicit add_relation tool does not (explicit wins, ADR 269).
+            src_id = _resolve_or_create_entity(
+                rel.src_name, user_id=user_id, evidence_id=memory_id, apply_rules=True
+            )
+            dst_id = _resolve_or_create_entity(
+                rel.dst_name, user_id=user_id, evidence_id=memory_id, apply_rules=True
+            )
             relation_ids.append(
                 entity_edges.store_edge(
                     user_id=user_id,
@@ -196,9 +211,24 @@ def extract_relations(
         return []
 
 
-def _resolve_or_create_entity(name: str, *, user_id: str, evidence_id: str) -> str:
+class EndpointBlocked(Exception):
+    """An LLM-chosen relation endpoint is a name the member deleted (LUM-966).
+
+    Carries no name: a name is user content and must not reach a log line.
+    """
+
+
+def _resolve_or_create_entity(
+    name: str, *, user_id: str, evidence_id: str, apply_rules: bool = False
+) -> str:
     """Return the user's entity id for ``name``, creating it (bypassing the
-    quality gate) when absent so an edge endpoint is always real."""
+    quality gate) when absent so an edge endpoint is always real.
+
+    ``apply_rules`` (LUM-966): run a *new* endpoint through the member's name
+    rules first — a blocked name raises :class:`EndpointBlocked`, a retyped one is
+    stored at the corrected kind. ``add_memory`` passes ``True`` (the endpoints
+    are LLM-chosen); the explicit ``add_relation`` keeps ``False``.
+    """
     ms = config.get_metadata_store()
     row = ms.fetch_one(
         "SELECT entity_id FROM entities "
@@ -210,15 +240,21 @@ def _resolve_or_create_entity(name: str, *, user_id: str, evidence_id: str) -> s
     )
     if row and row.get("entity_id"):
         return str(row["entity_id"])
+    entity = ExtractedEntity(name=name, entity_type="CONCEPT")
+    if apply_rules:
+        kept = entity_name_rules.apply_name_rules([entity], user_id)
+        if not kept:
+            raise EndpointBlocked("relation endpoint is a name the member deleted")
+        entity = kept[0]
     ids = store_entities(
-        [ExtractedEntity(name=name, entity_type="CONCEPT")],
+        [entity],
         evidence_id=evidence_id,
         evidence_type=_EVIDENCE_TYPE,
         user_id=user_id,
         skip_quality_gate=True,
     )
     if not ids:
-        raise RuntimeError(f"could not resolve or create entity {name!r}")
+        raise RuntimeError("could not resolve or create a relation endpoint")
     return ids[0]
 
 

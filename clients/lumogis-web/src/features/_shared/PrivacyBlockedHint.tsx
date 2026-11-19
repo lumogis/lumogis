@@ -9,6 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 
 import { fetchMePrivacyMode } from "../../api/privacyMode";
+import { Alert, AlertDescription } from "../../components/ui/alert";
 import { useAuth, useUser } from "../../auth/AuthProvider";
 import { privacyBlockCopy, type PrivacyHintSurface } from "./privacyBlockCopy";
 
@@ -32,14 +33,18 @@ export function PrivacyBlockedHint({
   if (copy === null) return null;
 
   return (
-    <p className="lumogis-privacy-hint" role="status" data-testid="privacy-blocked-hint">
-      {copy.text}
-      {copy.linkTo !== null && copy.linkLabel !== null ? (
-        <>
-          {" "}
-          <Link to={copy.linkTo}>{copy.linkLabel}</Link>
-        </>
-      ) : null}
-    </p>
+    <Alert role="status" data-testid="privacy-blocked-hint">
+      <AlertDescription>
+        {copy.text}
+        {copy.linkTo !== null && copy.linkLabel !== null ? (
+          <>
+            {" "}
+            <Link to={copy.linkTo} className="text-accent-text underline underline-offset-2">
+              {copy.linkLabel}
+            </Link>
+          </>
+        ) : null}
+      </AlertDescription>
+    </Alert>
   );
 }

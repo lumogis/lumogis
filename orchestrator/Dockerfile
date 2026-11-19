@@ -19,8 +19,8 @@ RUN groupadd --system --gid 10001 lumogis \
  && useradd --system --uid 10001 --gid 10001 --no-create-home \
       --home-dir /var/lib/lumogis/home --shell /usr/sbin/nologin lumogis \
  && mkdir -p /var/lib/lumogis/home /var/lib/lumogis/hf-cache \
-      /var/lib/lumogis/email-staging /opt/lumogis/data \
- && chown -R 10001:10001 /var/lib/lumogis /opt/lumogis/data
+      /var/lib/lumogis/email-staging /opt/lumogis/data /caddy-home \
+ && chown -R 10001:10001 /var/lib/lumogis /opt/lumogis/data /caddy-home
 ENV HF_HOME=/var/lib/lumogis/hf-cache
 WORKDIR /app
 COPY orchestrator/requirements-core.txt orchestrator/requirements.txt .

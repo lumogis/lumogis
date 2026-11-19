@@ -11,6 +11,7 @@ REAL ``privacy_mode.resolve_job_model`` (policy patched, no DB) and a recording
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import re
@@ -493,15 +494,33 @@ def test_old_judge_default_tag_never_resolves(monkeypatch):
         config.get_model_config("llama3.1:8b")
 
 
-def test_temporal_judge_cloud_entry_under_local_only_is_blocked_and_audited(monkeypatch):
+def test_temporal_judge_cloud_entry_is_replaced_and_explicit_cloud_is_still_blocked(monkeypatch):
+    """LUM-983: the resolver never returns a cloud judge; get_llm_provider still blocks one."""
     tp = _tp()
     install(monkeypatch, models={"claude": dict(CLOUD)}, tasks={"temporal_judge": ["claude"]})
     set_policy(monkeypatch, "local_only")
     blocks = []
     monkeypatch.setattr(privacy_mode, "record_privacy_block", lambda **kw: blocks.append(kw))
-    assert task_models.resolve_task_model("temporal_judge", user_id="u1") == "claude"
-    assert tp.judge_contradictions("t", _CAND, "u1", _now()) is None
+    assert task_models.resolve_task_model("temporal_judge", user_id="u1") == "llama"
+    # Defence in depth: an explicit cloud model is still hard-blocked and audited.
+    assert tp.judge_contradictions("t", _CAND, "u1", _now(), model="claude") is None
     assert len(blocks) == 1 and blocks[0]["requested_model"] == "claude"
+
+
+def test_temporal_judge_cloud_entry_never_reaches_the_cloud_under_allow_cloud(monkeypatch):
+    """The leak from LUM-983: a keyed cloud judge listed first received episode text."""
+    tp = _tp()
+    install(monkeypatch, models={"claude": dict(CLOUD)}, tasks={"temporal_judge": ["claude"]})
+    grant_key(monkeypatch, present=True)
+    set_policy(monkeypatch, "allow_cloud")
+    asked: list[str] = []
+    monkeypatch.setattr(
+        config,
+        "get_llm_provider",
+        lambda name, *, user_id=None: asked.append(name) or _Provider("[]"),
+    )
+    assert tp.judge_contradictions("t", _CAND, "u1", _now()) == []
+    assert asked == ["llama"]
 
 
 def test_temporal_pipeline_never_calls_resolve_job_model(monkeypatch, llm):
@@ -557,22 +576,26 @@ def test_temporal_judge_default_under_default_privacy_reaches_the_local_judge(mo
 
 def test_temporal_judge_never_falls_through_its_list(monkeypatch):
     tp = _tp()
-    install(monkeypatch, tasks={"temporal_judge": ["qwen-judge", "llama"]}, real_dynamic=True)
+    install(
+        monkeypatch,
+        models={"big": dict(BIG)},
+        tasks={"temporal_judge": ["qwen-judge", "big"]},
+        real_dynamic=True,
+    )
     import ollama_client
 
     monkeypatch.setattr(ollama_client, "list_local_models", lambda *a, **k: [])
     set_policy(monkeypatch, "allow_cloud")
     asked: list[str] = []
-    real = config.get_llm_provider
-
-    def spy(name, *, user_id=None):
-        asked.append(name)
-        return real(name, user_id=user_id)
-
-    monkeypatch.setattr(config, "get_llm_provider", spy)
-    assert tp._judge_model("u1") == "qwen-judge"
-    assert tp.judge_contradictions("t", _CAND, "u1", _now()) is None
-    assert asked == ["qwen-judge"]
+    monkeypatch.setattr(
+        config,
+        "get_llm_provider",
+        lambda name, *, user_id=None: asked.append(name) or _Provider("[]"),
+    )
+    # An unknown first entry gives the code default, never the second entry (LUM-983).
+    assert tp._judge_model("u1") == "llama"
+    assert tp.judge_contradictions("t", _CAND, "u1", _now()) == []
+    assert asked == ["llama"]
 
 
 @pytest.mark.parametrize(
@@ -586,8 +609,11 @@ def test_temporal_judge_never_falls_through_its_list(monkeypatch):
         ("true", {"temporal_judge": ["big"]}, "true", True, False),
         (None, {"temporal_judge": ["big"]}, "true", False, False),
         ("true", {"temporal_judge": ["big"]}, None, False, False),
-        # A raw tag is not an alias: unresolvable, and not the reference.
-        ("true", {"temporal_judge": ["llama3.2:3b"]}, "true", True, True),
+        # A raw tag is not an alias: the judge uses the default reference `llama`
+        # instead (LUM-983). With Ollama listing nothing (this test's `dynamic={}`),
+        # boot check §3 logs only task_models_ollama_unavailable_at_boot; the plugin's
+        # boot call to _judge_model logs the warn-once line naming the entry.
+        ("true", {"temporal_judge": ["llama3.2:3b"]}, "true", False, False),
     ],
 )
 def test_auto_apply_with_non_reference_judge_warns_at_boot(
@@ -610,6 +636,44 @@ def test_auto_apply_with_non_reference_judge_warns_at_boot(
     msgs = [r.getMessage() for r in caplog.records]
     assert any("temporal_judge_not_reference" in m for m in msgs) is expect_not_ref
     assert any("is not resolvable" in m for m in msgs) is expect_unresolvable
+    raw_tag = any("first entry llama3.2:3b for destructive task=temporal_judge" in m for m in msgs)
+    assert raw_tag is (tasks == {"temporal_judge": ["llama3.2:3b"]} and ff == "true")
+
+
+def test_judge_boot_warning_fires_when_the_default_is_unresolvable(monkeypatch, caplog):
+    """LUM-983: the boot warning is now only for a default that does not resolve."""
+    tp = _tp()
+    import plugins.graph as pg
+
+    install(monkeypatch, tasks={})
+    spec = dataclasses.replace(task_models.TASKS["temporal_judge"], default="not-in-catalogue")
+    monkeypatch.setattr(task_models, "TASKS", {**task_models.TASKS, "temporal_judge": spec})
+    monkeypatch.setenv("LUMOGIS_FF_TEMPORAL_KG", "true")
+    monkeypatch.delenv("LUMOGIS_TEMPORAL_AUTO_APPLY", raising=False)
+    monkeypatch.setattr(tp, "register_temporal_hooks", lambda: None)
+    monkeypatch.setattr(tp, "register_temporal_jobs", lambda sched: None)
+    monkeypatch.setattr(config, "get_scheduler", lambda: None)
+    with caplog.at_level(logging.INFO):
+        pg._register_temporal_pipeline()
+    msgs = [r.getMessage() for r in caplog.records]
+    assert any("is not resolvable" in m and "task_model_unsatisfiable" in m for m in msgs)
+    assert not any("list a configured alias under tasks.temporal_judge" in m for m in msgs)
+
+
+def test_substituted_judge_is_the_reference_and_may_auto_apply(monkeypatch):
+    """A substituted judge is the ADR 151 reference, so its verdicts may auto-apply.
+
+    Deliberate (LUM-983): the same result as a household with no judge entry. The pin
+    in apply_or_propose checks the model that judged; `_run_episode_check` passes it
+    the name it resolved once. apply_or_propose with a reference judge is pinned by
+    tests/premium/test_temporal_pipeline.py.
+    """
+    tp = _tp()
+    install(monkeypatch, models={"claude": dict(CLOUD)}, tasks={"temporal_judge": ["claude"]})
+    set_policy(monkeypatch, "allow_cloud")
+    monkeypatch.setenv("LUMOGIS_TEMPORAL_AUTO_APPLY", "true")
+    assert tp._judge_model("u1") == "llama"
+    assert tp.is_reference_judge(tp._judge_model("u1")) is True
 
 
 def test_temporal_tasks_open_only_while_documents_are_not_hydrated():

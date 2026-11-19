@@ -14,9 +14,11 @@
 # pull the Lumogis images instead, and the build finds nothing to build (LUM-980).
 #
 # Safe by design:
-#   * Records per-service image digests to a state file BEFORE pulling,
-#     generates rollback-compose.override.yml, so `make rollback` pins them back
-#     (required for ghcr-overlay installs, where :latest would otherwise float).
+#   * Tags each running image `lumogis-rollback/<project>/<service>:<UTC time>`
+#     BEFORE pulling or building, so `make rollback` can restore it offline
+#     (LUM-984); tags from earlier updates are removed once this one is healthy.
+#     While an update that did not pass its health check leaves the stack
+#     unhealthy, the next run keeps its rollback state.
 #   * Never deletes data. Migrations are idempotent (orchestrator/db_migrations.py).
 #   * Post-health gate verifies no pending migrations and no boot migration errors.
 #   * Strongly recommends a fresh backup first (see `make backup`, LUM-185).
@@ -35,7 +37,6 @@ source "$ROOT/scripts/update/common.sh"
 STATE_DIR="${LUMOGIS_UPDATE_STATE_DIR:-$ROOT/.lumogis-state}"
 STATE_FILE="$STATE_DIR/previous-images.txt"
 OVERRIDE_FILE="$STATE_DIR/rollback-compose.override.yml"
-WRITE_OVERRIDE="$ROOT/scripts/update/write_rollback_override.py"
 HEALTH_RETRIES="${LUMOGIS_HEALTH_RETRIES:-60}"
 
 command -v docker >/dev/null 2>&1 || die "docker not found on PATH"
@@ -54,7 +55,7 @@ MSG
 fi
 
 # --- Capture rollback state (per-service image refs) ------------------------
-capture_rollback_state "$STATE_FILE" "$OVERRIDE_FILE" "$WRITE_OVERRIDE"
+capture_rollback_state "$STATE_FILE" "$OVERRIDE_FILE"
 
 # --- Pull + build -----------------------------------------------------------
 installing="$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null || echo "unknown")"
@@ -92,4 +93,10 @@ docker compose up -d \
 
 # --- Health + migration gate ----------------------------------------------
 wait_for_stack_ready "$(orchestrator_health_url)" "$HEALTH_RETRIES"
+log "removing rollback tags from earlier updates"
+prune_rollback_tags "$STATE_FILE"
+finish_update_marker "$STATE_FILE"
 log "update complete — orchestrator healthy and migrations up to date"
+if [[ -n "${ROLLBACK_KEPT_FROM:-}" ]]; then
+  log "make rollback still goes back to the images recorded at $ROLLBACK_KEPT_FROM, from before the update that did not finish"
+fi

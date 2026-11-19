@@ -68,6 +68,17 @@ The full detail is in `.cursor/explorations/LUM-852-dead-css-classes.md`.
 - A `clsx` / `cn`-style class helper is adopted → the scanner must learn its name, or the call-argument exclusion silently exempts every class passed through it.
 - `eslint-plugin-undefined-css-classes` (or a successor) reaches a maintained 1.x with real adoption → consider swapping in for editor-time feedback.
 
+## Amendment — LUM-993 (2026-11-18): Tailwind classes and class helpers
+
+Lumogis Web adopted shadcn/ui on Base UI with Tailwind v4 (LUM-993). The guard keeps its purpose (a class that styles nothing must not ship) with three changes:
+
+- **Tailwind-generated classes pass.** An unprefixed token is accepted when Tailwind, compiled from `src/design/ui.css`, generates a rule for it, matched at the class's end so a prefix of a real class (`bg-destructiv`) still fails. `U5d` holds this. Tailwind's marker classes (`group`, `peer`, `group/name`, `peer/name`) pass by name.
+- **The class-helper revisit condition is met.** `cn` and `cva` are now scanned wherever they are called, in `.tsx` and `.ts` files: every string argument of `cn(…)`, and the base string, every `variants` value and each `compoundVariants` `class`/`className` of `cva(…)`. `defaultVariants` and object arguments of other calls hold variant names and are skipped. `U6` holds this. Classes held in a variable and passed to `cn(variable)` remain unscanned.
+- **The CSS-side invariant stays:** every class `tokens.css` defines is `lumogis-`-prefixed (`U5b`). `tokens.css` now loads in a `legacy` cascade layer, below Tailwind's utilities.
+
+Revisit when a third class helper (for example `clsx`) is adopted, or when `ui.css` stops being the single Tailwind entry point.
+
 ## Status history
 - 2026-11-06: Draft created by /explore (headless, run-workflow LUM-852)
 - 2026-11-06: **Finalised by `/verify-plan`** — implementation confirmed the decision. Two amendments recorded from the plan: the scanner parses TSX with the TypeScript compiler API rather than regex, and the CSS-side prefix invariant is asserted by the test (`U5b`) rather than stated as convention. The call-argument blind spot (a future `clsx`/`cn` helper) is added to the consequences and revisit conditions.
+- 2026-11-18: **Amended by `/verify-plan` (LUM-993 Pass 1)** — Tailwind-generated classes accepted (boundary-matched), `cn`/`cva` scanned, legacy cascade layer recorded.

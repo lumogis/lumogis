@@ -3,7 +3,7 @@
 //
 // Live-stack two-user household sharing proofs (P1 closure):
 //   LUM-582 — conversation share + cross-member visibility
-//   LUM-583 — /me/shared-items owner list vs member empty
+//   LUM-583 — /settings/shared owner list vs member empty
 //   LUM-585 — non-owner "Shared by {member}" attribution on document detail
 //
 // Requires a running stack (make web-e2e-prove) with smoke admin + member creds.
@@ -78,9 +78,9 @@ async function uploadAndShareDocument(admin: Page): Promise<string> {
   const docId = await row.getAttribute("data-document-id");
   if (!docId) throw new Error("upload row missing data-document-id");
 
-  admin.on("dialog", (dialog) => void dialog.accept());
   await admin.goto(`/documents/${docId}`);
   await admin.getByTestId("share-toggle").getByRole("switch").click();
+  await admin.getByRole("alertdialog").getByRole("button", { name: "Share", exact: true }).click();
   await admin
     .getByText("Everyone in your household can find and read this.")
     .waitFor({ timeout: 30_000 });
@@ -150,7 +150,7 @@ test.describe("household sharing live (two-user)", () => {
     }
   });
 
-  test("LUM-583: admin /me/shared-items lists shares; member sees empty", async ({
+  test("LUM-583: admin /settings/shared lists shares; member sees empty", async ({
     browser,
   }) => {
     const adminCtx: BrowserContext = await browser.newContext();
@@ -179,13 +179,13 @@ test.describe("household sharing live (two-user)", () => {
       await admin.getByTestId("conversation-share-confirm").click();
       await publishWait;
 
-      await admin.goto("/me/shared-items");
+      await admin.goto("/settings/shared");
       await expect(admin.getByTestId("me-shared-items")).toBeVisible();
       await admin.reload();
       await expect(
         admin.getByRole("row").filter({ hasText: SAMPLE_DOC_NAME }).first(),
       ).toBeVisible({ timeout: 15_000 });
-      await expect(admin.getByTestId(`unshare-sessions:${conversationId}`)).toBeVisible({
+      await expect(admin.getByTestId(`shared-row-sessions:${conversationId}`)).toBeVisible({
         timeout: 15_000,
       });
     } finally {
@@ -196,7 +196,7 @@ test.describe("household sharing live (two-user)", () => {
     const member = await memberCtx.newPage();
     try {
       await loginAs(member, memberCreds.email, memberCreds.password);
-      await member.goto("/me/shared-items");
+      await member.goto("/settings/shared");
       await expect(member.getByTestId("me-shared-items")).toBeVisible();
       await expect(
         member.getByText("You haven't shared anything with your household yet."),

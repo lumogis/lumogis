@@ -3,7 +3,7 @@
 //
 // Vitest unit — EntityShareToggle (LUM-581).
 
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
@@ -45,28 +45,31 @@ describe("EntityShareToggle", () => {
   beforeEach(() => {
     shareMutate.mockReset().mockResolvedValue(undefined);
     unshareMutate.mockReset().mockResolvedValue(undefined);
-    vi.spyOn(globalThis, "confirm").mockReturnValue(true);
   });
 
-  it("owner + personal → unchecked switch; enabling confirms + publishes", async () => {
+  it("owner + personal → unchecked switch; enabling asks in a dialog, then publishes", async () => {
     const user = userEvent.setup();
     const onChanged = vi.fn();
     renderToggle({ shareStatus: "personal", onChanged });
     const sw = screen.getByRole("switch");
-    expect((sw as HTMLInputElement).checked).toBe(false);
+    expect(sw).toHaveAttribute("aria-checked", "false");
 
     await user.click(sw);
-    expect(globalThis.confirm).toHaveBeenCalled();
+    // Sharing is a privacy boundary: nothing happens until the dialog is confirmed.
+    const dialog = await screen.findByRole("alertdialog");
+    expect(shareMutate).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole("button", { name: "Share" }));
     expect(shareMutate).toHaveBeenCalledWith(ENTITY_ID);
     expect(unshareMutate).not.toHaveBeenCalled();
     expect(onChanged).toHaveBeenCalled();
   });
 
-  it("does not publish if the confirm is dismissed", async () => {
-    vi.spyOn(globalThis, "confirm").mockReturnValue(false);
+  it("does not publish if the dialog is cancelled", async () => {
     const user = userEvent.setup();
     renderToggle({ shareStatus: "personal" });
     await user.click(screen.getByRole("switch"));
+    const dialog = await screen.findByRole("alertdialog");
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(shareMutate).not.toHaveBeenCalled();
   });
 
@@ -74,7 +77,7 @@ describe("EntityShareToggle", () => {
     const user = userEvent.setup();
     renderToggle({ shareStatus: "shared" });
     const sw = screen.getByRole("switch");
-    expect((sw as HTMLInputElement).checked).toBe(true);
+    expect(sw).toHaveAttribute("aria-checked", "true");
 
     await user.click(sw);
     expect(unshareMutate).toHaveBeenCalledWith(ENTITY_ID);
@@ -87,9 +90,12 @@ describe("EntityShareToggle", () => {
     const onChanged = vi.fn();
     renderToggle({ shareStatus: "personal", onChanged });
     await user.click(screen.getByRole("switch"));
+    await user.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Share" }),
+    );
     expect(await screen.findByRole("alert")).toBeTruthy();
     // Prior state preserved: still shown as not-shared, onChanged not fired.
-    expect((screen.getByRole("switch") as HTMLInputElement).checked).toBe(false);
+    expect(screen.getByRole("switch")).toHaveAttribute("aria-checked", "false");
     expect(onChanged).not.toHaveBeenCalled();
   });
 

@@ -1,0 +1,431 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Lumogis
+#
+# LUM-997 — release smoke: install a release from its two Release files on clean
+# amd64 and arm64 GitHub-hosted runners and run the release checks.
+#
+# Called by release-assets.yml between "stage" and "publish": the Release is published
+# only when this is green (or with a recorded skip_smoke_reason). Also dispatchable on
+# its own against a published version, as a rehearsal before a release.
+#
+#   files    the four install files (staged artifact, or downloaded from a published
+#            Release like a household), checksum-verified; the previous stable's files
+#   smoke    one install per (runner, suite): install, graph, upgrade, secure-address
+#   smoke-cloud-llm   MS-006 on amd64 (optional: needs SMOKE_CLOUD_LLM_KEY)
+#   summary  one table; its exit code is the verdict
+#
+# The script is scripts/release/smoke/release_smoke.py (standard library only). It runs
+# from the commit whose workflow file is running (github.sha, public main), never from
+# the tag: images and install files under test come only from the staged or published
+# files. Secrets are mapped into the one script step of the suite that needs them and
+# are never printed; the script redacts its own logs before they become artifacts
+# (artifacts of a public repository are public).
+#
+# Kept in lumogis-app for the export; every job is guarded on github.repository
+# (ADR 261) and on refs/heads/main. Third-party actions: immutable SHA pins (ADR 037).
+# No pull_request trigger, no inherited secrets, no top-level concurrency (the caller's
+# release-assets group already serialises releases).
+#
+# Runner budget: unmeasured. The first real run's numbers (disk, memory, minutes per
+# cell) go here; each run prints them in its summary (steps "Runner budget").
+
+name: Release smoke
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: true
+      files_artifact:
+        type: string
+        required: true
+      expect:
+        type: string
+        default: "stt,signin,graph-switch"
+      skip_reason:
+        type: string
+        default: ""
+    outputs:
+      verdict:
+        description: passed or skipped
+        value: ${{ jobs.summary.outputs.verdict }}
+    secrets:
+      HOME_DNS_CI_REGISTRATION_VALUE:
+        required: false
+      SMOKE_CLOUD_LLM_KEY:
+        required: false
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Published (non-draft) version without the leading v
+        type: string
+        required: true
+      expect:
+        description: Features the release must have; empty for 0.13.x
+        type: string
+        default: "stt,signin,graph-switch"
+      suites:
+        description: Comma list (rehearsal)
+        type: string
+        default: "install,graph,upgrade,secure-address"
+
+permissions: {}
+
+jobs:
+  files:
+    if: github.repository == 'lumogis/lumogis' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      matrix_suites: ${{ steps.plan.outputs.matrix_suites }}
+      suites: ${{ steps.plan.outputs.suites }}
+      skipped_reason: ${{ steps.plan.outputs.skipped_reason }}
+      previous_version: ${{ steps.previous.outputs.previous_version }}
+    env:
+      VERSION: ${{ inputs.version }}
+      FILES_ARTIFACT: ${{ inputs.files_artifact }}
+      SKIP_REASON: ${{ inputs.skip_reason }}
+      REQUESTED_SUITES: ${{ inputs.suites }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Plan
+        id: plan
+        run: |
+          set -euo pipefail
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::version must look like 1.2.3 or 1.2.3-rc.1 (no leading v); got '$VERSION'"
+            exit 1
+          fi
+          if [[ -n "$SKIP_REASON" ]]; then
+            {
+              echo "matrix_suites=[]"
+              echo "suites="
+              echo "skipped_reason=$SKIP_REASON"
+            } >> "$GITHUB_OUTPUT"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "skipped_reason=" >> "$GITHUB_OUTPUT"
+          if [[ -n "$FILES_ARTIFACT" ]]; then
+            # Called by release-assets: every suite, and the optional cloud model on amd64.
+            list="install,graph,upgrade,secure-address,cloud-llm"
+          else
+            list="${REQUESTED_SUITES:-install,graph,upgrade,secure-address}"
+          fi
+          matrix='[]'
+          suites=""
+          IFS=',' read -ra want <<<"$list"
+          for s in "${want[@]}"; do
+            case "$s" in
+              install|graph|upgrade|secure-address)
+                matrix="$(jq -c --arg s "$s" '. + [$s]' <<<"$matrix")"
+                suites="${suites:+$suites,}$s" ;;
+              cloud-llm) suites="${suites:+$suites,}cloud-llm@amd64" ;;
+              *) echo "::error::unknown suite '$s'"; exit 1 ;;
+            esac
+          done
+          echo "matrix_suites=$matrix" >> "$GITHUB_OUTPUT"
+          echo "suites=$suites" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Release smoke inputs"
+            echo "- script commit (github.sha): \`$GITHUB_SHA\`"
+            echo "- version under test: \`$VERSION\`"
+            if [[ -n "$FILES_ARTIFACT" ]]; then
+              echo "- tag commit: \`$(git ls-remote "https://github.com/$GITHUB_REPOSITORY" "refs/tags/v${VERSION}" | cut -f1)\`"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Download the staged files
+        if: steps.plan.outputs.skip != 'true' && inputs.files_artifact != ''
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ inputs.files_artifact }}
+          path: smoke-files
+
+      - name: Download the published files, as a household would
+        if: steps.plan.outputs.skip != 'true' && inputs.files_artifact == ''
+        run: |
+          set -euo pipefail
+          mkdir smoke-files
+          for f in docker-compose.yml example.env image-digests.txt SHA256SUMS; do
+            if ! curl -fsSL -o "smoke-files/$f" "https://github.com/lumogis/lumogis/releases/download/v${VERSION}/$f"; then
+              echo "::error::dispatch needs a published Release; a draft is smoked through release-assets (could not download $f of v${VERSION})"
+              exit 1
+            fi
+          done
+
+      - name: Verify the checksums
+        if: steps.plan.outputs.skip != 'true'
+        working-directory: smoke-files
+        run: sha256sum -c SHA256SUMS
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: steps.plan.outputs.skip != 'true'
+        with:
+          name: smoke-files
+          path: smoke-files
+          retention-days: 7
+          overwrite: true
+
+      - name: Find the previous stable release
+        id: previous
+        if: steps.plan.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! gh release list --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease --limit 100 > releases.json; then
+            echo "::error::could not list Releases"
+            exit 1
+          fi
+          prev="$(python3 scripts/release/smoke/release_smoke.py previous --version "$VERSION" --releases-json releases.json)"
+          if [[ -n "$prev" ]]; then
+            mkdir smoke-previous
+            ok=true
+            for f in docker-compose.yml example.env image-digests.txt SHA256SUMS; do
+              curl -fsSL -o "smoke-previous/$f" "https://github.com/lumogis/lumogis/releases/download/v${prev}/$f" || ok=false
+            done
+            if [[ "$ok" != "true" ]]; then
+              echo "::warning::v${prev} has no install files (before 0.13.0); the upgrade suite will report na"
+              prev=""
+            fi
+          fi
+          echo "previous_version=$prev" >> "$GITHUB_OUTPUT"
+          echo "previous stable: ${prev:-none}"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: steps.plan.outputs.skip != 'true' && steps.previous.outputs.previous_version != ''
+        with:
+          name: smoke-previous-files
+          path: smoke-previous
+          retention-days: 7
+          overwrite: true
+
+  smoke:
+    needs: files
+    if: github.repository == 'lumogis/lumogis' && github.ref == 'refs/heads/main' && needs.files.outputs.matrix_suites != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        # `runner` stays a literal list: the export gate resolves it statically.
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        suite: ${{ fromJSON(needs.files.outputs.matrix_suites) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ inputs.version }}
+      SUITE: ${{ matrix.suite }}
+      ARCH: ${{ matrix.runner == 'ubuntu-24.04-arm' && 'arm64' || 'amd64' }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Host ports are free
+        run: |
+          set -euo pipefail
+          busy="$(ss -ltn | awk '{print $4}' | grep -E ':(80|443|8000|6334)$' || true)"
+          if [[ -n "$busy" ]]; then
+            echo "::error::ports already in use on the runner: $busy"
+            exit 1
+          fi
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: smoke-files
+          path: smoke-files
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: matrix.suite == 'upgrade' && needs.files.outputs.previous_version != ''
+        with:
+          name: smoke-previous-files
+          path: smoke-previous
+
+      - name: Runner budget (before cleanup)
+        run: |
+          {
+            echo "### Runner budget — $SUITE on $ARCH"
+            echo '```'
+            df -BG /
+            free -g
+            echo "cpus: $(nproc)"
+            echo "docker: $(docker version --format '{{.Server.Version}}')"
+            docker info --format '{{.Driver}} {{json .DriverStatus}}'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Free disk space
+        continue-on-error: true
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # main 2024-02-12
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: false
+          swap-storage: false
+
+      - name: Disk gate
+        id: disk
+        run: |
+          set -euo pipefail
+          mkdir -p results
+          free="$(df -BG --output=avail / | tail -1 | tr -dc '0-9')"
+          need=18
+          if [[ "$SUITE" == "upgrade" ]]; then need=24; fi
+          echo "free disk: ${free} GB (need ${need} GB)"
+          if (( free < need )); then
+            echo "::error::free disk ${free} GB is below ${need} GB for $SUITE on $ARCH"
+            jq -n --arg v "$VERSION" --arg a "$ARCH" --arg s "$SUITE" --arg d "free ${free} GB, need ${need} GB" \
+              '{schema:1, version:$v, arch:$a, suite:$s, started:"", checks:[{id:"RUNNER-DISK", suite:$s, arch:$a, result:"fail", required:true, seconds:0, detail:$d}]}' \
+              > "results/${SUITE}-${ARCH}.json"
+            echo "low=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "low=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Smoke suite
+        id: suite
+        if: steps.disk.outputs.low != 'true'
+        continue-on-error: true
+        timeout-minutes: 85
+        env:
+          EXPECT: ${{ inputs.expect }}
+          PREVIOUS: ${{ needs.files.outputs.previous_version }}
+          REQUIRED: ${{ vars.SMOKE_SECURE_ADDRESS_REQUIRED }}
+          SMOKE_HOME_DNS_CI_VALUE: ${{ matrix.suite == 'secure-address' && secrets.HOME_DNS_CI_REGISTRATION_VALUE || '' }}
+        run: |
+          set -uo pipefail
+          args=(--files-dir smoke-files --version "$VERSION" --arch "$ARCH" --expect "$EXPECT" --deadline-min 80 --out "results/${SUITE}-${ARCH}.json")
+          case "$SUITE" in
+            upgrade) args+=(--previous-dir smoke-previous --previous-version "$PREVIOUS") ;;
+            secure-address) if [[ "$REQUIRED" == "true" ]]; then args+=(--required); fi ;;
+          esac
+          python3 scripts/release/smoke/release_smoke.py "$SUITE" "${args[@]}"
+
+      - name: Runner budget (after)
+        if: always()
+        run: |
+          {
+            echo "### After $SUITE on $ARCH"
+            echo '```'
+            df -BG /
+            free -g
+            docker system df
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: smoke-results-${{ matrix.suite }}-${{ matrix.runner == 'ubuntu-24.04-arm' && 'arm64' || 'amd64' }}
+          path: results
+          if-no-files-found: ignore
+          retention-days: 30
+          overwrite: true
+
+  smoke-cloud-llm:
+    needs: files
+    if: github.repository == 'lumogis/lumogis' && github.ref == 'refs/heads/main' && contains(format(',{0},', needs.files.outputs.suites), ',cloud-llm@amd64,')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ inputs.version }}
+      SUITE: cloud-llm
+      ARCH: amd64
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: smoke-files
+          path: smoke-files
+
+      - name: Free disk space
+        continue-on-error: true
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # main 2024-02-12
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: false
+          swap-storage: false
+
+      - name: Smoke suite
+        continue-on-error: true
+        timeout-minutes: 85
+        env:
+          EXPECT: ${{ inputs.expect }}
+          SMOKE_CLOUD_LLM_KEY: ${{ secrets.SMOKE_CLOUD_LLM_KEY }}
+        run: |
+          set -uo pipefail
+          mkdir -p results
+          python3 scripts/release/smoke/release_smoke.py cloud-llm --files-dir smoke-files --version "$VERSION" \
+            --arch "$ARCH" --expect "$EXPECT" --deadline-min 80 --out "results/${SUITE}-${ARCH}.json"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: smoke-results-cloud-llm-amd64
+          path: results
+          if-no-files-found: ignore
+          retention-days: 30
+          overwrite: true
+
+  summary:
+    needs: [files, smoke, smoke-cloud-llm]
+    if: always() && github.repository == 'lumogis/lumogis' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      verdict: ${{ steps.summary.outputs.verdict }}
+    steps:
+      - name: Planning succeeded
+        env:
+          FILES_RESULT: ${{ needs.files.result }}
+        run: |
+          if [[ "$FILES_RESULT" != "success" ]]; then
+            echo "::error::the files job ended '$FILES_RESULT', so no smoke ran"
+            exit 1
+          fi
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: needs.files.outputs.skipped_reason == ''
+        with:
+          pattern: smoke-results-*
+          merge-multiple: true
+          path: all-results
+
+      - name: Summary and verdict
+        id: summary
+        env:
+          SUITES: ${{ needs.files.outputs.suites }}
+          SKIPPED_REASON: ${{ needs.files.outputs.skipped_reason }}
+        run: |
+          set -uo pipefail
+          mkdir -p all-results
+          python3 scripts/release/smoke/release_smoke.py summary --results-dir all-results \
+            --expect-suites "$SUITES" --expect-arches amd64,arm64 \
+            --skipped-reason "$SKIPPED_REASON" --outputs "$GITHUB_OUTPUT" --markdown "$GITHUB_STEP_SUMMARY"

@@ -13,6 +13,7 @@ import { AdminUsersView } from "../../../src/features/admin/AdminUsersView";
 import { jsonResponse } from "../../helpers/jsonResponse";
 import { seedSignedInDevice } from "../../helpers/signedInDevice";
 
+
 const admin = { id: "a1", email: "admin@home.lan", role: "admin" as const };
 const row = (id: string, email: string, role: "admin" | "user") => ({
   id,
@@ -69,7 +70,7 @@ describe("AdminUsersView — credential consequence copy (LUM-885)", () => {
     const userEv = userEvent.setup();
     const bob = await screen.findByRole("row", { name: /bob@home\.lan/i });
     await userEv.click(within(bob).getByRole("button", { name: /more actions/i }));
-    await userEv.click(within(bob).getByRole("menuitem", { name: /^reset password$/i }));
+    await userEv.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: /^reset password$/i }));
     return screen.findByTestId("admin-reset-consequence");
   }
 
@@ -104,37 +105,35 @@ describe("AdminUsersView — credential consequence copy (LUM-885)", () => {
     expect(el.textContent).not.toMatch(/\d/);
   });
 
-  it("demote confirm says what is revoked and which invites are cancelled", async () => {
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
-    mount([row("a1", "admin@home.lan", "admin"), row("a2", "carol@home.lan", "admin")]);
+  async function openItem(email: RegExp, item: RegExp) {
     const userEv = userEvent.setup();
-    const carol = await screen.findByRole("row", { name: /carol@home\.lan/i });
-    await userEv.click(within(carol).getByRole("button", { name: /^make member$/i }));
-    const message = String(confirmSpy.mock.calls[0]?.[0]);
-    expect(message).toContain("signed out on every device");
-    expect(message).toContain("their MCP tokens revoked");
-    expect(message).toContain("any invites they sent cancelled");
+    const r = await screen.findByRole("row", { name: email });
+    await userEv.click(within(r).getByRole("button", { name: /more actions/i }));
+    await userEv.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: item }));
+    return { userEv, dialog: await screen.findByRole("alertdialog") };
+  }
+
+  it("demote confirm says what is revoked and which invites are cancelled", async () => {
+    mount([row("a1", "admin@home.lan", "admin"), row("a2", "carol@home.lan", "admin")]);
+    const { dialog } = await openItem(/carol@home\.lan/i, /^make member$/i);
+    expect(dialog).toHaveTextContent("signed out on every device");
+    expect(dialog).toHaveTextContent("keys for connected AI apps revoked");
+    expect(dialog).toHaveTextContent("any invites they sent cancelled");
   });
 
   it("promote confirm is unchanged (promotion revokes nothing)", async () => {
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
     mount(users);
-    const userEv = userEvent.setup();
-    const bob = await screen.findByRole("row", { name: /bob@home\.lan/i });
-    await userEv.click(within(bob).getByRole("button", { name: /^make admin$/i }));
-    expect(String(confirmSpy.mock.calls[0]?.[0])).not.toContain("signed out");
+    const { dialog } = await openItem(/bob@home\.lan/i, /^make admin$/i);
+    expect(dialog.textContent).not.toContain("signed out");
   });
 
   it("delete confirm says what is revoked, and cancelling sends no DELETE", async () => {
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
     const fetchImpl = mount(users);
-    const userEv = userEvent.setup();
-    const bob = await screen.findByRole("row", { name: /bob@home\.lan/i });
-    await userEv.click(within(bob).getByRole("button", { name: /more actions/i }));
-    await userEv.click(within(bob).getByRole("menuitem", { name: /^delete$/i }));
-    const message = String(confirmSpy.mock.calls[0]?.[0]);
-    expect(message).toContain("their MCP tokens revoked");
-    expect(message).toContain("any invites they sent cancelled");
+    const { userEv, dialog } = await openItem(/bob@home\.lan/i, /^delete$/i);
+    expect(dialog).toHaveTextContent("keys for connected AI apps revoked");
+    expect(dialog).toHaveTextContent("any invites they sent cancelled");
+    await userEv.click(within(dialog).getByRole("button", { name: /^cancel$/i }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(fetchImpl.mock.calls.some((c) => c[1]?.method === "DELETE")).toBe(false);
   });
 });

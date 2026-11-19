@@ -32,6 +32,21 @@ import type {
   InviteRedeemResponse,
 } from "./invitesTypes";
 
+/**
+ * Core builds the invite link from the pinned `LUMOGIS_PUBLIC_ORIGIN`. With nothing pinned it
+ * returns a path (`/invite?token=…`); the address this admin is using in the browser is the one
+ * the household uses, so the origin is added here. An absolute URL is left alone.
+ */
+export function absoluteInviteUrl(url: string): string {
+  return url.startsWith("/") ? `${window.location.origin}${url}` : url;
+}
+
+/** True for `localhost` and loopback addresses: a link built there only works on this computer. */
+export function isLoopbackHost(hostname: string): boolean {
+  const h = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  return h === "localhost" || h.endsWith(".localhost") || h === "::1" || /^127(\.\d{1,3}){3}$/.test(h);
+}
+
 export async function peekInvite(token: string): Promise<InvitePeekPublic> {
   const res = await fetch(`/api/v1/invites/${encodeURIComponent(token)}`);
   if (!res.ok) {

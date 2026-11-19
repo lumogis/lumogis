@@ -210,10 +210,10 @@ describe("the mailbox opt-in", () => {
       />,
     );
 
-    const box = screen.getByRole("checkbox", {
+    const box = screen.getByRole("switch", {
       name: /review this mailbox.s attachments/i,
     });
-    expect(box).toBeDisabled();
+    expect(box).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByTestId("ingest-unsupported")).toHaveTextContent(
       api.METADATA_MODE_EXPLANATION,
     );
@@ -231,7 +231,7 @@ describe("the mailbox opt-in", () => {
     );
 
     await user.click(
-      screen.getByRole("checkbox", { name: /review this mailbox.s attachments/i }),
+      screen.getByRole("switch", { name: /review this mailbox.s attachments/i }),
     );
 
     expect(api.setAttachmentIngest).not.toHaveBeenCalled();
@@ -250,7 +250,7 @@ describe("the mailbox opt-in", () => {
       />,
     );
 
-    const box = screen.getByRole("checkbox", {
+    const box = screen.getByRole("switch", {
       name: /review this mailbox.s attachments/i,
     });
     expect(box).not.toBeChecked();
@@ -280,7 +280,7 @@ describe("the mailbox opt-in", () => {
       screen.getByRole("checkbox", { name: /also include attachments from existing mail/i }),
     );
     await user.click(
-      screen.getByRole("checkbox", { name: /review this mailbox.s attachments/i }),
+      screen.getByRole("switch", { name: /review this mailbox.s attachments/i }),
     );
 
     expect(api.setAttachmentIngest).toHaveBeenCalledWith(expect.anything(), "src-1", {

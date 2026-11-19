@@ -16,15 +16,17 @@ superuser (they create throwaway databases); they skip otherwise, like
 ``test_migration_074_extension_privilege.py``.
 """
 
+# ruff: noqa: F811  (fixtures imported from _fresh_db are used as test parameters)
+
 from __future__ import annotations
 
-import os
-import uuid
 from pathlib import Path
 
 import db_migrations
 import psycopg2
-import pytest
+from tests._fresh_db import _conn_kwargs
+from tests._fresh_db import fresh_db  # noqa: F401 — fixture
+from tests._fresh_db import superuser  # noqa: F401 — fixture
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _MIGRATIONS = _REPO_ROOT / "postgres" / "migrations"
@@ -99,53 +101,6 @@ def test_main_explicit_missing_dir_still_skips(tmp_path, monkeypatch, capsys):
 # ---------------------------------------------------------------------------
 # Baseline (real Postgres, superuser)
 # ---------------------------------------------------------------------------
-
-
-def _conn_kwargs(dbname: str | None = None) -> dict:
-    return {
-        "host": os.environ.get("POSTGRES_HOST", "postgres"),
-        "port": int(os.environ.get("POSTGRES_PORT", "5432")),
-        "user": os.environ.get("POSTGRES_USER", "lumogis"),
-        "password": os.environ.get("POSTGRES_PASSWORD", "lumogis-dev"),
-        "dbname": dbname or os.environ.get("POSTGRES_DB", "lumogis"),
-        "connect_timeout": 3,
-    }
-
-
-@pytest.fixture(scope="module")
-def superuser():
-    try:
-        conn = psycopg2.connect(**_conn_kwargs())
-    except Exception as exc:  # noqa: BLE001 — diagnostic skip
-        if os.environ.get("LUMOGIS_REQUIRE_INTEGRATION_DB") == "1":
-            raise
-        pytest.skip(f"Postgres not reachable for the baseline tests: {exc}")
-    conn.autocommit = True
-    with conn.cursor() as cur:
-        cur.execute("SELECT rolsuper FROM pg_roles WHERE rolname = current_user")
-        if not cur.fetchone()[0]:
-            conn.close()
-            pytest.skip("connection is not superuser; cannot create test databases")
-    yield conn
-    conn.close()
-
-
-@pytest.fixture
-def fresh_db(superuser, monkeypatch):
-    """A new empty database; the runner is pointed at it through POSTGRES_DB."""
-    created: list[str] = []
-
-    def make() -> str:
-        name = f"lum980_{uuid.uuid4().hex[:10]}"
-        with superuser.cursor() as cur:
-            cur.execute(f'CREATE DATABASE "{name}"')
-        created.append(name)
-        return name
-
-    yield make
-    with superuser.cursor() as cur:
-        for name in created:
-            cur.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
 
 
 def _use(monkeypatch, dbname: str, migrations: Path = _MIGRATIONS) -> None:

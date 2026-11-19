@@ -10,6 +10,7 @@ class MergeResult(BaseModel):
     relations_moved: int
     sessions_updated: int
     qdrant_cleaned: bool
+    merge_id: str = ""
 
 
 class ExtractedEntity(BaseModel):

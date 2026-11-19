@@ -24,6 +24,7 @@
 //     warning implying recoverability beside a recovery path nobody can reach is
 //     a promise the product does not keep.
 
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
@@ -102,7 +103,7 @@ function gatingFetch() {
 }
 
 async function armFolderSortAndSave() {
-  fireEvent.click(await screen.findByLabelText(/Sort my emails into folders/i));
+  fireEvent.click(await screen.findByRole("checkbox", { name: /Sort my emails into folders/i }));
   fireEvent.click(screen.getByRole("button", { name: /^Save$/ }));
 }
 
@@ -213,8 +214,8 @@ describe("the starvation warning", () => {
     await armFolderSortAndSave();
     fireEvent.click(await screen.findByRole("button", { name: /Use labels instead/i }));
 
-    expect((screen.getByLabelText(/Sort my emails into folders/i) as HTMLInputElement).checked).toBe(false);
-    expect((screen.getByLabelText(/Label my emails/i) as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByRole("checkbox", { name: /Sort my emails into folders/i })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /Label my emails/i })).toBeChecked();
     // Still one PATCH: the user sees what they are about to agree to first.
     expect(patches).toHaveLength(1);
   });
@@ -226,11 +227,18 @@ describe("the starvation warning", () => {
     await armFolderSortAndSave();
     await screen.findByTestId("starvation-warning");
 
-    fireEvent.click(screen.getByLabelText(/Also apply to existing mail/i));
+    fireEvent.click(screen.getByRole("checkbox", { name: /Also apply to existing mail/i }));
 
     expect(screen.queryByTestId("starvation-warning")).toBeNull();
   });
 });
+
+// The scope picker is a Base UI Select (a combobox that opens a listbox), not a
+// native <select>, so the choice is a click, not a change event.
+async function chooseUndoScope(option: RegExp) {
+  await userEvent.click(await screen.findByRole("combobox", { name: /What to undo/i }));
+  await userEvent.click(await screen.findByRole("option", { name: option }));
+}
 
 describe("undo is reachable at the scope the user means", () => {
   let originalFetch: typeof fetch;
@@ -248,9 +256,7 @@ describe("undo is reachable at the scope the user means", () => {
     // Previously hardcoded to "all", so a user who discovered the starvation
     // after the fact could only undo by also throwing away every label.
     renderView(gatingFetch());
-    fireEvent.change(await screen.findByLabelText(/What to undo/i), {
-      target: { value: "folder" },
-    });
+    await chooseUndoScope(/^Folder sorting only/);
     fireEvent.click(screen.getByRole("button", { name: /^Undo$/ }));
 
     await waitFor(() => expect(undos).toHaveLength(1));
@@ -267,9 +273,7 @@ describe("undo is reachable at the scope the user means", () => {
 
   it("says what it is putting back, not just that it started", async () => {
     renderView(gatingFetch());
-    fireEvent.change(await screen.findByLabelText(/What to undo/i), {
-      target: { value: "folder" },
-    });
+    await chooseUndoScope(/^Folder sorting only/);
     fireEvent.click(screen.getByRole("button", { name: /^Undo$/ }));
 
     expect((await screen.findByRole("status")).textContent).toMatch(/inbox/i);

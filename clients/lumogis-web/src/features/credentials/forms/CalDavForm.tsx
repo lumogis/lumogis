@@ -9,6 +9,10 @@
 // there is. See `./secrets.ts` for the full reasoning.
 import { useState, type FormEvent } from "react";
 
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+
+import { Field, FormError } from "./FormParts";
 import { REPLACE_NOTICE, isSecretEntered, secretRequiredMessage } from "./secrets";
 
 export function CalDavForm({
@@ -47,38 +51,39 @@ export function CalDavForm({
   };
 
   return (
-    <form onSubmit={submit} style={{ display: "grid", gap: "0.5rem" }}>
-      <label>
-        Base URL
-        <input value={base} onChange={(e) => setBase(e.target.value)} type="url" required />
-      </label>
-      <label>
-        Username
-        <input
-          value={user}
-          onChange={(e) => setUser(e.target.value)}
-          required
-          minLength={1}
-          maxLength={256}
-        />
-      </label>
-      <label>
-        Password
-        <input
-          value={pass}
-          onChange={(e) => setPass(e.target.value)}
-          type="password"
-          autoComplete="new-password"
-          maxLength={1024}
-        />
-        {isEdit && <span style={{ fontSize: "0.8rem" }}>{REPLACE_NOTICE}</span>}
-      </label>
-      {error && (
-        <p role="alert" style={{ fontSize: "0.85rem" }}>
-          {error}
-        </p>
-      )}
-      <button type="submit">Apply</button>
+    <form onSubmit={submit} className="grid gap-3">
+      <Field label="Base URL">
+        {({ id }) => <Input id={id} value={base} onChange={(e) => setBase(e.target.value)} type="url" required />}
+      </Field>
+      <Field label="Username">
+        {({ id }) => (
+          <Input
+            id={id}
+            value={user}
+            onChange={(e) => setUser(e.target.value)}
+            required
+            minLength={1}
+            maxLength={256}
+          />
+        )}
+      </Field>
+      <Field label="Password" note={isEdit ? REPLACE_NOTICE : undefined}>
+        {({ id, noteId }) => (
+          <Input
+            id={id}
+            value={pass}
+            onChange={(e) => setPass(e.target.value)}
+            type="password"
+            autoComplete="new-password"
+            maxLength={1024}
+            aria-describedby={noteId}
+          />
+        )}
+      </Field>
+      {error && <FormError>{error}</FormError>}
+      <Button type="submit" className="justify-self-start">
+        Apply
+      </Button>
     </form>
   );
 }

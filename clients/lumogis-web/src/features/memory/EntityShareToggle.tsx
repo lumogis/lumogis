@@ -4,7 +4,7 @@
 // Per-entity household share control (LUM-581).
 //
 // Owner view: an interactive toggle that publishes (with a plain-language
-// confirm — sharing is a privacy boundary) or unpublishes the entity, disabled
+// AlertDialog confirm — sharing is a privacy boundary) or unpublishes the entity, disabled
 // while the request is in flight, surfacing errors and preserving prior state
 // on failure.
 // Non-owner view: a read-only "Shared with your household" indicator — a member
@@ -18,6 +18,18 @@ import { useState } from "react";
 
 import type { ApiClient } from "../../api/client";
 import { isEntityShared, type EntityShareStatus } from "../../api/search";
+import { Alert, AlertDescription } from "../../components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "../../components/ui/alert-dialog";
+import { Switch } from "../../components/ui/switch";
 import {
   entityShareStatusLabel,
   usePublishEntity,
@@ -45,6 +57,7 @@ export function EntityShareToggle({
   const shareMutation = usePublishEntity(client);
   const unshareMutation = useUnpublishEntity(client);
   const [error, setError] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   const shared = isEntityShared(shareStatus);
   const pending = shareMutation.isPending || unshareMutation.isPending;
@@ -52,60 +65,81 @@ export function EntityShareToggle({
   // Non-owner: read-only indicator, no mutation affordance.
   if (!isOwner) {
     return (
-      <div className="lumogis-share-toggle" data-testid="entity-share-indicator">
-        <span className="lumogis-share-toggle__readonly">
-          Shared with your household
-        </span>
+      <div data-testid="entity-share-indicator">
+        <span className="text-sm">Shared with your household</span>
       </div>
     );
   }
 
-  const handleToggle = async () => {
+  const run = async (publish: boolean) => {
     setError(null);
     try {
-      if (shared) {
-        await unshareMutation.mutateAsync(entityId);
-      } else {
-        const ok = window.confirm(
-          `Share "${displayName}" with your household? Everyone in your ` +
-            `household will be able to find it. You can unshare anytime.`,
-        );
-        if (!ok) return;
+      if (publish) {
         await shareMutation.mutateAsync(entityId);
+      } else {
+        await unshareMutation.mutateAsync(entityId);
       }
       onChanged?.();
     } catch {
       setError(
-        shared
-          ? "Couldn't stop sharing this entity. Please try again."
-          : "Couldn't share this entity. You can only share your own items.",
+        publish
+          ? "Couldn't share this entity. You can only share your own items."
+          : "Couldn't stop sharing this entity. Please try again.",
       );
     }
   };
 
+  // Unsharing needs no confirm; sharing is a privacy boundary and asks first.
+  const handleToggle = () => {
+    if (shared) {
+      void run(false);
+    } else {
+      setConfirmOpen(true);
+    }
+  };
+
   return (
-    <div className="lumogis-share-toggle" data-testid="entity-share-toggle">
-      <label className="lumogis-share-toggle__label">
-        <input
-          type="checkbox"
-          role="switch"
+    <div className="flex flex-col gap-1.5" data-testid="entity-share-toggle">
+      <div className="flex items-center gap-2">
+        <Switch
           checked={shared}
           disabled={pending}
           aria-label={`Share "${displayName}" with your household`}
-          onChange={() => void handleToggle()}
+          onCheckedChange={handleToggle}
         />
-        <span>{entityShareStatusLabel(shareStatus)}</span>
-      </label>
+        <span className="text-sm">{entityShareStatusLabel(shareStatus)}</span>
+      </div>
       {shared ? (
-        <p className="lumogis-share-toggle__hint">
+        <p className="m-0 text-xs text-muted-foreground">
           Everyone in your household can find this.
         </p>
       ) : null}
       {error ? (
-        <p role="alert" className="lumogis-share-toggle__error">
-          {error}
-        </p>
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       ) : null}
+      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Share with your household?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {`Share "${displayName}" with your household? Everyone in your household will be able to find it. You can unshare anytime.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setConfirmOpen(false);
+                void run(true);
+              }}
+            >
+              Share
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -32,7 +32,7 @@ Public surface (used by `main.py` lifespan and unit tests):
     function with the same signature as the in-process
     `plugins/graph/writer.py:on_<event>` so `hooks.register(...)` is
     drop-in.
-  * `register_core_callbacks()` — wires all six callbacks onto the hook
+  * `register_core_callbacks()` — wires every callback in `_EVENT_REGISTRATION` onto the hook
     bus. Idempotent (subsequent calls are a no-op + WARNING log).
   * `_CALLBACKS_BY_EVENT` — populated by `register_core_callbacks()` so
     tests can introspect what got wired without touching `hooks._listeners`.
@@ -65,6 +65,7 @@ from models.webhook import AudioTranscribedPayload
 from models.webhook import DocumentIngestedPayload
 from models.webhook import DocumentSharedPayload
 from models.webhook import EntityCreatedPayload
+from models.webhook import EntityDeletedPayload
 from models.webhook import EntityMergedPayload
 from models.webhook import NoteCapturedPayload
 from models.webhook import SessionEndedPayload
@@ -354,6 +355,8 @@ _EVENT_REGISTRATION: list[tuple[str, WebhookEvent, type[BaseModel]]] = [
     (Event.ENTITY_CREATED, WebhookEvent.ENTITY_CREATED, EntityCreatedPayload),
     (Event.SESSION_ENDED, WebhookEvent.SESSION_ENDED, SessionEndedPayload),
     (Event.ENTITY_MERGED, WebhookEvent.ENTITY_MERGED, EntityMergedPayload),
+    # LUM-966: a member deleted an entry; the graph removes its node and household copy.
+    (Event.ENTITY_DELETED, WebhookEvent.ENTITY_DELETED, EntityDeletedPayload),
     (Event.NOTE_CAPTURED, WebhookEvent.NOTE_CAPTURED, NoteCapturedPayload),
     (Event.AUDIO_TRANSCRIBED, WebhookEvent.AUDIO_TRANSCRIBED, AudioTranscribedPayload),
     # LUM-586: document-share entity cascade → shared-graph projection. Fired by
@@ -369,7 +372,7 @@ _register_lock = threading.Lock()
 
 
 def register_core_callbacks() -> None:
-    """Wire all six webhook callbacks onto the in-process hook bus.
+    """Wire every webhook callback onto the in-process hook bus.
 
     Called from `orchestrator/main.py` lifespan in `GRAPH_MODE=service`
     branch. Idempotent: a second call logs a WARNING and returns

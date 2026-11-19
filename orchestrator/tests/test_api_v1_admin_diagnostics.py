@@ -408,18 +408,33 @@ def test_admin_diagnostics_tasks_failure_degrades(client, monkeypatch) -> None:
     assert "task_models_unavailable" in [w["code"] for w in body["warnings"]]
 
 
+def test_admin_diagnostics_temporal_judge_cloud_entry_reads_default(client, monkeypatch) -> None:
+    from tests._task_models_support import CLOUD
+
+    _task_setup(monkeypatch, models={"claude": dict(CLOUD)}, tasks={"temporal_judge": ["claude"]})
+    row = next(r for r in _tasks_get(client, monkeypatch)["tasks"] if r["task"] == "temporal_judge")
+    assert row["configured"] == [{"model": "claude", "skip_reason": "not_on_box"}]
+    assert row["resolved_model"] == "llama"
+    assert row["resolved_from"] == "default"
+    assert row["default_skip_reason"] is None
+
+
 @pytest.mark.parametrize(
-    "tasks,on_box",
+    "tasks,on_box,want_judge",
     [
-        ({}, True),
-        ({"email_classify": ["lan"]}, True),
-        ({"email_classify": ["claude"]}, True),
-        ({"email_classify": ["lan"]}, False),
-        ({"entity_extraction": ["claude", "llama"]}, True),
+        ({}, True, None),
+        ({"email_classify": ["lan"]}, True, None),
+        ({"email_classify": ["claude"]}, True, None),
+        ({"email_classify": ["lan"]}, False, None),
+        ({"entity_extraction": ["claude", "llama"]}, True, None),
+        # LUM-983: the judge follows the on-box answer; literal values so the rows
+        # fail on the old unchecked first-entry branch.
+        ({"temporal_judge": ["lan"]}, True, "lan"),
+        ({"temporal_judge": ["lan"]}, False, "llama"),
     ],
 )
 def test_admin_diagnostics_email_rows_match_resolve_on_box_model(
-    client, monkeypatch, tasks, on_box
+    client, monkeypatch, tasks, on_box, want_judge
 ) -> None:
     from tests._task_models_support import CLOUD
     from tests._task_models_support import LLAMA
@@ -438,6 +453,8 @@ def test_admin_diagnostics_email_rows_match_resolve_on_box_model(
         else:
             continue
         assert by_task[name]["resolved_model"] == want, name
+    if want_judge is not None:
+        assert by_task["temporal_judge"]["resolved_model"] == want_judge
 
 
 def test_admin_diagnostics_lists_ollama_once(client, monkeypatch) -> None:
@@ -463,3 +480,26 @@ def test_admin_diagnostics_lists_ollama_once(client, monkeypatch) -> None:
     rows, warns = admin_diagnostics._tasks_block("admin-o")
     assert warns == [] and len(rows) == 10
     assert len(calls) - before == 1
+
+
+def test_graph_store_row_service_mode_message_points_to_graph_page(monkeypatch) -> None:
+    import config
+    from services import admin_diagnostics
+
+    monkeypatch.setattr(config, "get_graph_store", lambda *a, **k: None)
+    monkeypatch.setattr(config, "get_graph_mode", lambda: "service")
+    row = admin_diagnostics._graph_store_row()
+    assert row.status == "not_configured"
+    assert "graph service" in row.message
+    assert "GRAPH_BACKEND" not in row.message
+
+
+def test_graph_store_row_disabled_mode_message_unchanged(monkeypatch) -> None:
+    import config
+    from services import admin_diagnostics
+
+    monkeypatch.setattr(config, "get_graph_store", lambda *a, **k: None)
+    monkeypatch.setattr(config, "get_graph_mode", lambda: "disabled")
+    row = admin_diagnostics._graph_store_row()
+    assert row.status == "not_configured"
+    assert row.message == "GRAPH_BACKEND is not falkordb"

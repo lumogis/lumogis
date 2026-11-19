@@ -62,7 +62,8 @@ Self-hosters configure the stack via `.env` (see `.env.example`), Compose overla
 An optional knowledge graph layer relates extracted entities beyond flat search; basic chat and retrieval do not require it.
 
 - The knowledge graph is **AGPL-3.0-only** and ships in this repository (**[ADR 229](decisions/229-lum-855-kg-agpl-relicence.md)**). It runs in **`service`** mode: the `lumogis-graph` HTTP capability service beside Core, enabled with the **`docker-compose.falkordb.yml`** and **`docker-compose.premium.yml`** overlays. Falkor-backed stacks are activated only when operators add those overlays.
-- **`GRAPH_MODE`** selects **`disabled`** (fresh default — no graph bootstrap noise), **`inprocess`**, or **`service`** and must be paired with the matching overlays. **`service` is the only mode that works on the standard Core image.** The image copies `orchestrator/` only, so it never contains `services/lumogis-graph/`, and **`GRAPH_MODE=inprocess` needs a Core build that includes it**. Without it, Core observes the request, falls back to **`disabled`**, and emits exactly one **`graph_mode_fallback`** WARNING with reason **`inprocess_plugin_absent`** — chat and ingest continue without KG wiring.
+- **`GRAPH_MODE`** selects **`disabled`** (fresh default — no graph bootstrap noise), **`inprocess`**, or **`service`** and must be paired with the matching overlays. **`service` is the only mode that works on the standard Core image.** The image copies `orchestrator/` only, so it never contains `services/lumogis-graph/`, and **`GRAPH_MODE=inprocess` needs a Core build that includes it**. Without it the graph plugin fails to load ("Failed to load plugin: graph") and the graph stays off — chat and ingest continue without KG wiring.
+- **Settings → Knowledge graph** (admins only) explains what the graph adds and costs (about 2 GB more memory, about 10 GB in total), says whether it is on and whether this machine has enough memory. On an install from the two Release files it has **Turn on** and **Turn off** buttons (the images are published as `ghcr.io/lumogis/lumogis-graph`, and FalkorDB runs from its upstream `falkordb-server` image; the Release `docker-compose.yml` carries both under a `graph` profile that stays off until switched on); below the memory threshold the admin can still turn it on after confirming. On a git checkout it shows the written steps. Admins also see a dismissible offer line in **System status**. Steps: [quickstart § Turn on the knowledge graph](deployment/quickstart.md#turn-on-the-knowledge-graph).
 - In **`service`** mode, Core forwards webhook and context traffic to the graph service; the in-process graph plugin stays inactive so work is not duplicated.
 - The **`query_graph`** tool can be bridged to the out-of-process service; **`GRAPH_WEBHOOK_SECRET`** (or an explicit Core opt-in documented for insecure-missing-secret scenarios) is required for that proxy path when **`GRAPH_MODE=service`**—otherwise the bridge stays closed.
 - Capability manifests may advertise an operator **`management_url`** for a linked management UI where implemented.
@@ -78,6 +79,7 @@ Structured memory and extracted entities sit alongside search so chat can draw o
 - Memory uses **personal**, **shared**, and **system** scopes for isolation and household-wide context where configured.
 - Entity extraction stores and links entities through ingestion and session flows.
 - Context assembly applies a **context budget** before model calls so prompts stay bounded.
+- **What Lumogis knows** — members browse the entries Lumogis has learned (people, organisations, projects, concepts, other) with counts per kind, see which of their documents, chats and AI-tool additions mention an entry, rename an entry or edit its other names, correct what kind it is, merge two entries that are the same, with a History that can undo a merge, and delete an entry so Lumogis does not learn its names again (with a list of those names, an offer to re-read the documents that mentioned it, and **Hide** for entries other members share). Works with the knowledge graph on or off; the map follows a rename or an undo within a day. See [`guides/what-lumogis-knows.md`](guides/what-lumogis-knows.md).
 
 ---
 
@@ -89,9 +91,9 @@ Surfaces for quick capture and optional speech input complement chat and ingest.
 - **Capture inbox and archive** — **Inbox** lists pending and failed captures for edit, delete, retry, and commit-to-memory; **Archive** lists indexed captures read-only with provenance (`note_id`, `indexed_at`). Status-filtered **`GET /api/v1/captures`** drives each tab; failed rows include `last_error` for retry UX.
 - **Authenticated capture ledger APIs** under **`/api/v1/captures`** create, list, update, and delete capture rows for the signed-in user; support attachments and capture-linked transcription requests; and expose indexing submission so captures can enter the ingest pipeline. Pending captures stay editable; indexed captures block destructive edits enforced by the API.
 - **Semantic search** over captures versus ordinary **`documents`** remains uneven—treat capture-oriented discovery as still catching up to library search.
-- **Push-to-talk** transcription via **`POST /api/v1/voice/transcribe`** accepts short audio uploads and returns plain text for an editable field when speech-to-text is enabled (`STT_BACKEND`); **off** by default. A lightweight **`fake_stt`** backend supports tests and scaffolding; production-style deployments use Whisper-class STT in-process or via an optional HTTP sidecar enabled through Compose.
+- **Push-to-talk** transcription via **`POST /api/v1/voice/transcribe`** accepts short audio uploads and returns plain text for an editable field. **On by default in an install from the Release files** (a local Speaches engine under the `stt` Compose profile; Lumogis installs the speech model itself) and **off** in a source checkout, where you opt in with the STT Compose overlay (`STT_BACKEND`). Dictation shows "Listening…" with a level meter while you speak and says why when it fails (speech-to-text off, model still downloading, engine not answering). Browsers give a page the microphone only over HTTPS or at `localhost`, so phones and other computers need **Settings → Home address**. A lightweight **`fake_stt`** backend supports tests and scaffolding; an in-process engine is not built.
 
-Enable STT only when you accept extra CPU/RAM (and optional GPU) cost; use the STT Compose overlay and environment knobs from operator docs when running a sidecar.
+The engine costs about 3.3 GB of disk and up to about 0.6 GB of memory while it transcribes; see the [quickstart](deployment/quickstart.md#speech-to-text) to turn it off. In a checkout, use the STT Compose overlay and the environment knobs from operator docs.
 
 ---
 
@@ -107,6 +109,7 @@ The first-party SPA is the primary household UI: chat, search, approvals, and Me
 - **Unified document library:** `/documents` lists uploads, watched-folder ingest, paperless, and email-filed documents in one browseable list with origin badges and scoped actions.
 - **Voice dictation in composer fields:** reusable push-to-talk button when STT is enabled — see **[ADR 188](decisions/188-voice-dictation.md)**.
 - **Household sharing (documents, entities, conversations):** owners publish library documents, search entities, or conversation summaries to shared scope; members discover shared material through Search, Library filters, and shared-items views; graph mode cascades document entities into shared stores when enabled.
+- **What Lumogis knows (`/entities`):** reached from Search; entries by kind with counts, a **Mentioned in** section on each entry page (only items you can open), an owner-only **Edit names** dialog, **Delete…** and **Hide from my list**; **Names Lumogis won't learn** at `/me/wont-learn`. No new top-level navigation item.
 - **Household invites:** admins mint single-use invite links with optional shared-scope gate for new members; redeem flow sets credentials and optional welcome onboarding.
 - **First-run onboarding:** skippable modal when auth is on; **Connect sources** completes onboarding while navigating to **`/me/sources`** (not behind a stuck modal overlay) — see **[ADR 221](decisions/221-lum-282-paperless-onboarding-offer.md)**.
 - **First wow moment:** guided first-query and entity-discovery cards with server-owned readiness and dismissal — see **[ADR 075](decisions/075-lum-216-first-wow-moment.md)**.
@@ -118,7 +121,7 @@ The first-party SPA is the primary household UI: chat, search, approvals, and Me
 - Password change for self-service and admin-led reset are implemented; **email-based forgot-password** ships when an operator enables **Admin → System mail** with a proven send test (**[ADR 209](decisions/209-lum-65-forgot-password-reset.md)**).
 - Older FastAPI-hosted HTML pages (dashboard, settings, graph views, backup, and similar) still exist for compatibility; full replacement by Lumogis Web is not claimed as finished.
 
-Pin **`LUMOGIS_PUBLIC_ORIGIN`** when authentication is on; align trusted proxy settings if TLS terminates in front of Caddy.
+**`LUMOGIS_PUBLIC_ORIGIN`** is optional: when it is unset Lumogis accepts the address in the browser (still the right setting for a TLS tunnel). Email password reset and other emailed links need it pinned, because Lumogis never builds an email link from the request's `Host`. Align trusted proxy settings if TLS terminates in front of Caddy.
 
 ---
 
@@ -173,6 +176,7 @@ Lumogis Web targets responsive browsers and companion mobile use; intelligence s
 - Phase **2** mobile-oriented UX is shipped as an MVP.
 - A **PWA** layer includes manifest and service worker work (**precache** and push-related boundaries); this is **not** a full offline product—runtime caching of private **`/api/*`** responses is excluded by policy from the service worker design described for Web Push.
 - **Web Push** MVP ships with VAPID **`pywebpush`** flows, explicit permission UX, minimal payloads, and service-worker **`push`** / **`notificationclick`** handling; generic push on every action type is not claimed.
+- **Secure address at home** (Settings → Home address): a free `https://….homes.lumogis.app` name with a real certificate, for phones and laptops on the home network, so app install, voice input and push work there with nothing installed on the device. Home network only; turning it on publishes the name and this computer's private address in public DNS. See [remote access § Secure address at home](deployment/remote-access.md#secure-address-at-home).
 - **LibreChat** remains an optional Compose profile for OpenAI-style chat against **`/v1/*`**—not the household identity surface.
 
 Daily digest and connector-backed notifications remain alternatives where browser push is unavailable or undesirable.
@@ -224,7 +228,7 @@ Extensions split between **in-process plugins** and **out-of-process capabilitie
 
 ## Deployment
 
-Lumogis installs from published images, like Immich. Each GitHub Release carries a `docker-compose.yml` and an `example.env`; in an empty folder, save them (the second as `.env`) and run `docker compose up -d`. Nothing is built and no source checkout is needed. Update with `docker compose pull && docker compose up -d` (**[Upgrading](deployment/upgrading.md)**).
+Lumogis installs from published images. Each GitHub Release carries a `docker-compose.yml` and an `example.env`; in an empty folder, save them (the second as `.env`) and run `docker compose up -d`. Nothing is built and no source checkout is needed. Update with `docker compose pull && docker compose up -d` (**[Upgrading](deployment/upgrading.md)**).
 
 The five Lumogis images (`lumogis-orchestrator`, `lumogis-web`, `lumogis-stack-control`, `lumogis-backup`, `lumogis-caddy`) are multi-platform (amd64/arm64) on `ghcr.io/lumogis/`, tagged `X.Y.Z`, `X.Y` and `release` (the latest release, the default `LUMOGIS_VERSION`), plus `latest` for the head of public `main`. A release is published only after its files and images have been pulled anonymously by digest; its `image-digests.txt` lists those digests. In a git checkout, `docker-compose.ghcr.yml` pulls the same images instead of building:
 

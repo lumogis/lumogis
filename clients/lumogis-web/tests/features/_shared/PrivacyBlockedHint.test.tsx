@@ -62,14 +62,14 @@ describe("PrivacyBlockedHint", () => {
     vi.restoreAllMocks();
   });
 
-  it("(a) admin + local-only: text and a link to /admin/privacy-mode", async () => {
+  it("(a) admin + local-only: text and a link to the household privacy page", async () => {
     mount({ role: "admin" });
     const hint = await screen.findByTestId("privacy-blocked-hint");
     expect(hint).toHaveAttribute("role", "status");
     expect(hint).toHaveTextContent("Cloud models are off because household privacy mode is local-only.");
     expect(screen.getByRole("link", { name: "Allow cloud models in Privacy mode" })).toHaveAttribute(
       "href",
-      "/admin/privacy-mode",
+      "/settings/privacy?view=household",
     );
   });
 

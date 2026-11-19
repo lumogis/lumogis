@@ -92,9 +92,62 @@ describe("AuditLogView", () => {
         </AuthProvider>
       </MemoryRouter>,
     );
-    await screen.findByRole("heading", { name: /my activity/i });
+    await screen.findByText(/decline_type=external_call_denied/i);
     expect(screen.queryByRole("button", { name: /^reverse$/i })).toBeNull();
     expect(await screen.findByText(/decline_type=external_call_denied/i)).toBeInTheDocument();
+  });
+
+  it("says what happened in a sentence and keeps the raw code in Details", async () => {
+    const { client, tokens } = setup();
+    render(
+      <MemoryRouter initialEntries={["/audit"]}>
+        <AuthProvider client={client} tokens={tokens} skipRefreshOnMount>
+          <Routes>
+            <Route path="/audit" element={<AuditLogView />} />
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText(/an online ai call was blocked by the privacy setting/i)).toBeInTheDocument();
+    expect(screen.queryByText("privacy · external_call · denied")).toBeNull();
+  });
+
+  it("shows the empty state when no events match", async () => {
+    const { client, tokens, fetchImpl } = setup();
+    fetchImpl.mockImplementation(async (input: RequestInfo) => {
+      const url = String(input);
+      if (url.includes("/api/v1/auth/me")) return jsonResponse(200, { id: "member", email: "m@h", role: "user" });
+      return jsonResponse(200, { audit: [], total: 0, limit: 50, offset: 0 });
+    });
+    render(
+      <MemoryRouter initialEntries={["/audit"]}>
+        <AuthProvider client={client} tokens={tokens} skipRefreshOnMount>
+          <Routes>
+            <Route path="/audit" element={<AuditLogView />} />
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText(/no audit events match your filters/i)).toBeInTheDocument();
+  });
+
+  it("offers a retry when loading fails", async () => {
+    const { client, tokens, fetchImpl } = setup();
+    fetchImpl.mockImplementation(async (input: RequestInfo) => {
+      const url = String(input);
+      if (url.includes("/api/v1/auth/me")) return jsonResponse(200, { id: "member", email: "m@h", role: "user" });
+      return jsonResponse(500, { detail: "boom" });
+    });
+    render(
+      <MemoryRouter initialEntries={["/audit"]}>
+        <AuthProvider client={client} tokens={tokens} skipRefreshOnMount>
+          <Routes>
+            <Route path="/audit" element={<AuditLogView />} />
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByRole("button", { name: "Try again" })).toBeInTheDocument();
   });
 
   it("shows privacy badge for privacy event types", async () => {
@@ -123,7 +176,7 @@ describe("AuditLogView", () => {
         </AuthProvider>
       </MemoryRouter>,
     );
-    await screen.findByRole("heading", { name: /my activity/i });
+    await screen.findByRole("button", { name: /^privacy$/i });
     await user.click(screen.getByRole("button", { name: /^privacy$/i }));
     await waitFor(() => {
       const hit = fetchImpl.mock.calls.some((c) =>
@@ -171,7 +224,7 @@ describe("AuditLogView", () => {
         </AuthProvider>
       </MemoryRouter>,
     );
-    await screen.findByRole("heading", { name: /my activity/i });
+    await screen.findByRole("button", { name: /^privacy$/i });
     await user.click(screen.getByRole("button", { name: /^live$/i }));
     await waitFor(() => {
       expect(fetchImpl.mock.calls.some((c) => String(c[0]).includes("/api/v1/audit/stream"))).toBe(true);

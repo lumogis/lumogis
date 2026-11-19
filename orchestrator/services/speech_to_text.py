@@ -18,6 +18,8 @@ import threading
 import time
 
 from models.api_v1 import TranscriptionResult
+from ports.speech_to_text import SttModelMissing
+from ports.speech_to_text import SttUnreachable
 
 import config as app_config
 
@@ -62,7 +64,12 @@ class SttValidationError(Exception):
 
 
 class SttProcessingError(Exception):
-    """Adapter/ping/transcribe failure — maps to HTTP 503 ``stt_processing_error``."""
+    """Adapter/ping/transcribe failure — maps to HTTP 503 with ``code``.
+
+    Codes: ``stt_processing_error`` (anything unexpected), ``stt_unreachable`` (the
+    engine does not answer), ``stt_model_missing`` (the speech model is still being
+    installed). ``stt_disabled`` is :class:`SttDisabled`.
+    """
 
     def __init__(self, message: str, code: str = "stt_processing_error") -> None:
         self.code = code
@@ -198,9 +205,9 @@ def transcribe_blob(
     try:
         try:
             if not adapter.ping():
+                _log.warning("event=stt_unreachable reason=ping_failed")
                 raise SttProcessingError(
-                    "Speech-to-text adapter did not respond to ping",
-                    "stt_processing_error",
+                    "The speech-to-text engine is not reachable", "stt_unreachable"
                 )
         except SttProcessingError:
             raise
@@ -217,6 +224,21 @@ def transcribe_blob(
                 language=language,
                 user_id=user_id,
             )
+        except SttModelMissing as exc:
+            # Imported here: keeps this facade free of adapter imports and import cycles.
+            from services import stt_model_readiness
+
+            _log.warning("event=stt_model_missing model=%s", app_config.get_stt_model())
+            stt_model_readiness.note_model_missing()
+            raise SttProcessingError(
+                "The speech model is still being installed. Try again in a minute.",
+                "stt_model_missing",
+            ) from exc
+        except SttUnreachable as exc:
+            _log.warning("event=stt_unreachable reason=transcribe_connect")
+            raise SttProcessingError(
+                "The speech-to-text engine is not reachable", "stt_unreachable"
+            ) from exc
         except Exception as exc:
             _log.exception("stt_transcribe_failed")
             raise SttProcessingError(

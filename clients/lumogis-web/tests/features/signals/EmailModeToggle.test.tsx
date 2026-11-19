@@ -8,10 +8,10 @@ import { MemoryRouter } from "react-router-dom";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { toast } from "sonner";
 
 const mocks = vi.hoisted(() => ({
   listSources: vi.fn(),
-  listSignals: vi.fn().mockResolvedValue({ signals: [], total: 0 }),
   syncSourceNow: vi.fn(),
   updateSource: vi.fn(),
 }));
@@ -26,9 +26,8 @@ vi.mock("../../../src/auth/AuthProvider", () => ({
 vi.mock("../../../src/features/signals/EmailMailboxSetupForm", () => ({
   EmailMailboxSetupForm: () => null,
 }));
-vi.mock("../../../src/features/signals/SignalListItem", () => ({
-  SignalListItem: () => null,
-}));
+// Success messages are sonner toasts (LUM-993); there is no Toaster in this tree.
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 import { EmailSignalsView } from "../../../src/features/signals/EmailSignalsView";
 
@@ -66,43 +65,52 @@ function renderView() {
 
 afterEach(() => {
   vi.clearAllMocks();
-  mocks.listSignals.mockResolvedValue({ signals: [], total: 0 });
 });
 
+/** Open the card's "…" menu and choose an item. */
+async function chooseFromMenu(name: string) {
+  await userEvent.click(await screen.findByRole("button", { name: "More actions for Personal" }));
+  await userEvent.click(await screen.findByRole("menuitem", { name }));
+}
+
 describe("EmailSignalsView mode toggle", () => {
-  it("renders metadata mode with a switch-to-full-ingest button and no pending hint", async () => {
+  it("renders subject-and-sender mode with a switch-to-full-messages item and no pending hint", async () => {
     mocks.listSources.mockResolvedValue({ sources: [source()], total: 1 });
     renderView();
     const mode = await screen.findByTestId("mode-src-1");
-    expect(mode.textContent).toContain("Metadata");
-    expect(mode.textContent).not.toContain("pending");
-    expect(screen.getByRole("button", { name: "Switch Personal to full ingest" })).toBeTruthy();
+    expect(mode.textContent).toContain("Subject and sender only");
+    expect(mode.textContent).not.toContain("waiting for");
+    await userEvent.click(screen.getByRole("button", { name: "More actions for Personal" }));
+    expect(await screen.findByRole("menuitem", { name: "Switch to full messages" })).toBeTruthy();
   });
 
-  it("renders full-ingest active mode with no pending hint", async () => {
+  it("renders full-messages active mode with no pending hint", async () => {
     mocks.listSources.mockResolvedValue({
       sources: [source({ extraction_method: "imap_full_ingest", full_ingest_active: true })],
       total: 1,
     });
     renderView();
     const mode = await screen.findByTestId("mode-src-1");
-    expect(mode.textContent).toContain("Full ingest");
-    expect(mode.textContent).not.toContain("pending");
-    expect(screen.getByRole("button", { name: "Switch Personal to metadata" })).toBeTruthy();
+    expect(mode.textContent).toContain("Full messages");
+    expect(mode.textContent).not.toContain("waiting for");
+    await userEvent.click(screen.getByRole("button", { name: "More actions for Personal" }));
+    expect(
+      await screen.findByRole("menuitem", { name: "Switch to subject and sender only" }),
+    ).toBeTruthy();
   });
 
-  it("shows the pending-operator-enable hint when full-ingest but the flag is off", async () => {
+  it("shows the waiting-for-admin hint when full messages is chosen but the flag is off", async () => {
     mocks.listSources.mockResolvedValue({
       sources: [source({ extraction_method: "imap_full_ingest", full_ingest_active: false })],
       total: 1,
     });
     renderView();
     const mode = await screen.findByTestId("mode-src-1");
-    expect(mode.textContent).toContain("Full ingest");
-    expect(mode.textContent).toContain("pending operator enable");
+    expect(mode.textContent).toContain("Full messages");
+    expect(mode.textContent).toContain("waiting for the household admin to allow it");
   });
 
-  it("toggling calls updateSource with the flipped mode and shows a status", async () => {
+  it("toggling calls updateSource with the flipped mode and toasts the result", async () => {
     mocks.listSources.mockResolvedValue({ sources: [source()], total: 1 });
     mocks.updateSource.mockResolvedValue({
       status: "updated",
@@ -113,32 +121,28 @@ describe("EmailSignalsView mode toggle", () => {
       rescheduled: true,
     });
     renderView();
-    const btn = await screen.findByRole("button", { name: "Switch Personal to full ingest" });
-    await userEvent.click(btn);
-    expect(mocks.updateSource).toHaveBeenCalledWith(expect.anything(), "src-1", {
-      full_ingest: true,
-    });
-    // LUM-769: `findByRole("status")` is ambiguous now — MailboxSendControl
-    // renders one live region per mailbox. Wait on the message itself and
-    // assert its role, which is what this line was actually for.
-    expect(await screen.findByTestId("mode-msg")).toHaveAttribute("role", "status");
-    expect(screen.getByTestId("mode-msg").textContent).toContain("pending operator enable");
+    await chooseFromMenu("Switch to full messages");
+    await waitFor(() =>
+      expect(mocks.updateSource).toHaveBeenCalledWith(expect.anything(), "src-1", {
+        full_ingest: true,
+      }),
+    );
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(
+        "Switched to full messages (waiting for the household admin to allow it).",
+      ),
+    );
   });
 
-  it("shows an error message when the toggle fails (no raw detail)", async () => {
+  it("shows an inline error when the toggle fails (no raw detail)", async () => {
     mocks.listSources.mockResolvedValue({ sources: [source()], total: 1 });
     mocks.updateSource.mockRejectedValue(new Error("boom: postgres://secret@host"));
     renderView();
-    const btn = await screen.findByRole("button", { name: "Switch Personal to full ingest" });
-    await userEvent.click(btn);
+    await chooseFromMenu("Switch to full messages");
     await waitFor(() => {
       expect(screen.getByTestId("mode-msg").textContent).toContain("Couldn't change mode");
     });
-    expect(
-      screen
-        .getAllByRole("status")
-        .map((el) => el.textContent ?? "")
-        .join(" "),
-    ).not.toContain("secret");
+    expect(screen.getByTestId("mode-msg")).toHaveAttribute("role", "alert");
+    expect(screen.getByTestId("mode-msg").textContent).not.toContain("secret");
   });
 });

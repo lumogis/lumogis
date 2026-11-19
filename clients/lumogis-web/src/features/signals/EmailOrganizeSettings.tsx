@@ -14,7 +14,24 @@ import {
   undoEmailOrganize,
   type UndoScope,
 } from "../../api/emailSources";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { starvationWarning, type StarvationWarning } from "./externalConsumerWarning";
+
+const UNDO_SCOPES: { value: UndoScope; label: string }[] = [
+  { value: "all", label: "Labels and folder sorting" },
+  { value: "folder", label: "Folder sorting only (move mail back to the inbox)" },
+  { value: "label", label: "Labels only" },
+];
 
 export interface EmailOrganizeSettingsProps {
   sourceId: string;
@@ -131,139 +148,161 @@ export function EmailOrganizeSettings({
   };
 
   return (
-    <section aria-labelledby="organize-heading">
-      <h3 id="organize-heading">Organize my mailbox</h3>
-      <p>
-        Let Lumogis apply what it has learned to your real mailbox. This is off by
-        default and always reversible.
-      </p>
+    <section aria-labelledby="organize-heading" className="grid gap-4">
+      <div>
+        <h3 id="organize-heading" className="m-0 text-sm font-semibold">
+          Organize my mailbox
+        </h3>
+        <p className="m-0 mt-1 text-sm text-muted-foreground">
+          Let Lumogis apply what it has learned to your real mailbox. This is off by
+          default and always reversible.
+        </p>
+      </div>
 
-      <label>
-        <input
-          type="checkbox"
+      <Label className="items-start">
+        <Checkbox
           checked={labelOn}
-          onChange={(e) => {
+          onCheckedChange={(on: boolean) => {
             clearWarning();
-            setLabelOn(e.target.checked);
+            setLabelOn(on);
           }}
-        />{" "}
+        />
         Label my emails so they can be sorted
-      </label>
+      </Label>
       {labelOn && !labelVisible && (
-        <p role="note" data-testid="label-caveat">
+        <p role="note" data-testid="label-caveat" className="m-0 text-sm text-muted-foreground">
           Heads up: your provider may not <em>show</em> these labels in its own app.
           To see the organization visibly, turn on “Sort into folders” below.
         </p>
       )}
 
-      <label>
-        <input
-          type="checkbox"
+      <Label className="items-start">
+        <Checkbox
           checked={folderOn}
-          onChange={(e) => {
+          onCheckedChange={(on: boolean) => {
             clearWarning();
-            setFolderOn(e.target.checked);
+            setFolderOn(on);
           }}
-        />{" "}
+        />
         Sort my emails into folders (moves mail)
-      </label>
+      </Label>
       {folderOn && (
-        <fieldset data-testid="folder-categories">
-          <legend>Which categories to sort into folders</legend>
+        <fieldset data-testid="folder-categories" className="m-0 grid gap-2 rounded-lg border p-3">
+          <legend className="px-1 text-sm font-medium">Which categories to sort into folders</legend>
           {sortable.map((c) => (
-            <label key={c.slug}>
-              <input
-                type="checkbox"
+            <Label key={c.slug} className="items-start">
+              <Checkbox
                 checked={folderCats.includes(c.slug)}
-                onChange={() => toggleCat(c.slug)}
-              />{" "}
+                onCheckedChange={() => toggleCat(c.slug)}
+              />
               {c.label}
-            </label>
+            </Label>
           ))}
-          <p>“Other” is never moved — unsorted mail stays in your inbox.</p>
+          <p className="m-0 text-sm text-muted-foreground">
+            “Other” is never moved — unsorted mail stays in your inbox.
+          </p>
         </fieldset>
       )}
 
-      <label>
-        <input
-          type="checkbox"
+      <Label className="items-start">
+        <Checkbox
           checked={applyExisting}
-          onChange={(e) => {
+          onCheckedChange={(on: boolean) => {
             clearWarning();
-            setApplyExisting(e.target.checked);
+            setApplyExisting(on);
           }}
-        />{" "}
+        />
         Also apply to existing mail (not just new). Duplicates are skipped.
-      </label>
+      </Label>
 
       {starvation && (
-        <div role="alertdialog" aria-labelledby="starve-heading" data-testid="starvation-warning">
-          <h4 id="starve-heading">This will hide mail from paperless</h4>
-          <p>{starvation.message}</p>
-          {/* Offered to EVERY provider. What matters for paperless is only that
-              the message stays in the inbox, which labels-only guarantees
-              everywhere — label and move are separate operations server-side. */}
-          <p data-testid="starvation-alternative">{starvation.alternative}</p>
-          {!labelVisible && (
-            <p data-testid="starvation-label-caveat">
-              On your provider you will not <em>see</em> the category on the message
-              itself, but your documents keep arriving in paperless.
+        <Alert data-testid="starvation-warning" aria-labelledby="starve-heading">
+          <AlertTitle id="starve-heading">This will hide mail from paperless</AlertTitle>
+          <AlertDescription className="grid gap-2">
+            <p className="m-0">{starvation.message}</p>
+            {/* Offered to EVERY provider. What matters for paperless is only that
+                the message stays in the inbox, which labels-only guarantees
+                everywhere — label and move are separate operations server-side. */}
+            <p className="m-0" data-testid="starvation-alternative">
+              {starvation.alternative}
             </p>
-          )}
-          {/* Undo is a real recovery path and must not be oversold. */}
-          <p data-testid="starvation-recovery">{starvation.recovery}</p>
-          <button type="button" onClick={useLabelsInstead}>
-            Use labels instead
-          </button>
-          <button
-            type="button"
-            data-testid="starvation-continue"
-            onClick={() => saveM.mutate(true)}
-            disabled={saveM.isPending}
-          >
-            I understand — sort into folders anyway
-          </button>
-          <button type="button" onClick={clearWarning}>
-            Cancel
-          </button>
-        </div>
+            {!labelVisible && (
+              <p className="m-0" data-testid="starvation-label-caveat">
+                On your provider you will not <em>see</em> the category on the message
+                itself, but your documents keep arriving in paperless.
+              </p>
+            )}
+            {/* Undo is a real recovery path and must not be oversold. */}
+            <p className="m-0" data-testid="starvation-recovery">
+              {starvation.recovery}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="outline" onClick={useLabelsInstead}>
+                Use labels instead
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                data-testid="starvation-continue"
+                onClick={() => saveM.mutate(true)}
+                disabled={saveM.isPending}
+              >
+                I understand — sort into folders anyway
+              </Button>
+              <Button type="button" variant="ghost" onClick={clearWarning}>
+                Cancel
+              </Button>
+            </div>
+          </AlertDescription>
+        </Alert>
       )}
 
-      <div>
-        <button type="button" onClick={() => saveM.mutate(false)} disabled={saveM.isPending}>
+      <div className="flex flex-wrap items-end gap-3">
+        <Button type="button" onClick={() => saveM.mutate(false)} disabled={saveM.isPending}>
           Save
-        </button>
-        {/* LUM-729: the scope was hardcoded to "all", so the folder-only put-back
-            — the recovery path for exactly the user this feature warns — was
-            unreachable from the UI. A warning that implies recoverability beside
-            a recovery path nobody can reach is a promise the product does not
-            keep. */}
-        <label>
-          What to undo{" "}
-          <select
-            aria-label="What to undo"
+        </Button>
+      </div>
+
+      {/* LUM-729: the scope was hardcoded to "all", so the folder-only put-back
+          — the recovery path for exactly the user this feature warns — was
+          unreachable from the UI. A warning that implies recoverability beside
+          a recovery path nobody can reach is a promise the product does not
+          keep. */}
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="grid gap-1.5">
+          <Label id="undo-scope-label">What to undo</Label>
+          <Select
+            items={UNDO_SCOPES}
             value={undoScope}
-            onChange={(e) => setUndoScope(e.target.value as UndoScope)}
+            onValueChange={(v) => setUndoScope(v as UndoScope)}
           >
-            <option value="all">Labels and folder sorting</option>
-            <option value="folder">Folder sorting only (move mail back to the inbox)</option>
-            <option value="label">Labels only</option>
-          </select>
-        </label>
-        <button
+            <SelectTrigger aria-labelledby="undo-scope-label" className="w-full min-w-64 sm:w-auto">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {UNDO_SCOPES.map((o) => (
+                <SelectItem key={o.value} value={o.value}>
+                  {o.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <Button
           type="button"
+          variant="outline"
           onClick={() => undoM.mutate(undoScope)}
           disabled={undoM.isPending}
         >
           Undo
-        </button>
-        <button type="button" onClick={() => void logQ.refetch()}>
+        </Button>
+        <Button type="button" variant="ghost" onClick={() => void logQ.refetch()}>
           Show activity
-        </button>
+        </Button>
       </div>
 
       {msg && (
-        <p role="status" data-testid="organize-save-msg">
+        <p role="status" data-testid="organize-save-msg" className="m-0 text-sm text-muted-foreground">
           {msg}
         </p>
       )}
@@ -273,16 +312,18 @@ export function EmailOrganizeSettings({
           to stop. Shown with the activity log because that is where the
           un-reversed messages are listed. */}
       {logQ.data?.undo_gave_up_at && (
-        <p role="alert" data-testid="undo-gave-up">
-          Lumogis stopped trying to undo {logQ.data.undo_unreversed ?? 0} message
-          {(logQ.data.undo_unreversed ?? 0) === 1 ? "" : "s"} — they could not be moved
-          back, most likely because they were deleted or moved in your mail app.
-          They stay where Lumogis put them. Organizing has resumed.
-        </p>
+        <Alert variant="destructive" data-testid="undo-gave-up">
+          <AlertDescription>
+            Lumogis stopped trying to undo {logQ.data.undo_unreversed ?? 0} message
+            {(logQ.data.undo_unreversed ?? 0) === 1 ? "" : "s"} — they could not be moved
+            back, most likely because they were deleted or moved in your mail app.
+            They stay where Lumogis put them. Organizing has resumed.
+          </AlertDescription>
+        </Alert>
       )}
 
       {logQ.data && (
-        <ul data-testid="organize-log">
+        <ul data-testid="organize-log" className="m-0 grid gap-1 pl-5 text-sm">
           {logQ.data.entries.map((e, i) => (
             <li key={i}>
               {e.op === "label" ? "Labelled" : "Sorted"} → {e.target}

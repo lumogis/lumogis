@@ -3,7 +3,7 @@
 // LUM-65 — Admin → System mail: enablement diagnosis, keep-password semantics,
 // and the Send test that is the only thing which turns email reset on.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { ApiClient } from "../../../src/api/client";
@@ -99,7 +99,9 @@ describe("AdminSystemMailView", () => {
 
     const summary = await screen.findByTestId("system-mail-enablement");
     expect(summary.textContent).toMatch(/not enabled/i);
-    expect(summary.textContent).toMatch(/LUMOGIS_PUBLIC_ORIGIN/);
+    expect(summary.textContent).toMatch(/Public address set/);
+    // The env var name is developer detail: collapsed Details only, not the checklist.
+    expect(summary.textContent).not.toMatch(/LUMOGIS_PUBLIC_ORIGIN/);
   });
 
   it("says a Send test is still needed when the relay has never delivered", async () => {
@@ -111,6 +113,7 @@ describe("AdminSystemMailView", () => {
 
     const summary = await screen.findByTestId("system-mail-enablement");
     expect(summary.textContent).toMatch(/Send test/);
+    expect(summary.textContent).toMatch(/Test message delivered/);
   });
 
   it("never renders the stored password and omits it when left blank", async () => {
@@ -189,6 +192,44 @@ describe("AdminSystemMailView", () => {
     await user.click(screen.getByTestId("system-mail-test"));
 
     expect(await screen.findByRole("alert")).toBeTruthy();
+  });
+
+  it("asks before removing the email settings, and Cancel does nothing", async () => {
+    const { client, tokens, fetchImpl } = setup(systemMail());
+    const user = userEvent.setup();
+
+    renderView(client, tokens);
+    await user.click(await screen.findByTestId("system-mail-delete"));
+    const dialog = await screen.findByRole("alertdialog");
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(fetchImpl.mock.calls.some((c) => (c[1] as RequestInit)?.method === "DELETE")).toBe(false);
+  });
+
+  it("removes the email settings once confirmed", async () => {
+    const { client, tokens, fetchImpl } = setup(systemMail());
+    const user = userEvent.setup();
+
+    renderView(client, tokens);
+    await user.click(await screen.findByTestId("system-mail-delete"));
+    const dialog = await screen.findByRole("alertdialog");
+    await user.click(within(dialog).getByRole("button", { name: "Remove" }));
+    await waitFor(() =>
+      expect(fetchImpl.mock.calls.some((c) => (c[1] as RequestInit)?.method === "DELETE")).toBe(true),
+    );
+  });
+
+  it("shows a retry when the settings cannot load", async () => {
+    const { client, tokens, fetchImpl } = setup(systemMail());
+    const base = fetchImpl.getMockImplementation()!;
+    fetchImpl.mockImplementation(async (input: RequestInfo, init?: RequestInit) =>
+      String(input).includes("/api/v1/admin/system-mail") && !String(input).includes("/test")
+        ? jsonResponse(500, { detail: "boom" })
+        : base(input, init),
+    );
+
+    renderView(client, tokens);
+    expect(await screen.findByRole("button", { name: /try again/i })).toBeTruthy();
   });
 
   it("disables Send test until SMTP is configured", async () => {

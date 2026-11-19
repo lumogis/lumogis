@@ -125,7 +125,7 @@ class _EntityWorld:
 
     def execute(self, sql, params=None):
         if sql.startswith("UPDATE entities SET graph_projected_at"):
-            eid, uid = params
+            eid, uid = params[:2]  # a third param is the LUM-967 entity_type guard
             stamp = None if "= NULL" in sql else "now"
             self.entities[(uid, eid)]["graph_projected_at"] = stamp
 

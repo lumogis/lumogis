@@ -109,8 +109,8 @@ lumogis_preflight() {
 [lumogis-preflight] WARNING: names a public hostname: $public
 [lumogis-preflight] WARNING: Anyone who can reach that address uses Lumogis as its
 [lumogis-preflight] WARNING: admin and can read everything it stores.
-[lumogis-preflight] WARNING: Turn sign-in on before publishing this address:
-[lumogis-preflight] WARNING: docs/deployment/quickstart.md#turn-on-sign-in
+[lumogis-preflight] WARNING: Set AUTH_ENABLED=true in .env before publishing this
+[lumogis-preflight] WARNING: address (see docs/deployment/quickstart.md#sign-in).
 [lumogis-preflight] WARNING ==========================================================
 EOF
 	return 1
@@ -120,7 +120,65 @@ if [ "${LUMOGIS_PREFLIGHT_LIB:-0}" = "1" ]; then
 	return 0 2>/dev/null || exit 0 # sourced by tests for the functions only
 fi
 
+# LUM-331 — household secure-address guard, for `caddy run` only. A household
+# site in /etc/caddy/home.d that no longer validates (a Caddy upgrade, a damaged
+# file) must not stop Caddy, or the home-network address goes down with it. If
+# home.caddy exists and the configuration does not validate, start Caddy from a
+# copy without the household import line, say so, and leave a marker that
+# stack-control reports to Core (which re-applies the site and reloads). Every
+# other command keeps the plain `exec "$@"`.
+# The paths are fixed in the image; the tests point them at a temporary folder.
+LUMOGIS_HOME_SITE=${LUMOGIS_HOME_SITE:-/etc/caddy/home.d/home.caddy}
+LUMOGIS_HOME_IMPORT='import /etc/caddy/home.d/*.caddy'
+LUMOGIS_HOME_REJECTED=${LUMOGIS_HOME_REJECTED:-/tmp/lumogis-home-rejected}
+LUMOGIS_NOHOME_CONFIG=${LUMOGIS_NOHOME_CONFIG:-/tmp/Caddyfile.nohome}
+
+# Print the --config value of a `caddy run` command line (default Caddyfile).
+lumogis_config_arg() {
+	cfg=/etc/caddy/Caddyfile
+	while [ "$#" -gt 0 ]; do
+		case $1 in
+			--config | -c) [ "$#" -gt 1 ] && cfg=$2 ;;
+			--config=*) cfg=${1#--config=} ;;
+		esac
+		shift
+	done
+	printf '%s' "$cfg"
+}
+
+# 0 when Caddy should start without the household site (and the copy is written).
+lumogis_home_fallback() {
+	[ -f "$LUMOGIS_HOME_SITE" ] || return 1
+	cfg=$1
+	if caddy validate --adapter caddyfile --config "$cfg" >/dev/null 2>&1; then
+		return 1
+	fi
+	awk -v line="$LUMOGIS_HOME_IMPORT" '$0 != line' "$cfg" >"$LUMOGIS_NOHOME_CONFIG" || return 1
+	echo "[preflight] household secure-address config rejected; starting without it" >&2
+	: >"$LUMOGIS_HOME_REJECTED"
+	return 0
+}
+
 lumogis_preflight || true
+if [ "$#" -gt 1 ] && [ "$1" = caddy ] && [ "$2" = run ]; then
+	rm -f "$LUMOGIS_HOME_REJECTED"
+	if lumogis_home_fallback "$(lumogis_config_arg "$@")"; then
+		# Rebuild the arguments with --config pointing at the copy.
+		n=$#
+		prev=
+		while [ "$n" -gt 0 ]; do
+			arg=$1
+			shift
+			n=$((n - 1))
+			case $prev:$arg in
+				--config:* | -c:*) arg=$LUMOGIS_NOHOME_CONFIG ;;
+				*:--config=*) arg=--config=$LUMOGIS_NOHOME_CONFIG ;;
+			esac
+			prev=$arg
+			set -- "$@" "$arg"
+		done
+	fi
+fi
 if [ "$#" -gt 0 ]; then
 	exec "$@"
 fi

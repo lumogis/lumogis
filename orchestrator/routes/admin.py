@@ -11,6 +11,7 @@ import uuid
 import zipfile
 from pathlib import Path
 
+import psycopg2.errors
 from auth import UserContext
 from auth import auth_enabled
 from auth import get_user
@@ -54,6 +55,8 @@ from settings_store import put_settings
 import config
 from services import admin_ollama as admin_ollama_svc
 from services import connector_credentials
+from services import host_env
+from services import stack_control
 
 _DASHBOARD_HTML = Path(__file__).parent.parent / "dashboard" / "index.html"
 _GRAPH_MGM_HTML = Path(__file__).parent.parent / "static" / "graph_mgm.html"
@@ -64,45 +67,9 @@ router = APIRouter()
 _log = logging.getLogger(__name__)
 
 
-def _current_restart_secret() -> str:
-    """Read RESTART_SECRET from /project/.env at call time.
-
-    The entrypoint generates a new secret on first boot and writes it to
-    /project/.env, but the orchestrator's own env var still holds the old
-    placeholder.  Reading the file ensures we always send the current token.
-    """
-    if _PROJECT_ENV_FILE.is_file():
-        try:
-            for line in _PROJECT_ENV_FILE.read_text().splitlines():
-                stripped = line.strip()
-                if stripped.startswith("RESTART_SECRET="):
-                    return stripped[len("RESTART_SECRET=") :].strip()
-        except Exception:
-            pass
-    return os.environ.get("RESTART_SECRET", "")
-
-
 def _reranker_backend_active(backend: str) -> bool:
     """True when RERANKER_BACKEND env indicates an active reranker process."""
     return backend.strip().lower() not in ("none", "", "off", "false", "0")
-
-
-def _rewrite_host_env_key(content: str, key: str, value: str) -> str:
-    """Strip every `key=...` line (flexible whitespace) and append one canonical line.
-
-    A strict ``^KEY=`` regex misses ``KEY = value`` and duplicate lines. Appending
-    then leaves an older assignment in place; Compose can keep RERANKER_BACKEND=bge
-    while app_settings says false, so the dashboard shows the wrong state after restart.
-    """
-    pattern = re.compile(
-        rf"^[ \t]*{re.escape(key)}[ \t]*=.*(?:\r?\n)?",
-        re.MULTILINE,
-    )
-    content = pattern.sub("", content).rstrip()
-    if content:
-        content += "\n"
-    content += f"{key}={value}\n"
-    return content
 
 
 # Tables restored in dependency order (entities before entity_relations etc.)
@@ -651,6 +618,8 @@ def _write_stop_entity_file_atomic(path: str, phrases: list[str]) -> None:
     )
     parent = Path(path).parent
     parent.mkdir(parents=True, exist_ok=True)
+    # Same pattern as services/_atomic_file.atomic_write_text (LUM-331); this
+    # older copy predates it. New atomic writes call that helper, not a copy.
     fd, tmp_path = tempfile.mkstemp(dir=str(parent), prefix=".stop_entities_", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -928,9 +897,7 @@ def _apply_compose_ingest_auto_tier(stored_paths: list[str]) -> tuple[bool, bool
         return True, True
 
     try:
-        content = _PROJECT_ENV_FILE.read_text()
-        content, _changed = chain_compose_file_in_env(content)
-        _PROJECT_ENV_FILE.write_text(content)
+        host_env.update(lambda text: chain_compose_file_in_env(text)[0], _PROJECT_ENV_FILE)
     except OSError as exc:
         _log.warning("Override written but COMPOSE_FILE chain failed: %s", exc)
         return True, True
@@ -952,9 +919,9 @@ def _shrink_compose_override() -> None:
             _log.warning("Could not remove empty override %s: %s", o_path, exc)
         if _PROJECT_ENV_FILE.is_file():
             try:
-                content = _PROJECT_ENV_FILE.read_text()
-                content, _ = unchain_compose_file_in_env(content)
-                _PROJECT_ENV_FILE.write_text(content)
+                host_env.update(
+                    lambda text: unchain_compose_file_in_env(text)[0], _PROJECT_ENV_FILE
+                )
             except OSError as exc:
                 _log.warning("Could not unchain COMPOSE_FILE: %s", exc)
         return
@@ -1172,12 +1139,12 @@ def update_settings(body: SettingsUpdate, user: UserContext = Depends(get_user))
     if body.reranker_enabled is not None:
         new_val = "bge" if body.reranker_enabled else "none"
         updates["reranker_enabled"] = "true" if body.reranker_enabled else "false"
-        env_path = Path("/project/.env")
-        if env_path.is_file():
+        if _PROJECT_ENV_FILE.is_file():
             try:
-                content = env_path.read_text()
-                content = _rewrite_host_env_key(content, "RERANKER_BACKEND", new_val)
-                env_path.write_text(content)
+                host_env.update(
+                    lambda text: host_env.rewrite_key(text, "RERANKER_BACKEND", new_val),
+                    _PROJECT_ENV_FILE,
+                )
                 _log.info("Updated RERANKER_BACKEND in /project/.env to %s", new_val)
             except Exception as exc:
                 _log.warning("Could not write RERANKER_BACKEND to /project/.env: %s", exc)
@@ -1238,13 +1205,15 @@ def _write_ingest_paths_env(host_paths: list[str], container_paths: list[str]) -
         _log.info("Project .env not writable; returning ingest snippet instead of writing")
         return
     try:
-        content = _PROJECT_ENV_FILE.read_text()
-        content = _rewrite_host_env_key(
-            content, "FILESYSTEM_ROOT", _host_path_for_env(host_paths[0])
-        )
-        content = _rewrite_host_env_key(content, "INGEST_PATHS_HOST", json.dumps(host_paths))
-        content = _rewrite_host_env_key(content, "INGEST_PATHS", json.dumps(container_paths))
-        _PROJECT_ENV_FILE.write_text(content)
+
+        def apply(content: str) -> str:
+            content = host_env.rewrite_key(
+                content, "FILESYSTEM_ROOT", _host_path_for_env(host_paths[0])
+            )
+            content = host_env.rewrite_key(content, "INGEST_PATHS_HOST", json.dumps(host_paths))
+            return host_env.rewrite_key(content, "INGEST_PATHS", json.dumps(container_paths))
+
+        host_env.update(apply, _PROJECT_ENV_FILE)
         _log.info(
             "Updated ingest path env keys in /project/.env (host=%s container=%s)",
             host_paths,
@@ -1260,30 +1229,15 @@ def _write_ingest_paths_env(host_paths: list[str], container_paths: list[str]) -
 
 
 def _sync_librechat_config() -> None:
-    """Regenerate librechat.yaml and restart LibreChat so the model list updates."""
-    import httpx as _httpx
-    from librechat_config import generate_librechat_yaml
+    """Regenerate librechat.yaml and restart LibreChat, when it runs (LUM-1002)."""
+    from librechat_config import sync_librechat
 
-    if not generate_librechat_yaml():
-        return
-    token = _current_restart_secret()
-    try:
-        _httpx.post(
-            f"{_STACK_CONTROL_URL}/restart",
-            json={"services": ["librechat"]},
-            headers={"X-Lumogis-Restart-Token": token},
-            timeout=30,
-        )
-        _log.info("LibreChat restart triggered after config sync")
-    except Exception as exc:
-        _log.warning("Could not restart LibreChat: %s", exc)
+    sync_librechat("model list changed")
 
 
 # ---------------------------------------------------------------------------
 # Restart (delegates to stack-control sidecar)
 # ---------------------------------------------------------------------------
-
-_STACK_CONTROL_URL = os.environ.get("STACK_CONTROL_URL", "http://stack-control:9000")
 
 
 @router.post("/settings/restart", dependencies=[Depends(require_admin)])
@@ -1316,14 +1270,8 @@ def restart_stack():
     # Only orchestrator: LibreChat doesn't read RERANKER_BACKEND or other settings-written vars.
     sc_payload: dict = {"recreate": True, "services": ["orchestrator"]}
 
-    token = _current_restart_secret()
     try:
-        r = _httpx.post(
-            f"{_STACK_CONTROL_URL}/restart",
-            headers={"X-Lumogis-Restart-Token": token},
-            json=sc_payload,
-            timeout=120.0,
-        )
+        r = stack_control.post("/restart", json=sc_payload, timeout=120.0)
         r.raise_for_status()
     except _httpx.HTTPStatusError as exc:
         detail = f"stack-control HTTP {exc.response.status_code}"
@@ -2460,10 +2408,45 @@ def review_queue_decide(body: DecideRequest, ctx: UserContext = Depends(require_
 
         if action == "merge":
             # winner = candidate_a, loser = candidate_b (convention: a was first-seen)
+            from services.entity_merge import MergeChangesSharing
+            from services.entity_merge import MergeNotPersonal
             from services.entity_merge import merge_entities
 
             try:
-                result = merge_entities(winner_id=cand_a, loser_id=cand_b, user_id=user_id)
+                result = merge_entities(
+                    winner_id=cand_a,
+                    loser_id=cand_b,
+                    user_id=user_id,
+                    origin="review_queue",
+                    acted_by=acted_by,
+                )
+            except MergeChangesSharing as exc:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "sharing_differs",
+                        "message": (
+                            "One of these entries is shared with your household. Merge them "
+                            "from the entry page, where Lumogis shows what becomes visible."
+                        ),
+                    },
+                ) from exc
+            except MergeNotPersonal as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail={"code": "not_personal", "message": str(exc)},
+                ) from exc
+            except psycopg2.errors.LockNotAvailable as exc:
+                # The engine waits 5 s for the member's entity lock (LUM-965).
+                raise HTTPException(
+                    status_code=503,
+                    detail={
+                        "code": "entry_busy",
+                        "message": (
+                            "The member is editing one of these entries. Try again in a moment."
+                        ),
+                    },
+                ) from exc
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
             except RuntimeError as exc:
@@ -2598,22 +2581,22 @@ def review_queue_decide(body: DecideRequest, ctx: UserContext = Depends(require_
 class MergeRequest(BaseModel):
     winner_id: str
     loser_id: str
-    user_id: str = "default"
+    user_id: str
 
 
 @router.post("/entities/merge", dependencies=[Depends(require_admin)])
-def entities_merge(body: MergeRequest):
-    """Manually merge two entities.
+def entities_merge(body: MergeRequest, request: Request):
+    """Manually merge two of a member's entities (admin only).
 
-    Auth: no token required — intentionally unauthenticated, matching the
-    existing POST /backup and POST /restore pattern for this single-user,
-    LAN-only deployment.
+    Auth: ``require_admin``. ``user_id`` (the member whose entries are merged)
+    is required: a missing field is a 422, never a silent merge in ``default``.
 
-    PHASE 6 NOTE: When multi-user isolation lands, this endpoint (along with
-    POST /backup, POST /restore, and POST /review-queue/decide) must be gated
-    behind an admin token.  /entities/merge is destructive and irreversible
-    (the loser entity is permanently deleted); it has higher consequence than
-    the read-only endpoints that share the same unauthenticated pattern today.
+    Every merge writes an undo record (``entity_merges``, origin ``admin``) and
+    the member can undo it from the entry's History. A cross-kind merge also
+    writes the member's ``entity_name_rules`` retype rule (the survivor's kind
+    wins). A merge that would change what the household sees (exactly one side
+    is shared) is refused with ``409 sharing_differs``; the member merges those
+    from the entry page, where Lumogis shows what becomes visible.
 
     Validates UUIDs before any DB call.  Calls merge_entities() which executes
     a single Postgres transaction (Phase A) followed by best-effort Qdrant
@@ -2623,6 +2606,8 @@ def entities_merge(body: MergeRequest):
       200  on success
       400  same winner/loser, invalid UUID, or business rule violation (ValueError)
       404  entity not found
+      409  sharing_differs (one side shared)
+      422  not_personal (a row is a shared copy) or a missing ``user_id``
       500  SQL error during Phase A (transaction rolled back)
     """
     # UUID validation before any DB call
@@ -2632,19 +2617,51 @@ def entities_merge(body: MergeRequest):
     except (ValueError, AttributeError):
         raise HTTPException(status_code=400, detail="invalid uuid")
 
-    user_id = body.user_id or "default"
+    user_id = body.user_id
 
     if winner_uuid == loser_uuid:
         raise HTTPException(status_code=400, detail="winner_id and loser_id must differ")
 
+    from services.entity_merge import MergeChangesSharing
+    from services.entity_merge import MergeNotPersonal
     from services.entity_merge import merge_entities
 
     try:
-        result = merge_entities(winner_id=winner_uuid, loser_id=loser_uuid, user_id=user_id)
+        result = merge_entities(
+            winner_id=winner_uuid,
+            loser_id=loser_uuid,
+            user_id=user_id,
+            origin="admin",
+            acted_by=get_user(request).user_id,
+        )
+    except MergeChangesSharing as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "sharing_differs",
+                "message": (
+                    "One of these entries is shared with your household. Merge them from "
+                    "the entry page, where Lumogis shows what becomes visible."
+                ),
+            },
+        ) from exc
+    except MergeNotPersonal as exc:
+        raise HTTPException(
+            status_code=422, detail={"code": "not_personal", "message": str(exc)}
+        ) from exc
     except ValueError as exc:
         msg = str(exc)
         status = 404 if "not found" in msg else 400
         raise HTTPException(status_code=status, detail=msg) from exc
+    except psycopg2.errors.LockNotAvailable as exc:
+        # The engine waits 5 s for the member's entity lock (LUM-965).
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "entry_busy",
+                "message": "The member is editing one of these entries. Try again in a moment.",
+            },
+        ) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

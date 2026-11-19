@@ -53,12 +53,28 @@ def _store_row(name: str, check_fn: Callable[[], bool]) -> AdminDiagnosticsStore
 
 
 def _graph_store_row() -> AdminDiagnosticsStoreItem:
+    """Core's own graph store row.
+
+    Status stays ``not_configured`` on purpose when there is no store: this row
+    feeds ``stack_status`` -> ``/api/v1/health`` -> the member graph-down
+    banner, so reporting the graph service's capability health here is a
+    separate behaviour change (LUM-937 plan, Follow-up register). In service
+    mode Core keeps no store (the graph service holds the graph); only the
+    message differs. For "is the graph on", use ``services.graph_status``.
+    """
     gs = config.get_graph_store()
     if gs is None:
+        if config.get_graph_mode() == "service":
+            message = (
+                "Core keeps no graph store in service mode; the graph service holds "
+                "the graph. See Admin → Knowledge graph."
+            )
+        else:
+            message = "GRAPH_BACKEND is not falkordb"
         return AdminDiagnosticsStoreItem(
             name="graph",
             status="not_configured",
-            message="GRAPH_BACKEND is not falkordb",
+            message=message,
         )
     return _store_row("graph", gs.ping)
 
@@ -248,12 +264,19 @@ def _speech_to_text_block() -> AdminDiagnosticsSpeechToText:
         ok = bool(adapter and adapter.ping())
     except Exception:
         ok = False
+    # LUM-995: a reachable engine without its model cannot transcribe yet. Reads the
+    # state only; it never starts an install.
+    from services import stt_model_readiness
+
+    model_state = stt_model_readiness.state()
     return AdminDiagnosticsSpeechToText(
         backend=bk,
-        transcribe_available=ok,
+        transcribe_available=ok and model_state in ("ready", "not_applicable"),
         max_audio_bytes=max_b,
         max_duration_sec=max_d,
         endpoint=ep,
+        model=config.get_stt_model() if bk == "whisper_sidecar" else None,
+        model_state=model_state,
     )
 
 

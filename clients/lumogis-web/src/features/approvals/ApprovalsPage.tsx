@@ -13,7 +13,7 @@
 //  * Two modal flows:
 //    (a) "Switch to DO mode" → POST /api/v1/approvals/connector/{c}/mode
 //    (b) "Always allow this action type" → POST /api/v1/approvals/elevate
-//  * Default focus on destructive choice is Cancel.
+//  * Default focus on the confirm dialogs is Cancel (initialFocus).
 //  * Hard-limited rows render the action button disabled with tooltip.
 /* eslint-disable react-refresh/only-export-components */
 
@@ -24,6 +24,7 @@ import {
   useState,
 } from "react";
 
+import { refreshShellState } from "../../api/meShell";
 import { useAuth } from "../../auth/AuthProvider";
 import type { ApiClient } from "../../api/client";
 import {
@@ -37,7 +38,27 @@ import {
   type PendingProposalItem,
 } from "../../api/approvals";
 import { openReconnectingSse } from "../../api/sse";
-import { Button } from "../../components/Button";
+import { PageHeader } from "@/components/page/PageHeader";
+import { ErrorState } from "@/components/page/ErrorState";
+import { LoadingPlaceholder, SkeletonText } from "@/components/page/LoadingState";
+import { PageSection } from "@/components/page/PageSection";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { ChevronDown } from "lucide-react";
+import { formatDateTime } from "../../util/formatTimestamp";
 import { RiskBadge } from "./RiskBadge";
 import { RecoverableSends } from "./RecoverableSends";
 
@@ -115,6 +136,8 @@ export function useApprovalsInvalidation(
   }, [tokens]);
 }
 
+const VISIBLE_ITEMS = 5;
+
 // ── Modal types ───────────────────────────────────────────────────────────
 
 type ModalState =
@@ -135,6 +158,8 @@ export function ApprovalsPage(): JSX.Element {
 
   const invalidate = useCallback(() => {
     setRefreshCount((n) => n + 1);
+    // Keep the sidebar's Approvals count in step (LUM-993).
+    refreshShellState();
   }, []);
 
   useApprovalsInvalidation(tokens, invalidate);
@@ -203,27 +228,46 @@ export function ApprovalsPage(): JSX.Element {
     }
   }, [client, modal, closeModal, invalidate]);
 
-  return (
-    <section className="lumogis-approvals" aria-label="Pending approvals">
-      <header className="lumogis-approvals__header">
-        <h1 className="lumogis-approvals__title">Approvals</h1>
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          onClick={invalidate}
-          aria-label="Refresh approvals list"
-          disabled={loading}
-        >
-          {loading ? "Loading…" : "Refresh"}
-        </Button>
-      </header>
+  // LUM-993 Pass 7: a long list of denied actions is history, not a to-do. The first few
+  // stay open; the rest sit in a collapsed section so the page does not become a wall.
+  const visible = items.slice(0, VISIBLE_ITEMS);
+  const older = items.slice(VISIBLE_ITEMS);
+  const renderItem = (item: PendingApprovalItem): JSX.Element =>
+    item.kind === "denied_action" ? (
+      <DeniedActionRow
+        key={`denied-${item.action_log_id}`}
+        item={item}
+        onSetMode={openSetModeModal}
+        onElevate={openElevateModal}
+      />
+    ) : (
+      <ElevationCandidateRow
+        key={`elev-${item.connector}-${item.action_type}`}
+        item={item}
+        onElevate={openElevateModal}
+      />
+    );
 
-      {error && (
-        <p className="lumogis-approvals__error" role="alert">
-          {error}
-        </p>
-      )}
+  return (
+    <section className="mx-auto w-full max-w-3xl p-4" aria-label="Pending approvals">
+      <PageHeader
+        title="Approvals"
+        description="Things Lumogis stopped to ask about, and actions you have approved often enough to allow for good."
+        action={
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={invalidate}
+            aria-label="Refresh approvals list"
+            disabled={loading}
+          >
+            {loading ? "Loading…" : "Refresh"}
+          </Button>
+        }
+      />
+
+      {error && <ErrorState message={error} onRetry={invalidate} doctorHint={false} />}
 
       <PendingSendProposals client={client} />
 
@@ -232,31 +276,40 @@ export function ApprovalsPage(): JSX.Element {
           not arrive. */}
       <RecoverableSends client={client} />
 
+      {loading && items.length === 0 && !error && (
+        <LoadingPlaceholder label="Loading approvals">
+          <SkeletonText lines={3} />
+        </LoadingPlaceholder>
+      )}
 
       {!loading && items.length === 0 && !error && (
-        <p className="lumogis-approvals__empty" role="status">
+        <p className="m-0 py-8 text-center text-sm text-muted-foreground" role="status">
           No pending approvals. Lumogis is operating normally.
         </p>
       )}
 
-      <ul className="lumogis-approvals__list" role="list" aria-live="polite" aria-busy={loading}>
-        {items.map((item) =>
-          item.kind === "denied_action" ? (
-            <DeniedActionRow
-              key={`denied-${item.action_log_id}`}
-              item={item}
-              onSetMode={openSetModeModal}
-              onElevate={openElevateModal}
-            />
-          ) : (
-            <ElevationCandidateRow
-              key={`elev-${item.connector}-${item.action_type}`}
-              item={item}
-              onElevate={openElevateModal}
-            />
-          ),
-        )}
+      <ul className="m-0 flex list-none flex-col gap-3 p-0" role="list" aria-live="polite" aria-busy={loading}>
+        {visible.map(renderItem)}
       </ul>
+
+      {older.length > 0 && (
+        <Collapsible className="mt-3 border-t pt-2">
+          <CollapsibleTrigger
+            render={<Button type="button" variant="ghost" size="sm" className="-ml-2 group/trigger" />}
+          >
+            <ChevronDown
+              aria-hidden="true"
+              className="transition-transform group-aria-expanded/trigger:rotate-180"
+            />
+            {`Show ${older.length} older ${older.length === 1 ? "item" : "items"}`}
+          </CollapsibleTrigger>
+          <CollapsibleContent keepMounted className="pt-2">
+            <ul className="m-0 flex list-none flex-col gap-3 p-0" role="list">
+              {older.map(renderItem)}
+            </ul>
+          </CollapsibleContent>
+        </Collapsible>
+      )}
 
       {modal && (
         <ApprovalsModal
@@ -280,6 +333,24 @@ interface DeniedActionRowProps {
   onElevate: (connector: string, action_type: string, isHardLimited: boolean) => void;
 }
 
+function ItemHeader({
+  connector,
+  actionType,
+  tier,
+}: {
+  connector: string;
+  actionType: string;
+  tier: DeniedActionItem["risk_tier"];
+}): JSX.Element {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="font-medium">{connector}</span>
+      <span className="text-muted-foreground">{actionType}</span>
+      <RiskBadge tier={tier} />
+    </div>
+  );
+}
+
 function DeniedActionRow({ item, onSetMode, onElevate }: DeniedActionRowProps): JSX.Element {
   const isHardLimited = item.risk_tier === "hard_limit";
   const canElevate = item.elevation_eligible && !isHardLimited;
@@ -288,58 +359,50 @@ function DeniedActionRow({ item, onSetMode, onElevate }: DeniedActionRowProps): 
   const canSetMode = !isHardLimited && item.suggested_action !== "explain_only";
 
   return (
-    <li className="lumogis-approvals__item lumogis-approvals__item--denied" aria-label={`Denied: ${item.connector} ${item.action_type}`}>
-      <div className="lumogis-approvals__item-header">
-        <span className="lumogis-approvals__connector">{item.connector}</span>
-        <span className="lumogis-approvals__action-type">{item.action_type}</span>
-        <RiskBadge tier={item.risk_tier} />
-      </div>
+    <li aria-label={`Denied: ${item.connector} ${item.action_type}`}>
+      <Card size="sm">
+        <CardContent className="flex flex-col gap-2">
+          <ItemHeader connector={item.connector} actionType={item.action_type} tier={item.risk_tier} />
 
-      {item.input_summary && (
-        <p className="lumogis-approvals__summary">{item.input_summary}</p>
-      )}
+          {item.input_summary && <p className="m-0 text-sm">{item.input_summary}</p>}
 
-      <div className="lumogis-approvals__meta">
-        <time className="lumogis-approvals__occurred" dateTime={item.occurred_at}>
-          {new Date(item.occurred_at).toLocaleString()}
-        </time>
-      </div>
+          <time className="text-xs text-muted-foreground" dateTime={item.occurred_at}>
+            {formatDateTime(item.occurred_at)}
+          </time>
 
-      <div className="lumogis-approvals__actions">
-        {isHardLimited ? (
-          <span className="lumogis-approvals__hard-limited" title="This action is hard-limited and cannot be approved.">
-            Hard-limited — cannot approve
-          </span>
-        ) : (
-          <>
-            {canSetMode && (
-              <Button
-                type="button"
-                variant="primary"
-                size="sm"
-                onClick={() => onSetMode(item.connector, isHardLimited)}
+          <div className="flex flex-wrap items-center gap-2">
+            {isHardLimited ? (
+              <span
+                className="text-sm text-muted-foreground"
+                title="This action is hard-limited and cannot be approved."
               >
-                Switch {item.connector} to DO mode
-              </Button>
-            )}
-            {canElevate && (
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                onClick={() => onElevate(item.connector, item.action_type, isHardLimited)}
-              >
-                Always allow this action type
-              </Button>
-            )}
-            {!canSetMode && !canElevate && (
-              <span className="lumogis-approvals__not-switchable">
-                This can&apos;t be switched from here.
+                Hard-limited — cannot approve
               </span>
+            ) : (
+              <>
+                {canSetMode && (
+                  <Button type="button" size="sm" onClick={() => onSetMode(item.connector, isHardLimited)}>
+                    Switch {item.connector} to DO mode
+                  </Button>
+                )}
+                {canElevate && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onElevate(item.connector, item.action_type, isHardLimited)}
+                  >
+                    Always allow this action type
+                  </Button>
+                )}
+                {!canSetMode && !canElevate && (
+                  <span className="text-sm text-muted-foreground">This can&apos;t be switched from here.</span>
+                )}
+              </>
             )}
-          </>
-        )}
-      </div>
+          </div>
+        </CardContent>
+      </Card>
     </li>
   );
 }
@@ -353,43 +416,42 @@ function ElevationCandidateRow({ item, onElevate }: ElevationCandidateRowProps):
   const isHardLimited = item.risk_tier === "hard_limit";
 
   return (
-    <li className="lumogis-approvals__item lumogis-approvals__item--elevation" aria-label={`Elevation candidate: ${item.connector} ${item.action_type}`}>
-      <div className="lumogis-approvals__item-header">
-        <span className="lumogis-approvals__connector">{item.connector}</span>
-        <span className="lumogis-approvals__action-type">{item.action_type}</span>
-        <RiskBadge tier={item.risk_tier} />
-      </div>
+    <li aria-label={`Elevation candidate: ${item.connector} ${item.action_type}`}>
+      <Card size="sm">
+        <CardContent className="flex flex-col gap-2">
+          <ItemHeader connector={item.connector} actionType={item.action_type} tier={item.risk_tier} />
 
-      <p className="lumogis-approvals__summary">
-        Approved <strong>{item.approval_count}</strong> times — eligible for automatic elevation.
-      </p>
+          <p className="m-0 text-sm">
+            Approved <strong>{item.approval_count}</strong> times — eligible for automatic elevation.
+          </p>
 
-      <div className="lumogis-approvals__actions">
-        {isHardLimited ? (
-          <span
-            className="lumogis-approvals__hard-limited"
-            title="This action type is hard-limited and cannot be elevated to routine."
-          >
-            Hard-limited — cannot elevate
-          </span>
-        ) : (
-          <Button
-            type="button"
-            variant="primary"
-            size="sm"
-            onClick={() => onElevate(item.connector, item.action_type, isHardLimited)}
-            disabled={!item.elevation_eligible}
-            title={!item.elevation_eligible ? "Not eligible for elevation" : undefined}
-          >
-            Always allow this action type
-          </Button>
-        )}
-      </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {isHardLimited ? (
+              <span
+                className="text-sm text-muted-foreground"
+                title="This action type is hard-limited and cannot be elevated to routine."
+              >
+                Hard-limited — cannot elevate
+              </span>
+            ) : (
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => onElevate(item.connector, item.action_type, isHardLimited)}
+                disabled={!item.elevation_eligible}
+                title={!item.elevation_eligible ? "Not eligible for elevation" : undefined}
+              >
+                Always allow this action type
+              </Button>
+            )}
+          </div>
+        </CardContent>
+      </Card>
     </li>
   );
 }
 
-// ── Modal ─────────────────────────────────────────────────────────────────
+// ── Confirm dialog ────────────────────────────────────────────────────────
 
 interface ApprovalsModalProps {
   modal: NonNullable<ModalState>;
@@ -408,101 +470,61 @@ function ApprovalsModal({
   onSetMode,
   onElevate,
 }: ApprovalsModalProps): JSX.Element {
-  const cancelRef = useRef<HTMLButtonElement>(null);
-  const onCloseRef = useRef(onClose);
-  useEffect(() => {
-    onCloseRef.current = onClose;
-  }, [onClose]);
-
-  // Default focus on Cancel (safe default: the destructive choice).
-  useEffect(() => {
-    cancelRef.current?.focus();
-  }, []);
-
-  // Escape closes even when focus is not on the backdrop (Phase 2D).
-  useEffect(() => {
-    const handleDocKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onCloseRef.current();
-      }
-    };
-    document.addEventListener("keydown", handleDocKeyDown);
-    return () => document.removeEventListener("keydown", handleDocKeyDown);
-  }, []);
-
   const isSetMode = modal.kind === "set_mode";
   const isHardLimited = modal.isHardLimited;
   const confirmLabel = isSetMode
     ? `Switch ${modal.connector} to DO mode`
     : `Always allow ${modal.kind === "elevate" ? modal.action_type : ""}`;
 
+  // LUM-993 Pass 7: was a hand-made dialog element. The ui AlertDialog traps focus, closes on
+  // Escape and hands focus back to the invoking button. Cancel is the first button in the
+  // footer, so it takes the initial focus (the safe default for a consequential choice).
   return (
-    <div
-      className="lumogis-approvals__backdrop"
-      role="presentation"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <div
-        className="lumogis-approvals__modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="approvals-modal-title"
+    <AlertDialog open onOpenChange={(open) => (open ? undefined : onClose())}>
+      <AlertDialogContent
+        initialFocus={() => document.querySelector<HTMLElement>('[data-slot="alert-dialog-cancel"]')}
       >
-        <h2 id="approvals-modal-title" className="lumogis-approvals__modal-title">
-          {isSetMode ? "Switch connector to DO mode?" : "Always allow this action type?"}
-        </h2>
-
-        <div className="lumogis-approvals__modal-body">
-          {isSetMode ? (
-            <p>
-              Switching <strong>{modal.connector}</strong> to{" "}
-              <strong>DO mode</strong> means Lumogis will execute actions for
-              this connector without asking. You can switch back at any time.
-            </p>
-          ) : (
-            modal.kind === "elevate" && (
-              <p>
-                Marking <strong>{modal.action_type}</strong> on{" "}
-                <strong>{modal.connector}</strong> as "always allowed" will auto-approve
-                future requests for this action type. Hard-limited actions cannot be
-                elevated.
+        <AlertDialogHeader>
+          <AlertDialogTitle data-testid="approvals-modal-title">
+            {isSetMode ? "Switch connector to DO mode?" : "Always allow this action type?"}
+          </AlertDialogTitle>
+          <AlertDialogDescription render={<div />}>
+            {isSetMode ? (
+              <p className="m-0">
+                Switching <strong>{modal.connector}</strong> to <strong>DO mode</strong> means Lumogis
+                will execute actions for this connector without asking. You can switch back at any
+                time.
               </p>
-            )
-          )}
+            ) : (
+              modal.kind === "elevate" && (
+                <p className="m-0">
+                  Marking <strong>{modal.action_type}</strong> on <strong>{modal.connector}</strong> as
+                  "always allowed" will auto-approve future requests for this action type.
+                  Hard-limited actions cannot be elevated.
+                </p>
+              )
+            )}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
 
-          {actionError && (
-            <p className="lumogis-approvals__modal-error" role="alert">
-              {actionError}
-            </p>
-          )}
-        </div>
+        {actionError && (
+          <Alert variant="destructive">
+            <AlertDescription>{actionError}</AlertDescription>
+          </Alert>
+        )}
 
-        <div className="lumogis-approvals__modal-footer lumogis-form-actions">
-          <Button
-            ref={cancelRef}
-            type="button"
-            variant="ghost"
-            onClick={onClose}
-            disabled={actionLoading}
-          >
-            Cancel
-          </Button>
-
-          <Button
-            type="button"
-            variant="primary"
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={actionLoading}>Cancel</AlertDialogCancel>
+          <AlertDialogAction
             onClick={isSetMode ? onSetMode : onElevate}
             disabled={actionLoading || isHardLimited}
             title={isHardLimited ? "Hard-limited — cannot be elevated" : undefined}
           >
             {actionLoading ? "Working…" : confirmLabel}
-          </Button>
-        </div>
-      </div>
-    </div>
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 
@@ -551,12 +573,12 @@ function UnsubscribeTargets({ payload }: { payload?: Record<string, unknown> }):
   const targets = (payload?.targets as UnsubscribeTarget[] | undefined) ?? [];
   if (targets.length === 0) return null;
   return (
-    <ul className="lumogis-approvals__unsubscribe-targets" data-testid="unsubscribe-targets">
+    <ul className="m-0 flex list-none flex-col gap-1 p-0 text-sm" data-testid="unsubscribe-targets">
       {targets.map((t, i) => (
         <li key={`${t.from_addr ?? i}`}>
-          <span className="lumogis-approvals__unsubscribe-sender">{t.from_addr}</span>
+          <span>{t.from_addr}</span>
           {" → "}
-          <span className="lumogis-approvals__unsubscribe-recipient">{t.mailto_addr}</span>
+          <span className="text-muted-foreground">{t.mailto_addr}</span>
         </li>
       ))}
     </ul>
@@ -579,14 +601,11 @@ export function PendingSendProposals({ client }: { client: ApiClient }): JSX.Ele
   if (items.length === 0) return null;
 
   return (
-    <section className="lumogis-approvals__pending-sends" aria-label="Unsent drafts">
-      <h2 className="lumogis-approvals__subtitle">Unsent messages</h2>
-      <ul className="lumogis-approvals__list" role="list">
+    <PageSection title="Unsent messages">
+      <ul className="m-0 flex list-none flex-col gap-3 p-0" role="list">
         {items.map((p) => (
-          <li key={p.proposal_id} className="lumogis-approvals__pending-send">
-            <span className="lumogis-approvals__pending-send-action">
-              {_actionLabel(p.action_name)}
-            </span>
+          <li key={p.proposal_id} className="flex flex-col gap-1 text-sm">
+            <span className="font-medium">{_actionLabel(p.action_name)}</span>
             {/* LUM-697: an unsubscribe batch is approved as ONE proposal, so the
                 approver must be able to see every sender AND the exact address
                 each will be mailed. The recipient was resolved server-side at
@@ -597,14 +616,14 @@ export function PendingSendProposals({ client }: { client: ApiClient }): JSX.Ele
               <UnsubscribeTargets payload={p.payload} />
             ) : null}
             {p.first_contact ? (
-              <span className="lumogis-approvals__first-contact" role="note">
+              <Badge variant="outline" role="note">
                 first contact
-              </span>
+              </Badge>
             ) : null}
-            <span className="lumogis-approvals__pending-send-status">{p.status}</span>
+            <span className="text-muted-foreground">{p.status}</span>
           </li>
         ))}
       </ul>
-    </section>
+    </PageSection>
   );
 }

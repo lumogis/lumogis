@@ -32,7 +32,8 @@ describe("ServiceDegradationBanner (LUM-512)", () => {
     const alert = screen.getByRole("alert");
     expect(alert).toHaveTextContent(/local ai unavailable/i);
     expect(alert).toHaveTextContent(/messages may fail/i);
-    expect(alert).toHaveTextContent(/lumogis doctor/i);
+    expect(alert).toHaveTextContent(/keeps happening/i);
+    expect(alert).not.toHaveTextContent(/lumogis doctor/i);
   });
 
   it("shows a degraded (non-alert) status when Qdrant is down", () => {

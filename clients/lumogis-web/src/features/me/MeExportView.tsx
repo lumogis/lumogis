@@ -2,7 +2,13 @@
 // Copyright (C) 2026 Lumogis
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
+import { ChevronDown } from "lucide-react";
+
 import { useAuth } from "../../auth/AuthProvider";
+import { PageSection } from "../../components/page/PageSection";
+import { Alert, AlertDescription } from "../../components/ui/alert";
+import { Button } from "../../components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../../components/ui/collapsible";
 import { parseFilenameFromContentDisposition } from "../../util/contentDisposition";
 
 interface SectionSummary {
@@ -59,21 +65,44 @@ export function MeExportView(): JSX.Element {
   }
 
   return (
-    <section>
-      <h2>Export</h2>
-      {status && <p role="status">{status}</p>}
-      {inv.isSuccess && (
-        <ul>
-          {inv.data.map((s) => (
-            <li key={s.name}>
-              {s.name} ({s.kind}): {s.row_count}
-            </li>
-          ))}
-        </ul>
-      )}
-      <button type="button" onClick={() => void doExport()}>
-        Download ZIP
-      </button>
-    </section>
+    <PageSection
+      title="Download my data"
+      description="Download a ZIP file with a copy of what Lumogis holds for you: your notes, documents, mail summaries, settings and more."
+    >
+      <div className="flex flex-col gap-3">
+        <div>
+          <Button type="button" onClick={() => void doExport()}>
+            Download ZIP
+          </Button>
+        </div>
+        {status ? (
+          <Alert role="status">
+            <AlertDescription>{status}</AlertDescription>
+          </Alert>
+        ) : null}
+        {inv.isSuccess ? (
+          <Collapsible>
+            <CollapsibleTrigger
+              render={<Button type="button" variant="ghost" size="sm" className="-ml-2 group/trigger" />}
+            >
+              <ChevronDown
+                aria-hidden="true"
+                className="transition-transform group-aria-expanded/trigger:rotate-180"
+              />
+              What&apos;s included
+            </CollapsibleTrigger>
+            <CollapsibleContent keepMounted className="pt-2">
+              <ul role="list" className="m-0 list-none p-0 text-sm">
+                {inv.data.map((s) => (
+                  <li key={s.name}>
+                    {s.name} ({s.kind}): {s.row_count}
+                  </li>
+                ))}
+              </ul>
+            </CollapsibleContent>
+          </Collapsible>
+        ) : null}
+      </div>
+    </PageSection>
   );
 }

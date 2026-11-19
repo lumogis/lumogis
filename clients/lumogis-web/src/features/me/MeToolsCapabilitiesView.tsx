@@ -2,6 +2,9 @@
 // Copyright (C) 2026 Lumogis
 //
 // Read-only “Tools & capabilities” — GET /api/v1/me/tools. No execution.
+//
+// Rebuilt on the shared components in LUM-993 plan B Pass 6. A developer page: every
+// column stays visible, now in a Table with Badges and Select filters.
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -9,6 +12,14 @@ import { useQuery } from "@tanstack/react-query";
 import { ApiError } from "../../api/client";
 import { fetchMeTools } from "../../api/meTools";
 import { useAuth } from "../../auth/AuthProvider";
+import { EmptyState } from "../../components/page/EmptyState";
+import { ErrorState } from "../../components/page/ErrorState";
+import { LoadingPlaceholder, SkeletonText } from "../../components/page/LoadingState";
+import { PageSection } from "../../components/page/PageSection";
+import { Badge } from "../../components/ui/badge";
+import { Label } from "../../components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
 
 const SOURCE_LABELS: Record<string, string> = {
   core: "Core",
@@ -24,6 +35,22 @@ const TRANSPORT_LABELS: Record<string, string> = {
   mcp_surface: "MCP clients",
   catalog_only: "Listed only",
   both: "Multiple surfaces",
+};
+
+const SOURCE_FILTERS: Record<string, string> = {
+  all: "All",
+  core: "Core",
+  plugin: "Plugin",
+  mcp: "MCP",
+  proxy: "Proxy",
+  capability: "Capability",
+  action: "Action",
+};
+
+const AVAIL_FILTERS: Record<string, string> = {
+  all: "All",
+  available: "Available",
+  unavailable: "Unavailable",
 };
 
 function labelSource(raw: string): string {
@@ -60,10 +87,9 @@ export function MeToolsCapabilitiesView(): JSX.Element {
 
   if (q.isPending) {
     return (
-      <section aria-busy="true">
-        <h2>Tools &amp; capabilities</h2>
-        <p>Loading…</p>
-      </section>
+      <LoadingPlaceholder label="Loading tools…" className="max-w-2xl">
+        <SkeletonText lines={6} />
+      </LoadingPlaceholder>
     );
   }
 
@@ -75,178 +101,152 @@ export function MeToolsCapabilitiesView(): JSX.Element {
           ? "Your session expired or you are not signed in. Refresh the page or sign in again."
           : err.detail
         : "Something went wrong loading the catalog.";
-    return (
-      <section>
-        <h2>Tools &amp; capabilities</h2>
-        <p role="alert">{detail}</p>
-      </section>
-    );
+    return <ErrorState message={detail} onRetry={() => void q.refetch()} />;
   }
 
   const { summary } = q.data!;
   const sourceKeys = Object.keys(summary.by_source).sort();
 
   return (
-    <section>
-      <h2>Tools &amp; capabilities</h2>
-      <p style={{ maxWidth: "42rem", opacity: 0.9 }}>
-        What your assistant can use right now — read-only overview. This does not run tools or change
-        permissions.
-      </p>
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(9rem, 1fr))",
-          gap: "0.75rem",
-          margin: "1rem 0",
-        }}
+    <div>
+      <PageSection
+        title="What your assistant can use"
+        description="What your assistant can use right now — read-only overview. This does not run tools or change permissions."
       >
-        <div style={{ border: "1px solid rgba(128,128,128,0.25)", borderRadius: 8, padding: "0.75rem" }}>
-          <div style={{ fontSize: "0.8rem", opacity: 0.8 }}>Total</div>
-          <div style={{ fontSize: "1.35rem", fontWeight: 700 }} aria-label={`Total tools: ${summary.total}`}>
-            {summary.total}
-          </div>
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(9rem,1fr))] gap-3">
+          {(
+            [
+              ["Total", "Total tools", summary.total],
+              ["Available", "Available tools", summary.available],
+              ["Unavailable", "Unavailable tools", summary.unavailable],
+            ] as const
+          ).map(([label, aria, n]) => (
+            <div key={label} className="rounded-lg border p-3">
+              <div className="text-xs text-muted-foreground">{label}</div>
+              <div className="text-xl font-bold" aria-label={`${aria}: ${n}`}>
+                {n}
+              </div>
+            </div>
+          ))}
         </div>
-        <div style={{ border: "1px solid rgba(128,128,128,0.25)", borderRadius: 8, padding: "0.75rem" }}>
-          <div style={{ fontSize: "0.8rem", opacity: 0.8 }}>Available</div>
-          <div
-            style={{ fontSize: "1.35rem", fontWeight: 700 }}
-            aria-label={`Available tools: ${summary.available}`}
-          >
-            {summary.available}
-          </div>
-        </div>
-        <div style={{ border: "1px solid rgba(128,128,128,0.25)", borderRadius: 8, padding: "0.75rem" }}>
-          <div style={{ fontSize: "0.8rem", opacity: 0.8 }}>Unavailable</div>
-          <div
-            style={{ fontSize: "1.35rem", fontWeight: 700 }}
-            aria-label={`Unavailable tools: ${summary.unavailable}`}
-          >
-            {summary.unavailable}
-          </div>
-        </div>
-      </div>
 
-      <div style={{ marginBottom: "0.75rem" }}>
-        <strong style={{ fontSize: "0.9rem" }}>By source</strong>
-        <ul style={{ margin: "0.35rem 0 0", paddingLeft: "1.2rem" }}>
+        <h3 className="mt-4 mb-1 text-sm font-semibold">By source</h3>
+        <ul className="m-0 list-disc pl-5 text-sm">
           {sourceKeys.map((k) => (
             <li key={k}>
               {labelSource(k)}: {summary.by_source[k]}
             </li>
           ))}
         </ul>
-      </div>
+      </PageSection>
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "1rem", marginBottom: "1rem" }}>
-        <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem", fontSize: "0.9rem" }}>
-          Source
-          <select
-            value={sourceFilter}
-            onChange={(e) => setSourceFilter(e.target.value)}
-            aria-label="Filter by source"
-          >
-            <option value="all">All</option>
-            <option value="core">Core</option>
-            <option value="plugin">Plugin</option>
-            <option value="mcp">MCP</option>
-            <option value="proxy">Proxy</option>
-            <option value="capability">Capability</option>
-            <option value="action">Action</option>
-          </select>
-        </label>
-        <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem", fontSize: "0.9rem" }}>
-          Availability
-          <select
-            value={availFilter}
-            onChange={(e) => setAvailFilter(e.target.value)}
-            aria-label="Filter by availability"
-          >
-            <option value="all">All</option>
-            <option value="available">Available</option>
-            <option value="unavailable">Unavailable</option>
-          </select>
-        </label>
+      <div className="mb-4 flex flex-wrap gap-4">
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="tools-source-filter">Source</Label>
+          <Select value={sourceFilter} onValueChange={(v) => setSourceFilter(String(v ?? "all"))}>
+            <SelectTrigger id="tools-source-filter" aria-label="Filter by source" className="w-44">
+              <SelectValue>{(v: string | null) => SOURCE_FILTERS[v ?? "all"] ?? "All"}</SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {Object.entries(SOURCE_FILTERS).map(([value, label]) => (
+                <SelectItem key={value} value={value}>
+                  {label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="tools-avail-filter">Availability</Label>
+          <Select value={availFilter} onValueChange={(v) => setAvailFilter(String(v ?? "all"))}>
+            <SelectTrigger id="tools-avail-filter" aria-label="Filter by availability" className="w-44">
+              <SelectValue>{(v: string | null) => AVAIL_FILTERS[v ?? "all"] ?? "All"}</SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {Object.entries(AVAIL_FILTERS).map(([value, label]) => (
+                <SelectItem key={value} value={value}>
+                  {label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       {summary.total === 0 ? (
-        <p>No tools are listed in the catalog yet.</p>
+        <EmptyState title="No tools are listed in the catalog yet." />
       ) : filtered.length === 0 ? (
-        <p>No tools match the current filters.</p>
+        <EmptyState title="No tools match the current filters." />
       ) : (
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.9rem" }}>
-            <thead>
-              <tr style={{ textAlign: "left", borderBottom: "1px solid rgba(128,128,128,0.35)" }}>
-                <th style={{ padding: "0.5rem 0.35rem" }}>Tool</th>
-                <th style={{ padding: "0.5rem 0.35rem" }}>Source</th>
-                <th style={{ padding: "0.5rem 0.35rem" }}>Surface</th>
-                <th style={{ padding: "0.5rem 0.35rem" }}>Tier</th>
-                <th style={{ padding: "0.5rem 0.35rem" }}>Status</th>
-                <th style={{ padding: "0.5rem 0.35rem" }}>Details</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((t) => (
-                <tr key={`${t.source}-${t.name}-${t.capability_id ?? ""}`} style={{ verticalAlign: "top" }}>
-                  <td style={{ padding: "0.5rem 0.35rem" }}>
-                    <div style={{ fontWeight: 600 }}>{t.label}</div>
-                    <div style={{ fontSize: "0.8rem", opacity: 0.75 }}>{t.name}</div>
-                    {t.description ? (
-                      <div style={{ fontSize: "0.8rem", marginTop: "0.25rem", opacity: 0.85 }}>
-                        {t.description.length > 200 ? `${t.description.slice(0, 197)}…` : t.description}
-                      </div>
-                    ) : null}
-                  </td>
-                  <td style={{ padding: "0.5rem 0.35rem" }}>{labelSource(t.source)}</td>
-                  <td style={{ padding: "0.5rem 0.35rem" }}>{labelTransport(t.transport)}</td>
-                  <td style={{ padding: "0.5rem 0.35rem" }}>{labelOriginTier(t.origin_tier)}</td>
-                  <td style={{ padding: "0.5rem 0.35rem" }}>
-                    {t.available ? (
-                      <span aria-label="Tool status: available">Available</span>
-                    ) : (
-                      <span
-                        aria-label="Tool status: unavailable"
-                        style={{ color: "var(--warn, #b45309)" }}
-                      >
-                        Unavailable
-                      </span>
-                    )}
-                    {t.requires_credentials ? (
-                      <div style={{ fontSize: "0.75rem", opacity: 0.8 }}>Needs credentials</div>
-                    ) : null}
-                  </td>
-                  <td style={{ padding: "0.5rem 0.35rem", fontSize: "0.85rem" }}>
-                    {t.why_not_available ? <div>{t.why_not_available}</div> : null}
-                    {t.capability_id ? (
-                      <div style={{ opacity: 0.85 }}>
-                        <span style={{ opacity: 0.7 }}>Service: </span>
-                        {t.capability_id}
-                      </div>
-                    ) : null}
-                    {t.connector ? (
-                      <div style={{ opacity: 0.85 }}>
-                        <span style={{ opacity: 0.7 }}>Connector: </span>
-                        {t.connector}
-                      </div>
-                    ) : null}
-                    {t.action_type ? (
-                      <div style={{ opacity: 0.85 }}>
-                        <span style={{ opacity: 0.7 }}>Action: </span>
-                        {t.action_type}
-                      </div>
-                    ) : null}
-                    <div style={{ opacity: 0.75 }}>
-                      Permissions: {t.permission_mode === "unknown" ? "Not resolved" : t.permission_mode}
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Tool</TableHead>
+              <TableHead>Source</TableHead>
+              <TableHead>Surface</TableHead>
+              <TableHead>Tier</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Details</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {filtered.map((t) => (
+              <TableRow key={`${t.source}-${t.name}-${t.capability_id ?? ""}`} className="align-top">
+                <TableCell className="whitespace-normal">
+                  <div className="font-semibold">{t.label}</div>
+                  <div className="text-xs text-muted-foreground">{t.name}</div>
+                  {t.description ? (
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      {t.description.length > 200 ? `${t.description.slice(0, 197)}…` : t.description}
                     </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                  ) : null}
+                </TableCell>
+                <TableCell>{labelSource(t.source)}</TableCell>
+                <TableCell className="whitespace-normal">{labelTransport(t.transport)}</TableCell>
+                <TableCell>{labelOriginTier(t.origin_tier)}</TableCell>
+                <TableCell className="whitespace-normal">
+                  {t.available ? (
+                    <Badge variant="secondary" aria-label="Tool status: available">
+                      Available
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline" aria-label="Tool status: unavailable">
+                      Unavailable
+                    </Badge>
+                  )}
+                  {t.requires_credentials ? (
+                    <div className="mt-1 text-xs text-muted-foreground">Needs credentials</div>
+                  ) : null}
+                </TableCell>
+                <TableCell className="text-xs whitespace-normal">
+                  {t.why_not_available ? <div>{t.why_not_available}</div> : null}
+                  {t.capability_id ? (
+                    <div>
+                      <span className="text-muted-foreground">Service: </span>
+                      {t.capability_id}
+                    </div>
+                  ) : null}
+                  {t.connector ? (
+                    <div>
+                      <span className="text-muted-foreground">Connector: </span>
+                      {t.connector}
+                    </div>
+                  ) : null}
+                  {t.action_type ? (
+                    <div>
+                      <span className="text-muted-foreground">Action: </span>
+                      {t.action_type}
+                    </div>
+                  ) : null}
+                  <div className="text-muted-foreground">
+                    Permissions: {t.permission_mode === "unknown" ? "Not resolved" : t.permission_mode}
+                  </div>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
       )}
-    </section>
+    </div>
   );
 }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Lumogis
 
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
@@ -48,26 +48,29 @@ describe("ShareToggle", () => {
       job_id: 2,
       share_status: "unsharing",
     });
-    vi.spyOn(globalThis, "confirm").mockReturnValue(true);
   });
 
   it("owner + personal → unchecked switch; enabling confirms + publishes", async () => {
     const user = userEvent.setup();
     renderToggle({ shareStatus: "personal" });
     const sw = screen.getByRole("switch");
-    expect((sw as HTMLInputElement).checked).toBe(false);
+    expect(sw).toHaveAttribute("aria-checked", "false");
 
     await user.click(sw);
-    expect(globalThis.confirm).toHaveBeenCalled();
+    expect(shareMutate).not.toHaveBeenCalled();
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveTextContent("Everyone in your household will be able to search and read it");
+    await user.click(within(dialog).getByRole("button", { name: "Share" }));
     expect(shareMutate).toHaveBeenCalledWith(5);
     expect(unshareMutate).not.toHaveBeenCalled();
   });
 
-  it("does not publish if the confirm is dismissed", async () => {
-    vi.spyOn(globalThis, "confirm").mockReturnValue(false);
+  it("does not publish if the confirm is cancelled", async () => {
     const user = userEvent.setup();
     renderToggle({ shareStatus: "personal" });
     await user.click(screen.getByRole("switch"));
+    const dialog = await screen.findByRole("alertdialog");
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(shareMutate).not.toHaveBeenCalled();
   });
 
@@ -75,7 +78,7 @@ describe("ShareToggle", () => {
     const user = userEvent.setup();
     renderToggle({ shareStatus: "shared" });
     const sw = screen.getByRole("switch");
-    expect((sw as HTMLInputElement).checked).toBe(true);
+    expect(sw).toHaveAttribute("aria-checked", "true");
 
     await user.click(sw);
     expect(unshareMutate).toHaveBeenCalledWith(5);
@@ -84,7 +87,7 @@ describe("ShareToggle", () => {
 
   it("disables the switch while a share job is in flight", () => {
     renderToggle({ shareStatus: "sharing" });
-    expect((screen.getByRole("switch") as HTMLInputElement).disabled).toBe(true);
+    expect(screen.getByRole("switch")).toHaveAttribute("aria-disabled", "true");
   });
 
   it("surfaces an error when the publish call fails", async () => {
@@ -92,7 +95,10 @@ describe("ShareToggle", () => {
     const user = userEvent.setup();
     renderToggle({ shareStatus: "personal" });
     await user.click(screen.getByRole("switch"));
-    expect(await screen.findByRole("alert")).toBeTruthy();
+    await user.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Share" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't share this document");
   });
 
   it("non-owner renders a read-only indicator with no switch or mutation", async () => {

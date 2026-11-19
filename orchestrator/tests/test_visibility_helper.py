@@ -45,6 +45,42 @@ def test_visible_filter_default_household_union(user):
     assert params == ("alice",)
 
 
+def test_visible_filter_qualifier_prefixes_columns(user):
+    clause, params = visible_filter(user, qualifier="e")
+    assert clause == (
+        "((e.scope = 'personal' AND e.user_id = %s) OR e.scope IN ('shared','system'))"
+    )
+    assert params == ("alice",)
+    clause, params = visible_filter(user, scope_filter="personal", qualifier="e")
+    assert clause == "(e.scope = 'personal' AND e.user_id = %s)"
+    assert params == ("alice",)
+    clause, _ = visible_filter(user, scope_filter="shared", qualifier="e")
+    assert clause == "(e.scope = 'shared')"
+    clause, _ = visible_filter(user, scope_filter="system", qualifier="fi")
+    assert clause == "(fi.scope = 'system')"
+
+
+def test_visible_filter_qualifier_no_shared_branch(user):
+    personal_only = UserContext(
+        user_id="alice", is_authenticated=False, role="user", allows_shared=False
+    )
+    clause, params = visible_filter(personal_only, qualifier="e")
+    assert clause == "((e.scope = 'personal' AND e.user_id = %s) OR e.scope = 'system')"
+    assert params == ("alice",)
+
+
+def test_visible_filter_default_unchanged(user):
+    assert visible_filter(user, qualifier="") == visible_filter(user)
+    clause, _ = visible_filter(user)
+    assert "e." not in clause
+
+
+@pytest.mark.parametrize("bad", ["e; DROP", "E", "1e", "e.x", "e "])
+def test_visible_filter_rejects_bad_qualifier(user, bad):
+    with pytest.raises(ValueError):
+        visible_filter(user, qualifier=bad)
+
+
 def test_visible_filter_personal_only(user):
     clause, params = visible_filter(user, scope_filter="personal")
     assert clause == "(scope = 'personal' AND user_id = %s)"

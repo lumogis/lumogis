@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Lumogis
-// FP-046 — MeMcpTokensView list + mint + CopyOnceModal.
+// FP-046 — MeMcpTokensView list + create a key + the one-time key dialog.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { ApiClient } from "../../../src/api/client";
@@ -60,13 +60,15 @@ describe("MeMcpTokensView", () => {
     await waitFor(() => {
       expect(screen.getByText("a")).toBeInTheDocument();
     });
-    expect(screen.getByText("t1")).toBeInTheDocument();
+    // Plain wording: a date and an access word, never the id.
+    expect(screen.queryByText("t1")).toBeNull();
+    expect(screen.getByText(/Created 1 Jan 2020/)).toBeInTheDocument();
 
-    await userEv.type(screen.getByPlaceholderText(/label/i), "my");
-    await userEv.click(screen.getByRole("button", { name: /^mint$/i }));
+    await userEv.type(screen.getByLabelText("Key name"), "my");
+    await userEv.click(screen.getByRole("button", { name: /^create a key$/i }));
 
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: /new mcp token/i })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: /your new key/i })).toBeInTheDocument();
     });
     expect(screen.getByText("plain-secret-123")).toBeInTheDocument();
     await userEv.click(screen.getByRole("button", { name: /^close$/i }));
@@ -107,23 +109,85 @@ describe("MeMcpTokensView", () => {
 
     // List renders per-token access labels (null ⇒ legacy; write ⇒ read+write).
     await waitFor(() => expect(screen.getByText("legacy-tok")).toBeInTheDocument());
-    // Bracketed form is the list span; the radio also has "Read + write" text.
-    expect(screen.getByText(/\[Unrestricted \(legacy\)\]/)).toBeInTheDocument();
-    expect(screen.getByText(/\[Read \+ write\]/)).toBeInTheDocument();
+    expect(screen.getByText(/Unrestricted \(legacy\)/)).toBeInTheDocument();
+    expect(screen.getByText(/Created 2 Jan 2020, \d\d:\d\d\. Read \+ write\./)).toBeInTheDocument();
 
-    // Default selection is Read-only → first mint sends ["mcp:read"].
-    expect((screen.getByLabelText("Read-only") as HTMLInputElement).checked).toBe(true);
-    await userEv.type(screen.getByPlaceholderText(/label/i), "a");
-    await userEv.click(screen.getByRole("button", { name: /^mint$/i }));
+    // Default selection is Read-only → first key sends ["mcp:read"].
+    expect(screen.getByRole("radio", { name: "Read-only" })).toBeChecked();
+    await userEv.type(screen.getByLabelText("Key name"), "a");
+    await userEv.click(screen.getByRole("button", { name: /^create a key$/i }));
     await waitFor(() => expect(postBodies).toHaveLength(1));
     expect(postBodies[0]).toEqual({ label: "a", scopes: ["mcp:read"] });
     await userEv.click(screen.getByRole("button", { name: /^close$/i }));
 
     // Opt into Read + write → next mint sends both scopes.
-    await userEv.click(screen.getByLabelText("Read + write"));
-    await userEv.type(screen.getByPlaceholderText(/label/i), "b");
-    await userEv.click(screen.getByRole("button", { name: /^mint$/i }));
+    await userEv.click(screen.getByRole("radio", { name: "Read + write" }));
+    await userEv.type(screen.getByLabelText("Key name"), "b");
+    await userEv.click(screen.getByRole("button", { name: /^create a key$/i }));
     await waitFor(() => expect(postBodies).toHaveLength(2));
     expect(postBodies[1]).toEqual({ label: "b", scopes: ["mcp:read", "mcp:write"] });
+  });
+
+  function revokeHarness() {
+    const user = { id: "u1", email: "u@home.lan", role: "user" as const };
+    let mcpList = [{ id: "t1", label: "Claude Desktop", created_at: "2020-01-01T00:00:00Z", scopes: ["mcp:read"] }];
+    const deleted: string[] = [];
+    const fetchImpl = vi.fn(async (input: RequestInfo, init?: RequestInit) => {
+      const u = String(input);
+      if (u.includes("/api/v1/auth/me")) return jsonResponse(200, user);
+      if (u.includes("/me/mcp-tokens/") && init?.method === "DELETE") {
+        deleted.push(u);
+        mcpList = [];
+        return new Response(null, { status: 204 });
+      }
+      if (u.includes("/me/mcp-tokens")) return jsonResponse(200, mcpList);
+      return jsonResponse(404, {});
+    });
+    const store = new AccessTokenStore();
+    const client = new ApiClient({ tokens: store, fetchImpl: fetchImpl as unknown as typeof fetch });
+    render(
+      <AuthProvider client={client} tokens={store} skipRefreshOnMount>
+        <MeMcpTokensView />
+      </AuthProvider>,
+    );
+    return { deleted };
+  }
+
+  it("Revoke is in the row menu and asks first: Cancel does nothing, Revoke deletes", async () => {
+    const { deleted } = revokeHarness();
+    const userEv = userEvent.setup();
+    await userEv.click(await screen.findByRole("button", { name: "Actions for Claude Desktop" }));
+    await userEv.click(await screen.findByRole("menuitem", { name: "Revoke" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveTextContent(/loses access to Lumogis/);
+    await userEv.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(deleted).toHaveLength(0);
+
+    await userEv.click(screen.getByRole("button", { name: "Actions for Claude Desktop" }));
+    await userEv.click(await screen.findByRole("menuitem", { name: "Revoke" }));
+    await userEv.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Revoke" }));
+    await waitFor(() => expect(deleted).toHaveLength(1));
+    expect(deleted[0]).toMatch(/\/me\/mcp-tokens\/t1$/);
+    // The list refreshes to the empty state with the next step.
+    expect(await screen.findByText("No keys yet")).toBeInTheDocument();
+  });
+
+  it("shows an error with retry when the keys cannot load", async () => {
+    const user = { id: "u1", email: "u@home.lan", role: "user" as const };
+    const fetchImpl = vi.fn(async (input: RequestInfo) => {
+      const u = String(input);
+      if (u.includes("/api/v1/auth/me")) return jsonResponse(200, user);
+      return jsonResponse(500, { detail: "boom" });
+    });
+    const store = new AccessTokenStore();
+    const client = new ApiClient({ tokens: store, fetchImpl: fetchImpl as unknown as typeof fetch });
+    render(
+      <AuthProvider client={client} tokens={store} skipRefreshOnMount>
+        <MeMcpTokensView />
+      </AuthProvider>,
+    );
+    expect(await screen.findByText(/couldn't load your keys/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
   });
 });

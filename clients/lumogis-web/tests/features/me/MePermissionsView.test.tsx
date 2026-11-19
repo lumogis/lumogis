@@ -137,7 +137,7 @@ describe("MePermissionsView", () => {
     // (the cross-link), and is tested there with three mailboxes.
     renderView(mockFetch());
     await waitFor(() => expect(screen.getByText("Send email as you")).toBeInTheDocument());
-    expect(document.querySelectorAll("fieldset[data-testid^='perm-group-']")).toHaveLength(2);
+    expect(document.querySelectorAll("[data-testid^='perm-group-']")).toHaveLength(2);
     expect(screen.getAllByRole("radio")).toHaveLength(4);
   });
 
@@ -180,7 +180,7 @@ describe("MePermissionsView", () => {
     });
     const group = screen.getByTestId("perm-group-imap");
     expect(group.textContent).toMatch(/couldn't load this setting/i);
-    expect(group.querySelectorAll("input[type=radio]")).toHaveLength(0);
+    expect(within(group).queryAllByRole("radio")).toHaveLength(0);
   });
 
   it("never renders an absent row as the default", async () => {
@@ -247,9 +247,9 @@ describe("MePermissionsView", () => {
       mockFetch({ rows: [row("smtp", "ASK", true)], listHeaders: { Warning: REGISTRY_WARNING } }),
     );
     await waitFor(() => expect(screen.getByText(/may be incomplete/i)).toBeInTheDocument());
-    const radios = screen.getByTestId("perm-group-smtp").querySelectorAll("input[type=radio]");
+    const radios = within(screen.getByTestId("perm-group-smtp")).getAllByRole("radio");
     expect(radios).toHaveLength(2);
-    radios.forEach((r) => expect(r).not.toBeDisabled());
+    radios.forEach((r) => expect(r).not.toHaveAttribute("aria-disabled", "true"));
   });
 
   // --- B4: the request failed ----------------------------------------------- //
@@ -272,7 +272,7 @@ describe("MePermissionsView", () => {
 
     await userEvent.click(screen.getByRole("radio", { name: /Just send/i }));
     await waitFor(() => {
-      expect(screen.getByRole("alert").textContent).toMatch(/didn't save/i);
+      expect(screen.getByText(/didn't save/i)).toBeInTheDocument();
     });
     // No optimistic update, so there is nothing to revert — the control still
     // shows what the server last confirmed. Scoped to the smtp group: BOTH
@@ -294,7 +294,7 @@ describe("MePermissionsView", () => {
     try {
       await userEvent.click(screen.getByRole("radio", { name: /Just send/i }));
       await waitFor(() => {
-        expect(screen.getByRole("radio", { name: /Just send/i })).toBeDisabled();
+        expect(screen.getByRole("radio", { name: /Just send/i })).toHaveAttribute("aria-disabled", "true");
       });
     } finally {
       release();
@@ -320,12 +320,12 @@ describe("MePermissionsView", () => {
       const smtpJustSend = within(screen.getByTestId("perm-group-smtp")).getByRole("radio", {
         name: /Just send/i,
       });
-      await waitFor(() => expect(smtpJustSend).toBeDisabled());
+      await waitFor(() => expect(smtpJustSend).toHaveAttribute("aria-disabled", "true"));
 
       await userEvent.click(screen.getByRole("radio", { name: /Just do it/i }));
 
       // smtp's PUT has not resolved, so smtp must still be locked.
-      expect(smtpJustSend).toBeDisabled();
+      expect(smtpJustSend).toHaveAttribute("aria-disabled", "true");
     } finally {
       release();
     }
@@ -349,8 +349,8 @@ describe("MePermissionsView", () => {
 
     await waitFor(() => {
       expect(
-        within(screen.getByTestId("perm-group-smtp")).getByRole("alert").textContent,
-      ).toMatch(/didn't save/i);
+        within(screen.getByTestId("perm-group-smtp")).getByText(/didn't save/i),
+      ).toBeInTheDocument();
     });
   });
 
@@ -362,7 +362,7 @@ describe("MePermissionsView", () => {
     await waitFor(() => {
       expect(screen.getByText(/session expired or you are not signed in/i)).toBeInTheDocument();
     });
-    expect(screen.queryByText(/lumogis doctor/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/keeps happening/i)).not.toBeInTheDocument();
   });
 
   it("fires exactly one PUT when the second click lands before the re-render", async () => {
@@ -410,7 +410,7 @@ describe("MePermissionsView", () => {
     try {
       const justSend = screen.getByRole("radio", { name: /Just send/i });
       await userEvent.click(justSend);
-      await waitFor(() => expect(justSend).toBeDisabled());
+      await waitFor(() => expect(justSend).toHaveAttribute("aria-disabled", "true"));
       await userEvent.click(justSend);
       expect(puts).toHaveLength(1);
     } finally {

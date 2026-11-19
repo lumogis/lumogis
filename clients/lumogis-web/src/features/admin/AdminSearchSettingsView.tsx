@@ -4,8 +4,13 @@
 // Admin Search & retrieval settings (LUM-159). Exposes the BGE reranker
 // quality toggle with honest RAM/download copy, pending-vs-live state,
 // and restart-and-wait UX on Docker Compose.
+//
+// Rebuilt on the shared components in LUM-993 plan B Pass 6: one plain on/off
+// switch, the restart/health state as Alerts; model name and the manual restart
+// instructions live in a collapsed "Details".
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ChevronDown } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { fetchAdminStackStatus } from "../../api/adminStackStatus";
@@ -20,6 +25,14 @@ import {
 } from "../../api/searchSettings";
 import { ApiError } from "../../api/client";
 import { useAuth } from "../../auth/AuthProvider";
+import { ErrorState } from "../../components/page/ErrorState";
+import { LoadingPlaceholder, SkeletonText } from "../../components/page/LoadingState";
+import { PageSection, Row } from "../../components/page/PageSection";
+import { Alert, AlertDescription } from "../../components/ui/alert";
+import { Button } from "../../components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../../components/ui/collapsible";
+import { Label } from "../../components/ui/label";
+import { Switch } from "../../components/ui/switch";
 import { pollOrchestratorHealth } from "./pollOrchestratorHealth";
 
 function errMsg(e: unknown): string {
@@ -104,19 +117,19 @@ export function AdminSearchSettingsView(): JSX.Element {
 
   if (q.isPending) {
     return (
-      <section aria-busy="true" data-testid="retrieval-settings-page">
-        <h1>Search &amp; retrieval</h1>
-        <p>Loading…</p>
-      </section>
+      <div data-testid="retrieval-settings-page">
+        <LoadingPlaceholder label="Loading search settings…" className="max-w-2xl">
+          <SkeletonText lines={4} />
+        </LoadingPlaceholder>
+      </div>
     );
   }
 
   if (q.isError) {
     return (
-      <section data-testid="retrieval-settings-page">
-        <h1>Search &amp; retrieval</h1>
-        <p role="alert">{errMsg(q.error)}</p>
-      </section>
+      <div data-testid="retrieval-settings-page">
+        <ErrorState message={errMsg(q.error)} onRetry={() => void q.refetch()} />
+      </div>
     );
   }
 
@@ -124,114 +137,125 @@ export function AdminSearchSettingsView(): JSX.Element {
   const dirty = rerankerEnabled !== persisted.reranker_enabled;
   const liveActive = isRerankerBackendActive(persisted.reranker_backend_live);
   const busy = saveMutation.isPending || saveAndRestartMutation.isPending || restartPhase === "polling";
+  const currentMode =
+    liveActive && !persisted.reranker_pending_restart
+      ? "On"
+      : persisted.reranker_enabled
+        ? "On after the next restart"
+        : "Off";
 
   return (
-    <section data-testid="retrieval-settings-page">
-      <h1>Search &amp; retrieval</h1>
-      <p style={{ maxWidth: "42rem", opacity: 0.9 }}>
-        Two-stage retrieval: after vector search finds candidates, a cross-encoder re-scores them
-        for higher precision. Downloads {BGE_RERANKER_DOWNLOAD_ESTIMATE} from HuggingFace on
-        first enable. Requires restart.
-      </p>
+    <div data-testid="retrieval-settings-page">
+      <PageSection
+        title="Better search ranking"
+        description="After Lumogis finds possible matches, a second model re-reads them so the best ones come first. Answers get more precise, at the cost of more memory."
+      >
+        <dl className="m-0">
+          <Row label="Better ranking">
+            <span className="flex items-center gap-2">
+              <Switch
+                id="reranker-switch"
+                checked={rerankerEnabled}
+                disabled={busy}
+                onCheckedChange={(on: boolean) => setRerankerEnabled(on)}
+                aria-label="Better search ranking"
+              />
+              <Label htmlFor="reranker-switch" className="font-normal">
+                {rerankerEnabled ? "On" : "Off (default, uses less memory)"}
+              </Label>
+            </span>
+          </Row>
+          <Row label="Currently">{currentMode}</Row>
+        </dl>
 
-      <fieldset style={{ border: "none", padding: 0, marginTop: "1rem" }}>
-        <legend className="lumogis-visually-hidden">Reranking mode</legend>
-        <label style={{ display: "block", marginBottom: "0.5rem" }}>
-          <input
-            type="radio"
-            name="reranking"
-            value="off"
-            checked={!rerankerEnabled}
-            disabled={busy}
-            onChange={() => setRerankerEnabled(false)}
-          />{" "}
-          Off — default, lower RAM
-        </label>
-        <label style={{ display: "block", marginBottom: "0.75rem" }}>
-          <input
-            type="radio"
-            name="reranking"
-            value="bge"
-            checked={rerankerEnabled}
-            disabled={busy}
-            onChange={() => setRerankerEnabled(true)}
-          />{" "}
-          BGE reranker ({BGE_RERANKER_MODEL}, {BGE_RERANKER_RAM_ESTIMATE})
-        </label>
-      </fieldset>
-
-      {rerankerEnabled ? (
-        <p role="note" style={{ maxWidth: "42rem", fontSize: "0.9rem", color: "#ed6c02" }}>
-          The BGE reranker loads {BGE_RERANKER_MODEL} and adds roughly {BGE_RERANKER_RAM_ESTIMATE}{" "}
-          of resident memory. On a memory-constrained host this can degrade or destabilise the
-          stack — turn it off if you hit memory pressure.
-        </p>
-      ) : null}
-
-      <p style={{ fontSize: "0.85rem", opacity: 0.85 }}>
-        Current mode:{" "}
-        <strong>{liveActive && !persisted.reranker_pending_restart ? "BGE reranker (live)" : persisted.reranker_enabled ? "BGE reranker (pending restart)" : "Off"}</strong>
-      </p>
-
-      {persisted.reranker_pending_restart ? (
-        <p role="status" style={{ fontSize: "0.85rem", color: "#ed6c02" }}>
-          Change pending — restart orchestrator to apply.
-        </p>
-      ) : dirty ? (
-        <p role="status" style={{ fontSize: "0.85rem", color: "#ed6c02" }}>
-          Unsaved change — save (and restart) to apply.
-        </p>
-      ) : null}
-
-      {savedNeedsManualRestart && !stackControlReachable ? (
-        <p role="status" style={{ maxWidth: "42rem", fontSize: "0.85rem", color: "#ed6c02" }}>
-          Settings saved. Restart the Lumogis orchestrator process manually (Docker: recreate the
-          orchestrator container; Lumogis Server: restart from the server tray or supervisor).
-        </p>
-      ) : null}
-
-      {restartPhase === "timeout" ? (
-        <div role="status" style={{ maxWidth: "42rem", fontSize: "0.85rem", marginTop: "0.5rem" }}>
-          <p>
-            The stack may still be starting — this panel only waits <strong>90 seconds</strong>{" "}
-            before showing this message. If you enabled the <strong>BGE reranker</strong>, the first
-            model download often takes <strong>several minutes</strong>; that is normal. Check{" "}
-            <code>docker compose logs orchestrator</code> for progress.
-          </p>
-          <button type="button" onClick={() => void runRestartPoll()}>
-            Check again
-          </button>
-        </div>
-      ) : restartStatus ? (
-        <p role="status" style={{ fontSize: "0.85rem", marginTop: "0.5rem" }}>
-          {restartStatus}
-        </p>
-      ) : null}
-
-      {error ? (
-        <p role="alert" style={{ color: "#c62828" }}>
-          {error}
-        </p>
-      ) : null}
-
-      <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginTop: "0.75rem" }}>
-        <button
-          type="button"
-          disabled={busy || !dirty}
-          onClick={() => saveMutation.mutate()}
-        >
-          Save retrieval settings
-        </button>
-        {stackControlReachable ? (
-          <button
-            type="button"
-            disabled={busy || !dirty}
-            onClick={() => saveAndRestartMutation.mutate()}
-          >
-            Save &amp; restart stack
-          </button>
+        {rerankerEnabled ? (
+          <Alert role="note" className="mt-3">
+            <AlertDescription>
+              Better ranking loads an extra model and adds roughly {BGE_RERANKER_RAM_ESTIMATE} of memory. On a
+              memory-constrained host this can degrade or destabilise the stack — turn it off if you hit memory
+              pressure. The first time, it downloads about {BGE_RERANKER_DOWNLOAD_ESTIMATE}.
+            </AlertDescription>
+          </Alert>
         ) : null}
-      </div>
-    </section>
+
+        {persisted.reranker_pending_restart ? (
+          <Alert role="status" className="mt-3">
+            <AlertDescription>Change pending — restart orchestrator to apply.</AlertDescription>
+          </Alert>
+        ) : dirty ? (
+          <Alert role="status" className="mt-3">
+            <AlertDescription>Unsaved change — save (and restart) to apply.</AlertDescription>
+          </Alert>
+        ) : null}
+
+        {savedNeedsManualRestart && !stackControlReachable ? (
+          <Alert role="status" className="mt-3">
+            <AlertDescription>
+              Settings saved. Restart the Lumogis orchestrator process manually (Docker: recreate the
+              orchestrator container; Lumogis Server: restart from the server tray or supervisor).
+            </AlertDescription>
+          </Alert>
+        ) : null}
+
+        {restartPhase === "timeout" ? (
+          <Alert role="status" className="mt-3">
+            <AlertDescription>
+              <p className="m-0">
+                The stack may still be starting — this panel only waits <strong>90 seconds</strong> before showing
+                this message. If you turned on better ranking, the first model download often takes{" "}
+                <strong>several minutes</strong>; that is normal.
+              </p>
+              <Button type="button" variant="outline" size="sm" className="mt-2" onClick={() => void runRestartPoll()}>
+                Check again
+              </Button>
+            </AlertDescription>
+          </Alert>
+        ) : restartStatus ? (
+          <Alert role="status" className="mt-3">
+            <AlertDescription>{restartStatus}</AlertDescription>
+          </Alert>
+        ) : null}
+
+        {error ? (
+          <Alert variant="destructive" className="mt-3">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        ) : null}
+
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Button type="button" disabled={busy || !dirty} onClick={() => saveMutation.mutate()}>
+            Save retrieval settings
+          </Button>
+          {stackControlReachable ? (
+            <Button
+              type="button"
+              variant="outline"
+              disabled={busy || !dirty}
+              onClick={() => saveAndRestartMutation.mutate()}
+            >
+              Save &amp; restart stack
+            </Button>
+          ) : null}
+        </div>
+      </PageSection>
+
+      <Collapsible className="max-w-2xl">
+        <CollapsibleTrigger
+          render={<Button type="button" variant="ghost" size="sm" className="-ml-2 group/trigger" />}
+        >
+          <ChevronDown aria-hidden="true" className="transition-transform group-aria-expanded/trigger:rotate-180" />
+          Details
+        </CollapsibleTrigger>
+        <CollapsibleContent keepMounted className="flex flex-col gap-2 pt-2 text-sm">
+          <p className="m-0">
+            Model: {BGE_RERANKER_MODEL} (about {BGE_RERANKER_RAM_ESTIMATE} of memory), downloaded from HuggingFace on
+            first use. Turning it on or off needs an orchestrator restart.
+          </p>
+          <p className="m-0 text-muted-foreground">
+            To follow the first download, run <code className="font-mono">docker compose logs orchestrator</code>.
+          </p>
+        </CollapsibleContent>
+      </Collapsible>
+    </div>
   );
 }

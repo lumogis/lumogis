@@ -151,8 +151,8 @@ describe("SubscriptionsView", () => {
     render(
       view(makeClient([row({ has_mailto: false, has_https: true, https_uri: "https://x.com/u" })])),
     );
-    const box = await screen.findByLabelText("Select news@retailer.example");
-    expect(box).toBeDisabled();
+    const box = await screen.findByRole("checkbox", { name: "Select news@retailer.example" });
+    expect(box).toHaveAttribute("aria-disabled", "true");
   });
 
   it("caps the selection at the batch cap and says so", async () => {

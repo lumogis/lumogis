@@ -4,7 +4,7 @@
 
 Test groups:
   1. Blocking — type-based, attribute, known-distinct filtering, deduplication
-  2. Blocking — Qdrant ANN uses user_id filter on every search call
+  2. Blocking — Qdrant ANN uses user_id and personal-scope filters on every search call
   3. Scoring and threshold routing:
        >= 0.85 + mention_count >= 2  → auto-merge
        >= 0.85 + mention_count < 2   → queued (not merged)
@@ -238,6 +238,8 @@ class TestAnnUserIdFilter:
             mock_cfg.get_embedder.return_value = embedder
             _build_ann_blocks([_ENTITY_A, _ENTITY_B], vs, USER_ID)
 
+        # One search per entity; zero searches would make the loop below vacuous
+        assert vs.search.call_count == 2, "expected one ANN search per entity"
         # Every search call must include the user_id filter
         for call_args in vs.search.call_args_list:
             kwargs = call_args[1] if call_args[1] else {}
@@ -257,6 +259,27 @@ class TestAnnUserIdFilter:
             ]
             assert len(user_id_conditions) >= 1, (
                 f"user_id filter missing in search call: {call_args}"
+            )
+
+    def test_every_search_call_includes_personal_scope_filter(self):
+        from services.deduplication import _build_ann_blocks
+
+        vs = MagicMock()
+        vs.search.return_value = []
+
+        embedder = MagicMock()
+        embedder.embed.return_value = [0.1] * 768
+
+        with patch("services.deduplication.config") as mock_cfg:
+            mock_cfg.get_embedder.return_value = embedder
+            _build_ann_blocks([_ENTITY_A, _ENTITY_B], vs, USER_ID)
+
+        assert vs.search.call_count == 2, "expected one ANN search per entity"
+        for call_args in vs.search.call_args_list:
+            f = call_args.kwargs.get("filter")
+            assert f is not None, "search called without filter"
+            assert {"key": "scope", "match": {"value": "personal"}} in f.get("must", []), (
+                f"personal-scope filter missing in search call: {call_args}"
             )
 
     def test_ann_candidate_pairs_use_canonical_ordering(self):
@@ -324,6 +347,41 @@ class TestThresholdRouting:
             result = _route_pair(ms, "run-1", USER_ID, e_a, e_b, 0.90, {})
 
         assert result == "auto_merged"
+        # D1 (LUM-965): the origin is recorded so the member can undo it from History.
+        assert mock_merge.call_args.kwargs["origin"] == "auto_dedup"
+
+    def test_D2_sharing_change_is_queued_not_merged(self):
+        from services.deduplication import _route_pair
+        from services.entity_merge import MergeChangesSharing
+
+        ms = MagicMock()
+        e_a = {**_ENTITY_A, "mention_count": 3}
+        e_b = {**_ENTITY_B, "mention_count": 3}
+        with (
+            patch("services.entity_merge.merge_entities", side_effect=MergeChangesSharing("x")),
+            patch("services.deduplication._insert_candidate_and_queue") as queue,
+        ):
+            result = _route_pair(ms, "run-1", USER_ID, e_a, e_b, 0.90, {})
+        assert result == "queued"
+        queue.assert_called_once()
+
+    def test_D2_busy_member_lock_is_left_for_the_next_run(self):
+        import psycopg2.errors
+        from services.deduplication import _route_pair
+
+        ms = MagicMock()
+        e_a = {**_ENTITY_A, "mention_count": 3}
+        e_b = {**_ENTITY_B, "mention_count": 3}
+        with (
+            patch(
+                "services.entity_merge.merge_entities",
+                side_effect=psycopg2.errors.LockNotAvailable("busy"),
+            ),
+            patch("services.deduplication._insert_candidate_and_queue") as queue,
+        ):
+            result = _route_pair(ms, "run-1", USER_ID, e_a, e_b, 0.90, {})
+        assert result == "ignored"
+        queue.assert_not_called()
 
     def test_high_prob_mention_count_too_low_queues_not_merges(self):
         from services.deduplication import _route_pair

@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Lumogis
+//
+// Safety test bench (developer page). Rebuilt on the shared components in LUM-993 plan B
+// Pass 6: all detail stays visible, now in a Table, Badges, Select/Input/Textarea and Alerts.
 import { useMutation } from "@tanstack/react-query";
-import { type CSSProperties, useState } from "react";
+import { useState } from "react";
 import { ApiError } from "../../api/client";
 import {
   SAFETY_VECTORS,
@@ -10,19 +13,20 @@ import {
   type SafetyVector,
 } from "../../api/safety";
 import { useAuth } from "../../auth/AuthProvider";
+import { PageSection } from "../../components/page/PageSection";
+import { Alert, AlertDescription } from "../../components/ui/alert";
+import { Badge } from "../../components/ui/badge";
+import { Button } from "../../components/ui/button";
+import { Input } from "../../components/ui/input";
+import { Label } from "../../components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
+import { Textarea } from "../../components/ui/textarea";
+import { formatDateTime } from "../../util/formatTimestamp";
 
 function errMsg(e: unknown): string {
   if (e instanceof ApiError) return e.detail;
   return "Request failed";
-}
-
-const STYLE_PASS: CSSProperties = { color: "#137333" };
-const STYLE_WARN: CSSProperties = { color: "#b06000" };
-const STYLE_FAIL: CSSProperties = { color: "#c5221f", fontWeight: 600 };
-
-function rowStyle(passed: boolean, knownGap: boolean): CSSProperties {
-  if (passed) return STYLE_PASS;
-  return knownGap ? STYLE_WARN : STYLE_FAIL;
 }
 
 export function AdminSafetyPlaygroundView(): JSX.Element {
@@ -57,107 +61,122 @@ export function AdminSafetyPlaygroundView(): JSX.Element {
   const suite = runM.data;
 
   return (
-    <section aria-labelledby="safety-heading">
-      <h2 id="safety-heading">Safety playground</h2>
-      <p>
-        Run known injection / credential / action-bypass payloads against the live defences
-        (document ingest, retrieval origin-tagging, tool-result scanner, config secrets scanner,
-        hard-limit policy). Runs in dry-run against the detection primitives — nothing is persisted
-        or sent to a model.
-      </p>
-
-      {msg && <p role="alert">{msg}</p>}
-
-      <div className="lumogis-safety-playground__actions">
-        <button type="button" onClick={() => runM.mutate()} disabled={runM.isPending}>
-          {runM.isPending ? "Running…" : "Run injection test suite"}
-        </button>
-      </div>
-
-      {suite && (
-        <div className="lumogis-safety-playground__summary" data-testid="safety-summary">
-          <p>
-            Ran {suite.ran_at} — <strong>{suite.passed}/{suite.total} passed</strong>
-            {suite.failed > 0 && <span style={STYLE_FAIL}> · {suite.failed} FAILED</span>}
-            {suite.warnings > 0 && (
-              <span style={STYLE_WARN}> · {suite.warnings} known-gap warning(s)</span>
-            )}
-          </p>
-          <table>
-            <thead>
-              <tr>
-                <th>Case</th>
-                <th>Vector</th>
-                <th>Expected</th>
-                <th>Actual</th>
-                <th>Result</th>
-                <th>Detail</th>
-              </tr>
-            </thead>
-            <tbody>
-              {suite.results.map((r) => (
-                <tr key={r.name} style={rowStyle(r.passed, r.known_gap)}>
-                  <td>{r.name}</td>
-                  <td>{r.vector}</td>
-                  <td>{r.expected}</td>
-                  <td>{r.actual}</td>
-                  <td>
-                    {r.passed ? "pass" : r.known_gap ? "warn (known gap)" : "FAIL"}
-                  </td>
-                  <td>{r.detail}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      <hr />
-
-      <h3>Craft a test payload</h3>
-      <div className="lumogis-safety-playground__probe">
-        <label>
-          Vector{" "}
-          <select value={vector} onChange={(e) => setVector(e.target.value as SafetyVector)}>
-            {SAFETY_VECTORS.map((v) => (
-              <option key={v} value={v}>
-                {v}
-              </option>
-            ))}
-          </select>
-        </label>
-        {vector === "action_execution" ? (
-          <label>
-            Action type{" "}
-            <input
-              value={actionType}
-              onChange={(e) => setActionType(e.target.value)}
-              placeholder="e.g. mass_communication"
-            />
-          </label>
-        ) : (
-          <label>
-            Payload
-            <textarea
-              value={payload}
-              onChange={(e) => setPayload(e.target.value)}
-              rows={3}
-              placeholder="Paste a suspicious payload…"
-            />
-          </label>
+    <div>
+      <PageSection
+        title="Injection test suite"
+        description="Run known injection / credential / action-bypass payloads against the live defences (document ingest, retrieval origin-tagging, tool-result scanner, config secrets scanner, hard-limit policy). Runs in dry-run against the detection primitives — nothing is persisted or sent to a model."
+      >
+        {msg && (
+          <Alert variant="destructive" className="mb-3">
+            <AlertDescription>{msg}</AlertDescription>
+          </Alert>
         )}
-        <button type="button" onClick={() => probeM.mutate()} disabled={probeM.isPending}>
-          {probeM.isPending ? "Probing…" : "Probe"}
-        </button>
-      </div>
 
-      {probe && (
-        <p data-testid="probe-result" style={probe.actual === "passed" ? STYLE_WARN : STYLE_PASS}>
-          Result: <strong>{probe.actual}</strong>
-          {probe.actual === "passed" ? " (defence did not act on this payload)" : ""}
-          {probe.detail ? ` — ${probe.detail}` : ""}
-        </p>
-      )}
-    </section>
+        <Button type="button" onClick={() => runM.mutate()} disabled={runM.isPending}>
+          {runM.isPending ? "Running…" : "Run injection test suite"}
+        </Button>
+
+        {suite && (
+          <div className="mt-4 flex flex-col gap-2 text-sm" data-testid="safety-summary">
+            <p className="m-0 flex flex-wrap items-center gap-2">
+              <span>
+                Ran {formatDateTime(suite.ran_at)} — <strong>{suite.passed}/{suite.total} passed</strong>
+              </span>
+              {suite.failed > 0 && <Badge variant="destructive">{suite.failed} FAILED</Badge>}
+              {suite.warnings > 0 && <Badge variant="outline">{suite.warnings} known-gap warning(s)</Badge>}
+            </p>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Case</TableHead>
+                  <TableHead>Vector</TableHead>
+                  <TableHead>Expected</TableHead>
+                  <TableHead>Actual</TableHead>
+                  <TableHead>Result</TableHead>
+                  <TableHead>Detail</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {suite.results.map((r) => (
+                  <TableRow key={r.name} className="align-top">
+                    <TableCell className="whitespace-normal">{r.name}</TableCell>
+                    <TableCell>{r.vector}</TableCell>
+                    <TableCell>{r.expected}</TableCell>
+                    <TableCell>{r.actual}</TableCell>
+                    <TableCell>
+                      {r.passed ? (
+                        <Badge variant="secondary">pass</Badge>
+                      ) : r.known_gap ? (
+                        <Badge variant="outline">warn (known gap)</Badge>
+                      ) : (
+                        <Badge variant="destructive">FAIL</Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-xs whitespace-normal">{r.detail}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </PageSection>
+
+      <PageSection title="Craft a test payload">
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="safety-vector">Vector</Label>
+            <Select value={vector} onValueChange={(v) => setVector((v ?? "tool_result") as SafetyVector)}>
+              <SelectTrigger id="safety-vector" aria-label="Vector" className="w-64">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {SAFETY_VECTORS.map((v) => (
+                  <SelectItem key={v} value={v}>
+                    {v}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          {vector === "action_execution" ? (
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="safety-action-type">Action type</Label>
+              <Input
+                id="safety-action-type"
+                value={actionType}
+                onChange={(e) => setActionType(e.target.value)}
+                placeholder="e.g. mass_communication"
+              />
+            </div>
+          ) : (
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="safety-payload">Payload</Label>
+              <Textarea
+                id="safety-payload"
+                value={payload}
+                onChange={(e) => setPayload(e.target.value)}
+                rows={3}
+                placeholder="Paste a suspicious payload…"
+              />
+            </div>
+          )}
+          <div>
+            <Button type="button" onClick={() => probeM.mutate()} disabled={probeM.isPending}>
+              {probeM.isPending ? "Probing…" : "Probe"}
+            </Button>
+          </div>
+        </div>
+
+        {probe && (
+          <Alert role="status" className="mt-3" data-testid="probe-result">
+            <AlertDescription>
+              Result: <strong>{probe.actual}</strong>
+              {probe.actual === "passed" ? " (defence did not act on this payload)" : ""}
+              {probe.detail ? ` — ${probe.detail}` : ""}
+            </AlertDescription>
+          </Alert>
+        )}
+      </PageSection>
+    </div>
   );
 }

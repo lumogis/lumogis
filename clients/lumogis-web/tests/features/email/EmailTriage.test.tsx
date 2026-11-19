@@ -98,7 +98,8 @@ describe("EmailInboxView triage mutations", () => {
     renderView();
 
     await waitFor(() => expect(screen.getByText("Renew passport")).toBeInTheDocument());
-    await userEvent.click(screen.getByRole("button", { name: "Tomorrow" }));
+    await userEvent.click(screen.getByRole("button", { name: "Snooze" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Tomorrow" }));
 
     expect(mocks.setTriage).toHaveBeenCalledWith(
       expect.anything(), "s1", "snoozed", expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),

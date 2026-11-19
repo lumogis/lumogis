@@ -79,6 +79,13 @@ describe("CalDavForm", () => {
 });
 
 describe("NtfyForm", () => {
+  it("says on edit that saving replaces the whole credential, tied to the token field", () => {
+    render(<NtfyForm value={{ url: "https://ntfy.sh", topic: "home" }} onChange={vi.fn()} isEdit />);
+    const input = screen.getByLabelText(/^token/i);
+    const note = screen.getByText(/re-enter your token to keep it/i);
+    expect(input.getAttribute("aria-describedby")).toBe(note.id);
+  });
+
   it("rejects an invalid topic with an inline error (does not call onChange)", async () => {
     const onChange = vi.fn();
     const u = userEvent.setup();
@@ -92,12 +99,20 @@ describe("NtfyForm", () => {
 });
 
 describe("LlmApiKeyForm", () => {
+  it("rejects a too-short key without calling onChange", async () => {
+    const onChange = vi.fn();
+    const u = userEvent.setup();
+    render(<LlmApiKeyForm value={{}} onChange={onChange} />);
+    await u.type(screen.getByLabelText(/^api key/i), "short");
+    await u.click(screen.getByRole("button", { name: /^save$/i }));
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it("emits { api_key } on submit when key length is valid (≥16)", async () => {
     const onChange = vi.fn();
     const u = userEvent.setup();
     const key = "a".repeat(20);
     render(<LlmApiKeyForm value={{}} onChange={onChange} />);
-    expect(document.querySelector("form.lumogis-credential-form")).toBeTruthy();
     await u.type(screen.getByLabelText(/^api key/i), key);
     await u.click(screen.getByRole("button", { name: /^save$/i }));
     expect(onChange).toHaveBeenCalledWith({ api_key: key });

@@ -12,22 +12,44 @@ import type { components } from "./generated/openapi";
 
 export type VoiceTranscribeResponse = components["schemas"]["VoiceTranscribeResponse"];
 
-async function readErrorPayload(res: Response): Promise<string> {
+async function readErrorPayload(res: Response): Promise<{ message: string; code?: string }> {
   try {
     const body = (await res.clone().json()) as { detail?: unknown };
     const detail = body?.detail;
-    if (typeof detail === "string") return detail;
-    if (detail && typeof detail === "object" && "message" in detail) {
+    if (typeof detail === "string") return { message: detail };
+    if (detail && typeof detail === "object") {
+      const code = (detail as { code?: unknown }).code;
       const m = (detail as { message?: unknown }).message;
-      if (typeof m === "string") return m;
+      return {
+        message: typeof m === "string" ? m : JSON.stringify(detail),
+        code: typeof code === "string" ? code : undefined,
+      };
     }
-    return JSON.stringify(detail ?? body);
+    return { message: JSON.stringify(detail ?? body) };
   } catch {
     try {
-      return await res.text();
+      return { message: await res.text() };
     } catch {
-      return res.statusText || "request failed";
+      return { message: res.statusText || "request failed" };
     }
+  }
+}
+
+/**
+ * The words a person sees when dictation fails, keyed on the route's `code`
+ * (`{"detail": {"code": …}}`), never on the message text (LUM-995).
+ */
+export function dictationErrorMessage(err: unknown): string {
+  const code = err instanceof ApiError ? err.code : undefined;
+  switch (code) {
+    case "stt_disabled":
+      return "Speech-to-text is off on this Lumogis.";
+    case "stt_model_missing":
+      return "The speech model is still downloading. Try again in a minute.";
+    case "stt_unreachable":
+      return "The speech engine isn't answering yet. If this lasts more than a few minutes, ask whoever runs Lumogis to check it.";
+    default:
+      return "Transcription failed. Try again.";
   }
 }
 
@@ -62,7 +84,8 @@ export async function transcribeVoice(
     body: fd,
   });
   if (!res.ok) {
-    throw new ApiError(res.status, await readErrorPayload(res));
+    const { message, code } = await readErrorPayload(res);
+    throw new ApiError(res.status, message, code);
   }
   return (await res.json()) as VoiceTranscribeResponse;
 }

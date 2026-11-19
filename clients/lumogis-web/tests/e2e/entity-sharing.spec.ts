@@ -54,9 +54,6 @@ function entityCard(
 }
 
 async function mockEntityShareRoutes(page: Page, state: ShareMockState): Promise<void> {
-  // Auto-accept the plain-language share confirm (window.confirm in the toggle).
-  page.on("dialog", (dialog) => void dialog.accept());
-
   // Memory column — keep it empty so the entity column is the only surface.
   await page.route("**/api/v1/memory/search**", async (route: Route) => {
     await route.fulfill({
@@ -139,9 +136,9 @@ test.describe("LUM-581 household entity sharing (/search)", () => {
     await loginWithSmokeCredentials(page);
 
     const entityButton = () =>
-      page.locator("button.lumogis-search__entity-btn").filter({ hasText: SHARED_ENTITY_NAME });
+      page.getByRole("button", { name: new RegExp(`^${SHARED_ENTITY_NAME}`) });
     const filter = () => page.getByRole("checkbox", { name: "Shared with household" });
-    const sharedBadge = () => entityButton().locator(".lumogis-search__shared-badge");
+    const sharedBadge = () => entityButton().getByLabel("Shared with household");
 
     // Search: entity column lists the target as "Personal" (no shared badge).
     await page.goto("/search");
@@ -161,8 +158,9 @@ test.describe("LUM-581 household entity sharing (/search)", () => {
     await expect(shareSwitch).not.toBeChecked();
     await expect(toggle).toContainText("Personal");
 
-    // Share: confirm dialog auto-accepted → flips to "Shared" + household hint.
+    // Share: confirm in the dialog → flips to "Shared" + household hint.
     await shareSwitch.click();
+    await page.getByRole("alertdialog").getByRole("button", { name: "Share", exact: true }).click();
     await expect(shareSwitch).toBeChecked({ timeout: 15_000 });
     await expect(toggle).toContainText("Shared");
     await expect(page.getByText("Everyone in your household can find this.")).toBeVisible();

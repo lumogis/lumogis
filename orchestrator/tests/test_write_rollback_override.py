@@ -199,3 +199,51 @@ def test_override_stop_entities_pin_matches_the_default_path(monkeypatch):
     monkeypatch.delenv("STOP_ENTITIES_PATH", raising=False)
     monkeypatch.setenv("WORKSPACE_PATH", "/workspace")
     assert _STOP_LINE.split(": ", 1)[1] == config.get_stop_entities_path()
+
+
+# --- LUM-984: local rollback tags --------------------------------------------
+
+_ROLLBACK_REF = "lumogis-rollback/lumogis/orchestrator:20261116T101500Z"
+
+
+def test_override_pins_rollback_tag_with_pull_policy_never():
+    yaml = wro.render_override_yaml([("orchestrator", _ROLLBACK_REF)])
+    assert f"    image: {_ROLLBACK_REF}" in yaml
+    assert "    build: !reset null" in yaml
+    assert "    pull_policy: never" in yaml
+    assert "pull_policy: !reset null" not in yaml
+
+
+def test_override_mixes_rollback_tags_and_registry_refs():
+    yaml = wro.render_override_yaml(
+        [
+            ("orchestrator", _ROLLBACK_REF),
+            ("lumogis-web", "ghcr.io/lumogis/lumogis-web@sha256:def"),
+        ]
+    )
+    orch = yaml.split("  orchestrator:")[1].split("  lumogis-web:")[0]
+    web = yaml.split("  lumogis-web:")[1]
+    assert "pull_policy: never" in orch and "pull_policy: !reset null" not in orch
+    assert "pull_policy: !reset null" in web and "pull_policy: never" not in web
+
+
+def test_cli_writes_pull_policy_never_for_rollback_tags(tmp_path: Path):
+    state = tmp_path / "state.tsv"
+    out = tmp_path / "override.yml"
+    state.write_text(
+        f"orchestrator\tghcr.io/x/orch:dev-lumogis\t{_ROLLBACK_REF}\n", encoding="utf-8"
+    )
+    proc = subprocess.run(
+        [sys.executable, str(_WRITE_SCRIPT), str(state), str(out)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "    pull_policy: never" in out.read_text(encoding="utf-8")
+
+
+def test_rollback_prefix_matches_common_sh():
+    assert wro.ROLLBACK_REPO_PREFIX == "lumogis-rollback/"
+    common = (_REPO_ROOT / "scripts" / "update" / "common.sh").read_text(encoding="utf-8")
+    assert f'ROLLBACK_REPO_PREFIX="{wro.ROLLBACK_REPO_PREFIX}"' in common

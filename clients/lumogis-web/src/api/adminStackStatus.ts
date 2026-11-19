@@ -4,6 +4,7 @@
 // Read-only GET /api/v1/admin/diagnostics/stack-status.
 
 import type { ApiClient } from "./client";
+import type { SecureAddressState } from "./secureAddress";
 
 export type StackServiceState =
   | "healthy"
@@ -61,6 +62,13 @@ export interface StackStatusResponse {
   storage: StackStatusStorageItem[];
   ollama: StackStatusOllamaModel[];
   warnings: StackStatusWarning[];
+  /** LUM-331 — absent from older servers. */
+  secure_address?: StackStatusSecureAddress | null;
+}
+
+export interface StackStatusSecureAddress {
+  state: SecureAddressState;
+  url: string | null;
 }
 
 export function fetchAdminStackStatus(client: ApiClient): Promise<StackStatusResponse> {

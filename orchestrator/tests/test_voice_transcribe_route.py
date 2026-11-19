@@ -296,3 +296,96 @@ def test_whisper_diag_backend(monkeypatch: pytest.MonkeyPatch, orch_client: Test
     st = r.json()["speech_to_text"]
     assert st["backend"] == "whisper_sidecar"
     assert st["transcribe_available"] is True
+    # a sidecar adapter that does not manage models: nothing to wait for (LUM-995)
+    assert st["model_state"] == "not_applicable"
+    assert st["model"]
+
+
+# ── LUM-995: new 503 codes through the route; diagnostics model fields ────────
+
+
+def _install_engine(error=None, ping=True) -> None:
+    import config as cfg
+
+    class Engine:
+        def ping(self) -> bool:
+            return ping
+
+        def transcribe(self, *_a, **_k):
+            raise error
+
+    _pop_stt_adapter()
+    cfg._instances["speech_to_text:fake_stt"] = Engine()
+
+
+@pytest.mark.parametrize(
+    "error, ping, code",
+    [
+        ("missing", True, "stt_model_missing"),
+        ("unreachable", True, "stt_unreachable"),
+        (None, False, "stt_unreachable"),
+    ],
+)
+def test_voice_route_503_new_codes(
+    orch_client: TestClient, monkeypatch: pytest.MonkeyPatch, error, ping, code
+) -> None:
+    from ports.speech_to_text import SttModelMissing
+    from ports.speech_to_text import SttUnreachable
+
+    from services import stt_model_readiness
+
+    monkeypatch.setattr(stt_model_readiness, "note_model_missing", lambda: None)
+    monkeypatch.setenv("STT_BACKEND", "fake_stt")
+    hdr = _auth(monkeypatch)
+    exc = {"missing": SttModelMissing("x"), "unreachable": SttUnreachable("x"), None: None}[error]
+    _install_engine(exc, ping)
+    r = orch_client.post(
+        "/api/v1/voice/transcribe",
+        files={"file": ("x.webm", b"abc", "audio/webm")},
+        headers=hdr,
+    )
+    assert r.status_code == 503
+    assert r.json()["detail"]["code"] == code
+
+
+def test_whisper_diag_installer_states(
+    monkeypatch: pytest.MonkeyPatch, orch_client: TestClient
+) -> None:
+    _pop_stt_adapter()
+    monkeypatch.setenv("AUTH_SECRET", "test-whisper-admin-states")
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    monkeypatch.setenv("STT_BACKEND", "whisper_sidecar")
+    monkeypatch.setenv("STT_SIDECAR_URL", "http://lumogis-stt:8080")
+    monkeypatch.setenv("STT_MODEL", "Systran/faster-whisper-base.en")
+
+    import config as cfg
+    from services import stt_model_readiness
+
+    class Installer:
+        def ping(self) -> bool:
+            return True
+
+        def model_installed(self, model: str) -> bool:  # pragma: no cover
+            raise AssertionError("diagnostics must not check or install")
+
+        def install_model(self, model: str) -> None:  # pragma: no cover
+            raise AssertionError("diagnostics must not check or install")
+
+        def transcribe(self, *_a, **_k):  # pragma: no cover
+            raise AssertionError()
+
+    cfg._instances["speech_to_text:whisper_sidecar"] = Installer()
+    from auth import mint_access_token
+
+    hdr = {"Authorization": f"Bearer {mint_access_token('admin-s', 'admin')}"}
+    for state, available in [
+        ("installing", False),
+        ("failed", False),
+        ("unknown_model", False),
+        ("ready", True),
+    ]:
+        monkeypatch.setattr(stt_model_readiness, "state", lambda s=state: s)
+        st = orch_client.get("/api/v1/admin/diagnostics", headers=hdr).json()["speech_to_text"]
+        assert st["model"] == "Systran/faster-whisper-base.en"
+        assert st["model_state"] == state
+        assert st["transcribe_available"] is available, state

@@ -28,7 +28,7 @@ The supported Compose merge is **`docker-compose.yml` + `docker-compose.falkordb
 ## HTTP authentication
 
 KG endpoint auth is **not** the same as Core’s FastAPI `require_admin` matrix.
-**Summary:** Public/health-style paths stay open by default; **`/webhook`** and **`/context`** require **`GRAPH_WEBHOOK_SECRET`** when not using the dev-only insecure flag; mutating **`/kg/*`** may require **`X-Graph-Admin-Token`** when **`GRAPH_ADMIN_TOKEN`** is set; the FastMCP mount can be gated with **`MCP_AUTH_TOKEN`**. See **`routes/`** (health, capabilities, webhook, context, kg, MCP) and **`auth.py`** for the exact matrix.
+**Summary:** Public/health-style paths stay open by default; **`/webhook`** and **`/context`** require **`GRAPH_WEBHOOK_SECRET`** when not using the dev-only insecure flag; mutating **`/kg/*`** may require **`X-Graph-Admin-Token`** when **`GRAPH_ADMIN_TOKEN`** is set; **`/mcp`** needs a Core access JWT when **`AUTH_ENABLED=true`** (**`MCP_AUTH_TOKEN`** is refused then), the **`MCP_AUTH_TOKEN`** shared secret when auth is off and it is set, and is open as `"default"` when neither applies; MCP tools take no `user_id` (the caller comes from the bearer) and `graph.backfill` is admin-only (refused while **`GRAPH_ADMIN_TOKEN`** is set — use `POST /graph/backfill`). Every JWT is checked for `typ` and `tv`. With auth on, `/mgm`, every `/kg/*` call and every non-GET `/graph/*` / `/codegraph/*` call needs an admin token (**`GRAPH_ADMIN_TOKEN`** stays an optional second check). The service is not routed by Caddy (compose network only), and the MCP SDK answers 421 to a non-loopback `Host`. See **`routes/`** (health, capabilities, webhook, context, kg, MCP) and **`auth.py`** for the exact matrix.
 
 ## Build & run
 
@@ -95,7 +95,8 @@ docs. Service-specific knobs:
 | `KG_ALLOW_INSECURE_WEBHOOKS`| `false` | dev-only opt-in to accept `/webhook` and `/context` without `GRAPH_WEBHOOK_SECRET` set |
 | `GRAPH_WEBHOOK_SECRET`      | unset   | bearer token Core presents on `/webhook` and `/context` |
 | `GRAPH_ADMIN_TOKEN`         | unset   | if set, `X-Graph-Admin-Token` on mutating `/kg/*`, `GET /graph/health` (this service), etc. — see **HTTP authentication** above and `routes/` |
-| `MCP_AUTH_TOKEN`            | unset   | gates `/mcp/*` calls from external MCP clients |
+| `MCP_AUTH_TOKEN`            | unset   | gates `/mcp` when `AUTH_ENABLED=false`; refused when `true` (a Core access JWT is required then) |
+| `LUMOGIS_REQUIRE_TV_CLAIM`  | `true`  | access JWT without a `tv` claim → 401 (read from the shared `.env`, same rule as Core) |
 
 ## License
 

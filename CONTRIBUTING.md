@@ -241,9 +241,9 @@ diff-cover coverage-orchestrator.lcov coverage-stack-control.lcov \
 - **Locally:** `pip install -r orchestrator/requirements-dev.txt` (includes `pytest-cov` + `diff-cover`), run a suite with `--cov=. --cov-report=lcov:cov.lcov`, then `diff-cover cov.lcov --compare-branch origin/main --show-uncovered`.
 - **Required gate (future):** promoting **`--fail-under=80`** as a blocking check is tracked as a **Linear child of LUM-379**, after **LUM-384** coverage matrix + an advisory burn-in period (see `/evaluate` LUM-379 defer rationale).
 
-### Release manual checklist
+### Release smoke and the remaining manual rows
 
-Before a maintainer release sign-off (after automated RC gates on the release line), complete [docs/RELEASE-MANUAL-CHECKLIST.md](docs/RELEASE-MANUAL-CHECKLIST.md) — human verification items cited as **`MS-###`** in coverage matrix 🚫 rows. See [docs/testing/automated-test-strategy.md](docs/testing/automated-test-strategy.md) for automated vs manual boundaries.
+Per-release checks run in the **release smoke** (`.github/workflows/release-smoke.yml`; locally `python3 scripts/release/smoke/release_smoke.py install --help`) before a Release is published. [docs/RELEASE-MANUAL-CHECKLIST.md](docs/RELEASE-MANUAL-CHECKLIST.md) lists the **`MS-###`** ids cited in coverage matrix 🚫 rows, the smoke check that runs each, and the few rows that cannot run in CI. A change to a household API route the smoke uses must update `release_smoke.py` in the same change. See [docs/testing/automated-test-strategy.md](docs/testing/automated-test-strategy.md) for automated vs manual boundaries.
 
 ### OpenAPI snapshot / Lumogis Web typed client
 

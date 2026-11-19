@@ -13,6 +13,7 @@ import uuid
 from typing import Any
 
 from auth import UserContext
+from visibility import not_hidden_sql
 from visibility import visible_filter
 
 import config
@@ -22,7 +23,9 @@ _STAGED_CLAUSE = "AND (is_staged IS NOT TRUE)"
 
 def _entity_where(user_id: str, scope_filter: str | None = None) -> tuple[str, tuple]:
     vis_clause, vis_params = visible_filter(UserContext(user_id=user_id), scope_filter)
-    return f"({vis_clause}) {_STAGED_CLAUSE}", vis_params
+    # LUM-966: an entry the member hid is not counted and not shown.
+    hidden_clause, hidden_params = not_hidden_sql(user_id)
+    return f"({vis_clause}) AND {hidden_clause} {_STAGED_CLAUSE}", (*vis_params, *hidden_params)
 
 
 def count_visible_entities(user_id: str) -> int:

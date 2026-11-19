@@ -23,6 +23,10 @@
 // EmailComposer.
 
 import { useState } from "react";
+
+import { LoadingPlaceholder, SkeletonText } from "@/components/page/LoadingState";
+import { Button } from "@/components/ui/button";
+
 import type { JSX } from "react";
 
 import type { EmailBodyDisplayReason, EmailInlineImage } from "../../api/emailSend";
@@ -102,21 +106,21 @@ export function EmailBody({
 
   if (loading) {
     return (
-      <p className="lumogis-email-body lumogis-email-body--loading" role="status">
-        Loading message…
-      </p>
+      <LoadingPlaceholder label="Loading message…">
+        <SkeletonText lines={3} />
+      </LoadingPlaceholder>
     );
   }
 
   const copy = reasonCopy(reason);
   if (copy !== null) {
     return (
-      <div className="lumogis-email-body lumogis-email-body--unavailable" role="note">
-        <p>{copy}</p>
+      <div className="flex flex-col items-start gap-2" role="note">
+        <p className="m-0 text-sm text-muted-foreground">{copy}</p>
         {degraded && onRetry ? (
-          <button type="button" className="lumogis-email-body__retry" onClick={onRetry}>
+          <Button type="button" variant="outline" size="sm" onClick={onRetry}>
             Try again
-          </button>
+          </Button>
         ) : null}
         {/* A message can have images and NO text — a scanned letter, a
             cid:-only marketing mail — and the server answers `no_body` for it.
@@ -132,24 +136,25 @@ export function EmailBody({
   const shown = expanded || !longBody ? body : `${body.slice(0, BODY_PREVIEW_CHARS)}…`;
 
   return (
-    <div className="lumogis-email-body">
+    <div className="flex flex-col items-start gap-2">
       {/* `pre-wrap`: the extractor's newlines and table tabs ARE the layout
           once the HTML is gone. Collapsing them would undo the extraction. */}
-      <p className="lumogis-email-body__text" style={{ whiteSpace: "pre-wrap" }}>
+      <p className="m-0 w-full text-sm break-words whitespace-pre-wrap">
         {shown}
       </p>
       {longBody ? (
-        <button
+        <Button
           type="button"
-          className="lumogis-email-body__toggle"
+          variant="outline"
+          size="sm"
           onClick={() => setExpanded((v) => !v)}
           aria-expanded={expanded}
         >
           {expanded ? "Show less" : "Show all"}
-        </button>
+        </Button>
       ) : null}
       {truncated ? (
-        <p className="lumogis-email-body__truncated" role="note">
+        <p className="m-0 text-xs text-muted-foreground" role="note">
           Message truncated — open it in your mail app to read the rest.
         </p>
       ) : null}
@@ -158,7 +163,7 @@ export function EmailBody({
           discover it — so it must stop claiming images are not displayed the
           moment some are, and must not contradict a strip that is on screen
           saying images were dropped. Formatting is never displayed. */}
-      <p className="lumogis-email-body__footer" role="note">
+      <p className="m-0 text-xs text-muted-foreground" role="note">
         {footerCopy(inlineImages.length, inlineImagesTruncated)}
       </p>
     </div>

@@ -177,6 +177,12 @@ describe("SearchPage", () => {
     });
   });
 
+  it("links to What Lumogis knows, even with an empty query (LUM-161)", async () => {
+    mountSearchPage();
+    const link = await screen.findByRole("link", { name: /browse what lumogis knows/i });
+    expect(link).toHaveAttribute("href", "/entities");
+  });
+
   it("shows empty state with no query", async () => {
     mountSearchPage();
     await waitFor(() => {
@@ -264,7 +270,7 @@ describe("SearchPage", () => {
     await waitFor(() => {
       expect(screen.getByText("A personal AI assistant.")).toBeInTheDocument();
     }, { timeout: 3000 });
-    expect(document.querySelector(".lumogis-entity-card")).not.toBeNull();
+    expect(document.querySelector("article[aria-label^='Entity:']")).not.toBeNull();
     expect(screen.getByText("Thomas")).toBeInTheDocument();
     expect(screen.getByText("LG")).toBeInTheDocument();
   });

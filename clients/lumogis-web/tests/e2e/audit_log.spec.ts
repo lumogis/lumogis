@@ -10,14 +10,12 @@ import { hasSmokeCreds, loginWithSmokeCredentials, smokeCredsSkipMessage } from 
 test.describe("Lumogis Web member audit log", () => {
   test.skip(!hasSmokeCreds, smokeCredsSkipMessage);
 
-  test("audit: /audit page renders heading and table or empty state", async ({ page }) => {
+  test("audit: /settings/activity page renders heading and table or empty state", async ({ page }) => {
     await loginWithSmokeCredentials(page);
-    await page.goto("/audit");
-    // "My activity", not "Audit log": c06d376a3 renamed the member-facing page
-    // to match MeNav and docs/capabilities.md. "Audit log" is now dead copy —
-    // the admin surface at /admin/audit reads "Household audit" — so the old
-    // assertion could never pass against any shipped page.
-    await expect(page.getByRole("heading", { name: /my activity/i })).toBeVisible();
+    await page.goto("/settings/activity");
+    // The page is titled "Activity" (Settings, LUM-993 Pass 3); the household view
+    // is the same page with ?view=household.
+    await expect(page.getByRole("heading", { level: 1, name: "Activity" })).toBeVisible();
     const table = page.getByRole("table");
     const empty = page.getByText(/no audit events match your filters/i);
     await expect(table.or(empty)).toBeVisible();
@@ -25,7 +23,7 @@ test.describe("Lumogis Web member audit log", () => {
 
   test("audit: Privacy filter chip triggers refetch", async ({ page }) => {
     await loginWithSmokeCredentials(page);
-    await page.goto("/audit");
+    await page.goto("/settings/activity");
     await page.getByRole("button", { name: /^privacy$/i }).click();
     await expect(page).toHaveURL(/event_type=privacy/);
   });

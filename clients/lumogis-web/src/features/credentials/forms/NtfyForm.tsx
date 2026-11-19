@@ -2,6 +2,11 @@
 // Copyright (C) 2026 Lumogis
 import { useState, type FormEvent } from "react";
 
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+
+import { Field, FormError } from "./FormParts";
+
 const topicRe = /^[a-zA-Z0-9_-]+$/;
 
 export function NtfyForm({
@@ -48,30 +53,45 @@ export function NtfyForm({
   };
 
   return (
-    <form onSubmit={submit} style={{ display: "grid", gap: "0.5rem" }}>
-      <label>
-        URL
-        <input value={url} onChange={(e) => setUrl(e.target.value)} type="url" required />
-      </label>
-      <label>
-        Topic
-        <input value={topic} onChange={(e) => setTopic(e.target.value)} required minLength={1} maxLength={64} />
-      </label>
-      <label>
-        Token (optional)
-        <input value={token} onChange={(e) => setToken(e.target.value)} type="password" maxLength={512} />
-        <span style={{ fontSize: "0.8rem" }}>
-          {isEdit
+    <form onSubmit={submit} className="grid gap-3">
+      <Field label="URL">
+        {({ id }) => <Input id={id} value={url} onChange={(e) => setUrl(e.target.value)} type="url" required />}
+      </Field>
+      <Field label="Topic">
+        {({ id }) => (
+          <Input
+            id={id}
+            value={topic}
+            onChange={(e) => setTopic(e.target.value)}
+            required
+            minLength={1}
+            maxLength={64}
+          />
+        )}
+      </Field>
+      <Field
+        label="Token (optional)"
+        note={
+          isEdit
             ? "Saving replaces the whole credential: re-enter your token to keep it, or leave this blank to remove it."
-            : "Leave blank for a topic that needs no token."}
-        </span>
-      </label>
-      {err && (
-        <p role="alert" style={{ color: "salmon" }}>
-          {err}
-        </p>
-      )}
-      <button type="submit">Save</button>
+            : "Leave blank for a topic that needs no token."
+        }
+      >
+        {({ id, noteId }) => (
+          <Input
+            id={id}
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            type="password"
+            maxLength={512}
+            aria-describedby={noteId}
+          />
+        )}
+      </Field>
+      {err && <FormError>{err}</FormError>}
+      <Button type="submit" className="justify-self-start">
+        Save
+      </Button>
     </form>
   );
 }

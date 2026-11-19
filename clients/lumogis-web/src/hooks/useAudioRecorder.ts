@@ -29,6 +29,11 @@ export interface UseAudioRecorder {
   status: RecorderStatus;
   /** MediaRecorder + getUserMedia are present in this environment. */
   supported: boolean;
+  /** The page is not a secure context (plain HTTP off the host): browsers withhold the
+   * microphone there, so `supported` is false too — this says why (LUM-995). */
+  insecureContext: boolean;
+  /** The live microphone stream while recording, else null (feeds the level meter). */
+  stream: MediaStream | null;
   start: () => Promise<void>;
   /** Stop and resolve the recorded Blob (null when nothing was captured). */
   stop: () => Promise<Blob | null>;
@@ -42,6 +47,7 @@ export function useAudioRecorder(
   const { onError } = opts;
   const [status, setStatus] = useState<RecorderStatus>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [stream, setStream] = useState<MediaStream | null>(null);
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -56,9 +62,13 @@ export function useAudioRecorder(
     typeof navigator !== "undefined" &&
     !!navigator.mediaDevices?.getUserMedia;
 
+  // Same check as pwa/webPushBrowser.ts: only an explicit `false` counts.
+  const insecureContext = typeof window !== "undefined" && window.isSecureContext === false;
+
   const stopTracks = useCallback(() => {
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
+    setStream(null);
   }, []);
 
   const fail = useCallback(
@@ -85,11 +95,12 @@ export function useAudioRecorder(
       return;
     }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
+      const media = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = media;
+      setStream(media);
       chunksRef.current = [];
       mimeRef.current = mime;
-      const mr = new MediaRecorder(stream, { mimeType: mime });
+      const mr = new MediaRecorder(media, { mimeType: mime });
       recorderRef.current = mr;
       mr.ondataavailable = (ev) => {
         if (ev.data.size > 0) chunksRef.current.push(ev.data);
@@ -155,5 +166,5 @@ export function useAudioRecorder(
     };
   }, []);
 
-  return { status, supported, start, stop, cancel, error };
+  return { status, supported, insecureContext, stream, start, stop, cancel, error };
 }

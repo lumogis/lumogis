@@ -1,8 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Lumogis
+//
+// Activity filters on the shared components (LUM-993 plan B Pass 6). Members get
+// pill filters; the household view adds a person picker and, collapsed under
+// "More filters", the connector / action-type text filters.
 
-import { Button } from "../../components/Button";
+import { ChevronDown } from "lucide-react";
+
 import { SegmentedControl } from "../../components/SegmentedControl";
+import { Button } from "../../components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../../components/ui/collapsible";
+import { Input } from "../../components/ui/input";
+import { Label } from "../../components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
 import type { UserRow } from "../_shared/UserPicker";
 import { AuditLiveToggle } from "./AuditLiveToggle";
 
@@ -93,10 +103,10 @@ export function AuditFilters({
 
   return (
     <div
-      className="lumogis-audit-filters"
+      className="mb-4 flex max-w-3xl flex-col gap-3"
       data-testid={isMember ? "audit-member-filters" : "audit-household-filters"}
     >
-      <div className="lumogis-audit-filters__row lumogis-audit-filters__row--time">
+      <div className="flex flex-wrap items-center gap-2">
         <AuditLiveToggle enabled={liveEnabled} onChange={onLiveChange} />
         {isMember && onPresetChange ? (
           <SegmentedControl
@@ -104,56 +114,56 @@ export function AuditFilters({
             value={preset}
             options={DATE_PRESETS}
             onChange={(v) => onPresetChange(v as DatePreset)}
+            className="max-w-full flex-wrap"
           />
         ) : null}
         {!isMember && onRefresh ? (
-          <Button type="button" variant="secondary" size="sm" onClick={onRefresh}>
+          <Button type="button" variant="outline" size="sm" onClick={onRefresh}>
             Refresh
           </Button>
         ) : null}
         {liveEnabled ? (
-          <p className="lumogis-audit-filters__live-note" role="status">
+          <p className="m-0 text-xs text-muted-foreground" role="status">
             {statusMessage}
           </p>
         ) : null}
       </div>
 
       {isMember && preset === "custom" && onAfterCustomChange && onBeforeCustomChange ? (
-        <div className="lumogis-audit-filters__custom-range">
-          <label className="lumogis-field lumogis-audit-filters__date-field">
-            <span className="lumogis-field__label">After</span>
-            <input
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="audit-after">After</Label>
+            <Input
+              id="audit-after"
               type="datetime-local"
-              className="lumogis-field__input"
               value={afterCustom}
               onChange={(e) => onAfterCustomChange(e.target.value)}
             />
-          </label>
-          <label className="lumogis-field lumogis-audit-filters__date-field">
-            <span className="lumogis-field__label">Before</span>
-            <input
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="audit-before">Before</Label>
+            <Input
+              id="audit-before"
               type="datetime-local"
-              className="lumogis-field__input"
               value={beforeCustom}
               onChange={(e) => onBeforeCustomChange(e.target.value)}
             />
-          </label>
+          </div>
         </div>
       ) : null}
 
       {isMember && onEventTypeChange ? (
-        <div className="lumogis-audit-filters__row">
-          <SegmentedControl
-            ariaLabel="Event type"
-            value={eventType}
-            options={EVENT_CHIPS.map((c) => ({ value: c.value, label: c.label }))}
-            onChange={onEventTypeChange}
-          />
-        </div>
+        <SegmentedControl
+          ariaLabel="Event type"
+          value={eventType}
+          options={EVENT_CHIPS.map((c) => ({ value: c.value, label: c.label }))}
+          onChange={onEventTypeChange}
+          className="max-w-full flex-wrap"
+        />
       ) : null}
 
       {isMember ? (
-        <div className="lumogis-audit-filters__scope-block">
+        <div className="flex flex-col gap-1.5">
           <SegmentedControl
             ariaLabel="Scope"
             value="personal"
@@ -165,67 +175,86 @@ export function AuditFilters({
             onChange={() => {
               /* personal-only until shared/system recording ships */
             }}
+            className="max-w-full flex-wrap"
           />
-          <p className="lumogis-audit-filters__scope-note">{SCOPE_NOTE}</p>
+          <p className="m-0 text-xs text-muted-foreground">{SCOPE_NOTE}</p>
         </div>
       ) : null}
 
       {!isMember && onLimitChange && onConnectorChange && onActionTypeFilterChange ? (
-        <div className="lumogis-audit-filters__admin-fields">
-          <label className="lumogis-field">
-            <span className="lumogis-field__label">Limit (1–200)</span>
-            <input
+        <>
+          {onAsUserChange ? (
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="audit-as-user">View as user</Label>
+              {usersLoading ? (
+                <span className="text-sm text-muted-foreground">Loading users…</span>
+              ) : usersError ? (
+                <span className="text-sm text-destructive">Failed to load users.</span>
+              ) : (
+                <Select value={asUser || "self"} onValueChange={(v) => onAsUserChange(v === "self" ? "" : String(v ?? ""))}>
+                  <SelectTrigger id="audit-as-user" aria-label="View as user" className="w-full max-w-md">
+                    <SelectValue>
+                      {(v: string | null) => {
+                        const hit = users?.find((u) => u.id === v);
+                        return hit ? `${hit.email}${hit.disabled ? " (turned off)" : ""}` : "Just me";
+                      }}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="self">Just me</SelectItem>
+                    {users?.map((u) => (
+                      <SelectItem key={u.id} value={u.id}>
+                        {u.email}
+                        {u.disabled ? " (turned off)" : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+          ) : null}
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="audit-limit">How many to show (1–200)</Label>
+            <Input
+              id="audit-limit"
               type="number"
-              className="lumogis-field__input"
               min={1}
               max={200}
               value={limit}
               onChange={(e) => onLimitChange(Number(e.target.value) || 50)}
+              className="w-32"
             />
-          </label>
-          <label className="lumogis-field">
-            <span className="lumogis-field__label">Connector filter</span>
-            <input
-              type="text"
-              className="lumogis-field__input"
-              value={connector}
-              onChange={(e) => onConnectorChange(e.target.value)}
-            />
-          </label>
-          <label className="lumogis-field">
-            <span className="lumogis-field__label">Action type filter</span>
-            <input
-              type="text"
-              className="lumogis-field__input"
-              value={actionTypeFilter}
-              onChange={(e) => onActionTypeFilterChange(e.target.value)}
-            />
-          </label>
-          {onAsUserChange ? (
-            <label className="lumogis-field lumogis-field--wide">
-              <span className="lumogis-field__label">View as user</span>
-              {usersLoading ? (
-                <span className="lumogis-field__hint">Loading users…</span>
-              ) : usersError ? (
-                <span className="lumogis-field__hint lumogis-field__hint--error">Failed to load users.</span>
-              ) : (
-                <select
-                  className="lumogis-field__input lumogis-field__select"
-                  value={asUser}
-                  onChange={(e) => onAsUserChange(e.target.value)}
-                >
-                  <option value="">Self (no filter)</option>
-                  {users?.map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {u.email} ({u.role}
-                      {u.disabled ? ", disabled" : ""})
-                    </option>
-                  ))}
-                </select>
-              )}
-            </label>
-          ) : null}
-        </div>
+          </div>
+          <Collapsible>
+            <CollapsibleTrigger
+              render={<Button type="button" variant="ghost" size="sm" className="-ml-2 group/trigger" />}
+            >
+              <ChevronDown aria-hidden="true" className="transition-transform group-aria-expanded/trigger:rotate-180" />
+              More filters
+            </CollapsibleTrigger>
+            {/* keepMounted: the two text filters stay in the page while closed. */}
+            <CollapsibleContent keepMounted className="grid gap-3 pt-2 sm:grid-cols-2">
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="audit-connector">Connector filter</Label>
+                <Input
+                  id="audit-connector"
+                  type="text"
+                  value={connector}
+                  onChange={(e) => onConnectorChange(e.target.value)}
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="audit-action-type">Action type filter</Label>
+                <Input
+                  id="audit-action-type"
+                  type="text"
+                  value={actionTypeFilter}
+                  onChange={(e) => onActionTypeFilterChange(e.target.value)}
+                />
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
+        </>
       ) : null}
     </div>
   );

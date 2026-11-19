@@ -17,6 +17,9 @@
 
 import { useCallback, useState } from "react";
 
+import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { ApiError, type ApiClient } from "../../api/client";
 import { downloadAttachment, formatBytes, type AttachmentRow } from "../../api/emailAttachments";
 import { acceptCandidates, explainAcceptSkip } from "../../api/emailAttachmentIngest";
@@ -123,7 +126,7 @@ export function AttachmentList({
 
   if (loading) {
     return (
-      <p className="lumogis-attachments__status" role="status">
+      <p className="text-sm text-muted-foreground" role="status">
         Loading attachments…
       </p>
     );
@@ -131,9 +134,7 @@ export function AttachmentList({
 
   if (error) {
     return (
-      <p className="lumogis-attachments__status lumogis-attachments__status--error" role="alert">
-        Couldn’t load attachments.
-      </p>
+      <Alert variant="destructive">Couldn’t load attachments.</Alert>
     );
   }
 
@@ -141,7 +142,7 @@ export function AttachmentList({
     // NOT an empty list. This mailbox is in metadata mode, so we genuinely do
     // not know whether this message has attachments.
     return (
-      <p className="lumogis-attachments__status" data-testid="attachments-unavailable" role="note">
+      <p className="text-sm text-muted-foreground" data-testid="attachments-unavailable" role="note">
         Attachments need full-ingest mode for this mailbox.
       </p>
     );
@@ -153,56 +154,56 @@ export function AttachmentList({
   }
 
   return (
-    <div className="lumogis-attachments" aria-label="Attachments">
-      <ul className="lumogis-attachments__list">
+    <div className="flex flex-col gap-2" aria-label="Attachments">
+      <ul className="flex list-none flex-col gap-1 p-0">
         {rows.map((row) => (
-          <li key={row.part_index} className="lumogis-attachments__item">
+          <li key={row.part_index} className="flex flex-wrap items-center gap-2 text-sm">
             {/* A button, not a link: the download is an authenticated fetch.
                 The server always responds Content-Disposition: attachment +
                 nosniff, so nothing here can ever render in-page. */}
-            <button
+            <Button
               type="button"
-              className="lumogis-attachments__link"
+              variant="link"
+              className="h-auto min-w-0 p-0 text-accent-text underline underline-offset-2"
               disabled={busy !== null}
               onClick={() => void onDownload(row)}
             >
               {row.filename}
-            </button>
-            <span className="lumogis-attachments__size">{formatBytes(row.size_bytes)}</span>
+            </Button>
+            <span className="text-xs text-muted-foreground">{formatBytes(row.size_bytes)}</span>
             {/* Nothing is filed automatically since LUM-727, so this is how a
                 single attachment gets into the library without a trip to the
                 review list. */}
             {canFile ? (
               filed.has(row.part_index) ? (
-                <span className="lumogis-attachments__filed" data-testid="attachment-filed">
+                <Badge variant="secondary" data-testid="attachment-filed">
                   Filed
-                </span>
+                </Badge>
               ) : (
-                <button
+                <Button
                   type="button"
-                  className="lumogis-attachments__file"
+                  variant="outline"
+                  size="sm"
                   disabled={filing !== null}
                   onClick={() => void onFile(row)}
                   aria-label={`File ${row.filename} to library`}
                 >
                   File to library
-                </button>
+                </Button>
               )
             ) : null}
           </li>
         ))}
       </ul>
       {fileStatus ? (
-        <p className="lumogis-attachments__status" role="status" data-testid="attachment-file-status">
+        <p className="text-sm text-muted-foreground" role="status" data-testid="attachment-file-status">
           {fileStatus}
         </p>
       ) : null}
       {downloadError ? (
-        <p className="lumogis-attachments__status lumogis-attachments__status--error" role="alert">
-          {downloadError}
-        </p>
+        <Alert variant="destructive">{downloadError}</Alert>
       ) : null}
-      <p className="lumogis-attachments__note">
+      <p className="text-xs text-muted-foreground">
         Attachments open from your mailbox — it needs to be reachable, and a message deleted
         there takes its attachments with it.
       </p>

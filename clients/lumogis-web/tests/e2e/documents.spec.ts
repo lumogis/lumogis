@@ -87,8 +87,6 @@ function detail(
 }
 
 async function mockShareRoutes(page: Page, state: ShareMockState): Promise<void> {
-  // Auto-accept the plain-language share confirm (window.confirm in ShareToggle).
-  page.on("dialog", (dialog) => void dialog.accept());
 
   // List — the shared doc (current lifecycle state) + a control personal doc.
   await page.route("**/api/v1/documents", async (route: Route) => {
@@ -192,8 +190,9 @@ test.describe("LUM-157 household document sharing (/documents)", () => {
     await expect(shareSwitch).not.toBeChecked();
     await expect(toggle).toContainText("Personal");
 
-    // Share: confirm dialog auto-accepted → flips to "Shared".
+    // Share: confirm in the dialog → flips to "Shared".
     await shareSwitch.click();
+    await page.getByRole("alertdialog").getByRole("button", { name: "Share", exact: true }).click();
     await expect(shareSwitch).toBeChecked({ timeout: 15_000 });
     await expect(toggle).toContainText("Shared");
     await expect(

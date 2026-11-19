@@ -18,8 +18,10 @@ Rules for future tasks:
 * If a new input path brings email text into a task, that task becomes
   ``local_only`` in the same change (ADR 174).
 * Anything whose output deletes or invalidates data is ``destructive``: first
-  listed entry only, no fall-through, and its call site must not call
-  ``resolve_job_model`` (a privacy swap would run an unmeasured model).
+  listed entry only, no fall-through. If it is also ``local_only``, an entry that
+  is not proven on-box is replaced by the code default (LUM-983). Its call site
+  must not call ``resolve_job_model`` (a privacy swap would run an unmeasured
+  model).
 """
 
 from __future__ import annotations
@@ -205,7 +207,9 @@ class _BootRefused(RuntimeError):
     """Raised by :func:`check_tasks_at_boot` to stop boot (ADR 026, generalised)."""
 
 
-# Task names already warned about a full fall-through (once per process per task).
+# Warn-once keys for using a code default: a task name for a full fall-through (once
+# per process per task), or ``{task}:destructive:{reason}`` for a destructive task's
+# unusable first entry (once per process per task and reason).
 _fallthrough_warned: set[str] = set()
 
 
@@ -359,6 +363,16 @@ def configured_list(task: str) -> tuple[str, ...]:
 # ---------------------------------------------------------------------------
 
 
+def _warn_entry_check_failed(spec: TaskSpec, name: str, exc: Exception) -> None:
+    """Log an entry check that raised: the exception type only, never its message."""
+    _log.warning(
+        "task_models: entry check failed task=%s model=%s (%s)",
+        spec.name,
+        name,
+        type(exc).__name__,
+    )
+
+
 def _skip_reason(
     spec: TaskSpec,
     name: str,
@@ -384,21 +398,47 @@ def _skip_reason(
         )
         return reason
     except Exception as exc:
-        _log.warning(
-            "task_models: entry check failed task=%s model=%s (%s)",
-            spec.name,
-            name,
-            type(exc).__name__,
-        )
+        _warn_entry_check_failed(spec, name, exc)
         return "error"
+
+
+def _destructive_choice(
+    spec: TaskSpec, first: str, lookup: _ModelLookup
+) -> tuple[str, Literal["list", "default"], SkipReason | None]:
+    """The one model a destructive task uses: ``first`` or the code default.
+
+    Never a later entry. For a ``local_only`` spec, ``first`` is used only when it
+    is found and on-box (``is_on_box_local`` with the found cfg, one lookup);
+    an unknown entry, an off-box or unresolvable host, or a lookup error gives the
+    code default (ADR 250 addendum, LUM-983). No key, privacy or switched-off
+    check: an on-box entry that is keyless, blocked or switched off still fails
+    at the call site into judge_failed (ADR 241 §8).
+
+    Returns ``(model, "list" | "default", reason)``; ``reason`` is why the first
+    entry was replaced, and ``None`` when it is used. Nothing raises out of here.
+    """
+    if not spec.local_only:
+        return first, "list", None
+    try:
+        cfg = lookup.get(first)
+        if cfg is None:
+            return spec.default, "default", "unknown"
+        if is_on_box_local(first, cfg=cfg):
+            return first, "list", None
+        return spec.default, "default", "not_on_box"
+    except Exception as exc:
+        _warn_entry_check_failed(spec, first, exc)
+        return spec.default, "default", "error"
 
 
 def resolve_task_model(task: str, *, user_id: str | None) -> str:
     """Return the model name ``task`` uses now (never raises past an unknown task).
 
     First usable listed entry; else the code default, unconditionally. A
-    destructive task returns its first entry unchecked. With an empty list this
-    makes zero settings, DB, file or Ollama calls.
+    destructive task uses its first entry or its code default, never a later
+    entry. If the task is ``local_only``, the first entry must be on-box; there is
+    no key or privacy check. With an empty list this makes zero settings, DB, file
+    or Ollama calls.
     """
     spec = TASKS.get(task)
     if spec is None:
@@ -407,9 +447,38 @@ def resolve_task_model(task: str, *, user_id: str | None) -> str:
     if not entries:
         return spec.default
     if spec.destructive:
-        # No skip check: if the entry is unusable, get_llm_provider fails at the
-        # call site and the judge ends judge_failed. It never moves down a list.
-        return entries[0]
+        # No key or privacy check: an on-box entry that is unusable fails at the call
+        # site (judge_failed). A first entry not proven on-box gives the code default.
+        # It never moves down a list.
+        lookup = _ModelLookup()
+        model, source, why = _destructive_choice(spec, entries[0], lookup)
+        if source == "default":
+            note = (
+                " (Ollama listed no models: unreachable or empty)"
+                if why == "unknown" and lookup.dynamic_count() == 0
+                else ""
+            )
+            key = f"{task}:destructive:{why}"
+            if key not in _fallthrough_warned:
+                _fallthrough_warned.add(key)
+                _log.warning(
+                    "task_models: first entry %s for destructive task=%s is not usable on "
+                    "the box (reason=%s%s); using code default %s — it never falls back "
+                    "down the list",
+                    entries[0],
+                    task,
+                    why,
+                    note,
+                    spec.default,
+                )
+            else:
+                _log.debug(
+                    "task_models: destructive task=%s substituted code default %s (reason=%s)",
+                    task,
+                    spec.default,
+                    why,
+                )
+        return model
     lookup = _ModelLookup()
     reasons: list[str] = []
     for m in entries:
@@ -465,7 +534,8 @@ def explain_task(
         for m in names
     )
     if spec.destructive and entries:
-        resolved, resolved_from = entries[0].model, "list"
+        # The same helper as resolve_task_model; it does not log the warn-once line.
+        resolved, resolved_from, _ = _destructive_choice(spec, entries[0].model, lookup)
     else:
         usable = next((e.model for e in entries if e.skip_reason is None), None)
         if usable is not None:

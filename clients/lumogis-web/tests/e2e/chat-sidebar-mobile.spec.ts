@@ -37,25 +37,24 @@ async function expectNoPageHorizontalOverflow(page: Page): Promise<void> {
 test.describe("Chat conversation sidebar — responsive collapse", () => {
   test.skip(!hasSmokeCreds, smokeCredsSkipMessage);
 
-  test("mobile (390x844): sidebar stacks above the transcript, both reachable", async ({
+  test("mobile (390x844): the chat list opens from Chats in a sheet; the chat fills the screen", async ({
     page,
   }) => {
+    // LUM-993 Pass 2b: on a phone the list is a sheet, not a block stacked above the chat.
     await page.setViewportSize({ width: 390, height: 844 });
     await loginWithSmokeCredentials(page);
     await page.goto("/chat");
     await dismissOnboardingIfPresent(page);
 
-    const sidebar = page.getByRole("complementary", { name: /conversations/i });
     const main = page.getByRole("region", { name: /^chat$/i });
-    await expect(sidebar).toBeVisible();
     await expect(main).toBeVisible();
+    await expect(page.getByRole("complementary", { name: /conversations/i })).toBeHidden();
 
-    const sb = await sidebar.boundingBox();
-    const mb = await main.boundingBox();
-    expect(sb).not.toBeNull();
-    expect(mb).not.toBeNull();
-    // Single-column (stacked): the sidebar's bottom is at/above the chat's top.
-    expect(sb!.y + sb!.height).toBeLessThanOrEqual(mb!.y + 2);
+    await page.getByRole("button", { name: "Chats" }).click();
+    const sheet = page.getByRole("dialog", { name: "Chats" });
+    await expect(sheet.getByTestId("conversation-sidebar")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(sheet).toHaveCount(0);
 
     await expectNoPageHorizontalOverflow(page);
   });

@@ -23,6 +23,14 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { ErrorState } from "@/components/page/ErrorState";
+import { EmptyState } from "@/components/page/EmptyState";
+import { LoadingPlaceholder, SkeletonText } from "@/components/page/LoadingState";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
+import { formatDateTime } from "@/util/formatTimestamp";
 import type { ApiClient } from "../../api/client";
 import { OVERLAP_FALLBACK, paperlessOverlapWarning } from "./paperlessOverlapWarning";
 import {
@@ -54,12 +62,6 @@ function formatBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function formatWhen(iso: string): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString();
-}
-
 export function AttachmentReviewList({
   client,
   sourceId,
@@ -69,12 +71,14 @@ export function AttachmentReviewList({
   const [truncated, setTruncated] = useState(false);
   const [unreachable, setUnreachable] = useState(0);
   const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(new Set());
 
   const load = useCallback(
     (abort?: AbortSignal) => {
+      setLoadError(false);
       fetchCandidates(client, { sourceId }, abort)
         .then((res) => {
           setGroups(res.groups);
@@ -82,7 +86,12 @@ export function AttachmentReviewList({
           setUnreachable(res.unreachable ?? 0);
           setLoaded(true);
         })
-        .catch(() => setLoaded(true));
+        .catch(() => {
+          // An aborted request is an unmount, not a failure.
+          if (abort?.aborted) return;
+          setLoadError(true);
+          setLoaded(true);
+        });
     },
     [client, sourceId],
   );
@@ -352,36 +361,60 @@ export function AttachmentReviewList({
   );
 
   if (!loaded) {
-    return <p data-testid="review-loading">Loading…</p>;
+    return (
+      <div data-testid="review-loading">
+        <LoadingPlaceholder label="Loading attachments to review">
+          <SkeletonText lines={3} />
+        </LoadingPlaceholder>
+      </div>
+    );
   }
+
+  if (loadError) {
+    return (
+      <ErrorState
+        title="Couldn't load attachments"
+        message="Lumogis couldn't get the attachments waiting for review."
+        onRetry={() => load()}
+      />
+    );
+  }
+
+  const unreachableNote =
+    unreachable > 0 ? (
+      // Terminal, but not silent. The bytes are unfetchable so there is no
+      // action to offer — the point is that the user stops waiting for a file
+      // that is never coming, and knows why.
+      <p className="text-sm text-muted-foreground" data-testid="review-unreachable">
+        {explainUnreachable(unreachable)}
+      </p>
+    ) : null;
 
   if (groups.length === 0) {
     return (
-      <section aria-label="Attachments to review">
+      <section aria-label="Attachments to review" className="flex flex-col gap-3">
         {/* The status has to survive into the empty state. Deciding on the LAST
             attachment is exactly when the confirmation matters most — and an
             early return that drops it means the one action with no feedback is
             the one that finished the job. */}
         {status ? (
-          <p role="status" data-testid="review-status">
+          <p className="text-sm" role="status" data-testid="review-status">
             {status}
           </p>
         ) : null}
-        <p data-testid="review-empty">
-          Nothing to review. New attachments will show up here.
-        </p>
-      {unreachable > 0 ? (
-        // Terminal, but not silent. The bytes are unfetchable so there is no
-        // action to offer — the point is that the user stops waiting for a file
-        // that is never coming, and knows why.
-        <p data-testid="review-unreachable">{explainUnreachable(unreachable)}</p>
-      ) : null}
+        <div data-testid="review-empty">
+          <EmptyState
+            title="Nothing to review"
+            helperText="New attachments will show up here."
+          />
+        </div>
+        {unreachableNote}
       </section>
     );
   }
 
   return (
-    <section aria-label="Attachments to review">
+    <section aria-label="Attachments to review" className="flex flex-col gap-3">
       {/* LUM-728 — a `low`-confidence overlap. Rendered ONCE for the list, never
           per sender group, and never blocking: a wrong `low` is frequent (two
           mailboxes on one provider is ordinary), so gating on it would train
@@ -391,74 +424,85 @@ export function AttachmentReviewList({
       {/* Advisories are per mailbox now — rendered with the groups they describe,
           not once above a list that may span several. */}
       {status ? (
-        <p role="status" data-testid="review-status">
+        <p className="text-sm" role="status" data-testid="review-status">
           {status}
         </p>
       ) : null}
-      {unreachable > 0 ? (
-        // Terminal, but not silent. The bytes are unfetchable so there is no
-        // action to offer — the point is that the user stops waiting for a file
-        // that is never coming, and knows why.
-        <p data-testid="review-unreachable">{explainUnreachable(unreachable)}</p>
-      ) : null}
+      {unreachableNote}
       {truncated ? (
         // Never a silent cut — a user who cannot see the rest must at least know
         // there is a rest, or they will believe they finished.
-        <p data-testid="review-truncated">
+        <p className="text-sm text-muted-foreground" data-testid="review-truncated">
           Showing the most recent. Decide on these and more will appear.
         </p>
       ) : null}
       {picked.size > 0 ? (
-        <div data-testid="review-bulk-bar">
-          <span data-testid="review-picked-count">{picked.size} selected</span>
-          <button
+        <div
+          className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/40 p-2"
+          data-testid="review-bulk-bar"
+        >
+          <span className="text-sm font-medium" data-testid="review-picked-count">
+            {picked.size} selected
+          </span>
+          <Button
             type="button"
+            size="sm"
             onClick={() => onAccept(picked)}
             disabled={busy}
             data-testid="review-accept-picked"
           >
             File to library
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
+            size="sm"
+            variant="outline"
             onClick={() => onDecline(picked)}
             disabled={busy}
             data-testid="review-decline-picked"
           >
             Don't file
-          </button>
+          </Button>
         </div>
       ) : null}
-      <ul data-testid="review-groups">
+      <ul className="m-0 flex list-none flex-col gap-3 p-0" data-testid="review-groups">
         {groups.map((group) => {
           const keys = group.candidates.map(candidateKey);
           const allOn = keys.length > 0 && keys.every((k) => picked.has(k));
           return (
-            <li key={groupKey(group)} data-testid={`review-group-${groupKey(group)}`}>
-              <h3>
-                <label>
-                  <input
-                    type="checkbox"
+            <li
+              key={groupKey(group)}
+              className="flex flex-col gap-2 rounded-lg border p-3"
+              data-testid={`review-group-${groupKey(group)}`}
+            >
+              <h3 className="m-0 flex flex-wrap items-center gap-2 text-sm font-semibold">
+                <Label className="gap-2">
+                  <Checkbox
                     checked={allOn}
-                    onChange={() => toggleGroup(group)}
+                    onCheckedChange={() => toggleGroup(group)}
                     aria-label={`Select all from ${group.from_display || group.from_addr}`}
                   />
                   {group.from_display || group.from_addr}
-                </label>
+                </Label>
                 {/* Only when the list actually spans mailboxes. A one-mailbox
                     household gains nothing from a label that is the same on
                     every row, and a badge that never varies is noise. */}
                 {multiSource && group.source_name ? (
-                  <span data-testid={`review-group-source-${groupKey(group)}`}>
+                  <Badge variant="outline" data-testid={`review-group-source-${groupKey(group)}`}>
                     {group.source_name}
-                  </span>
+                  </Badge>
                 ) : null}
-                <span data-testid="review-group-count">{group.count}</span>
+                <Badge variant="secondary" data-testid="review-group-count">
+                  {group.count}
+                </Badge>
               </h3>
               {/* This mailbox's low-confidence paperless advisory, beside the
                   groups it describes rather than once above a mixed list. */}
               {advisory[group.source_id] ? (
-                <p data-testid={`review-overlap-advisory-${group.source_id}`}>
+                <p
+                  className="text-sm text-muted-foreground"
+                  data-testid={`review-overlap-advisory-${group.source_id}`}
+                >
                   {advisory[group.source_id]}
                 </p>
               ) : null}
@@ -467,7 +511,10 @@ export function AttachmentReviewList({
                   answer — they are looking at four invoices from one sender. */}
               {group.source_id ? (
                 overlapAsk[groupKey(group)] ? (
-                  <span data-testid={`review-overlap-${groupKey(group)}`}>
+                  <div
+                    className="flex flex-col gap-2 rounded-lg border border-amber-500/50 bg-amber-500/10 p-2 text-sm"
+                    data-testid={`review-overlap-${groupKey(group)}`}
+                  >
                     <span>{overlapAsk[groupKey(group)].message}</span>
                     {/* The refusal has three parts and only showing the first
                         turns a considered explanation into a bare error. */}
@@ -481,63 +528,87 @@ export function AttachmentReviewList({
                         {overlapAsk[groupKey(group)].recovery}
                       </span>
                     ) : null}
-                    <button
-                      type="button"
-                      onClick={() => onFileAnyway(group)}
-                      disabled={busy}
-                      data-testid={`review-overlap-confirm-${groupKey(group)}`}
-                    >
-                      File anyway
-                    </button>
-                  </span>
+                    <div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => onFileAnyway(group)}
+                        disabled={busy}
+                        data-testid={`review-overlap-confirm-${groupKey(group)}`}
+                      >
+                        File anyway
+                      </Button>
+                    </div>
+                  </div>
                 ) : (
-                  <button
-                    type="button"
-                    onClick={() => onAlwaysFile(group)}
-                    disabled={busy}
-                    data-testid={`review-always-${groupKey(group)}`}
-                  >
-                    Always file from this sender
-                  </button>
+                  <div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => onAlwaysFile(group)}
+                      disabled={busy}
+                      data-testid={`review-always-${groupKey(group)}`}
+                    >
+                      Always file from this sender
+                    </Button>
+                  </div>
                 )
               ) : null}
-              <ul>
+              <ul className="m-0 flex list-none flex-col p-0">
                 {group.candidates.map((c) => {
                   const key = candidateKey(c);
                   return (
-                    <li key={key} data-testid={`review-row-${key}`}>
-                      <label>
-                        <input
-                          type="checkbox"
+                    <li
+                      key={key}
+                      className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t py-2 text-sm"
+                      data-testid={`review-row-${key}`}
+                    >
+                      <Label className="min-w-0 gap-2 font-normal">
+                        <Checkbox
                           checked={picked.has(key)}
-                          onChange={() => toggle(key)}
+                          onCheckedChange={() => toggle(key)}
                           aria-label={`Select ${c.filename}`}
                         />
-                        <span data-testid="review-filename">{c.filename}</span>
-                      </label>
-                      <span data-testid="review-size">{formatBytes(c.size_bytes)}</span>
+                        <span className="break-all" data-testid="review-filename">
+                          {c.filename}
+                        </span>
+                      </Label>
+                      <span className="text-xs text-muted-foreground" data-testid="review-size">
+                        {formatBytes(c.size_bytes)}
+                      </span>
                       {/* Subject is what makes a file called `scan_0043.pdf`
                           decidable at all. */}
                       {c.subject ? (
-                        <span data-testid="review-subject">{c.subject}</span>
+                        <span className="min-w-0 text-muted-foreground" data-testid="review-subject">
+                          {c.subject}
+                        </span>
                       ) : null}
-                      <time dateTime={c.received_at}>{formatWhen(c.received_at)}</time>
-                      <button
-                        type="button"
-                        onClick={() => onAccept(new Set([key]))}
-                        disabled={busy}
-                        aria-label={`File ${c.filename} to library`}
-                      >
-                        File
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onDecline(new Set([key]))}
-                        disabled={busy}
-                        aria-label={`Don't file ${c.filename}`}
-                      >
-                        Skip
-                      </button>
+                      <time className="text-xs text-muted-foreground" dateTime={c.received_at}>
+                        {formatDateTime(c.received_at, { withTime: false })}
+                      </time>
+                      <span className="ml-auto flex gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => onAccept(new Set([key]))}
+                          disabled={busy}
+                          aria-label={`File ${c.filename} to library`}
+                        >
+                          File
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => onDecline(new Set([key]))}
+                          disabled={busy}
+                          aria-label={`Don't file ${c.filename}`}
+                        >
+                          Skip
+                        </Button>
+                      </span>
                     </li>
                   );
                 })}

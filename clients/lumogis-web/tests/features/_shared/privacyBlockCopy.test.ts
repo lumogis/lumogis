@@ -42,7 +42,7 @@ const PAYLOADS: Record<string, MePrivacyModeResponse | null> = {
   ownRestrictionUnderLock: me("allow_cloud", { locked: true, restriction: "local_only" }),
 };
 
-const ADMIN = "/admin/privacy-mode";
+const ADMIN = "/settings/privacy?view=household";
 const ASK = "Ask your household admin if you need them.";
 const link = (to: string | null, label: string | null) => ({ linkTo: to, linkLabel: label });
 const copy = (text: string, to: string | null = null, label: string | null = null): PrivacyHintCopy => ({
@@ -117,7 +117,7 @@ const CASES: Case[] = [
     payload: "ownRestriction", isAdmin: false, surface: "picker", row: 5,
     expected: copy(
       "Cloud models are off because you limited your account to local models.",
-      "/me/privacy-mode",
+      "/settings/privacy",
       "Change it in your privacy settings",
     ),
   },
@@ -125,7 +125,7 @@ const CASES: Case[] = [
     payload: "ownRestriction", isAdmin: true, surface: "key-save", row: 5,
     expected: copy(
       "Cloud models stay off for you because you limited your account to local models.",
-      "/me/privacy-mode",
+      "/settings/privacy",
       "Change it in your privacy settings",
     ),
   },
@@ -134,7 +134,7 @@ const CASES: Case[] = [
     payload: "ownRestriction", isAdmin: true, surface: "picker", adminTier: true, row: 5,
     expected: copy(
       "Cloud models are off because you limited your account to local models.",
-      "/me/privacy-mode",
+      "/settings/privacy",
       "Change it in your privacy settings",
     ),
   },

@@ -157,7 +157,7 @@ describe("Reply all", () => {
     await openReplyAll(user);
 
     const notice = await screen.findByText(/another household member's mailbox/i);
-    expect(notice).toHaveAttribute("role", "alert");
+    expect(notice.closest("[role=alert]")).not.toBeNull();
     expect(screen.queryByText(/replying to the sender only/i)).toBeNull();
   });
 
@@ -180,7 +180,7 @@ describe("Reply all", () => {
     await openReplyAll(user);
 
     const warning = await screen.findByText(/goes to 30 people/i);
-    expect(warning).toHaveAttribute("role", "alert");
+    expect(warning.closest("[role=alert]")).not.toBeNull();
   });
 
   it("a pre-filled Cc survives the composer's own split back into addresses", async () => {

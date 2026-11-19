@@ -16,7 +16,7 @@ The admin **System status → Disaster recovery backup** card shows this list fo
 | Covered | Not covered |
 | --- | --- |
 | Database (accounts, settings, document index) | Your library folder (`INGEST_PATHS` / `FILESYSTEM_ROOT`): your own folder, back it up with your usual tools |
-| Search index | The `.env` settings file: it holds the key that decrypts saved passwords, so keep a copy somewhere safe |
+| Search index | The `.env` settings file: it holds the secrets Lumogis generated on first start, including the key that decrypts saved passwords. Keep a copy, and keep the file readable only by you |
 | Knowledge graph (when on) | Downloaded AI models: downloaded again when needed |
 | Uploaded documents (`ai-workspace/uploads`) | |
 | Inbox documents (`ai-workspace/inbox`, and `quarantine/`) | |
@@ -40,7 +40,7 @@ The card also warns when documents or captures the database knows about are **mi
 | `make backup-prune` | Apply retention (7 daily + 4 weekly successful snapshots) |
 | `make restore SNAPSHOT=YYYYMMDD-HHMMSS` | Restore a snapshot (interactive `--yes` required) |
 
-Without `make` (an install from the release files), the same commands are `docker compose run --rm backup /scripts/backup/backup.sh run` and `docker compose run --rm -it backup /scripts/backup/restore.sh YYYYMMDD-HHMMSS --yes`, with the orchestrator and Lumogis Web stopped for a restore: see [Upgrading](../deployment/upgrading.md#backup-and-restore).
+Without `make` (an install from the release files), the same commands are `docker compose run --rm backup /scripts/backup/backup.sh run` and `docker compose run --rm --no-deps -it backup /scripts/backup/restore.sh YYYYMMDD-HHMMSS --yes`, with the orchestrator, Lumogis Web and FalkorDB stopped for a restore: see [Upgrading](../deployment/upgrading.md#backup-and-restore).
 
 ## Layout
 
@@ -95,10 +95,10 @@ Captures live in `<workspace>/captures` (`ai-workspace/captures` by default). Be
 
 ## Restore procedure
 
-1. **Stop** `orchestrator` and `lumogis-web`. Restore also probes `/healthz` on both services and **refuses** if either is still responding (override only for maintainer scripts: `RESTORE_SKIP_QUIESCE=1`).
-2. Run `make restore SNAPSHOT=<id>` and confirm with `--yes`.
+1. **Stop** `orchestrator`, `lumogis-web` and, when the knowledge graph is on, `falkordb`: `docker compose stop orchestrator lumogis-web falkordb`. Restore probes `/healthz` on the first two and pings FalkorDB, and **refuses** if any of them still responds (override only for maintainer scripts: `RESTORE_SKIP_QUIESCE=1`). FalkorDB must be stopped *before* the restore: a running FalkorDB saves its current graph over the restored `dump.rdb` when it stops, and the restored graph is lost without an error (LUM-999).
+2. Run `make restore SNAPSHOT=<id>` and confirm with `--yes`. It runs the backup container with `--no-deps`, so Compose does not start FalkorDB again for it; Postgres and Qdrant stay running.
 3. If the snapshot manifest includes FalkorDB (not `skipped`), restore copies `dump.rdb` **even when graph is currently disabled** — match the snapshot, not today's `GRAPH_MODE`.
-4. If FalkorDB was restored via `dump.rdb`, restart the `falkordb` service.
+4. Start the stack again with `docker compose up -d`. FalkorDB loads the restored `dump.rdb` as it starts. Never *restart* a running FalkorDB to load a restored dump.
 5. Start orchestrator + web; check `/healthz` and a sample search.
 
 Restore order: Postgres → Qdrant (recreate collections from manifest meta, upload snapshots) → FalkorDB → files.

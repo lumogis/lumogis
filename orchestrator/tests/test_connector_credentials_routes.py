@@ -452,6 +452,23 @@ def test_user_put_creates_row_returns_200_and_record(store, dev_env):
     assert isinstance(body["key_version"], int)
 
 
+def test_p1_user_put_without_a_credential_key_is_503_not_500(store, dev_env, monkeypatch):
+    """LUM-981: ``_load_keys`` raises ``CredentialUnavailable``, so the existing 503
+    mapping applies. It used to raise a plain ``RuntimeError`` and answer 500."""
+    import services.connector_credentials as ccs
+
+    monkeypatch.delenv("LUMOGIS_CREDENTIAL_KEY", raising=False)
+    monkeypatch.delenv("LUMOGIS_CREDENTIAL_KEYS", raising=False)
+    ccs.reset_for_tests()
+    with _client() as client:
+        resp = client.put(
+            "/api/v1/me/connector-credentials/llm_openai",
+            json={"payload": {"api_key": "sk-test-123"}},
+        )
+    assert resp.status_code == 503, resp.text
+    assert resp.json()["detail"] == {"code": "credential_unavailable"}
+
+
 def test_user_put_then_get_returns_metadata(store, dev_env):
     """PUT then GET on the same id round-trips metadata (still no plaintext)."""
     with _client() as client:

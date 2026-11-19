@@ -23,8 +23,11 @@
 // with an explanation is the version the user can act on — a rejected request
 // after the click is worse news, later.
 
-import { useCallback, useState } from "react";
+import { useCallback, useId, useState } from "react";
 
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import type { ApiClient } from "../../api/client";
 import {
   canFileAttachments,
@@ -52,6 +55,7 @@ export function AttachmentIngestToggle({
   const [applyToExisting, setApplyToExisting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
+  const switchLabelId = useId();
 
   const onToggle = useCallback(
     (next: boolean) => {
@@ -77,42 +81,44 @@ export function AttachmentIngestToggle({
   );
 
   return (
-    <div>
-      <label>
-        <input
-          type="checkbox"
+    <div className="grid gap-3">
+      <div className="flex items-start gap-3 text-sm">
+        <Switch
           checked={enabled}
           disabled={!supported || busy}
-          onChange={(e) => onToggle(e.target.checked)}
-          aria-label="Review this mailbox's attachments for my document library"
+          onCheckedChange={(on: boolean) => onToggle(on)}
+          aria-labelledby={switchLabelId}
         />
-        Review this mailbox&rsquo;s attachments for my document library
-      </label>
-      {/* Says the quiet part out loud. Without it the checkbox still reads like
+        <span id={switchLabelId} className="font-medium">
+          Review this mailbox&rsquo;s attachments for my document library
+        </span>
+      </div>
+      {/* Says the quiet part out loud. Without it the switch still reads like
           the old "file everything", and a user who expects that will conclude
           the feature is broken when their library stays empty. */}
-      <p data-testid="ingest-explanation">
+      <p data-testid="ingest-explanation" className="m-0 text-sm text-muted-foreground">
         Nothing is filed automatically. Attachments appear in a list for you to
         pick from, and you can set up rules to file the recurring ones.
       </p>
 
       {!supported ? (
-        <p data-testid="ingest-unsupported">{METADATA_MODE_EXPLANATION}</p>
+        <p data-testid="ingest-unsupported" className="m-0 text-sm text-muted-foreground">
+          {METADATA_MODE_EXPLANATION}
+        </p>
       ) : (
-        <label>
-          <input
-            type="checkbox"
+        <Label className="items-start">
+          <Checkbox
             checked={applyToExisting}
             disabled={enabled || busy}
-            onChange={(e) => setApplyToExisting(e.target.checked)}
+            onCheckedChange={(on: boolean) => setApplyToExisting(on)}
             aria-label="Also include attachments from existing mail"
           />
           Also include attachments from existing mail
-        </label>
+        </Label>
       )}
 
       {status ? (
-        <p role="status" data-testid="ingest-status">
+        <p role="status" data-testid="ingest-status" className="m-0 text-sm text-muted-foreground">
           {status}
         </p>
       ) : null}

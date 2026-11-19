@@ -6,6 +6,8 @@ import { useCallback, useMemo, type JSX } from "react";
 import { INVITE_ONBOARDING_STORAGE_KEY, type InviteOnboardingHintStored } from "../../api/invites";
 import { describeApiError } from "../../api/webPush";
 import { useAuth } from "../../auth/AuthProvider";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { OnboardingModal } from "./OnboardingModal";
 import { useOnboardingStatus } from "./useOnboardingStatus";
 
@@ -36,22 +38,14 @@ export function OnboardingGate(): JSX.Element | null {
 
   if (query.status === "error") {
     return (
-      <div
-        role="alert"
-        style={{
-          margin: 0,
-          padding: "0.5rem 1rem",
-          background: "rgba(255, 80, 80, 0.12)",
-          borderBottom: "1px solid rgba(255, 120, 120, 0.35)",
-          textAlign: "center",
-          fontSize: "0.9rem",
-        }}
-      >
-        <span>Could not load onboarding state: {describeApiError(query.error)}. </span>
-        <button type="button" onClick={() => void query.refetch()}>
-          Retry
-        </button>
-      </div>
+      <Alert variant="destructive" className="rounded-none border-x-0 border-t-0">
+        <AlertDescription className="flex flex-wrap items-center justify-center gap-2">
+          <span>Could not load onboarding state: {describeApiError(query.error)}.</span>
+          <Button type="button" size="sm" variant="outline" onClick={() => void query.refetch()}>
+            Retry
+          </Button>
+        </AlertDescription>
+      </Alert>
     );
   }
 

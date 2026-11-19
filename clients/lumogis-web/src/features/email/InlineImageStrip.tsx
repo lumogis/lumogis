@@ -19,31 +19,6 @@ import type { JSX } from "react";
 
 import type { EmailInlineImage } from "../../api/emailSend";
 
-/** Layout lives here rather than in a stylesheet, matching `EmailBody`'s
- *  `pre-wrap`: this feature's classNames are test/theme hooks, and nothing
- *  ships CSS for them. The bounding is not cosmetic — a sender picks the pixel
- *  dimensions, and a 1200px banner is ordinary marketing mail. */
-const LIST_STYLE = {
-  display: "flex",
-  flexWrap: "wrap",
-  gap: "0.5rem",
-  listStyle: "none",
-  margin: "0.5rem 0 0",
-  padding: 0,
-} as const;
-
-const IMAGE_STYLE = {
-  // The pair that contains a sender-sized image inside a phone-width card.
-  maxWidth: "100%",
-  // Capped so a tall scan cannot push the rest of the card off-screen; the
-  // reader opens it in their mail app for the full thing, as the rest of this
-  // surface already tells them.
-  maxHeight: "20rem",
-  width: "auto",
-  height: "auto",
-  objectFit: "contain",
-} as const;
-
 export interface InlineImageStripProps {
   images: EmailInlineImage[];
   /** A cap dropped at least one image. Say so — a strip that silently shows
@@ -58,16 +33,20 @@ export function InlineImageStrip({
   if (images.length === 0 && !truncated) return null;
 
   return (
-    <div className="lumogis-inline-strip" data-testid="inline-image-strip">
-      <ul className="lumogis-inline-strip__list" style={LIST_STYLE}>
+    <div data-testid="inline-image-strip">
+      {/* The bounding on each image is not cosmetic: a sender picks the pixel
+          dimensions, and a 1200px banner is ordinary marketing mail. */}
+      <ul className="mx-0 mt-2 mb-0 flex list-none flex-wrap gap-2 p-0">
         {images.map((image, index) => (
           // `content_id` is sender-controlled and need not be unique, so the
           // index goes in the key too. The list is never reordered or filtered
           // after render, which is what makes an index safe here.
-          <li className="lumogis-inline-strip__item" key={`${image.content_id}-${index}`}>
+          <li key={`${image.content_id}-${index}`}>
             <img
-              className="lumogis-inline-strip__image"
-              style={IMAGE_STYLE}
+              // max-w-full contains a sender-sized image inside a phone-width card.
+              // Height is capped so a tall scan cannot push the rest of the card
+              // off-screen; the reader opens it in their mail app for the full thing.
+              className="h-auto max-h-80 w-auto max-w-full object-contain"
               src={image.data_uri}
               // The message text is the caption an inline image never carries;
               // its Content-ID is a machine handle, not a description. Number
@@ -79,7 +58,7 @@ export function InlineImageStrip({
         ))}
       </ul>
       {truncated ? (
-        <p className="lumogis-inline-strip__truncated" role="note">
+        <p className="mt-2 text-sm text-muted-foreground" role="note">
           Some images weren’t shown — open the message in your mail app to see them all.
         </p>
       ) : null}

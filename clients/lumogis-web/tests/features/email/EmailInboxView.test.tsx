@@ -159,6 +159,8 @@ describe("EmailInboxView", () => {
 
     // category filter
     await userEvent.click(screen.getByRole("button", { name: "School" }));
+    expect(screen.getByRole("button", { name: "School" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByText("School pickup")).toBeInTheDocument();
     expect(screen.queryByText("Electric bill")).not.toBeInTheDocument();
 

@@ -124,6 +124,8 @@ _USER_EXPORT_TABLES: tuple[str, ...] = (
     "feedback_log",
     "edge_scores",
     "constraint_violations",
+    # LUM-967 per-member name rules (keyed by name, not entity id).
+    "entity_name_rules",
     # Phase-5 capture tables — user_id-only filter (no scope column).
     "captures",
     "capture_attachments",
@@ -205,6 +207,19 @@ _OMITTED_USER_TABLES: dict[str, str] = {
     # household key to decrypt).
     "user_connector_credentials": "excluded (sensitive, non-portable in standard export)",
     "user_batch_jobs": "excluded (operational queue state, non-portable)",
+    # LUM-965 merge undo records name this instance's serial ``entity_relations.id``
+    # values, which import drops and re-issues, so every id array in a record would
+    # name the wrong rows at the destination. ``make backup`` (pg_dump) keeps ids
+    # consistent and carries the table.
+    "entity_merges": (
+        "excluded (merge undo records name this instance's serial relation ids; not portable)"
+    ),
+    # LUM-966: a hide points at ANOTHER member's entry id, which means nothing at a
+    # destination install; the tombstones are ids-only retry state for Qdrant and
+    # the graph. ``entity_name_rules`` stays exported: it now carries the won't-learn
+    # list and the document paths for the re-read offer, which are the member's own data.
+    "entity_hidden": "excluded (hides point at other members' entries; not portable)",
+    "entity_deletions": "excluded (delete retry tombstones, ids only; operational)",
     "action_proposals": "excluded (Ask/Do proposal queue; operational, non-portable)",
     # Bulk-cleanup job state (migration 061) — pending/backfilling/executing
     # state machine tied to this instance's live IMAP walk cursors, not

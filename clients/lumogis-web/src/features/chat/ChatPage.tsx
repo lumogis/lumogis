@@ -20,7 +20,7 @@
 // hook, and a couple of pure helpers (`formatTimestamp`, `messageToDto`) in
 // the same file. The react-refresh `only-export-components` rule degrades HMR
 // slightly when components and helpers share a module — same DX trade-off
-// `AuthProvider.tsx` and `BottomNav.tsx` already make.
+// `AuthProvider.tsx` already makes.
 /* eslint-disable react-refresh/only-export-components */
 
 import {
@@ -37,7 +37,17 @@ import { patchMeWowDismissed } from "../../api/meWow";
 import { useAuth } from "../../auth/AuthProvider";
 import { ChatComposer } from "../../components/ChatComposer";
 import { transcribeVoice } from "../../api/voice";
-import { Button } from "../../components/Button";
+import { Button } from "../../components/ui/button";
+import { Alert, AlertDescription } from "../../components/ui/alert";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "../../components/ui/sheet";
+import { InfoTip } from "../../components/page/InfoTip";
+import { help } from "../../copy/help";
+import { useShellState } from "../../api/meShell";
+import { PanelLeft, Plus, SquarePen, TriangleAlert, X } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { AnswerText } from "./AnswerText";
+import { ChatHome } from "./ChatHome";
+import { ModelChip } from "./ModelChip";
 import { EmptyState } from "../_shared/EmptyState";
 import { PrivacyBlockedHint } from "../_shared/PrivacyBlockedHint";
 import { catalogHasPrivacyBlock } from "../_shared/privacyBlockCopy";
@@ -71,17 +81,18 @@ import {
   type ChatMessage,
   type ChatThread,
 } from "./threadStore";
+import { randomUuid } from "../../util/uuid";
 
 const DEFAULT_MODEL = "claude";
 
 function ChatLibraryEmptyState(): JSX.Element {
   return (
     <EmptyState
-      className="lumogis-chat__empty"
+      className="rounded-xl border border-border py-6"
       title="No documents in your library yet"
       helperText="Chat answers from the documents in your library. Connect a document archive, feed or watched page, or upload a file, and Lumogis can answer from it."
       actions={[
-        { label: "Connect a source", href: "/me/sources", primary: true },
+        { label: "Connect a source", href: "/settings/sources", primary: true },
         { label: "Upload a file", href: "/documents" },
       ]}
     />
@@ -144,6 +155,9 @@ export function ChatPage(): JSX.Element {
   const [streamStatus, setStreamStatus] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [historyRefresh, setHistoryRefresh] = useState(0);
+  // Phone: the chat list opens in a sheet (LUM-993).
+  const [chatsOpen, setChatsOpen] = useState(false);
+  const shell = useShellState();
   const [pendingSummaries, setPendingSummaries] = useState<PendingSummary[]>([]);
   const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -583,35 +597,76 @@ export function ChatPage(): JSX.Element {
     [active, client, dispatch, input, online, streaming, scheduleTurnSync, refreshHealth],
   );
 
-  return (
-    <div className="lumogis-chat" data-testid="chat-page">
-      <aside className="lumogis-chat__threads" aria-label="Conversations">
-        <div className="lumogis-chat__threads-head">
-          <h2 className="lumogis-chat__heading">Conversations</h2>
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            onClick={handleNewThread}
-            className="lumogis-chat__new-thread"
-          >
-            + New chat
-          </Button>
-        </div>
-        <ConversationSidebar
-          client={client}
-          refreshToken={historyRefresh}
-          onContinue={handleContinueFromHistory}
-          pendingSummaries={pendingSummaries}
-          onPendingResolved={handlePendingResolved}
+  const historyNoteId = "lumogis-chat-history-note";
+
+  const composer = (
+    <ChatComposer
+      value={input}
+      onChange={(next) => {
+        setInput(next);
+        schedulePersistDraft(next);
+      }}
+      onSubmit={() => void onSubmit()}
+      streaming={streaming}
+      onStop={() => cancelStream()}
+      disabled={streaming}
+      sendDisabled={!online}
+      describedBy={historyNoteId}
+      textareaRef={composerRef}
+      // LUM-993 Decision 16: the microphone appears only while a speech engine runs.
+      voiceTranscribe={
+        shell?.voice_available === true ? (blob) => transcribeVoice(client, blob).then((r) => r.text) : undefined
+      }
+      modelSlot={
+        <ModelChip
+          models={models}
+          value={active?.model ?? DEFAULT_MODEL}
+          onChange={(id) => active && setModel(active.id, id)}
+          disabled={streaming}
+          error={modelError}
+          onRetry={() => void refreshModels()}
         />
-        <ul className="lumogis-chat__thread-list" role="list">
+      }
+      maxRows={8}
+    />
+  );
+
+  const footer = (
+    <>
+      {catalogHasPrivacyBlock(models) ? <PrivacyBlockedHint surface="picker" /> : null}
+      <p id={historyNoteId} className="m-0 flex items-center justify-center gap-0.5 text-center text-xs text-muted-foreground">
+        {help.chat.history}
+        <InfoTip about="chat history">{help.chat.historyAbout}</InfoTip>
+      </p>
+    </>
+  );
+
+  // Rendered in the wide-screen panel and, on phones, in the Chats sheet; while
+  // the sheet is open both copies are mounted (each fetches the history once),
+  // so ids carry the copy's name.
+  const renderChatList = (where: "panel" | "sheet") => (
+    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-3">
+      <Button variant="outline" className="w-full justify-start" onClick={() => {
+        handleNewThread();
+        setChatsOpen(false);
+      }}>
+        <Plus aria-hidden="true" />
+        New chat
+      </Button>
+      <section aria-labelledby={`lumogis-chat-open-heading-${where}`} className="flex flex-col gap-1">
+        <h2 id={`lumogis-chat-open-heading-${where}`} className="m-0 px-2 text-xs font-medium text-muted-foreground">
+          Open in this tab
+        </h2>
+        <ul className="m-0 flex list-none flex-col gap-0.5 p-0" role="list">
           {state.threads.map((t) => (
             <li key={t.id}>
               <ThreadRow
                 thread={t}
                 active={t.id === state.activeId}
-                onSelect={() => handleSelectThread(t.id)}
+                onSelect={() => {
+                  handleSelectThread(t.id);
+                  setChatsOpen(false);
+                }}
                 onDelete={() => {
                   cancelStream();
                   deleteThread(t.id);
@@ -620,86 +675,105 @@ export function ChatPage(): JSX.Element {
             </li>
           ))}
         </ul>
-        <p className="lumogis-chat__threads-note" id="lumogis-chat-ephemeral-note">
-          Active tab threads are ephemeral. Ended chats appear in History after summarization.
-        </p>
+      </section>
+      <ConversationSidebar
+        client={client}
+        refreshToken={historyRefresh}
+        onContinue={(c) => {
+          setChatsOpen(false);
+          return handleContinueFromHistory(c);
+        }}
+        pendingSummaries={pendingSummaries}
+        onPendingResolved={handlePendingResolved}
+      />
+    </div>
+  );
+
+  // Decision 8: below an empty chat's composer, the library card when the
+  // library is empty, otherwise the suggestion chips (WowGate renders nothing
+  // when there are none).
+  const emptyRegion = libraryEmpty ? <ChatLibraryEmptyState /> : <WowGate onPrefillComposer={applyComposerPrefill} />;
+
+  return (
+    // data-slot opts the page into the scoped reset (ui.css): no browser button and
+    // textarea defaults inside it (LUM-993).
+    <div className="flex h-full min-h-0" data-testid="chat-page" data-slot="chat-page">
+      <aside
+        aria-label="Conversations"
+        className="hidden w-64 shrink-0 flex-col border-r border-border @min-[900px]/layout:flex"
+      >
+        {renderChatList("panel")}
       </aside>
 
-      <section className="lumogis-chat__main" aria-label="Chat">
-        <header className="lumogis-chat__main-head">
-          <ModelPicker
-            models={models}
-            value={active?.model ?? DEFAULT_MODEL}
-            onChange={(id) => active && setModel(active.id, id)}
-            disabled={streaming}
-            error={modelError}
-            onRetry={() => void refreshModels()}
-          />
-          {catalogHasPrivacyBlock(models) ? <PrivacyBlockedHint surface="picker" /> : null}
-        </header>
+      <section aria-label="Chat" className="flex min-w-0 flex-1 flex-col">
+        <div className="flex items-center gap-2 pb-2 @min-[900px]/layout:hidden">
+          <Sheet open={chatsOpen} onOpenChange={setChatsOpen}>
+            <SheetTrigger render={<Button variant="ghost" size="sm" />}>
+              <PanelLeft aria-hidden="true" />
+              Chats
+            </SheetTrigger>
+            <SheetContent side="left" className="w-[85%] max-w-xs gap-0 p-0">
+              <SheetHeader>
+                <SheetTitle>Chats</SheetTitle>
+              </SheetHeader>
+              {renderChatList("sheet")}
+            </SheetContent>
+          </Sheet>
+          <Button variant="ghost" size="icon-sm" className="ml-auto" aria-label="Start a new chat" onClick={handleNewThread}>
+            <SquarePen aria-hidden="true" />
+          </Button>
+        </div>
 
         <ServiceDegradationBanner health={serviceHealth} />
 
+        {/* One transcript element for the life of the page: a live region that
+            appears already holding content is often not announced, so the first
+            message must arrive in a region that was already there (LUM-993). */}
         <div
-          className="lumogis-chat__messages"
           role="log"
           aria-live="polite"
           aria-relevant="additions text"
           aria-busy={streaming}
           aria-label="Conversation transcript"
+          className={threadEmpty ? "sr-only" : "min-h-0 flex-1 overflow-y-auto"}
         >
-          {threadEmpty ? (
-            <p className="lumogis-chat__empty">
-              Lumogis chats are ephemeral and live only in this browser tab. Closing the tab
-              discards them — use Capture or Search when you want durable notes.
-            </p>
-          ) : (
-            active.messages.map((m) => (
-              <MessageBubble
-                key={m.id}
-                message={m}
-                statusNote={m.status === "streaming" ? streamStatus : null}
-              />
-            ))
+          {threadEmpty ? null : (
+            <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 px-1 py-4">
+              {active.messages.map((m) => (
+                <MessageBubble key={m.id} message={m} statusNote={m.status === "streaming" ? streamStatus : null} />
+              ))}
+            </div>
           )}
         </div>
-
-        {/* LUM-853: keep this the sibling right after the log. The grid rows (auto 1fr auto auto)
-            are assigned by child order; ServiceDegradationBanner, when shown, already takes the
-            1fr row (pre-existing, P2). */}
-        {threadEmpty && libraryEmpty ? <ChatLibraryEmptyState /> : null}
-
-        {submitError !== null && (
-          <p role="alert" className="lumogis-chat__error">
-            {submitError}
-          </p>
+        {threadEmpty ? (
+          <ChatHome
+            composer={
+              <div className="flex flex-col gap-2">
+                {composer}
+                {submitError !== null ? <ChatError message={submitError} /> : null}
+                {footer}
+              </div>
+            }
+            below={emptyRegion}
+          />
+        ) : (
+          <div className="mx-auto flex w-full max-w-3xl flex-col gap-2 pt-2">
+            {submitError !== null ? <ChatError message={submitError} /> : null}
+            {composer}
+            {footer}
+          </div>
         )}
-
-        <WowGate onPrefillComposer={applyComposerPrefill} />
-
-        <ChatComposer
-          value={input}
-          onChange={(next) => {
-            setInput(next);
-            schedulePersistDraft(next);
-          }}
-          onSubmit={() => void onSubmit()}
-          streaming={streaming}
-          onStop={() => cancelStream()}
-          disabled={streaming}
-          sendDisabled={!online}
-          placeholder="Ask Lumogis…"
-          describedBy="lumogis-chat-ephemeral-note"
-          textareaRef={composerRef}
-          voiceTranscribe={(blob) => transcribeVoice(client, blob).then((r) => r.text)}
-          minRows={3}
-          maxRows={8}
-        />
-        <p id="lumogis-chat-ephemeral-note" className="lumogis-chat__threads-note">
-          Ephemeral — closing this tab discards the thread.
-        </p>
       </section>
     </div>
+  );
+}
+
+function ChatError({ message }: { message: string }): JSX.Element {
+  return (
+    <Alert variant="destructive">
+      <TriangleAlert aria-hidden="true" />
+      <AlertDescription>{message}</AlertDescription>
+    </Alert>
   );
 }
 
@@ -712,104 +786,29 @@ interface ThreadRowProps {
 
 function ThreadRow({ thread, active, onSelect, onDelete }: ThreadRowProps): JSX.Element {
   return (
-    <div className={`lumogis-chat__thread${active ? " lumogis-chat__thread--active" : ""}`}>
-      <button
-        type="button"
-        onClick={onSelect}
-        className="lumogis-chat__thread-button"
-        aria-current={active ? "true" : undefined}
-      >
-        <span className="lumogis-chat__thread-title">{thread.title}</span>
-        <span className="lumogis-chat__thread-meta">
-          {thread.messages.length === 0 ? "Empty" : `${thread.messages.length} msg`}
-        </span>
-      </button>
+    <div
+      className={cn(
+        "group flex items-center gap-1 rounded-md pr-1",
+        active ? "bg-accent-soft text-accent-text" : "hover:bg-muted",
+      )}
+    >
       <Button
         type="button"
         variant="ghost"
-        size="sm"
-        onClick={onDelete}
-        aria-label={`Delete ${thread.title}`}
-        className="lumogis-chat__thread-delete"
+        onClick={onSelect}
+        aria-current={active ? "true" : undefined}
+        className="h-auto justify-start whitespace-normal font-normal hover:bg-transparent flex min-h-9 min-w-0 flex-1 flex-col items-start rounded-md px-2 py-1.5 text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:min-h-[44px]"
       >
-        ×
+        <span className="w-full truncate text-sm">{thread.title}</span>
+        <span className={cn("text-xs", active ? "text-accent-text" : "text-muted-foreground")}>
+          {thread.messages.length === 0 ? "Empty" : `${thread.messages.length} msg`}
+        </span>
+      </Button>
+      <Button variant="ghost" size="icon-xs" onClick={onDelete} aria-label={`Delete ${thread.title}`} className="text-muted-foreground hover:text-destructive">
+        <X aria-hidden="true" />
       </Button>
     </div>
   );
-}
-
-interface ModelPickerProps {
-  models: ModelDescriptor[];
-  value: string;
-  onChange(id: string): void;
-  disabled: boolean;
-  error: string | null;
-  onRetry(): void;
-}
-
-function ModelPicker({
-  models,
-  value,
-  onChange,
-  disabled,
-  error,
-  onRetry,
-}: ModelPickerProps): JSX.Element {
-  if (error !== null) {
-    return (
-      <div className="lumogis-chat__model-error" role="alert">
-        <span>Unable to load models: {error}.</span>
-        <Button type="button" variant="ghost" size="sm" onClick={onRetry}>
-          Retry
-        </Button>
-      </div>
-    );
-  }
-  if (models.length === 0) {
-    return (
-      <label className="lumogis-chat__model-picker">
-        <span>Model</span>
-        <span className="lumogis-chat__model-loading" aria-busy="true">
-          <span className="lumogis-chat__model-spinner" aria-hidden />
-          Loading…
-        </span>
-      </label>
-    );
-  }
-  return (
-    <label className="lumogis-chat__model-picker">
-      <span>Model</span>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        disabled={disabled}
-        aria-label="Model"
-      >
-        {models.map((m) => (
-          <option key={m.id} value={m.id} disabled={!m.enabled}>
-            {m.label}
-            {m.is_local ? " (local)" : ""}
-            {disabledSuffix(m)}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
-/** Picker option suffix for a disabled model (LUM-881); an unknown or missing reason reads "unavailable". */
-function disabledSuffix(m: ModelDescriptor): string {
-  if (m.enabled) return "";
-  switch (m.disabled_reason) {
-    case "privacy_mode":
-      return " — off (privacy mode)";
-    case "no_credentials":
-      return " — no API key";
-    case "optional_disabled":
-      return " — not turned on";
-    default:
-      return " — unavailable";
-  }
 }
 
 function MessageBubble({
@@ -821,63 +820,64 @@ function MessageBubble({
   statusNote?: string | null;
 }): JSX.Element {
   const isAssistant = message.role === "assistant";
+  const isUser = message.role === "user";
   const status = message.status ?? "complete";
-  const className = [
-    "lumogis-chat__bubble",
-    `lumogis-chat__bubble--${message.role}`,
-    isAssistant && status !== "complete" ? `lumogis-chat__bubble--${status}` : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
+  // LUM-993: your messages sit in a soft bubble on the right; Lumogis's answers
+  // are plain text across the column, like the chat apps people know.
   return (
-    <article className={className} aria-label={`${message.role} message`}>
-      <header className="lumogis-chat__bubble-meta">
-        <span className="lumogis-chat__bubble-role">
-          {message.role === "assistant" ? "Lumogis" : message.role === "user" ? "You" : "System"}
+    <article
+      aria-label={`${message.role} message`}
+      data-status={isAssistant ? status : undefined}
+      className={cn("flex flex-col gap-1", isUser ? "items-end" : "items-start")}
+    >
+      <header className="flex items-baseline gap-2 text-xs text-muted-foreground">
+        <span className="font-medium">
+          {isAssistant ? "Lumogis" : isUser ? "You" : "System"}
         </span>
-        <time className="lumogis-chat__bubble-time" dateTime={new Date(message.createdAt).toISOString()}>
-          {formatTimestamp(message.createdAt)}
-        </time>
+        <time dateTime={new Date(message.createdAt).toISOString()}>{formatTimestamp(message.createdAt)}</time>
       </header>
-      <div className="lumogis-chat__bubble-content">
+      <div
+        className={cn(
+          "text-sm leading-6 break-words",
+          // Your text as typed; Lumogis's answers are formatted (AnswerText).
+          isUser ? "max-w-[85%] rounded-2xl bg-muted px-4 py-2 whitespace-pre-wrap" : "w-full",
+          isAssistant && status === "error" && "text-muted-foreground",
+        )}
+      >
         {isAssistant && status === "streaming" && message.content.length === 0 ? (
           <>
             <span
-              className="lumogis-chat__typing"
+              className="inline-flex items-center gap-1 py-2"
               role="status"
               aria-label="Lumogis is typing"
               data-testid="chat-typing-indicator"
             >
-              <span className="lumogis-chat__typing-dot" aria-hidden="true" />
-              <span className="lumogis-chat__typing-dot" aria-hidden="true" />
-              <span className="lumogis-chat__typing-dot" aria-hidden="true" />
+              <span className="size-1.5 animate-pulse rounded-full bg-muted-foreground" aria-hidden="true" />
+              <span className="size-1.5 animate-pulse rounded-full bg-muted-foreground [animation-delay:150ms]" aria-hidden="true" />
+              <span className="size-1.5 animate-pulse rounded-full bg-muted-foreground [animation-delay:300ms]" aria-hidden="true" />
             </span>
             {statusNote !== null ? (
-              <span
-                className="lumogis-chat__stream-status"
-                role="status"
-                data-testid="chat-stream-status"
-              >
+              <span className="ml-2 text-xs text-muted-foreground" role="status" data-testid="chat-stream-status">
                 {statusNote}
               </span>
             ) : null}
           </>
         ) : (
           <>
-            {message.content}
+            {isAssistant ? <AnswerText text={message.content} /> : message.content}
             {isAssistant && status === "streaming" && (
-              <span aria-hidden="true" className="lumogis-chat__caret">▍</span>
+              <span aria-hidden="true" className="ml-0.5 inline-block animate-pulse text-accent-text">▍</span>
             )}
           </>
         )}
       </div>
       {isAssistant && status === "error" && message.errorDetail !== undefined && (
-        <p className="lumogis-chat__bubble-error" role="status">
+        <p className="m-0 text-sm text-destructive" role="status">
           {message.errorDetail}
         </p>
       )}
       {isAssistant && status === "aborted" && (
-        <p className="lumogis-chat__bubble-error" role="status">
+        <p className="m-0 text-xs text-muted-foreground" role="status">
           Stopped.
         </p>
       )}
@@ -916,8 +916,7 @@ export function useModelCatalog(client: ApiClient): ModelCatalogResult {
 }
 
 function generateId(prefix: string): string {
-  const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
-  const tail = c?.randomUUID?.() ?? `${Math.random().toString(36).slice(2)}-${Date.now().toString(36)}`;
+  const tail = randomUuid();
   return `${prefix}_${tail}`;
 }
 

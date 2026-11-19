@@ -377,6 +377,24 @@ restore_quiesce_violation() {
   return 1
 }
 
+# True (and logs why) when the snapshot carries a FalkorDB dump that restore.sh
+# would copy into the data directory while FalkorDB is still running. A running
+# engine saves its in-memory graph over the restored dump.rdb when it is stopped
+# or restarted, so the restored graph would be lost without an error (LUM-999).
+# The redis GRAPH import fallback (no data directory mounted) needs FalkorDB up,
+# so it is not refused.
+restore_falkordb_violation() {
+  local manifest="$1"
+  [[ "$(jq -r '.stores.falkordb.skipped // false' "$manifest")" == "true" ]] && return 1
+  [[ "$(jq -r '.stores.falkordb.file // ""' "$manifest")" == "" ]] && return 1
+  [[ -d "$(falkordb_data_dir)" || -d /falkordb-data ]] || return 1
+  if redis-cli -h "${FALKORDB_HOST:-falkordb}" -p "${FALKORDB_PORT:-6379}" PING 2>/dev/null | grep -q PONG; then
+    log_error "stop falkordb before restore: it is running and would save its current graph over the restored one when it stops (docker compose stop falkordb)"
+    return 0
+  fi
+  return 1
+}
+
 falkordb_redis_check_rdb_bin() {
   echo "${FALKORDB_REDIS_CHECK_RDB_BIN:-/usr/local/bin/redis-check-rdb-v13}"
 }

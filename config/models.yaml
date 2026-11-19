@@ -108,12 +108,14 @@ models:
 # orchestrator/services/task_models.py.
 #
 #   * On-box only (cannot be loosened): for the three email tasks, entity_extraction
-#     (email attachments reach it) and routine_weekly_review (it reads email
-#     signals), list on-box models only (loopback, a LAN address, or a host in
+#     (email attachments reach it), routine_weekly_review (it reads email
+#     signals), session_summary and temporal_extract (they read chat session text,
+#     which can quote email), list on-box models only (loopback, a LAN address, or a host in
 #     EMAIL_LLM_ALLOWLIST); any other entry is skipped. The email tasks also refuse
 #     an off-box code default.
-#   * temporal_judge uses only its first entry and never falls back down the list
-#     (its verdicts can invalidate facts).
+#   * temporal_judge uses only its first entry, and only when that entry is on the
+#     box; otherwise it uses its code default. It never falls back down the list
+#     (its verdicts can invalidate facts, and it reads chat session text).
 #   * The list is read when a job starts, from configuration. It is not runtime
 #     failover: a listed model that is down fails the job; it does not move to the
 #     next entry.

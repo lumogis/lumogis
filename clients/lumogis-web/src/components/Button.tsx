@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Lumogis
+//
+// The app's one button (LUM-993). A thin wrapper over the shadcn `ui/button`, kept
+// so the 17 files that already use `<Button variant=…>` get the new look without
+// changing. New code may use `ui/button` directly. Links that must look like a
+// button use `legacyButtonClasses` from ./buttonClasses.
 
-/* eslint-disable react-refresh/only-export-components -- buttonClassName helper co-located with Button. */
+import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react";
 
-import {
-  forwardRef,
-  type ButtonHTMLAttributes,
-  type ReactNode,
-} from "react";
+import { Button as UiButton } from "@/components/ui/button";
 
-export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger" | "danger-solid";
-export type ButtonSize = "md" | "sm";
+import { SIZE, VARIANT, type ButtonSize, type ButtonVariant } from "./buttonClasses";
+
+export type { ButtonSize, ButtonVariant } from "./buttonClasses";
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: ButtonVariant;
@@ -18,30 +20,17 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   children?: ReactNode;
 }
 
-export function buttonClassName(
-  variant: ButtonVariant = "secondary",
-  size: ButtonSize = "md",
-  extra?: string,
-): string {
-  return [
-    "lumogis-btn",
-    `lumogis-btn--${variant}`,
-    `lumogis-btn--${size}`,
-    extra,
-  ]
-    .filter(Boolean)
-    .join(" ");
-}
-
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
-  { variant = "secondary", size = "md", className, type = "button", ...rest },
+  { variant = "secondary", size = "md", type = "button", ...rest },
   ref,
 ) {
   return (
-    <button
+    <UiButton
       ref={ref}
       type={type}
-      className={buttonClassName(variant, size, className)}
+      variant={VARIANT[variant]}
+      size={SIZE[size]}
+      data-variant={variant}
       {...rest}
     />
   );

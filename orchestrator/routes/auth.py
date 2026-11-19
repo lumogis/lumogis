@@ -48,20 +48,22 @@ from auth import mint_refresh_token
 from auth import refresh_token_ttl_seconds
 from auth import verify_refresh_token
 from csrf import _proxied_client_ip
+from csrf import _trusted_forwarded_proto
 from csrf import require_same_origin
 from fastapi import APIRouter
-from fastapi import Cookie
 from fastapi import Depends
 from fastapi import HTTPException
 from fastapi import Request
 from fastapi import Response
 from fastapi import status
+from models.auth import InternalUser
 from models.auth import LoginRequest
 from models.auth import LoginResponse
 from models.auth import UserPublic
 from rate_limit import FailureRateLimiter
 from services.auth_sessions import RefreshError
 from services.auth_sessions import RefreshReuseError
+from services.home_dns.validate import is_secure_zone_host
 
 from services import auth_sessions as auth_sess
 
@@ -102,33 +104,95 @@ def _reset_rate_limit_for_tests() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _cookie_secure() -> bool:
-    """Default Secure=True; allow opt-out for HTTP dev via env."""
-    return os.environ.get("LUMOGIS_REFRESH_COOKIE_SECURE", "true").strip().lower() == "true"
+# At most this many ``lumogis_refresh`` values are tried per request (LUM-331).
 
 
-def _set_refresh_cookie(response: Response, refresh_jwt: str) -> None:
+def _cookie_secure(request: Request | None = None) -> bool:
+    """Whether the refresh cookie carries ``Secure``. Fails closed.
+
+    In order:
+
+    1. a secure-address host (``*.homes.lumogis.app``, LUM-331) -> ``True``;
+    2. ``LUMOGIS_REFRESH_COOKIE_SECURE`` set to ``true`` or ``false`` -> that;
+    3. a pinned ``LUMOGIS_PUBLIC_ORIGIN`` starting ``https://`` -> ``True``;
+    4. the request's ``Origin`` starts ``https://`` -> ``True`` (a TLS
+       terminator in front of Caddy makes Caddy report ``http``);
+    5. a trusted proxy (``LUMOGIS_TRUSTED_PROXIES``) positively reporting
+       ``X-Forwarded-Proto: http`` -> ``False`` (a phone on a plain-HTTP LAN
+       address would otherwise lose the cookie);
+    6. anything else -> ``True``.
+
+    An untrusted peer, a failed trusted-proxy lookup or a missing header all
+    keep ``Secure`` (LUM-981).
+    """
+    if request is not None and is_secure_zone_host(request.headers.get("Host")):
+        return True
+    forced = os.environ.get("LUMOGIS_REFRESH_COOKIE_SECURE", "").strip().lower()
+    if forced in ("true", "false"):
+        return forced == "true"
+    if os.environ.get("LUMOGIS_PUBLIC_ORIGIN", "").strip().lower().startswith("https://"):
+        return True
+    if request is None:
+        return True
+    if request.headers.get("Origin", "").strip().lower().startswith("https://"):
+        return True
+    return _trusted_forwarded_proto(request) != "http"
+
+
+def _set_refresh_cookie(
+    response: Response, refresh_jwt: str, request: Request | None = None
+) -> None:
     response.set_cookie(
         key=REFRESH_COOKIE_NAME,
         value=refresh_jwt,
         max_age=refresh_token_ttl_seconds(),
         path=REFRESH_COOKIE_PATH,
         httponly=True,
-        secure=_cookie_secure(),
+        secure=_cookie_secure(request),
         samesite="strict",
     )
 
 
-def _clear_refresh_cookie(response: Response) -> None:
+def _clear_refresh_cookie(response: Response, request: Request | None = None) -> None:
     response.set_cookie(
         key=REFRESH_COOKIE_NAME,
         value="",
         max_age=0,
         path=REFRESH_COOKIE_PATH,
         httponly=True,
-        secure=_cookie_secure(),
+        secure=_cookie_secure(request),
         samesite="strict",
     )
+
+
+def _refresh_cookie_values(request: Request) -> list[str]:
+    """Every ``lumogis_refresh`` value in the raw ``Cookie`` header, in order.
+
+    ``request.cookies`` keeps only one value per name. Lumogis sets the cookie
+    host-only, so a browser never sends two of its own; a second value is one
+    planted by another site for a parent domain. On a secure address that can
+    be a sibling household, which shares ``lumogis.app`` (LUM-331). Callers try
+    each value and use one that verifies, so a planted value can neither sign
+    the household out nor shadow the real session.
+
+    No count limit: a planted cookie with a longer ``Path`` is sent first, so a
+    cap would let enough of them hide the real one. The header size limit bounds
+    the list, and a junk value fails JWT parsing before any signature check.
+    """
+    values: list[str] = []
+    for part in request.headers.get("cookie", "").split(";"):
+        name, sep, value = part.strip().partition("=")
+        if sep and name.strip() == REFRESH_COOKIE_NAME and value.strip():
+            values.append(value.strip())
+    return values
+
+
+def _first_verified_refresh(values: list[str]) -> tuple[str, dict] | None:
+    for value in values:
+        payload = verify_refresh_token(value)
+        if payload and "sub" in payload and "jti" in payload:
+            return value, payload
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +234,46 @@ def _login_response(
         token_type="bearer",
         expires_in=access_token_ttl_seconds(),
         user=UserPublic(id=user_id, email=email, role=role),
+    )
+
+
+def _start_session(user: InternalUser, request: Request, response: Response) -> LoginResponse:
+    """Mint a session for an authenticated ``user``: row, refresh cookie, access token.
+
+    Shared by login, invite redemption and first-admin setup (LUM-981), so the
+    three flows cannot drift apart.
+    """
+    salt = auth_sess.ensure_instance_salt()
+    session_id = uuid.uuid4().hex
+    refresh_jwt = mint_refresh_token(user.id, session_id)
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=refresh_token_ttl_seconds())
+    ua = request.headers.get("User-Agent") or ""
+    ip_h, ua_h = auth_sess.fingerprint_hashes(
+        normalized_ip=_client_ip(request),
+        user_agent=ua,
+        salt=salt,
+    )
+    label = auth_sess.compute_device_label(ua, utc_now=datetime.now(timezone.utc))
+    auth_sess.insert_login_session(
+        session_id=session_id,
+        user_id=user.id,
+        refresh_jwt=refresh_jwt,
+        expires_at=expires_at,
+        device_label=label,
+        ip_hash=ip_h,
+        ua_hash=ua_h,
+    )
+    users_svc.record_login(user.id)
+
+    _set_refresh_cookie(response, refresh_jwt, request)
+
+    return _login_response(
+        user.id,
+        user.role,
+        user.email,
+        session_id=session_id,
+        token_version=user.token_version,
+        allows_shared=user.allows_shared,
     )
 
 
@@ -217,38 +321,7 @@ def login(body: LoginRequest, request: Request, response: Response) -> LoginResp
 
     _rate_record_success(ip, email_key)
 
-    salt = auth_sess.ensure_instance_salt()
-    session_id = uuid.uuid4().hex
-    refresh_jwt = mint_refresh_token(user.id, session_id)
-    expires_at = datetime.now(timezone.utc) + timedelta(seconds=refresh_token_ttl_seconds())
-    ua = request.headers.get("User-Agent") or ""
-    ip_h, ua_h = auth_sess.fingerprint_hashes(
-        normalized_ip=_client_ip(request),
-        user_agent=ua,
-        salt=salt,
-    )
-    label = auth_sess.compute_device_label(ua, utc_now=datetime.now(timezone.utc))
-    auth_sess.insert_login_session(
-        session_id=session_id,
-        user_id=user.id,
-        refresh_jwt=refresh_jwt,
-        expires_at=expires_at,
-        device_label=label,
-        ip_hash=ip_h,
-        ua_hash=ua_h,
-    )
-    users_svc.record_login(user.id)
-
-    _set_refresh_cookie(response, refresh_jwt)
-
-    return _login_response(
-        user.id,
-        user.role,
-        user.email,
-        session_id=session_id,
-        token_version=user.token_version,
-        allows_shared=user.allows_shared,
-    )
+    return _start_session(user, request, response)
 
 
 @router.post(
@@ -256,11 +329,7 @@ def login(body: LoginRequest, request: Request, response: Response) -> LoginResp
     response_model=LoginResponse,
     dependencies=[Depends(require_same_origin)],
 )
-def refresh(
-    request: Request,
-    response: Response,
-    lumogis_refresh: str | None = Cookie(default=None),
-) -> LoginResponse:
+def refresh(request: Request, response: Response) -> LoginResponse:
     """Rotate the refresh JWT via ``auth_sessions`` and issue a new access token."""
     if not auth_enabled():
         raise HTTPException(
@@ -268,20 +337,22 @@ def refresh(
             detail="refresh is disabled in single-user dev mode",
         )
 
-    if not lumogis_refresh:
+    values = _refresh_cookie_values(request)
+    if not values:
         raise HTTPException(status_code=401, detail="missing refresh cookie")
 
-    payload = verify_refresh_token(lumogis_refresh)
-    if not payload or "sub" not in payload or "jti" not in payload:
-        _clear_refresh_cookie(response)
+    verified = _first_verified_refresh(values)
+    if verified is None:
+        _clear_refresh_cookie(response, request)
         raise HTTPException(status_code=401, detail="invalid refresh token")
+    lumogis_refresh, payload = verified
 
     user_id = str(payload["sub"])
     presented_jti = str(payload["jti"])
 
     user = users_svc.get_user_by_id(user_id)
     if user is None or user.disabled:
-        _clear_refresh_cookie(response)
+        _clear_refresh_cookie(response, request)
         raise HTTPException(status_code=401, detail="invalid refresh token")
 
     try:
@@ -292,10 +363,10 @@ def refresh(
             refresh_ttl_seconds=refresh_token_ttl_seconds(),
         )
     except RefreshReuseError:
-        _clear_refresh_cookie(response)
+        _clear_refresh_cookie(response, request)
         raise HTTPException(status_code=401, detail="invalid refresh token") from None
     except RefreshError:
-        _clear_refresh_cookie(response)
+        _clear_refresh_cookie(response, request)
         raise HTTPException(status_code=401, detail="invalid refresh token") from None
     except Exception as exc:
         _log.exception("refresh: rotation failed for user_id=%s", user_id)
@@ -303,10 +374,10 @@ def refresh(
 
     user2 = users_svc.get_user_by_id(user_id)
     if user2 is None:
-        _clear_refresh_cookie(response)
+        _clear_refresh_cookie(response, request)
         raise HTTPException(status_code=401, detail="invalid refresh token")
 
-    _set_refresh_cookie(response, new_refresh)
+    _set_refresh_cookie(response, new_refresh, request)
     return _login_response(
         user2.id,
         user2.role,
@@ -317,15 +388,16 @@ def refresh(
     )
 
 
-@router.post("/logout")
-def logout(
-    response: Response,
-    lumogis_refresh: str | None = Cookie(default=None),
-) -> dict:
-    """Revoke the refresh session server-side and expire the cookie."""
+@router.post("/logout", dependencies=[Depends(require_same_origin)])
+def logout(request: Request, response: Response) -> dict:
+    """Revoke the refresh session(s) server-side and expire the cookie.
 
-    if lumogis_refresh:
-        payload = verify_refresh_token(lumogis_refresh)
+    Every ``lumogis_refresh`` value that verifies is revoked (normally exactly
+    one). ``require_same_origin`` stops a sibling household's page from signing
+    this household out on a secure address (LUM-331).
+    """
+    for value in _refresh_cookie_values(request):
+        payload = verify_refresh_token(value)
         if payload and "sub" in payload and "jti" in payload:
             try:
                 auth_sess.revoke_session_for_user(
@@ -334,7 +406,7 @@ def logout(
                 )
             except Exception:
                 _log.exception("logout: failed to revoke auth session row")
-    _clear_refresh_cookie(response)
+    _clear_refresh_cookie(response, request)
     return {"ok": True}
 
 

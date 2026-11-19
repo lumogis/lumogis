@@ -14,6 +14,12 @@ import {
   type NotificationPreferencesResponse,
   patchNotificationPreference,
 } from "../../api/notificationPreferences";
+import { PageSection } from "../../components/page/PageSection";
+import { Alert, AlertDescription } from "../../components/ui/alert";
+import { Button } from "../../components/ui/button";
+import { Input } from "../../components/ui/input";
+import { Label } from "../../components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
 
 const FALLBACK_ZONES = [
   "UTC",
@@ -44,6 +50,9 @@ function listTimezones(): string[] {
   }
   return FALLBACK_ZONES;
 }
+
+// The Select needs a non-empty value for "Not set"; it maps back to null on save.
+const NO_ZONE = "__none__";
 
 // "22:00:00" (server) <-> "22:00" (<input type="time"> value).
 function toInputTime(iso: string | null): string {
@@ -91,39 +100,46 @@ export function QuietHoursEditor({ client, prefs }: Props): JSX.Element {
   const hasWindow = Boolean(prefs.quiet_hours_start && prefs.quiet_hours_end);
 
   return (
-    <div style={{ marginTop: "1.5rem" }}>
-      <h3 style={{ marginBottom: "0.5rem" }}>Quiet hours</h3>
-      <p style={{ maxWidth: "42rem", opacity: 0.9, fontSize: "0.9rem" }}>
-        While quiet hours are active, ntfy and Web Push are held back for everything except urgent
-        security alerts — including the email &quot;needs you&quot; push. Nothing is lost: it still
-        appears in-app right away and rolls into your next morning brief.
-      </p>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "1rem", alignItems: "flex-end", marginTop: "0.75rem" }}>
-        <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem", fontSize: "0.9rem" }}>
-          Timezone
-          <select
-            aria-label="Quiet hours timezone"
-            value={timezone}
+    <PageSection
+      title="Quiet hours"
+      description={
+        <>
+          While quiet hours are active, ntfy and browser push are held back for everything except urgent
+          security alerts, including the email &quot;needs you&quot; push. Nothing is lost: it still
+          appears in Lumogis right away and rolls into your next morning brief.
+        </>
+      }
+    >
+      <div className="flex flex-wrap items-end gap-4">
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="quiet-hours-timezone">Timezone</Label>
+          <Select
+            value={timezone === "" ? NO_ZONE : timezone}
             disabled={mutation.isPending}
-            onChange={(e) => {
-              const value = e.target.value;
+            onValueChange={(v) => {
+              const value = v === NO_ZONE || v == null ? "" : String(v);
               setTimezone(value);
               mutation.mutate({ timezone: value || null });
             }}
           >
-            <option value="">Not set (defaults to UTC)</option>
-            {zones.map((z) => (
-              <option key={z} value={z}>
-                {z}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem", fontSize: "0.9rem" }}>
-          Starts
-          <input
+            <SelectTrigger id="quiet-hours-timezone" aria-label="Timezone" className="min-w-56">
+              <SelectValue>{(v: string | null) => (v == null || v === NO_ZONE ? "Not set (UTC)" : v)}</SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NO_ZONE}>Not set (UTC)</SelectItem>
+              {zones.map((z) => (
+                <SelectItem key={z} value={z}>
+                  {z}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="quiet-hours-start">From</Label>
+          <Input
+            id="quiet-hours-start"
             type="time"
-            aria-label="Quiet hours start"
             value={start}
             disabled={mutation.isPending}
             onChange={(e) => setStart(e.target.value)}
@@ -132,12 +148,12 @@ export function QuietHoursEditor({ client, prefs }: Props): JSX.Element {
               mutation.mutate({ quiet_hours_start: start || null });
             }}
           />
-        </label>
-        <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem", fontSize: "0.9rem" }}>
-          Ends
-          <input
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="quiet-hours-end">Until</Label>
+          <Input
+            id="quiet-hours-end"
             type="time"
-            aria-label="Quiet hours end"
             value={end}
             disabled={mutation.isPending}
             onChange={(e) => setEnd(e.target.value)}
@@ -146,10 +162,11 @@ export function QuietHoursEditor({ client, prefs }: Props): JSX.Element {
               mutation.mutate({ quiet_hours_end: end || null });
             }}
           />
-        </label>
+        </div>
         {hasWindow ? (
-          <button
+          <Button
             type="button"
+            variant="outline"
             disabled={mutation.isPending}
             onClick={() => {
               setStart("");
@@ -158,14 +175,16 @@ export function QuietHoursEditor({ client, prefs }: Props): JSX.Element {
             }}
           >
             Clear quiet hours
-          </button>
+          </Button>
         ) : null}
       </div>
       {mutation.isError ? (
-        <p role="alert" style={{ color: "var(--warn, #b45309)", marginTop: "0.5rem" }}>
-          Could not save quiet hours. Check the timezone and time values and try again.
-        </p>
+        <Alert variant="destructive" className="mt-3">
+          <AlertDescription>
+            Could not save quiet hours. Check the timezone and times and try again.
+          </AlertDescription>
+        </Alert>
       ) : null}
-    </div>
+    </PageSection>
   );
 }

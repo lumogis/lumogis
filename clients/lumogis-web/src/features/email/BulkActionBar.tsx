@@ -10,6 +10,8 @@
 // SQL exists only so undo can replay a "was untriaged" batch — it is never
 // reachable from a button.
 
+import { Button } from "@/components/ui/button";
+
 import { SNOOZE_PRESETS } from "./triage";
 
 export interface BulkActionBarProps {
@@ -35,46 +37,53 @@ export function BulkActionBar({
   if (count === 0) return null;
   return (
     <div
-      className="lumogis-email__bulk-bar"
+      className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border bg-muted/50 p-2"
       data-testid="bulk-action-bar"
       role="region"
       aria-label="Bulk actions"
     >
-      <span className="lumogis-email__bulk-count" role="status">
+      <span className="px-1 text-sm font-medium" role="status">
         {count} selected
       </span>
-      <button type="button" disabled={busy} onClick={onDone}>
+      <Button type="button" size="sm" disabled={busy} onClick={onDone}>
         Mark done
-      </button>
-      <button
+      </Button>
+      <Button
         type="button"
+        variant="outline"
+        size="sm"
         disabled={busy}
         aria-expanded={snoozeOpen}
         onClick={onToggleSnooze}
       >
         Snooze
-      </button>
+      </Button>
+      <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={onDeselectAll}>
+        Clear selection
+      </Button>
       {snoozeOpen ? (
-        <ul className="lumogis-email__bulk-snooze-menu" data-testid="bulk-snooze-menu">
+        <ul
+          className="m-0 flex w-full list-none flex-wrap gap-2 p-0"
+          data-testid="bulk-snooze-menu"
+        >
           {SNOOZE_PRESETS.map((preset, i) => (
             <li key={preset.label}>
-              <button
+              <Button
                 type="button"
+                variant="outline"
+                size="sm"
                 disabled={busy}
                 // One wake time for the whole batch, computed ONCE here — not
                 // per row, which would land 200 rows on 200 timestamps a
                 // microsecond apart.
                 onClick={() => onSnooze(preset.at().toISOString())}
               >
-                <kbd>{i + 1}</kbd> {preset.label}
-              </button>
+                <kbd className="rounded border bg-muted px-1 font-mono text-xs">{i + 1}</kbd> {preset.label}
+              </Button>
             </li>
           ))}
         </ul>
       ) : null}
-      <button type="button" disabled={busy} onClick={onDeselectAll}>
-        Clear selection
-      </button>
     </div>
   );
 }

@@ -22,9 +22,10 @@
 //    mean the address is deliverable, and the first-contact confirm still
 //    fires. The UI says nothing that implies otherwise.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { JSX, KeyboardEvent } from "react";
 
+import { Input } from "@/components/ui/input";
 import type { RecipientSuggestion } from "../../api/emailRecipients";
 import { MIN_QUERY_CHARS } from "../../api/emailRecipients";
 
@@ -61,11 +62,13 @@ export interface RecipientInputProps {
   onChange: (next: string) => void;
   label: string;
   placeholder: string;
-  className: string;
+  /** Optional extra classes for the wrapper. */
+  className?: string;
 }
 
 export function RecipientInput(props: RecipientInputProps): JSX.Element {
   const { suggest, value, onChange, label, placeholder, className } = props;
+  const listId = useId();
 
   const [suggestions, setSuggestions] = useState<RecipientSuggestion[]>([]);
   const [highlighted, setHighlighted] = useState(0);
@@ -142,9 +145,8 @@ export function RecipientInput(props: RecipientInputProps): JSX.Element {
   };
 
   return (
-    <div className="lumogis-recipient-input">
-      <input
-        className={className}
+    <div className={`relative ${className ?? ""}`.trim()}>
+      <Input
         aria-label={label}
         placeholder={placeholder}
         value={value}
@@ -152,7 +154,7 @@ export function RecipientInput(props: RecipientInputProps): JSX.Element {
         role="combobox"
         aria-expanded={open}
         aria-autocomplete="list"
-        aria-controls={`${className}-suggestions`}
+        aria-controls={listId}
         onChange={(e) => {
           setDismissed(false);
           onChange(e.target.value);
@@ -161,8 +163,8 @@ export function RecipientInput(props: RecipientInputProps): JSX.Element {
       />
       {open ? (
         <ul
-          className="lumogis-recipient-input__suggestions"
-          id={`${className}-suggestions`}
+          className="absolute inset-x-0 top-full z-10 mt-1 max-h-48 list-none overflow-y-auto rounded-lg border bg-popover p-1 text-sm text-popover-foreground shadow-md"
+          id={listId}
           role="listbox"
           data-testid={`${label.toLowerCase()}-suggestions`}
         >
@@ -171,6 +173,7 @@ export function RecipientInput(props: RecipientInputProps): JSX.Element {
               key={s.address}
               role="option"
               aria-selected={i === highlighted}
+              className="cursor-pointer rounded-md px-2 py-1.5 aria-selected:bg-accent aria-selected:text-accent-foreground"
               // onMouseDown, not onClick: click fires after blur, by which point
               // the list has closed and the pick is lost.
               onMouseDown={(e) => {
@@ -180,11 +183,11 @@ export function RecipientInput(props: RecipientInputProps): JSX.Element {
             >
               {s.display_name ? (
                 <>
-                  <span className="lumogis-recipient-input__name">{s.display_name}</span>{" "}
-                  <span className="lumogis-recipient-input__addr">{s.address}</span>
+                  <span className="font-medium">{s.display_name}</span>{" "}
+                  <span className="text-muted-foreground">{s.address}</span>
                 </>
               ) : (
-                <span className="lumogis-recipient-input__addr">{s.address}</span>
+                <span className="text-muted-foreground">{s.address}</span>
               )}
             </li>
           ))}

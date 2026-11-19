@@ -35,6 +35,23 @@
  * Visual results (a legend actually being hidden) need a browser: jsdom
  * applies no CSS.
  *
+ * TAILWIND (LUM-993, amends ADR 222): an unprefixed token is also accepted when
+ * Tailwind, compiled from the app's own `src/design/ui.css` (theme included),
+ * generates a rule for it. So `text-sm` passes now because it really styles
+ * something, while a misspelt `text-smm` or a class from a framework we do not
+ * load still fails. Tailwind's marker classes (`group`, `peer`, `group/name`,
+ * `peer/name`) generate no rule of their own and are accepted by name.
+ *
+ * CLASS HELPERS (LUM-993, ADR 222's revisit condition): `cn(…)` and `cva(…)` are
+ * class-name helpers, so their string arguments ARE scanned, wherever the call
+ * is (inside `className={…}` or at module level, in `.tsx` and `.ts` files).
+ * For `cva(base, config)` the scan covers `base`, every value under
+ * `config.variants`, and the `class` / `className` of each `compoundVariants`
+ * entry; `defaultVariants` holds variant names, not classes, and is skipped.
+ * Object-literal arguments of any other call (`buttonVariants({ variant: "x" })`)
+ * are variant names and are skipped too. Classes held in a variable and passed
+ * to `cn(variable)` are still unscanned.
+ *
  * MAINTENANCE: if `tokens.css` is split, or another global stylesheet is
  * imported in `main.tsx`, add it to `GLOBAL_STYLESHEETS`. Otherwise the guard
  * reports false violations (the safe direction); the floors below catch the
@@ -44,8 +61,9 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { compile } from "@tailwindcss/node";
 import ts from "typescript";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const clientRoot = path.join(__dirname, "..", "..");
@@ -54,9 +72,11 @@ const GLOBAL_STYLESHEETS = ["src/design/tokens.css"] as const;
 const PREFIX = "lumogis-";
 
 // Non-vacuity floors (at plan time: 135 files / 788 tokens / 342 defined).
+// LUM-993 plan B Pass 8 removed the old page CSS: tokens.css now defines only the
+// app shell's classes, so the defined floor follows it (6 at the time).
 const MIN_FILES = 100;
 const MIN_TOKENS = 400;
-const MIN_DEFINED = 300;
+const MIN_DEFINED = 5;
 
 interface ClassToken {
   file: string;
@@ -89,9 +109,18 @@ function splitTokens(text: string, leftOpen: boolean, rightOpen: boolean): strin
   return parts.filter((p) => p.length > 0);
 }
 
+const CLASS_HELPERS = new Set(["cn", "cva"]);
+/** Tailwind marker classes: they name a group or peer and generate no rule themselves. */
+const MARKER = /^(group|peer)(\/[\w-]+)?$/;
+
+function isClassHelperCall(n: ts.Node): n is ts.CallExpression {
+  return ts.isCallExpression(n) && ts.isIdentifier(n.expression) && CLASS_HELPERS.has(n.expression.text);
+}
+
 function isIgnoredLiteral(node: ts.Node): boolean {
   const parent = node.parent;
-  if (ts.isCallExpression(parent) && parent.arguments.some((a) => a === node)) return true;
+  if (ts.isCallExpression(parent) && parent.arguments.some((a) => a === node)) return !isClassHelperCall(parent);
+  if (ts.isPropertyAssignment(parent) && parent.name === node) return true;
   if (ts.isElementAccessExpression(parent) && parent.argumentExpression === node) return true;
   if (ts.isBinaryExpression(parent)) {
     const k = parent.operatorToken.kind;
@@ -106,7 +135,8 @@ function isIgnoredLiteral(node: ts.Node): boolean {
 }
 
 function classTokens(file: string, source: string): ClassToken[] {
-  const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const kind = file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, kind);
   const out: ClassToken[] = [];
   const emit = (at: ts.Node, tokens: string[]): void => {
     const line = sf.getLineAndCharacterOfPosition(at.getStart(sf)).line + 1;
@@ -116,6 +146,13 @@ function classTokens(file: string, source: string): ClassToken[] {
   const walk = (n: ts.Node): void => {
     if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) {
       if (!isIgnoredLiteral(n)) emit(n, splitTokens(n.text, false, false));
+      return;
+    }
+    if (ts.isCallExpression(n) && !CLASS_HELPERS.has(ts.isIdentifier(n.expression) ? n.expression.text : "")) {
+      // Another call: its string arguments are skipped (isIgnoredLiteral) and its
+      // object-literal arguments hold variant names, not classes.
+      walk(n.expression);
+      for (const a of n.arguments) if (!ts.isObjectLiteralExpression(a)) walk(a);
       return;
     }
     if (ts.isTemplateExpression(n)) {
@@ -130,7 +167,41 @@ function classTokens(file: string, source: string): ClassToken[] {
     ts.forEachChild(n, walk);
   };
 
+  const prop = (obj: ts.Node, name: string): ts.Expression | undefined => {
+    if (!ts.isObjectLiteralExpression(obj)) return undefined;
+    for (const p of obj.properties) {
+      if (ts.isPropertyAssignment(p) && (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name)) && p.name.text === name) {
+        return p.initializer;
+      }
+    }
+    return undefined;
+  };
+  const values = (obj: ts.Node | undefined): ts.Expression[] =>
+    obj && ts.isObjectLiteralExpression(obj)
+      ? obj.properties.filter(ts.isPropertyAssignment).map((p) => p.initializer)
+      : [];
+  const cvaCall = (call: ts.CallExpression): void => {
+    const [base, config] = call.arguments;
+    if (base) walk(base);
+    if (!config) return;
+    for (const group of values(prop(config, "variants"))) for (const v of values(group)) walk(v);
+    const compound = prop(config, "compoundVariants");
+    if (compound && ts.isArrayLiteralExpression(compound)) {
+      for (const entry of compound.elements) {
+        for (const key of ["class", "className"]) {
+          const v = prop(entry, key);
+          if (v) walk(v);
+        }
+      }
+    }
+  };
+
   const visit = (n: ts.Node): void => {
+    if (isClassHelperCall(n)) {
+      if ((n.expression as ts.Identifier).text === "cva") cvaCall(n);
+      else n.arguments.forEach(walk);
+      return;
+    }
     if (ts.isJsxAttribute(n) && n.name.getText(sf) === "className" && n.initializer) {
       if (ts.isStringLiteral(n.initializer)) {
         emit(n.initializer, splitTokens(n.initializer.text, false, false));
@@ -145,20 +216,44 @@ function classTokens(file: string, source: string): ClassToken[] {
   return out;
 }
 
+/** `.tsx` and `.ts` sources (a `.ts` file can hold `cn`/`cva` calls); no generated code. */
 function tsxFiles(dir: string): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...tsxFiles(full));
-    else if (entry.isFile() && entry.name.endsWith(".tsx")) out.push(full);
+    if (entry.isDirectory()) {
+      if (entry.name !== "generated") out.push(...tsxFiles(full));
+    } else if (entry.isFile() && /\.tsx?$/.test(entry.name) && !entry.name.endsWith(".d.ts")) out.push(full);
   }
   return out.sort();
 }
 
-function violations(tokens: ClassToken[], defined: Set<string>): string[] {
+function violations(tokens: ClassToken[], defined: Set<string>, tailwind: Set<string> = new Set()): string[] {
   return tokens
-    .filter((t) => !t.token.startsWith(PREFIX) && !defined.has(t.token))
+    .filter((t) => !t.token.startsWith(PREFIX) && !defined.has(t.token) && !tailwind.has(t.token) && !MARKER.test(t.token))
     .map((t) => `${t.file}:${t.line} ${t.token}`);
+}
+
+/** The candidates Tailwind generates a rule for, compiled from the app's ui.css. */
+async function tailwindGenerated(candidates: string[]): Promise<Set<string>> {
+  const base = path.join(clientRoot, "src", "design");
+  const compiler = await compile(readFileSync(path.join(base, "ui.css"), "utf8"), {
+    base,
+    onDependency() {},
+  });
+  const css = compiler.build(candidates);
+  // Tailwind escapes class selectors the way CSS.escape does for these characters.
+  const escape = (c: string) => c.replace(/[^a-zA-Z0-9_-]/g, (ch) => `\\${ch}`);
+  // The selector must end where the class ends: `.bg-destructiv` is a prefix of
+  // `.bg-destructive` and must not count as generated.
+  const generated = (c: string) => {
+    const at = `.${escape(c)}`;
+    for (let i = css.indexOf(at); i >= 0; i = css.indexOf(at, i + 1)) {
+      if (!/[\w\\-]/.test(css.charAt(i + at.length))) return true;
+    }
+    return false;
+  };
+  return new Set(candidates.filter(generated));
 }
 
 function scanTree(): { files: string[]; tokens: ClassToken[]; defined: Set<string> } {
@@ -211,6 +306,28 @@ describe("class-name scanner (fixtures)", () => {
     expect(violations(access, new Set())).toEqual([]);
   });
 
+  it("U6: scans cn() and cva() arguments, but not variant names or other calls' objects", () => {
+    const inAttr = classTokens("x.tsx", '<p className={cn("lumogis-a", ok && "zed", other("skip"))} />');
+    expect(violations(inAttr, new Set())).toEqual(["x.tsx:1 zed"]);
+    const moduleLevel = classTokens(
+      "x.ts",
+      [
+        'const v = cva("base-zed", {',
+        '  variants: { variant: { default: "lumogis-a", outline: "out-zed" }, size: { sm: "sm-zed" } },',
+        '  compoundVariants: [{ variant: "outline", size: "sm", class: "comp-zed" }],',
+        '  defaultVariants: { variant: "default" },',
+        "});",
+        'const c = cn(v({ variant: "outline" }), "tail-zed");',
+      ].join("\n"),
+    );
+    expect(violations(moduleLevel, new Set()).map((s) => s.split(" ")[1]).sort()).toEqual(
+      ["base-zed", "comp-zed", "out-zed", "sm-zed", "tail-zed"],
+    );
+    // Marker classes pass by name; anything else that only looks like one does not.
+    const marker = classTokens("x.tsx", '<div className="group group/button peer peerish" />');
+    expect(violations(marker, new Set())).toEqual(["x.tsx:1 peerish"]);
+  });
+
   it("U4: definedClasses reads selector preludes only", () => {
     const css =
       '/* .commented */ .a, .b:hover > .c { color: red } @media (min-width: 40.5rem) { .d { x: 1 } } [href$=".pdf"] { } .e::after { content: "} .fake {" }';
@@ -220,26 +337,38 @@ describe("class-name scanner (fixtures)", () => {
 
 describe("class-name namespace guard (real tree)", () => {
   const { files, tokens, defined } = scanTree();
+  let tailwind = new Set<string>();
+  beforeAll(async () => {
+    const unprefixed = [...new Set(tokens.map((t) => t.token).filter((t) => !t.startsWith(PREFIX)))];
+    tailwind = await tailwindGenerated(unprefixed);
+  });
 
   it("U5: no unprefixed undefined class, and the scan is not vacuous", () => {
     expect(files.length).toBeGreaterThanOrEqual(MIN_FILES);
     expect(tokens.length).toBeGreaterThanOrEqual(MIN_TOKENS);
     expect(defined.size).toBeGreaterThanOrEqual(MIN_DEFINED);
-    expect(defined.has("lumogis-visually-hidden")).toBe(true);
-    expect(
-      tokens.some(
-        (t) => t.file === "src/features/me/EditSourceRow.tsx" && t.token === "lumogis-visually-hidden",
-      ),
-    ).toBe(true);
-    expect(violations(tokens, defined)).toEqual([]);
+    expect(defined.has("lumogis-shell")).toBe(true);
+    // The scan finds prefixed classes in use (the shell still has them). Not tied
+    // to one class: plan B (LUM-993) moved page bodies off them pass by pass.
+    expect(tokens.some((t) => t.token.startsWith(PREFIX))).toBe(true);
+    expect(violations(tokens, defined, tailwind)).toEqual([]);
+  });
+
+  it("U5d: Tailwind acceptance is real, not a pass-all", async () => {
+    const got = await tailwindGenerated(["text-sm", "pointer-coarse:size-11", "text-smm", "sr-onlyy", "bg-destructiv", "bg-destructive"]);
+    // bg-destructiv: a prefix of a real class must not count (found at LUM-993 verify).
+    expect([...got].sort()).toEqual(["bg-destructive", "pointer-coarse:size-11", "text-sm"]);
   });
 
   it("U5b: every defined global class is lumogis-prefixed", () => {
     expect([...defined].filter((c) => !c.startsWith(PREFIX)).sort()).toEqual([]);
   });
 
-  it("U5c: the classes LUM-852 relies on are defined", () => {
-    expect(defined.has("lumogis-visually-hidden")).toBe(true);
-    expect(defined.has("lumogis-document-chat__context-used")).toBe(true);
+  it("U5c: the classes the app shell relies on are defined", () => {
+    // Since LUM-993 plan B Pass 8 the shell is the only global CSS left; the
+    // LUM-852 classes (lumogis-visually-hidden, the context-used strip) moved to utilities.
+    for (const c of ["lumogis-shell", "lumogis-shell__body", "lumogis-shell__main", "lumogis-shell__sidebar", "lumogis-shell__bottom"]) {
+      expect(defined.has(c), c).toBe(true);
+    }
   });
 });

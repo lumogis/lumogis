@@ -90,8 +90,8 @@ test.describe("autonomy page (LUM-849)", () => {
 
   test("two questions render in words, not connector ids", async ({ page }) => {
     await installPermissionMocks(page);
-    await page.goto("/me/permissions");
-    await expect(page.getByRole("heading", { name: "What Lumogis may do" })).toBeVisible({
+    await page.goto("/settings/permissions");
+    await expect(page.getByRole("heading", { level: 1, name: "What Lumogis may do" })).toBeVisible({
       timeout: 15_000,
     });
     await expect(page.getByText("Send email as you")).toBeVisible();
@@ -105,7 +105,7 @@ test.describe("autonomy page (LUM-849)", () => {
 
   test("a group disables while its save is in flight", async ({ page }) => {
     const rec = await installPermissionMocks(page, { holdPuts: true });
-    await page.goto("/me/permissions");
+    await page.goto("/settings/permissions");
     await expect(page.getByText("Send email as you")).toBeVisible({ timeout: 15_000 });
 
     const smtpGroup = page.getByTestId("perm-group-smtp");
@@ -119,7 +119,7 @@ test.describe("autonomy page (LUM-849)", () => {
 
   test("a double-click fires exactly one PUT", async ({ page }) => {
     const rec = await installPermissionMocks(page, { holdPuts: true });
-    await page.goto("/me/permissions");
+    await page.goto("/settings/permissions");
     await expect(page.getByText("Send email as you")).toBeVisible({ timeout: 15_000 });
 
     const justSend = page.getByTestId("perm-group-smtp").getByRole("radio", { name: /Just send/i });

@@ -71,6 +71,11 @@ describe("AdminFeatureFlagsView", () => {
     expect(screen.getByText("PROACTIVE_PIPES")).toBeTruthy();
     expect(screen.getByText("enabled")).toBeTruthy();
     expect(screen.getByText("disabled")).toBeTruthy();
+    expect(screen.getByTestId("flag-state-EGRESS_GUARD")).toHaveTextContent("enabled");
+    expect(screen.getByTestId("flag-state-PROACTIVE_PIPES")).toHaveTextContent("disabled");
+    // Read-only: no control that looks usable (flags live in the server's environment).
+    expect(screen.queryByRole("switch")).toBeNull();
+    expect(screen.getByText("LUMOGIS_FF_EGRESS_GUARD")).toBeTruthy();
     expect(screen.getByText("1 of 2 flags currently enabled.")).toBeTruthy();
     // Egress-guard honesty copy: bypassable, routing policy primary.
     expect(screen.getByText(/routing policy at the orchestrator remains the primary/i)).toBeTruthy();

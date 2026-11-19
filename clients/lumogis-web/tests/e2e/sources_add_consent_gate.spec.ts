@@ -20,8 +20,8 @@
 //   * Path 2 — overlap only. The re-post carries acknowledge_paperless_overlap
 //     and NOT acknowledge_external_consumer. A flag for a card never shown is
 //     the failure mode.
-//   * Path 3 — the credential seam. The link resolves to /me/connectors, not
-//     /admin/connector-credentials (wrong tiers) and not bare /connectors
+//   * Path 3 — the credential seam. The link resolves to /settings/connections (Mine view), not
+//     the household view (wrong tiers) and not bare /connectors
 //     (redirects to /chat). Follow it, save where it actually goes, return,
 //     the badge flips. A toHaveAttribute unit assertion cannot prove the
 //     route resolves or that the round-trip refreshes presence.
@@ -240,12 +240,18 @@ async function installMocks(
   };
 }
 
+// The kind picker is a Base UI Select, not a native <select>: open it, pick the option.
+async function choosePaperless(page: Page) {
+  await page.getByRole("combobox", { name: "What are you adding?" }).click();
+  await page.getByRole("option", { name: "Paperless" }).click();
+}
+
 async function reachAdd(page: Page) {
-  await page.goto("/me/sources");
+  await page.goto("/settings/sources");
   await expect(page.getByRole("heading", { name: "Add a source" })).toBeVisible({
     timeout: 15_000,
   });
-  await page.getByLabel("What are you adding?").selectOption("paperless");
+  await choosePaperless(page);
   await page.getByLabel("Paperless address").fill(PAPERLESS_URL);
   await page.getByRole("button", { name: "Check" }).click();
   await expect(page.getByRole("button", { name: "Add" })).toBeVisible();
@@ -256,11 +262,10 @@ function expectConfirmTrue(body: ConfirmBody | undefined) {
 }
 
 async function expectSourceAdded(page: Page) {
-  // Scoped into the add panel: SourcesView also publishes "Source added." as
-  // its own labelled live region. Unscoped getByRole("status") is a
-  // strict-mode violation (email_imap_sources lesson).
-  const panel = page.getByRole("region", { name: "Add a source" });
-  await expect(panel.getByRole("status", { name: "Source add result" })).toHaveText(
+  // Matched by its accessible name: SourcesView also publishes "Source added."
+  // as its own labelled live region ("Source list status"). Unscoped
+  // getByRole("status") is a strict-mode violation (email_imap_sources lesson).
+  await expect(page.getByRole("status", { name: "Source add result" })).toHaveText(
     "Source added.",
   );
 }
@@ -312,7 +317,7 @@ test.describe("source add consent gates (LUM-842)", () => {
   // moment `/me/sources` loads.
   test("the empty sources page offers document setup above the add form", async ({ page }) => {
     await installMocks(page, { sequence: ["created"] });
-    await page.goto("/me/sources");
+    await page.goto("/settings/sources");
 
     const offer = page.getByRole("heading", {
       name: "No document archives, feeds or watched pages yet",
@@ -384,18 +389,18 @@ test.describe("source add consent gates (LUM-842)", () => {
     await expectSourceAdded(page);
   });
 
-  test("Path 3 — credential link resolves to /me/connectors and the badge flips", async ({
+  test("Path 3 — credential link resolves to /settings/connections and the badge flips", async ({
     page,
   }) => {
     const rec = await installMocks(page, { sequence: ["created"] });
-    await page.goto("/me/sources");
+    await page.goto("/settings/sources");
     await expect(page.getByRole("heading", { name: "Add a source" })).toBeVisible({
       timeout: 15_000,
     });
-    await page.getByLabel("What are you adding?").selectOption("paperless");
+    await choosePaperless(page);
 
     const addLink = page.getByRole("link", { name: "Add them" });
-    await expect(addLink).toHaveAttribute("href", "/me/connectors");
+    await expect(addLink).toHaveAttribute("href", "/settings/connections");
     await expect(addLink).toHaveAttribute("target", "_blank");
     await expect(page.getByText("No paperless credentials yet.")).toBeVisible();
 
@@ -403,26 +408,27 @@ test.describe("source add consent gates (LUM-842)", () => {
     await addLink.click();
     const popup = await popupPromise;
     await popup.waitForLoadState("domcontentloaded");
-    await expect(popup).toHaveURL(/\/me\/connectors\/?$/);
-    await expect(popup).not.toHaveURL(/\/admin\/connector-credentials/);
+    await expect(popup).toHaveURL(/\/settings\/connections\/?$/);
+    await expect(popup).not.toHaveURL(/\/settings\/connections\?view=household/);
     await expect(popup).not.toHaveURL(/\/chat/);
-    await expect(popup.getByLabel("Email")).toHaveCount(0);
+    await expect(popup.getByLabel("Email", { exact: true })).toHaveCount(0);
 
-    await expect(popup.getByRole("heading", { name: "Connectors" })).toBeVisible({
+    await expect(popup.getByRole("heading", { level: 1, name: "Connected services" })).toBeVisible({
       timeout: 15_000,
     });
-    // The card title is the registry id (`paperless`), not the description
-    // string ("Paperless-ngx…"). A locator for the word "Paperless" does not
-    // match. The chip sits in the same <h3>, so the accessible name is
-    // `paperless` + chip with no word boundary — `/^paperless\b/` misses it.
-    await expect(popup.getByRole("heading", { name: /^paperless/i })).toBeVisible({
+    // LUM-993 Pass 5: the card is named in plain words ("Paperless documents"),
+    // not by the registry id, and its form sits behind the Connect button.
+    const paperlessCard = popup.getByTestId("connector-paperless");
+    await expect(paperlessCard.getByRole("heading", { name: /^Paperless documents/ })).toBeVisible({
       timeout: 15_000,
     });
+    await paperlessCard.getByRole("button", { name: "Connect", exact: true }).click();
 
     await popup.getByLabel("Server address").fill(PAPERLESS_URL);
     await popup.getByLabel("API token").fill(PAPERLESS_TOKEN);
     await popup.getByRole("button", { name: "Apply" }).click();
-    await expect(popup.getByRole("status").filter({ hasText: /^Saved\.?$/ })).toBeVisible();
+    // Plain success is a toast now (LUM-993 Pass 5).
+    await expect(popup.getByText("Saved.", { exact: true })).toBeVisible();
 
     expect(rec.credentialPuts()).toHaveLength(1);
     expect(rec.credentialPuts()[0]?.path).toBe("/api/v1/me/connector-credentials/paperless");

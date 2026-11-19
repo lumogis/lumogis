@@ -2,17 +2,20 @@
 // Copyright (C) 2026 Lumogis
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Mock } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
+import { toast } from "sonner";
 
 import { ApiClient } from "../../../src/api/client";
 import { AccessTokenStore } from "../../../src/api/tokens";
 import { AuthProvider } from "../../../src/auth/AuthProvider";
 import { EmailSignalsView } from "../../../src/features/signals/EmailSignalsView";
-import { SignalListItem } from "../../../src/features/signals/SignalListItem";
 import { jsonResponse } from "../../helpers/jsonResponse";
 import { seedSignedInDevice } from "../../helpers/signedInDevice";
+
+// Success messages are sonner toasts (LUM-993); there is no Toaster in this tree.
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 // LUM-886: this suite mounts a real AuthProvider; mark the device as already reconciled so the
 // first-sign-in wipe does not remove the view's own queries.
@@ -144,6 +147,24 @@ describe("EmailSignalsView", () => {
     }) as unknown as typeof fetch;
   }
 
+  // LUM-993: the sorted-mail list lived here and duplicated the Email page, so
+  // this page now only points there and never asks for signals.
+  it("links to the Email page instead of listing sorted mail", async () => {
+    const urls: string[] = [];
+    const base = mockFetch();
+    renderView((async (input: RequestInfo | URL, init?: RequestInit) => {
+      urls.push(String(input));
+      return base(input as RequestInfo, init);
+    }) as typeof fetch);
+    const link = await screen.findByRole("link", { name: "Email page" });
+    expect(link).toHaveAttribute("href", "/email");
+    await screen.findByText("Personal");
+    expect(screen.queryByText("Field trip")).not.toBeInTheDocument();
+    expect(screen.queryByText("No signals yet.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Category filters" })).not.toBeInTheDocument();
+    expect(urls.filter((u) => u.includes("/signals"))).toHaveLength(0);
+  });
+
   it("queues sync now for an IMAP source", async () => {
     const syncSpy = vi.fn();
     renderView(mockFetch(syncSpy));
@@ -151,6 +172,34 @@ describe("EmailSignalsView", () => {
     fireEvent.click(screen.getByLabelText("Sync now Personal"));
     await waitFor(() => expect(syncSpy).toHaveBeenCalled());
     expect(String(syncSpy.mock.calls[0][0])).toContain("/sources/src-1/sync");
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Sync queued."));
+  });
+
+  // The "…" menu holds the mode switch; the card says what is stored either way.
+  it("switches the storage mode from the … menu", async () => {
+    const patches: unknown[] = [];
+    const base = mockFetch();
+    const fetchImpl = vi.fn(async (input: RequestInfo, init?: RequestInit) => {
+      if (String(input).includes("/sources/src-1") && init?.method === "PATCH") {
+        patches.push(JSON.parse(String(init.body)));
+        return jsonResponse(200, {
+          ...SOURCES.sources[0],
+          extraction_method: "imap_full_ingest",
+          full_ingest_active: false,
+        });
+      }
+      return base(input, init);
+    }) as unknown as typeof fetch;
+    renderView(fetchImpl);
+    expect(await screen.findByTestId("mode-src-1")).toHaveTextContent("Subject and sender only");
+    await userEvent.click(screen.getByRole("button", { name: "More actions for Personal" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Switch to full messages" }));
+    await waitFor(() => expect(patches).toEqual([{ full_ingest: true }]));
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(
+        "Switched to full messages (waiting for the household admin to allow it).",
+      ),
+    );
   });
 
   // LUM-690/633 — a mailbox that can't currently authenticate (revoked OAuth
@@ -229,28 +278,37 @@ describe("EmailSignalsView", () => {
   });
 
   // LUM-701 — self-service mailbox removal.
+  async function openRemoveDialog() {
+    await screen.findByText("Personal");
+    await userEvent.click(screen.getByRole("button", { name: "More actions for Personal" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Remove mailbox" }));
+    return screen.findByRole("alertdialog");
+  }
+
   it("removes a mailbox after confirming", async () => {
     const deleteSpy = vi.fn();
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     renderView(mockFetch(undefined, SOURCES, deleteSpy));
-    await waitFor(() => expect(screen.getByLabelText("Remove mailbox Personal")).toBeInTheDocument());
-    fireEvent.click(screen.getByLabelText("Remove mailbox Personal"));
-    expect(confirmSpy).toHaveBeenCalled();
+    const dialog = await openRemoveDialog();
+    expect(dialog).toHaveTextContent("Remove Personal?");
+    expect(dialog).toHaveTextContent(
+      "This stops syncing and disconnects the mailbox. Mail already sorted is kept. You can connect it again at any time.",
+    );
+    expect(deleteSpy).not.toHaveBeenCalled();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Remove mailbox" }));
     await waitFor(() => expect(deleteSpy).toHaveBeenCalled());
     expect(String(deleteSpy.mock.calls[0][0])).toContain("/sources/src-1");
   });
 
-  it("does not remove a mailbox when the confirm dialog is dismissed", async () => {
+  it("does not remove a mailbox when the dialog is cancelled", async () => {
     const deleteSpy = vi.fn();
-    vi.spyOn(window, "confirm").mockReturnValue(false);
     renderView(mockFetch(undefined, SOURCES, deleteSpy));
-    await waitFor(() => expect(screen.getByLabelText("Remove mailbox Personal")).toBeInTheDocument());
-    fireEvent.click(screen.getByLabelText("Remove mailbox Personal"));
+    const dialog = await openRemoveDialog();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(deleteSpy).not.toHaveBeenCalled();
   });
 
   it("shows an error and keeps the mailbox listed when removal fails", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     const fetchImpl = vi.fn(async (input: RequestInfo, init?: RequestInit) => {
       const u = String(input);
       if (u.includes("/auth/me")) return jsonResponse(200, { id: "u1", email: "u@home.lan", role: "user" });
@@ -264,22 +322,12 @@ describe("EmailSignalsView", () => {
       return jsonResponse(404, {});
     }) as unknown as typeof fetch;
     renderView(fetchImpl);
-    await waitFor(() => expect(screen.getByLabelText("Remove mailbox Personal")).toBeInTheDocument());
-    fireEvent.click(screen.getByLabelText("Remove mailbox Personal"));
-    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/couldn't remove/i));
+    const dialog = await openRemoveDialog();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Remove mailbox" }));
+    await waitFor(() => expect(screen.getByTestId("delete-msg")).toHaveTextContent(/couldn't remove/i));
     expect(screen.getByText("Personal")).toBeInTheDocument();
   });
 
-  it("filters signals when a category chip is selected", async () => {
-    renderView(mockFetch());
-    await waitFor(() => expect(screen.getByText("Field trip")).toBeInTheDocument());
-    expect(screen.getByText("Shared landlord mail")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "School" }));
-    await waitFor(() => {
-      expect(screen.getByText("Field trip")).toBeInTheDocument();
-      expect(screen.queryByText("Shared landlord mail")).not.toBeInTheDocument();
-    });
-  });
   // --- LUM-849: the autonomy signpost ----------------------------------- //
   it("renders the autonomy signpost exactly once with three mailboxes", async () => {
     // The trap this test exists for: the natural place to put this link is
@@ -305,29 +353,7 @@ describe("EmailSignalsView", () => {
     });
     const links = screen.getAllByRole("link", { name: /What Lumogis may do/i });
     expect(links).toHaveLength(1);
-    expect(links[0]).toHaveAttribute("href", "/me/permissions");
-  });
-});
-
-describe("SignalListItem category chip", () => {
-  it("renders category_label not the raw slug; omits chip when label empty", () => {
-    const { rerender } = render(
-      <ul>
-        <SignalListItem signal={SIGNALS.signals[1] as never} />
-        <SignalListItem signal={SIGNALS.signals[2] as never} />
-        <SignalListItem signal={SIGNALS.signals[3] as never} />
-      </ul>,
-    );
-    expect(screen.getByText("Landlord")).toBeInTheDocument();
-    expect(screen.queryByText("a_landlord")).not.toBeInTheDocument();
-    expect(screen.queryAllByTestId("category-chip")).toHaveLength(2);
-    expect(screen.getByText("gone_slug")).toBeInTheDocument();
-    rerender(
-      <ul>
-        <SignalListItem signal={SIGNALS.signals[2] as never} />
-      </ul>,
-    );
-    expect(screen.queryByTestId("category-chip")).not.toBeInTheDocument();
+    expect(links[0]).toHaveAttribute("href", "/settings/permissions");
   });
 });
 
@@ -526,7 +552,6 @@ describe("LUM-769 send capability surface", () => {
   it("passes the auth method through to the send control", async () => {
     // LUM-777: an OAuth mailbox never uses a stored sending password, so the
     // disable confirm must not mention one.
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     renderView(
       fetchWith({
         credentials: [{ connector: "smtp", instance: "src-1" }],
@@ -540,8 +565,9 @@ describe("LUM-769 send capability surface", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /Turn off sending for Personal/i }));
 
-    expect(confirm).toHaveBeenCalledTimes(1);
-    expect(String(confirm.mock.calls[0][0])).not.toContain("own sending password");
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveTextContent("Receiving is unaffected");
+    expect(dialog).not.toHaveTextContent("own sending password");
   });
 
   it("refreshes both queries when sending is turned on", async () => {

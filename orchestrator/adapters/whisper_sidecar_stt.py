@@ -9,10 +9,18 @@ HTTP service. Implements :class:`~ports.speech_to_text.SpeechToText`.
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 from models.api_v1 import TranscriptionResult
 from models.api_v1 import TranscriptionSegment
+from ports.speech_to_text import SttModelMissing
+from ports.speech_to_text import SttModelUnknown
+from ports.speech_to_text import SttUnreachable
+
+# Speaches 0.8.3 answers an uninstalled model with this 404 body; an unknown route
+# answers {"detail": "Not Found"} (LUM-995 Pass 0). Only the first means "model missing".
+_MODEL_NOT_INSTALLED_MARKER = "is not installed locally"
 
 
 class WhisperSidecarSpeechToTextAdapter:
@@ -35,6 +43,7 @@ class WhisperSidecarSpeechToTextAdapter:
         http_timeout_sec: int,
         ping_timeout_sec: int,
         api_key: str | None,
+        install_timeout_sec: int = 900,
     ) -> None:
         self._base = base_url.rstrip("/")
         self._health_path = health_path
@@ -42,6 +51,49 @@ class WhisperSidecarSpeechToTextAdapter:
         self._timeout = float(http_timeout_sec)
         self._ping_timeout = float(ping_timeout_sec)
         self._api_key = api_key
+        self._install_timeout = float(install_timeout_sec)
+
+    def _headers(self) -> dict[str, str]:
+        hdrs: dict[str, str] = {}
+        if self._api_key:
+            hdrs["Authorization"] = f"Bearer {self._api_key}"
+        return hdrs
+
+    def _model_url(self, model: str) -> str:
+        return f"{self._base}/v1/models/{quote(model, safe='/')}"
+
+    def model_installed(self, model: str) -> bool:
+        """``GET /v1/models/{id}``: 200 installed, 404 not installed (Speaches 0.8.3)."""
+        try:
+            with httpx.Client(**self._client_opts()) as client:
+                r = client.get(
+                    self._model_url(model),
+                    timeout=httpx.Timeout(self._ping_timeout),
+                    headers=self._headers(),
+                )
+        # TimeoutException includes ReadTimeout: an engine too busy to answer a cheap GET
+        # is "not answering", never a timed-out download (that is install_model's).
+        except (httpx.ConnectError, httpx.TimeoutException, OSError) as exc:
+            raise SttUnreachable("speech engine is not reachable") from exc
+        if r.status_code == 200:
+            return True
+        if r.status_code == 404:
+            return False
+        raise ValueError(f"sidecar model check failed: HTTP {r.status_code}: {_body_head(r)}")
+
+    def install_model(self, model: str) -> None:
+        """``POST /v1/models/{id}``: blocks until downloaded; 200/201 = present."""
+        tout = httpx.Timeout(self._install_timeout, connect=self._ping_timeout)
+        try:
+            with httpx.Client(**self._client_opts()) as client:
+                r = client.post(self._model_url(model), timeout=tout, headers=self._headers())
+        except (httpx.ConnectError, httpx.ConnectTimeout, OSError) as exc:
+            raise SttUnreachable("speech engine is not reachable") from exc
+        if r.status_code in (200, 201):
+            return
+        if r.status_code == 404:
+            raise SttModelUnknown(f"the speech engine does not know the model {model!r}")
+        raise ValueError(f"sidecar model install failed: HTTP {r.status_code}: {_body_head(r)}")
 
     def _client_opts(self) -> dict[str, Any]:
         return {"follow_redirects": False}
@@ -79,9 +131,7 @@ class WhisperSidecarSpeechToTextAdapter:
         if hint:
             data["language"] = hint
 
-        hdrs: dict[str, str] = {}
-        if self._api_key:
-            hdrs["Authorization"] = f"Bearer {self._api_key}"
+        hdrs = self._headers()
 
         transcribe_url = f"{self._base}{self._transcribe_path}"
         tout = httpx.Timeout(self._timeout)
@@ -96,10 +146,15 @@ class WhisperSidecarSpeechToTextAdapter:
                     files={"file": (basename, audio_bytes, mime_plain)},
                     data=data,
                 )
-        except (httpx.HTTPError, OSError):
-            raise
+        except (httpx.ConnectError, httpx.ConnectTimeout, OSError) as exc:
+            raise SttUnreachable("speech engine is not reachable") from exc
 
+        if resp.status_code == 404 and _MODEL_NOT_INSTALLED_MARKER in _body_head(resp, 400):
+            raise SttModelMissing(f"speech model {model!r} is not installed in the engine")
         if resp.status_code >= 400:
+            # Note: a model that is "installed" but half-downloaded (a killed download)
+            # fails here every time with a 5xx. It is not detected automatically; the
+            # quickstart ("reset the speech model") is the recovery (LUM-995).
             raise ValueError(f"sidecar transcription failed: HTTP {resp.status_code}")
 
         try:
@@ -113,6 +168,14 @@ class WhisperSidecarSpeechToTextAdapter:
             raise
         except Exception as exc:
             raise ValueError(f"sidecar transcription: malformed response: {exc!s}") from exc
+
+
+def _body_head(resp: httpx.Response, limit: int = 200) -> str:
+    """First characters of a response body, for logs and 404 matching. Never raises."""
+    try:
+        return resp.text[:limit]
+    except Exception:
+        return ""
 
 
 def _num(x: Any) -> float:

@@ -76,6 +76,7 @@ def _register_hook_handlers() -> None:
     from graph.writer import on_audio_transcribed
     from graph.writer import on_document_ingested
     from graph.writer import on_entity_created
+    from graph.writer import on_entity_deleted
     from graph.writer import on_entity_merged
     from graph.writer import on_feedback_received
     from graph.writer import on_note_captured
@@ -87,6 +88,7 @@ def _register_hook_handlers() -> None:
     hooks.register(Event.NOTE_CAPTURED, on_note_captured)
     hooks.register(Event.AUDIO_TRANSCRIBED, on_audio_transcribed)
     hooks.register(Event.ENTITY_MERGED, on_entity_merged)
+    hooks.register(Event.ENTITY_DELETED, on_entity_deleted)
     hooks.register(Event.FEEDBACK_RECEIVED, on_feedback_received)
     _log.info("Graph plugin: M1 hook handlers registered")
 
@@ -197,21 +199,26 @@ def _register_temporal_pipeline() -> None:
         register_temporal_hooks()
         register_temporal_jobs(config.get_scheduler())
         # Operator visibility: a judge that does not resolve fails every judgment
-        # (episodes stamped judge_failed, by design not retried). The default, the
-        # static `llama` entry, resolves without an Ollama call (LUM-927); a listed
-        # entry may not, e.g. an Ollama tag, which is never a model alias. Warn
-        # loudly at boot. The destructive rule makes the first listed entry (or the
-        # default) independent of keys, so None is enough here.
+        # (episodes stamped judge_failed, by design not retried). A listed first entry
+        # is used only when it is found and on the box; otherwise the resolver returns
+        # the code default and boot check §3 reports the entry
+        # (task_model_unsatisfiable; when Ollama listed no models, only the resolver's
+        # first-entry warning names it). So this fires when the code default itself does
+        # not resolve, for example when the static `llama` entry was removed from
+        # config/models.yaml (LUM-927, LUM-983). The destructive rule makes the result
+        # independent of keys, so None is enough here.
         judge = _judge_model(None)
         try:
             config.get_model_config(judge)
         except Exception:
             _log.warning(
                 "Graph plugin: temporal judge model %r (task temporal_judge) is not "
-                "resolvable — contradiction judgment will fail (judge_failed). An Ollama "
-                "tag such as 'llama3.2:3b' is not a model alias; list a configured alias "
-                "under tasks.temporal_judge in config/models.yaml, or remove the entry to "
-                "use the default %r (LUM-927).",
+                "resolvable — contradiction judgment will fail (judge_failed). The "
+                "judge's code default is the static %r entry in config/models.yaml; "
+                "restore it (LUM-927). A listed entry that is not found or not on the "
+                "box is replaced by this default and reported at boot "
+                "(task_model_unsatisfiable, or a first-entry warning when Ollama "
+                "listed no models).",
                 judge,
                 TEMPORAL_JUDGE_REFERENCE_MODEL,
             )

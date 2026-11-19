@@ -59,27 +59,41 @@ if [ -f "$HOST_ENV" ]; then
     [ "$_changed" -eq 1 ] && echo "[entrypoint] Secrets saved to .env — active on next restart."
 fi
 
-# ── Refresh secret (LUM-885, security audit #2 AUTH-002) ─────────────────────
-# The orchestrator refuses to boot with AUTH_ENABLED=true when its refresh
-# secret is missing, a placeholder, or equal to AUTH_SECRET (main.py). This
-# block makes the default compose install satisfy that, without ever editing an
-# operator-written .env:
+# ── Generated secrets (LUM-885 refresh secret; LUM-981 AUTH_SECRET + credential key) ──
+# The orchestrator refuses to boot with AUTH_ENABLED=true when AUTH_SECRET, the
+# refresh secret or LUMOGIS_CREDENTIAL_KEY is missing or a placeholder (main.py),
+# and a refresh secret equal to AUTH_SECRET. This block makes a fresh install
+# satisfy that with no typing, without ever editing a value somebody wrote:
 #
-#   1. LUMOGIS_JWT_REFRESH_SECRET non-empty  -> do nothing (python resolves it
-#      first, even when it is a placeholder, and its gate then judges it: the
-#      same "first non-empty wins" rule as auth._refresh_secret()).
-#   2. process JWT_REFRESH_SECRET is real    -> do nothing.
-#   3. .env holds a real JWT_REFRESH_SECRET  -> export it for THIS run (covers the
-#      first boot after the loop above rewrote the placeholder, and a
+#   1. the process value is real                -> do nothing.
+#   2. .env holds a real value                  -> export it for THIS run (covers the
+#      first boot after the loop above rewrote a placeholder, and a
 #      `docker compose restart` that keeps the creation-time env).
-#   4. .env key missing/empty/placeholder AND AUTH_ENABLED=true -> generate one,
+#   3. .env key missing/empty/placeholder AND the secret applies -> generate one,
 #      write it to .env, verify the write, then export it. A secret that could
-#      not be persisted is never exported (the python gate refuses boot).
+#      not be persisted is never exported (the FATAL backstop below, or the python
+#      gate, then refuses boot with a message that names the fix).
+#
+# A value that is already real is NEVER replaced: the credential key in
+# particular protects every saved password, and a new one would orphan them.
+#
+#   JWT_REFRESH_SECRET       generated when sign-in is on; a set
+#                            LUMOGIS_JWT_REFRESH_SECRET still wins (python resolves
+#                            it first, even when it is a placeholder, and its gate
+#                            then judges it: the same "first non-empty wins" rule
+#                            as auth._refresh_secret()).
+#   AUTH_SECRET              generated when sign-in is on.
+#   LUMOGIS_CREDENTIAL_KEY   generated in both modes (saving an LLM key or a mail
+#                            login needs it), unless LUMOGIS_CREDENTIAL_KEYS is
+#                            set in the process env or .env.
 #
 # LibreChat keeps reading the same JWT_REFRESH_SECRET from .env at `compose up`;
 # that is inherited on purpose (typ + the auth_sessions hash binding contain it).
 # Set LUMOGIS_JWT_REFRESH_SECRET to split the two products.
 _lum_gen() { python3 -c "import secrets; print(secrets.token_hex(32))"; }
+_lum_gen_fernet() {
+    python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+}
 _lum_trim() {
     local v="$1"
     v="${v#"${v%%[![:space:]]*}"}"
@@ -103,60 +117,92 @@ _lum_env_value() {
     esac
     printf '%s' "$v"
 }
-_lum_refresh_secret_section() {
-    local auth_on lum_secret proc_secret line has_key value new reread
+# _lum_ensure_secret KEY GENERATOR WHEN   (WHEN: auth_on | always)
+_lum_ensure_secret() {
+    local key="$1" gen="$2" when="$3"
+    local auth_on proc_secret line has_key value new reread
     auth_on="$(_lum_trim "${AUTH_ENABLED:-false}")"
     auth_on="$(printf '%s' "$auth_on" | tr '[:upper:]' '[:lower:]')"
 
-    lum_secret="$(_lum_trim "${LUMOGIS_JWT_REFRESH_SECRET:-}")"
-    [ -n "$lum_secret" ] && return 0
-
-    proc_secret="$(_lum_trim "${JWT_REFRESH_SECRET:-}")"
+    proc_secret="$(_lum_trim "${!key:-}")"
     _lum_is_placeholder "$proc_secret" || return 0
 
     [ -f "$HOST_ENV" ] || return 0
 
-    if grep -Eq '^[[:space:]]*export[[:space:]]+JWT_REFRESH_SECRET=' "$HOST_ENV"; then
-        echo "[entrypoint] WARNING: JWT_REFRESH_SECRET in .env has a form the entrypoint does not parse; leaving it to compose" >&2
+    if grep -Eq "^[[:space:]]*export[[:space:]]+${key}=" "$HOST_ENV"; then
+        echo "[entrypoint] WARNING: ${key} in .env has a form the entrypoint does not parse; leaving it to compose" >&2
         return 0
     fi
 
-    line="$(grep '^JWT_REFRESH_SECRET=' "$HOST_ENV" | tail -n 1)"
+    line="$(grep "^${key}=" "$HOST_ENV" | tail -n 1)"
     has_key=0
     [ -n "$line" ] && has_key=1
     value="$(_lum_env_value "${line#*=}")"
     case "$value" in
         *[[:space:]]*|*"#"*)
-            echo "[entrypoint] WARNING: JWT_REFRESH_SECRET in .env has a form the entrypoint does not parse; leaving it to compose" >&2
+            echo "[entrypoint] WARNING: ${key} in .env has a form the entrypoint does not parse; leaving it to compose" >&2
             return 0
             ;;
     esac
 
     if _lum_is_placeholder "$value"; then
-        [ "$auth_on" = "true" ] || return 0
-        new="$(_lum_gen)"
+        if [ "$when" = "auth_on" ] && [ "$auth_on" != "true" ]; then
+            return 0
+        fi
+        new="$("$gen")"
         if [ "$has_key" -eq 1 ]; then
-            sed -i "s|^JWT_REFRESH_SECRET=.*$|JWT_REFRESH_SECRET=${new}|" "$HOST_ENV" 2>/dev/null
+            sed -i "s|^${key}=.*$|${key}=${new}|" "$HOST_ENV" 2>/dev/null
         else
             {
                 [ -s "$HOST_ENV" ] && [ -n "$(tail -c 1 "$HOST_ENV")" ] && printf '\n'
-                printf 'JWT_REFRESH_SECRET=%s\n' "$new"
+                printf '%s=%s\n' "$key" "$new"
             } >> "$HOST_ENV" 2>/dev/null
         fi
-        reread="$(grep '^JWT_REFRESH_SECRET=' "$HOST_ENV" 2>/dev/null | tail -n 1)"
+        reread="$(grep "^${key}=" "$HOST_ENV" 2>/dev/null | tail -n 1)"
         if [ -n "$new" ] && [ "$(_lum_env_value "${reread#*=}")" = "$new" ]; then
-            echo "[entrypoint] Generated JWT_REFRESH_SECRET"
+            echo "[entrypoint] Generated ${key}"
+            _LUM_GENERATED_ANY=1
             value="$new"
         else
-            echo "[entrypoint] WARNING: could not write JWT_REFRESH_SECRET to .env" >&2
+            echo "[entrypoint] WARNING: could not write ${key} to .env" >&2
             return 0
         fi
     fi
 
-    export JWT_REFRESH_SECRET="$value"
-    echo "[entrypoint] Using JWT_REFRESH_SECRET from .env for this run"
+    export "${key}=${value}"
+    echo "[entrypoint] Using ${key} from .env for this run"
 }
+_lum_refresh_secret_section() {
+    local lum_secret
+    lum_secret="$(_lum_trim "${LUMOGIS_JWT_REFRESH_SECRET:-}")"
+    [ -n "$lum_secret" ] && return 0
+    _lum_ensure_secret JWT_REFRESH_SECRET _lum_gen auth_on
+}
+# LUMOGIS_CREDENTIAL_KEYS (CSV, newest first) overrides LUMOGIS_CREDENTIAL_KEY in
+# python's _load_keys(); when it is set anywhere, a generated single key would be
+# ignored, so do not generate one.
+_lum_credential_key_section() {
+    local keys_line keys_value
+    [ -n "$(_lum_trim "${LUMOGIS_CREDENTIAL_KEYS:-}")" ] && return 0
+    if [ -f "$HOST_ENV" ]; then
+        keys_line="$(grep '^LUMOGIS_CREDENTIAL_KEYS=' "$HOST_ENV" | tail -n 1)"
+        keys_value="$(_lum_env_value "${keys_line#*=}")"
+        [ -n "$keys_value" ] && return 0
+    fi
+    _lum_ensure_secret LUMOGIS_CREDENTIAL_KEY _lum_gen_fernet always
+}
+_LUM_GENERATED_ANY=0
+_lum_ensure_secret AUTH_SECRET _lum_gen auth_on
 _lum_refresh_secret_section
+_lum_credential_key_section
+# Other services read .env only when Compose creates them, so on a first
+# `docker compose up -d` they started before these values existed (LUM-981 code
+# review: the optional knowledge-graph service verifies Core's tokens with
+# AUTH_SECRET). The orchestrator already uses them for this run.
+if [ "$_LUM_GENERATED_ANY" = "1" ]; then
+    echo "[entrypoint] Generated secrets are saved in .env and active for the orchestrator now."
+    echo "[entrypoint] Run 'docker compose up -d' once more so the other services pick them up."
+fi
 # <<< secrets-section
 
 # Warn if /data is not mounted (misconfigured FILESYSTEM_ROOT)
@@ -164,54 +210,48 @@ if [ ! -d "/data" ]; then
     echo "[entrypoint] WARNING: /data is not mounted. Check FILESYSTEM_ROOT in .env." >&2
 fi
 
-# ── AUTH_SECRET hardening (post-/verify-plan follow-up) ─────────────────────
-# Refuse to boot when AUTH_ENABLED=true but AUTH_SECRET is unset or a known
-# placeholder. The entrypoint auto-rotates JWT_SECRET / JWT_REFRESH_SECRET /
-# RESTART_SECRET above, but intentionally does NOT auto-rotate AUTH_SECRET —
-# operators flip family-LAN mode on deliberately and must own that secret.
-# A duplicate Python-side guard lives in main._enforce_auth_consistency for
+# >>> secrets-backstop
+# ── AUTH_SECRET / credential key backstops ───────────────────────────────────
+# The secrets section above generates AUTH_SECRET and LUMOGIS_CREDENTIAL_KEY and
+# exports them (LUM-981). These blocks are the backstop for a run where it could
+# not: a read-only or missing .env. They refuse to boot, and name the file and the
+# fix. A duplicate Python-side guard lives in main._enforce_auth_consistency for
 # the case where the entrypoint is bypassed (e.g. local dev `uvicorn main:app`).
+_lum_fatal_unsaved() {
+    # $1 = variable name, $2 = how to make a value by hand
+    if [ ! -f "$HOST_ENV" ]; then
+        echo "[entrypoint] FATAL: No .env was found at $(dirname "$HOST_ENV") (the install folder is not mounted), so Lumogis could not generate $1." >&2
+        echo "[entrypoint]        Start Lumogis with docker compose from its install folder, or set $1 in the environment." >&2
+    else
+        echo "[entrypoint] FATAL: Lumogis could not save a generated $1 to $HOST_ENV (the .env next to docker-compose.yml)." >&2
+        echo "[entrypoint]        Make that file writable by the user that owns the install folder, or add $1=<$2> to it yourself, then start again." >&2
+    fi
+}
 _AUTH_ENABLED_NORM="$(echo "${AUTH_ENABLED:-false}" | tr '[:upper:]' '[:lower:]' | xargs)"
 if [ "$_AUTH_ENABLED_NORM" = "true" ]; then
     _AUTH_SECRET_NORM="$(echo "${AUTH_SECRET:-}" | xargs)"
     case "$_AUTH_SECRET_NORM" in
         ""|"change-me-in-production"|"__GENERATE_ME__")
-            echo "[entrypoint] FATAL: AUTH_ENABLED=true but AUTH_SECRET is unset or a placeholder." >&2
-            echo "[entrypoint]        Generate a real secret with: openssl rand -hex 32" >&2
-            echo "[entrypoint]        Then set AUTH_SECRET in .env and restart." >&2
-            echo "[entrypoint]        AUTH_SECRET is intentionally NOT auto-rotated — see" >&2
-            echo "[entrypoint]        .cursor/plans/family_lan_multi_user.plan.md follow-ups." >&2
+            _lum_fatal_unsaved AUTH_SECRET "openssl rand -hex 32"
             exit 1
             ;;
     esac
 fi
 
-# ── LUMOGIS_CREDENTIAL_KEY[S] hardening ─────────────────────────────────────
-# Refuse to boot when AUTH_ENABLED=true but no usable Fernet key is configured
-# for the per-user connector credential subsystem (services/connector_credentials.py).
-# Without a key, every credential PUT/GET/resolve would raise at request time
-# and the container would otherwise come up "healthy". A duplicate Python-side
-# guard lives in main._enforce_auth_consistency for the case where the
-# entrypoint is bypassed (e.g. local dev `uvicorn main:app`).
-#
 # Honour LUMOGIS_CREDENTIAL_KEYS (CSV, newest first) over LUMOGIS_CREDENTIAL_KEY
 # when set — same precedence as services.connector_credentials._load_keys().
-#
-# Critical: NOT auto-rotated by the loop above. Auto-generating this key would
-# silently destroy every existing encrypted credential on the next boot if
-# .env is ever re-bootstrapped. Operators must own this key.
+# The key is generated only when absent and never replaced once set: a new one
+# would orphan every saved password. The boot warns when stored rows do not match.
 if [ "$_AUTH_ENABLED_NORM" = "true" ]; then
     _CRED_KEYS_NORM="$(echo "${LUMOGIS_CREDENTIAL_KEYS:-${LUMOGIS_CREDENTIAL_KEY:-}}" | xargs)"
     case "$_CRED_KEYS_NORM" in
         ""|"change-me-in-production"|"__GENERATE_ME__")
-            echo "[entrypoint] FATAL: AUTH_ENABLED=true but LUMOGIS_CREDENTIAL_KEY[S] is unset or a placeholder." >&2
-            echo "[entrypoint]        Generate with: python3 -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\"" >&2
-            echo "[entrypoint]        Then set LUMOGIS_CREDENTIAL_KEY in .env (or LUMOGIS_CREDENTIAL_KEYS for a CSV during rotation) and restart." >&2
-            echo "[entrypoint]        Key is intentionally NOT auto-rotated — losing it makes every per-user connector credential unrecoverable." >&2
+            _lum_fatal_unsaved LUMOGIS_CREDENTIAL_KEY "a Fernet key from: python3 -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
             exit 1
             ;;
     esac
 fi
+# <<< secrets-backstop
 
 # ── Apply Postgres migrations ────────────────────────────────────────────────
 # In a git checkout, Postgres runs postgres/init.sql itself on the first init of
@@ -350,6 +390,8 @@ _LUM_DATA_GLOB="${_LUM_DATA_GLOB:-/data /data-[0-9]*}"
 _LUM_DEFAULT_HF_HOME="${_LUM_DEFAULT_HF_HOME:-/var/lib/lumogis/hf-cache}"
 _LUM_DEFAULT_STAGING="${_LUM_DEFAULT_STAGING:-/var/lib/lumogis/email-staging}"
 _LUM_DEFAULT_DATA_DIR="${_LUM_DEFAULT_DATA_DIR:-/opt/lumogis/data}"
+# LUM-331: the household's secure-address Caddy site (the caddy-home volume).
+_LUM_DEFAULT_CADDY_HOME="${_LUM_DEFAULT_CADDY_HOME:-/caddy-home}"
 _LUM_DEFAULT_UID=10001
 
 _lum_privdrop_section() {
@@ -471,6 +513,8 @@ _lum_privdrop_section() {
     if [ "$hf" = "$_LUM_DEFAULT_HF_HOME" ]; then _lum_own_tree owned "$hf"; else _lum_moved+=("$hf"); fi
     if [ "$stg" = "$_LUM_DEFAULT_STAGING" ]; then _lum_own_tree owned "$stg"; else _lum_moved+=("$stg"); fi
     if [ "$dat" = "$_LUM_DEFAULT_DATA_DIR" ]; then _lum_own_tree owned "$dat"; else _lum_moved+=("$dat"); fi
+    # A fresh named volume is root-owned; only Lumogis writes it (LUM-331).
+    _lum_own_tree owned "$_LUM_DEFAULT_CADDY_HOME"
 
     # Shared trees: host-visible binds or operator-chosen paths. Only
     # root-owned entries become U:G (leftovers from the old root image or from

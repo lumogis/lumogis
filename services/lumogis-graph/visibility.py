@@ -32,10 +32,13 @@ See also: ``.cursor/plans/personal_shared_system_memory_scopes.plan.md``
 
 from __future__ import annotations
 
+import re
 from typing import Literal
 from typing import Optional
 
 from auth import UserContext
+
+_QUALIFIER_RE = re.compile(r"[a-z_][a-z0-9_]*")
 
 Scope = Literal["personal", "shared", "system"]
 DEFAULT_SCOPE: Scope = "personal"
@@ -108,6 +111,24 @@ def visible_filter(
     return (
         "((scope = 'personal' AND user_id = %s) OR scope = 'system')",
         (me,),
+    )
+
+
+def not_hidden_sql(viewer_id: str, qualifier: str = "") -> tuple[str, tuple]:
+    """Return ``(SQL clause, params)``: the entry is not hidden by ``viewer_id`` (LUM-966).
+
+    Mirrors ``orchestrator.visibility.not_hidden_sql`` exactly (a test compares the
+    two outputs). A member's **Hide** of another member's shared entry lives in
+    ``entity_hidden``, keyed by the owner's source row. Hide is a per-viewer view
+    preference, **not** access control.
+    """
+    if qualifier and not _QUALIFIER_RE.fullmatch(qualifier):
+        raise ValueError(f"invalid qualifier={qualifier!r}; must match [a-z_][a-z0-9_]*")
+    p = f"{qualifier}." if qualifier else ""
+    return (
+        "NOT EXISTS (SELECT 1 FROM entity_hidden h WHERE h.user_id = %s "
+        f"AND h.entity_key = coalesce({p}published_from, {p}entity_id))",
+        (viewer_id,),
     )
 
 

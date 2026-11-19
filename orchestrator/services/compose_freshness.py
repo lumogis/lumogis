@@ -53,7 +53,7 @@ class ComposeFreshness:
     image_fingerprint: str | None = None
 
 
-def _file_fingerprint(path: Path) -> str | None:
+def release_fingerprint(path: Path) -> str | None:
     with path.open(encoding="utf-8", errors="replace") as fh:
         for _ in range(_HEADER_LINES):
             line = fh.readline()
@@ -76,7 +76,7 @@ def check(path: Path | None = None, image_fingerprint: str | None = None) -> Com
     if not image_fp or image_fp == "dev":
         return ComposeFreshness("not_applicable", image_fingerprint=image_fp or None)
     try:
-        file_fp = _file_fingerprint(path)
+        file_fp = release_fingerprint(path)
     except OSError:
         return ComposeFreshness("not_applicable", image_fingerprint=image_fp)
     if file_fp is None:

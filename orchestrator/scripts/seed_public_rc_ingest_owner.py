@@ -14,26 +14,15 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 from pathlib import Path
 
 import auth as auth_mod
 import services.users as users_svc
 
+from services import host_env
+
 _log = logging.getLogger("scripts.seed_public_rc_ingest_owner")
 _PROJECT_ENV = Path("/project/.env")
-
-
-def _rewrite_host_env_key(content: str, key: str, value: str) -> str:
-    pattern = re.compile(
-        rf"^[ \t]*{re.escape(key)}[ \t]*=.*(?:\r?\n)?",
-        re.MULTILINE,
-    )
-    content = pattern.sub("", content).rstrip()
-    if content:
-        content += "\n"
-    content += f"{key}={value}\n"
-    return content
 
 
 def main() -> int:
@@ -72,8 +61,9 @@ def main() -> int:
         return 0
 
     try:
-        updated = _rewrite_host_env_key(content, "INBOX_OWNER_USER_ID", user.id)
-        _PROJECT_ENV.write_text(updated)
+        host_env.update(
+            lambda text: host_env.rewrite_key(text, "INBOX_OWNER_USER_ID", user.id), _PROJECT_ENV
+        )
     except OSError:
         _log.exception("failed to write INBOX_OWNER_USER_ID to /project/.env")
         return 1

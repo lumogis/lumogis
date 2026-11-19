@@ -15,6 +15,7 @@ import { del, get, set } from "idb-keyval";
 import type { ApiClient } from "../api/client";
 import { ApiError } from "../api/client";
 import { createCapture, formatCaptureErrorMessage, uploadCaptureAttachment } from "../api/captures";
+import { randomUuid } from "../util/uuid";
 
 /** Pending voice clips cap (plan §13). */
 export const MAX_PENDING_VOICE_CLIPS = 10;
@@ -128,7 +129,7 @@ export async function removeFromIndex(id: string): Promise<void> {
 }
 
 function newId(): string {
-  return globalThis.crypto?.randomUUID?.() ?? `loc-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return randomUuid();
 }
 
 function countsTowardVoiceCap(m: CaptureOutboxItemMeta): boolean {

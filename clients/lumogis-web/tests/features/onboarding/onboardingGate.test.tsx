@@ -9,7 +9,6 @@ import { MemoryRouter } from "react-router-dom";
 import { ApiClient } from "../../../src/api/client";
 import { AccessTokenStore } from "../../../src/api/tokens";
 import { AuthProvider } from "../../../src/auth/AuthProvider";
-import { ModalFrame } from "../../../src/features/onboarding/modalFrame";
 import { OnboardingGate } from "../../../src/features/onboarding/OnboardingGate";
 import { LocationProbe } from "../../helpers/locationProbe";
 import { seedSignedInDevice } from "../../helpers/signedInDevice";
@@ -26,66 +25,6 @@ function jsonResponse(status: number, body: unknown): Response {
     headers: { "Content-Type": "application/json" },
   });
 }
-
-describe("ModalFrame", () => {
-  it("Escape invokes onClose", async () => {
-    const user = userEvent.setup();
-    const onClose = vi.fn();
-    render(
-      <ModalFrame open titleId="t1" onClose={onClose}>
-        <h2 id="t1">Title</h2>
-        <button type="button">Inside</button>
-      </ModalFrame>,
-    );
-    await user.keyboard("{Escape}");
-    expect(onClose).toHaveBeenCalledTimes(1);
-  });
-
-  it("Tab from last focusable wraps focus to first", async () => {
-    const user = userEvent.setup();
-    const onClose = vi.fn();
-    render(
-      <ModalFrame open titleId="t1" onClose={onClose}>
-        <h2 id="t1">Title</h2>
-        <button type="button">First</button>
-        <button type="button">Last</button>
-      </ModalFrame>,
-    );
-    const first = screen.getByRole("button", { name: "First" });
-    const last = screen.getByRole("button", { name: "Last" });
-
-    await waitFor(() => {
-      expect(first).toHaveFocus();
-    });
-
-    await user.tab();
-    expect(last).toHaveFocus();
-
-    await user.tab();
-    expect(first).toHaveFocus();
-  });
-
-  it("Shift+Tab from first focusable wraps focus to last", async () => {
-    const user = userEvent.setup();
-    const onClose = vi.fn();
-    render(
-      <ModalFrame open titleId="t1" onClose={onClose}>
-        <h2 id="t1">Title</h2>
-        <button type="button">First</button>
-        <button type="button">Last</button>
-      </ModalFrame>,
-    );
-    const first = screen.getByRole("button", { name: "First" });
-    const last = screen.getByRole("button", { name: "Last" });
-
-    await waitFor(() => {
-      expect(first).toHaveFocus();
-    });
-
-    await user.keyboard("{Shift>}{Tab}{/Shift}");
-    expect(last).toHaveFocus();
-  });
-});
 
 describe("OnboardingGate", () => {
   it("does not render modal while onboarding query is pending", async () => {
@@ -221,18 +160,18 @@ async function advanceToHandoff(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("OnboardingGate — LUM-282 handoff", () => {
-  it("completes onboarding, closes the modal, and lands on /me/sources", async () => {
+  it("completes onboarding, closes the modal, and lands on /settings/sources", async () => {
     const user = userEvent.setup();
     const { root, patchCalls } = handoffSetup();
     const button = await advanceToHandoff(user);
 
     // Positive first, or the negative below is worthless: prove the modal is
-    // really open and #root really is inert while it is.
+    // really open and #root really is hidden from assistive tech while it is (the ui Dialog
+    // sets aria-hidden on #root; the old hand-made frame also set `inert`).
     expect({
       dialogs: screen.queryAllByRole("dialog").length,
-      rootInert: root.hasAttribute("inert"),
       rootAriaHidden: root.getAttribute("aria-hidden"),
-    }).toEqual({ dialogs: 1, rootInert: true, rootAriaHidden: "true" });
+    }).toEqual({ dialogs: 1, rootAriaHidden: "true" });
 
     await user.click(button);
 
@@ -244,13 +183,11 @@ describe("OnboardingGate — LUM-282 handoff", () => {
         patches: patchCalls.length,
         route: screen.getByTestId("location-probe").textContent,
         dialogs: screen.queryAllByRole("dialog").length,
-        rootInert: root.hasAttribute("inert"),
         rootAriaHidden: root.getAttribute("aria-hidden"),
       }).toEqual({
         patches: 1,
-        route: "/me/sources",
+        route: "/settings/sources",
         dialogs: 0,
-        rootInert: false,
         rootAriaHidden: null,
       });
     });
@@ -281,13 +218,13 @@ describe("OnboardingGate — LUM-282 handoff", () => {
       patches: patchCalls.length,
       route: screen.getByTestId("location-probe").textContent,
       dialogs: screen.queryAllByRole("dialog").length,
-      rootInert: root.hasAttribute("inert"),
+      rootAriaHidden: root.getAttribute("aria-hidden"),
     }).toEqual({
       unhandledRejections: 0,
       patches: 1,
       route: "/chat",
       dialogs: 1,
-      rootInert: true,
+      rootAriaHidden: "true",
     });
 
     // Non-empty, not merely present: OnboardingModal renders the alert only
@@ -317,7 +254,7 @@ describe("OnboardingGate — LUM-282 handoff", () => {
 
     release();
     await waitFor(() => {
-      expect(screen.getByTestId("location-probe").textContent).toBe("/me/sources");
+      expect(screen.getByTestId("location-probe").textContent).toBe("/settings/sources");
     });
     expect(patchCalls).toHaveLength(1);
   });
@@ -340,7 +277,7 @@ describe("OnboardingGate — LUM-282 handoff", () => {
     // rest of the file.
     release();
     await waitFor(() => {
-      expect(screen.getByTestId("location-probe").textContent).toBe("/me/sources");
+      expect(screen.getByTestId("location-probe").textContent).toBe("/settings/sources");
     });
   });
 });

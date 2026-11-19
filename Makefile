@@ -55,7 +55,7 @@ SHELL := /bin/bash
         verify-lum-811 \
         m1-compat-with-retry \
         auth-sessions-grep-guard \
-        changelog-check exec-bit-check \
+        changelog-check exec-bit-check check-home-dns-registration \
         coverage-matrix-check \
         verify-no-telemetry \
         render-site-pages check-site-pages \
@@ -370,6 +370,11 @@ coverage-matrix-check:
 adr-check:
 	@bash scripts/check-adr-numbering.sh
 
+# LUM-996 — does the name service accept the registration value this tree ships?
+# Run from the tree that will be promoted, before the export push (exit 0 required).
+check-home-dns-registration:
+	@python3 scripts/release/check_home_dns_registration.py
+
 # LUM-784 — core.fileMode=false makes git ignore exec bits, so a script committed
 # from a local checkout lands as 100644 and fails with "permission denied" on a
 # clean checkout. Reads modes from the index; sourced-only files are allowlisted
@@ -567,8 +572,16 @@ compose-test-temporal-compose:
 	  -c "pip install -q -r /project/orchestrator/requirements-dev.txt && python -m pytest /integration-tests/integration/test_temporal_compose.py -v --tb=short"
 
 # LUM-185 — DR backup sidecar (operator targets).
+# Runs inside the running backup container when there is one. `compose run` on a
+# checkout rebuilds the backup image under the same tag (pull_policy: build); on
+# the containerd image store that deletes the image the running container came
+# from, and the next `make update` cannot keep it for rollback (LUM-990 MS-1).
 backup:
-	docker compose run --rm backup /scripts/backup/backup.sh run
+	@if [ -n "$$(docker compose ps -q --status running backup 2>/dev/null)" ]; then \
+	  docker compose exec -T backup /scripts/backup/backup.sh run; \
+	else \
+	  docker compose run --rm backup /scripts/backup/backup.sh run; \
+	fi
 
 backup-prune:
 	docker compose run --rm backup /scripts/backup/backup.sh prune
@@ -581,8 +594,10 @@ backup-verify:
 	fi
 
 SNAPSHOT ?=
+# --no-deps: with the graph overlay, backup depends on falkordb, and `run` would start
+# the FalkorDB that must stay stopped during a restore (LUM-999).
 restore:
-	docker compose run --rm -it backup /scripts/backup/restore.sh $(SNAPSHOT) --yes
+	docker compose run --rm --no-deps -it backup /scripts/backup/restore.sh $(SNAPSHOT) --yes
 
 # --- Update / lifecycle (LUM-187) ---
 migrate-dry-run: ## Preview pending DB migrations without applying them (LUM-187)
@@ -602,6 +617,9 @@ test-backup-retention:
 
 test-backup-bgsave-wait:
 	bash tests/unit/test_backup_bgsave_wait.sh
+
+test-backup-restore-falkordb: ## LUM-999 — restore refuses while FalkorDB runs
+	bash tests/unit/test_backup_restore_falkordb_quiesce.sh
 
 # LUM-892 — needs rsync + sha256sum on the host (apt install rsync)
 test-backup-files:
@@ -664,6 +682,7 @@ test: check-pytest
 	$(MAKE) test-backup-retention
 	$(MAKE) test-backup-files
 	$(MAKE) test-backup-bgsave-wait
+	$(MAKE) test-backup-restore-falkordb
 	$(MAKE) test-env-unit
 	cd orchestrator && AUTH_ENABLED=false $(PYTHON) -m pytest -x -q
 	cd stack-control && $(PYTHON) -m pytest test_main.py -q

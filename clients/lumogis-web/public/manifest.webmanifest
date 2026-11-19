@@ -5,8 +5,8 @@
   "start_url": "/chat",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#f7f7f9",
-  "theme_color": "#2747d3",
+  "background_color": "#faf7f1",
+  "theme_color": "#faf7f1",
   "categories": ["productivity", "utilities"],
   "icons": [
     {

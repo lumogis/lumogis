@@ -26,8 +26,10 @@
 #     `services/lumogis-graph/README.md` for the exact knobs.
 #   * Core MUST be configured with `GRAPH_MODE=service` (read by
 #     `orchestrator/main.py:_wire_graph_mode_handlers`). Without that env
-#     var Core stays in `inprocess` mode and the KG container will run
-#     idle (no webhooks arriving), which is harmless but wastes RAM.
+#     var Core stays in `disabled` mode (the default) and the KG container
+#     will run idle (no webhooks arriving), which is harmless but wastes RAM.
+#   * Steps and a state check: docs/deployment/quickstart.md#turn-on-the-knowledge-graph
+#     and Admin → Knowledge graph in Lumogis Web.
 
 services:
   lumogis-graph:

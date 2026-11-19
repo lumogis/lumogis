@@ -136,7 +136,7 @@ def test_stack_status_cache_skips_second_df_within_ttl(monkeypatch: pytest.Monke
         return payload, True
 
     monkeypatch.setattr(svc, "_fetch_stack_control_status_unlocked", fake_fetch)
-    monkeypatch.setattr(svc, "_restart_secret", lambda: "secret")
+    monkeypatch.setattr(svc.stack_control, "token", lambda: "secret")
     monkeypatch.setattr(svc, "_build_store_pings", lambda: {})
     monkeypatch.setattr(svc, "_local_storage_rows", lambda _df: [])
     monkeypatch.setattr(svc, "_ollama_read_only_block", lambda: ([], []))
@@ -154,7 +154,7 @@ def test_stack_status_http_timeout_exceeds_df_timeout() -> None:
 
 def test_stack_status_stack_control_unreachable_warnings(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(svc, "_get_stack_control_payload", lambda: (None, False, None))
-    monkeypatch.setattr(svc, "_restart_secret", lambda: "secret")
+    monkeypatch.setattr(svc.stack_control, "token", lambda: "secret")
     monkeypatch.setattr(
         svc,
         "_build_store_pings",
@@ -188,7 +188,7 @@ def test_stack_status_single_flight_one_fetch(monkeypatch: pytest.MonkeyPatch) -
 
     monkeypatch.setattr(svc, "_CACHE_TTL_SEC", 0.0)
     monkeypatch.setattr(svc, "_fetch_stack_control_status_unlocked", slow_fetch)
-    monkeypatch.setattr(svc, "_restart_secret", lambda: "secret")
+    monkeypatch.setattr(svc.stack_control, "token", lambda: "secret")
     monkeypatch.setattr(svc, "_build_store_pings", lambda: {})
     monkeypatch.setattr(svc, "_local_storage_rows", lambda _df: [])
     monkeypatch.setattr(svc, "_ollama_read_only_block", lambda: ([], []))

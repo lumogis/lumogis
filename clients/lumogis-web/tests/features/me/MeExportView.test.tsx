@@ -10,6 +10,7 @@ import { AccessTokenStore } from "../../../src/api/tokens";
 import { AuthProvider } from "../../../src/auth/AuthProvider";
 import { MeExportView } from "../../../src/features/me/MeExportView";
 import { jsonResponse } from "../../helpers/jsonResponse";
+import { seedSignedInDevice } from "../../helpers/signedInDevice";
 
 describe("MeExportView", () => {
   let originalFetch: typeof fetch;
@@ -68,7 +69,7 @@ describe("MeExportView", () => {
       </AuthProvider>,
     );
     await waitFor(() => {
-      expect(screen.getByText(/s \(k\):/)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /what's included/i })).toBeInTheDocument();
     });
     await userEv.click(screen.getByRole("button", { name: /download zip/i }));
     await waitFor(() => {
@@ -102,7 +103,7 @@ describe("MeExportView", () => {
       </AuthProvider>,
     );
     await waitFor(() => {
-      expect(screen.getByText(/s \(k\):/)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /what's included/i })).toBeInTheDocument();
     });
     await userEv.click(screen.getByRole("button", { name: /download zip/i }));
 
@@ -143,7 +144,7 @@ describe("MeExportView", () => {
         </AuthProvider>,
       );
       await waitFor(() => {
-        expect(screen.getByText(/s \(k\):/)).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: /what's included/i })).toBeInTheDocument();
       });
       await userEv.click(screen.getByRole("button", { name: /download zip/i }));
       await waitFor(() => {
@@ -154,5 +155,30 @@ describe("MeExportView", () => {
     } finally {
       HTMLAnchorElement.prototype.click = origClick;
     }
+  });
+
+  it("puts the download first and the table list behind What's included", async () => {
+    // LUM-886: the real AuthProvider wipes queries on a first sign-in; mark the device reconciled.
+    seedSignedInDevice("u1");
+    const user = { id: "u1", email: "u@home.lan", role: "user" as const };
+    const inv = [{ name: "s", kind: "k", row_count: 3 }];
+    const fetchImpl = vi.fn(async (input: RequestInfo) => {
+      const u = String(input);
+      if (u.includes("/api/v1/auth/me")) return jsonResponse(200, user);
+      if (u.includes("/data-inventory")) return jsonResponse(200, inv);
+      return jsonResponse(404, {});
+    });
+    const store = new AccessTokenStore();
+    const client = new ApiClient({ tokens: store, fetchImpl: fetchImpl as unknown as typeof fetch });
+    render(
+      <AuthProvider client={client} tokens={store} skipRefreshOnMount>
+        <MeExportView />
+      </AuthProvider>,
+    );
+    const toggle = await screen.findByRole("button", { name: /what's included/i });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText(/s \(k\): 3/)).not.toBeVisible();
+    await userEvent.setup().click(toggle);
+    expect(await screen.findByText(/s \(k\): 3/)).toBeVisible();
   });
 });

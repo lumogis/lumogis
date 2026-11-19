@@ -25,6 +25,7 @@ import { useCallback, useEffect, useReducer, useRef } from "react";
 import type { Dispatch } from "react";
 
 import type { ChatMessageDTO } from "../../api/chat";
+import { randomUuid } from "../../util/uuid";
 
 const SESSION_STORAGE_KEY = "lumogis-chat-threads";
 const SESSION_VERSION = 1;
@@ -413,7 +414,5 @@ export function useChatThreads(opts: UseChatThreadsOptions): UseChatThreadsResul
 }
 
 function defaultId(): string {
-  const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
-  if (c && typeof c.randomUUID === "function") return c.randomUUID();
-  throw new Error("crypto.randomUUID is required for chat thread ids");
+  return randomUuid();
 }

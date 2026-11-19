@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from .admin_knowledge_graph import router as admin_knowledge_graph_router
 from .approvals import router as approvals_router
 from .audit import router as audit_router
 from .biography_conflicts import router as biography_conflicts_router
@@ -42,6 +43,7 @@ from .feature_flags import router as feature_flags_router
 from .health import router as health_router
 from .ingest import router as ingest_router
 from .kg import router as kg_router
+from .me_shell import router as me_shell_router
 from .memory import router as memory_router
 from .notification_preferences import admin_router as notification_prefs_admin_router
 from .notification_preferences import me_router as notification_prefs_me_router
@@ -75,9 +77,11 @@ router.include_router(notifications_router)
 router.include_router(notification_prefs_me_router)
 router.include_router(notification_prefs_admin_router)
 router.include_router(privacy_mode_router)
+router.include_router(me_shell_router)
 router.include_router(voice_router)
 router.include_router(events_router)
 router.include_router(feature_flags_router)
+router.include_router(admin_knowledge_graph_router)
 router.include_router(health_router)
 router.include_router(ingest_router)
 

@@ -435,6 +435,39 @@
             "title": "Max Duration Sec",
             "type": "integer"
           },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The configured ``STT_MODEL`` (a model id, not a secret).",
+            "title": "Model"
+          },
+          "model_state": {
+            "anyOf": [
+              {
+                "enum": [
+                  "not_applicable",
+                  "unknown",
+                  "installing",
+                  "ready",
+                  "unreachable",
+                  "unknown_model",
+                  "failed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Whether the engine has the speech model: ``ready`` once installed. ``None`` when STT is off.",
+            "title": "Model State"
+          },
           "transcribe_available": {
             "title": "Transcribe Available",
             "type": "boolean"
@@ -672,6 +705,293 @@
           "message"
         ],
         "title": "AdminDiagnosticsWarning",
+        "type": "object"
+      },
+      "AdminKnowledgeGraphMemory": {
+        "properties": {
+          "enough": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "``None`` when total is unknown.",
+            "title": "Enough"
+          },
+          "required_bytes": {
+            "description": "Memory the graph needs in total.",
+            "minimum": 0.0,
+            "title": "Required Bytes",
+            "type": "integer"
+          },
+          "total_bytes": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "``None`` when unreadable.",
+            "title": "Total Bytes"
+          }
+        },
+        "required": [
+          "required_bytes"
+        ],
+        "title": "AdminKnowledgeGraphMemory",
+        "type": "object"
+      },
+      "AdminKnowledgeGraphService": {
+        "description": "The ``lumogis-graph`` capability as Core's registry sees it (no URL).",
+        "properties": {
+          "healthy": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "``None`` when not registered.",
+            "title": "Healthy"
+          },
+          "last_seen_healthy": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen Healthy"
+          },
+          "last_unhealthy_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Coarse code from the registry; ``None`` when healthy.",
+            "title": "Last Unhealthy Reason"
+          },
+          "registered": {
+            "description": "Registry has a manifest with id ``lumogis-graph``.",
+            "title": "Registered",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "registered"
+        ],
+        "title": "AdminKnowledgeGraphService",
+        "type": "object"
+      },
+      "AdminKnowledgeGraphStatus": {
+        "description": "``GET /api/v1/admin/knowledge-graph`` (LUM-937, LUM-989).\n\nAdmin-only; mode tokens only, no URLs or secrets.",
+        "properties": {
+          "configured_mode": {
+            "description": "Mode requested by the environment: ``config.read_graph_mode_from_env()``.",
+            "enum": [
+              "disabled",
+              "inprocess",
+              "service"
+            ],
+            "title": "Configured Mode",
+            "type": "string"
+          },
+          "failed_code": {
+            "anyOf": [
+              {
+                "enum": [
+                  "compose_failed",
+                  "timeout",
+                  "unreachable"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "With ``start_failed`` / ``stop_failed``.",
+            "title": "Failed Code"
+          },
+          "install_kind": {
+            "description": "``release``: the two Release files; ``checkout``: a git checkout.",
+            "enum": [
+              "release",
+              "checkout",
+              "unknown"
+            ],
+            "title": "Install Kind",
+            "type": "string"
+          },
+          "memory": {
+            "$ref": "#/components/schemas/AdminKnowledgeGraphMemory"
+          },
+          "mode": {
+            "description": "Effective mode: ``config.get_graph_mode()``.",
+            "enum": [
+              "disabled",
+              "inprocess",
+              "service"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "service": {
+            "$ref": "#/components/schemas/AdminKnowledgeGraphService"
+          },
+          "state": {
+            "enum": [
+              "on",
+              "starting",
+              "stopping",
+              "start_failed",
+              "stop_failed",
+              "service_unreachable",
+              "service_wiring_failed",
+              "unsupported_mode",
+              "off",
+              "off_low_memory"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "turn_off": {
+            "$ref": "#/components/schemas/AdminKnowledgeGraphTurnOff"
+          },
+          "turn_on": {
+            "$ref": "#/components/schemas/AdminKnowledgeGraphTurnOn"
+          }
+        },
+        "required": [
+          "state",
+          "mode",
+          "configured_mode",
+          "service",
+          "memory",
+          "install_kind",
+          "turn_on",
+          "turn_off"
+        ],
+        "title": "AdminKnowledgeGraphStatus",
+        "type": "object"
+      },
+      "AdminKnowledgeGraphToggleRequest": {
+        "additionalProperties": false,
+        "description": "``POST .../enable`` and ``.../disable`` body. One boolean; nothing else is accepted.",
+        "properties": {
+          "confirm_low_memory": {
+            "default": false,
+            "description": "Confirms Turn on although the memory check says short. Ignored by disable.",
+            "title": "Confirm Low Memory",
+            "type": "boolean"
+          }
+        },
+        "title": "AdminKnowledgeGraphToggleRequest",
+        "type": "object"
+      },
+      "AdminKnowledgeGraphToggleResponse": {
+        "properties": {
+          "state": {
+            "enum": [
+              "starting",
+              "stopping"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "AdminKnowledgeGraphToggleResponse",
+        "type": "object"
+      },
+      "AdminKnowledgeGraphTurnOff": {
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "block": {
+            "anyOf": [
+              {
+                "enum": [
+                  "checkout",
+                  "compose_too_old",
+                  "stack_control_unreachable",
+                  "env_unwritable",
+                  "already_off",
+                  "in_progress"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why not, when unavailable.",
+            "title": "Block"
+          }
+        },
+        "required": [
+          "available"
+        ],
+        "title": "AdminKnowledgeGraphTurnOff",
+        "type": "object"
+      },
+      "AdminKnowledgeGraphTurnOn": {
+        "description": "Whether the Turn on button is offered, computed server-side (LUM-989).",
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "block": {
+            "anyOf": [
+              {
+                "enum": [
+                  "checkout",
+                  "compose_too_old",
+                  "stack_control_unreachable",
+                  "env_unwritable",
+                  "already_on",
+                  "in_progress"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why not, when unavailable.",
+            "title": "Block"
+          },
+          "needs_confirmation": {
+            "default": false,
+            "description": "The memory verdict is False: ask for the low-memory confirmation.",
+            "title": "Needs Confirmation",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "available"
+        ],
+        "title": "AdminKnowledgeGraphTurnOn",
         "type": "object"
       },
       "AdminSharedItem": {
@@ -4925,6 +5245,11 @@
             "title": "Entity Id",
             "type": "string"
           },
+          "hidden": {
+            "default": false,
+            "title": "Hidden",
+            "type": "boolean"
+          },
           "is_owner": {
             "default": true,
             "title": "Is Owner",
@@ -4993,6 +5318,17 @@
               }
             ],
             "title": "Type"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
           }
         },
         "required": [
@@ -5000,6 +5336,112 @@
           "name"
         ],
         "title": "EntityCard",
+        "type": "object"
+      },
+      "EntityDeleteResponse": {
+        "properties": {
+          "blocked_names": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Blocked Names",
+            "type": "array"
+          },
+          "deleted": {
+            "default": true,
+            "title": "Deleted",
+            "type": "boolean"
+          },
+          "entity_id": {
+            "title": "Entity Id",
+            "type": "string"
+          },
+          "household_copy_removed": {
+            "title": "Household Copy Removed",
+            "type": "boolean"
+          },
+          "merges_removed": {
+            "title": "Merges Removed",
+            "type": "integer"
+          },
+          "not_blocked": {
+            "items": {
+              "$ref": "#/components/schemas/EntityNotBlocked"
+            },
+            "title": "Not Blocked",
+            "type": "array"
+          }
+        },
+        "required": [
+          "entity_id",
+          "blocked_names",
+          "not_blocked",
+          "household_copy_removed",
+          "merges_removed"
+        ],
+        "title": "EntityDeleteResponse",
+        "type": "object"
+      },
+      "EntityEditRequest": {
+        "additionalProperties": false,
+        "description": "``PATCH /api/v1/kg/entities/{id}`` — rename + other-name deltas (LUM-161), or kind (LUM-967).\n\nOne change at a time: ``entity_type`` alone, or the name / other-name fields.\n``entity_type`` is validated in the service (PERSON|ORG|PROJECT|CONCEPT,\ncase-insensitive) so every domain 422 keeps the same body shape.\n\nAlias changes are *deltas* applied to the locked row, never a replacement\nlist (an alias added by extraction while the dialog was open survives).\n\"Nothing to change\" is checked in the route, so every domain 422 has the\nsame ``{\"detail\": {\"error\", \"code\"}}`` body shape.",
+        "properties": {
+          "aliases_add": {
+            "items": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Aliases Add",
+            "type": "array"
+          },
+          "aliases_remove": {
+            "items": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Aliases Remove",
+            "type": "array"
+          },
+          "entity_type": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entity Type"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "title": "EntityEditRequest",
         "type": "object"
       },
       "EntityExtractRequest": {
@@ -5025,6 +5467,534 @@
         "title": "EntityExtractRequest",
         "type": "object"
       },
+      "EntityHideResponse": {
+        "properties": {
+          "entity_id": {
+            "title": "Entity Id",
+            "type": "string"
+          },
+          "hidden": {
+            "title": "Hidden",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "entity_id",
+          "hidden"
+        ],
+        "title": "EntityHideResponse",
+        "type": "object"
+      },
+      "EntityHistoryResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/EntityMergeHistoryItem"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "EntityHistoryResponse",
+        "type": "object"
+      },
+      "EntityKindCounts": {
+        "properties": {
+          "concept": {
+            "default": 0,
+            "title": "Concept",
+            "type": "integer"
+          },
+          "org": {
+            "default": 0,
+            "title": "Org",
+            "type": "integer"
+          },
+          "other": {
+            "default": 0,
+            "title": "Other",
+            "type": "integer"
+          },
+          "person": {
+            "default": 0,
+            "title": "Person",
+            "type": "integer"
+          },
+          "project": {
+            "default": 0,
+            "title": "Project",
+            "type": "integer"
+          }
+        },
+        "title": "EntityKindCounts",
+        "type": "object"
+      },
+      "EntityListItem": {
+        "properties": {
+          "alias_count": {
+            "default": 0,
+            "title": "Alias Count",
+            "type": "integer"
+          },
+          "aliases": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Aliases",
+            "type": "array"
+          },
+          "entity_id": {
+            "title": "Entity Id",
+            "type": "string"
+          },
+          "is_owner": {
+            "default": true,
+            "title": "Is Owner",
+            "type": "boolean"
+          },
+          "kind": {
+            "enum": [
+              "person",
+              "org",
+              "project",
+              "concept",
+              "other"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "last_mentioned_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Mentioned At"
+          },
+          "mention_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mention Count"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "scope": {
+            "default": "personal",
+            "enum": [
+              "personal",
+              "shared",
+              "system"
+            ],
+            "title": "Scope",
+            "type": "string"
+          },
+          "share_status": {
+            "default": "personal",
+            "enum": [
+              "personal",
+              "shared"
+            ],
+            "title": "Share Status",
+            "type": "string"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type"
+          }
+        },
+        "required": [
+          "entity_id",
+          "name",
+          "kind"
+        ],
+        "title": "EntityListItem",
+        "type": "object"
+      },
+      "EntityListResponse": {
+        "properties": {
+          "counts": {
+            "$ref": "#/components/schemas/EntityKindCounts"
+          },
+          "entities": {
+            "items": {
+              "$ref": "#/components/schemas/EntityListItem"
+            },
+            "title": "Entities",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "entities",
+          "counts",
+          "total"
+        ],
+        "title": "EntityListResponse",
+        "type": "object"
+      },
+      "EntityMention": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "document",
+              "chat",
+              "ai_tool"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "mentioned_at": {
+            "format": "date-time",
+            "title": "Mentioned At",
+            "type": "string"
+          },
+          "ref_id": {
+            "title": "Ref Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "ref_id",
+          "title",
+          "mentioned_at"
+        ],
+        "title": "EntityMention",
+        "type": "object"
+      },
+      "EntityMentionCounts": {
+        "properties": {
+          "ai_tool": {
+            "default": 0,
+            "title": "Ai Tool",
+            "type": "integer"
+          },
+          "chat": {
+            "default": 0,
+            "title": "Chat",
+            "type": "integer"
+          },
+          "document": {
+            "default": 0,
+            "title": "Document",
+            "type": "integer"
+          }
+        },
+        "title": "EntityMentionCounts",
+        "type": "object"
+      },
+      "EntityMentionsResponse": {
+        "properties": {
+          "counts": {
+            "$ref": "#/components/schemas/EntityMentionCounts"
+          },
+          "mentions": {
+            "items": {
+              "$ref": "#/components/schemas/EntityMention"
+            },
+            "title": "Mentions",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "mentions",
+          "counts",
+          "total"
+        ],
+        "title": "EntityMentionsResponse",
+        "type": "object"
+      },
+      "EntityMergeHistoryItem": {
+        "properties": {
+          "can_undo": {
+            "title": "Can Undo",
+            "type": "boolean"
+          },
+          "direction": {
+            "enum": [
+              "merged_in",
+              "merged_out"
+            ],
+            "title": "Direction",
+            "type": "string"
+          },
+          "merge_id": {
+            "title": "Merge Id",
+            "type": "string"
+          },
+          "merged_at": {
+            "format": "date-time",
+            "title": "Merged At",
+            "type": "string"
+          },
+          "newer_merge_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Newer Merge Id"
+          },
+          "origin": {
+            "enum": [
+              "member",
+              "auto_dedup",
+              "review_queue",
+              "admin"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "other_entity_id": {
+            "title": "Other Entity Id",
+            "type": "string"
+          },
+          "other_name": {
+            "title": "Other Name",
+            "type": "string"
+          },
+          "restores_sharing": {
+            "default": false,
+            "title": "Restores Sharing",
+            "type": "boolean"
+          },
+          "undone_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Undone At"
+          }
+        },
+        "required": [
+          "merge_id",
+          "direction",
+          "other_entity_id",
+          "other_name",
+          "origin",
+          "merged_at",
+          "can_undo"
+        ],
+        "title": "EntityMergeHistoryItem",
+        "type": "object"
+      },
+      "EntityMergeRequest": {
+        "additionalProperties": false,
+        "description": "``POST /api/v1/kg/entities/{id}/merge`` — the path entry survives.",
+        "properties": {
+          "keep_name": {
+            "default": "this",
+            "enum": [
+              "this",
+              "other"
+            ],
+            "title": "Keep Name",
+            "type": "string"
+          },
+          "other_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Other Id",
+            "type": "string"
+          },
+          "other_version": {
+            "minimum": 1.0,
+            "title": "Other Version",
+            "type": "integer"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "other_id",
+          "version",
+          "other_version"
+        ],
+        "title": "EntityMergeRequest",
+        "type": "object"
+      },
+      "EntityMergeResponse": {
+        "properties": {
+          "entry": {
+            "$ref": "#/components/schemas/EntityCard"
+          },
+          "merge_id": {
+            "title": "Merge Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "entry",
+          "merge_id"
+        ],
+        "title": "EntityMergeResponse",
+        "type": "object"
+      },
+      "EntityMovableMention": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "document",
+              "chat",
+              "ai_tool"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "mentioned_at": {
+            "format": "date-time",
+            "title": "Mentioned At",
+            "type": "string"
+          },
+          "ref_id": {
+            "title": "Ref Id",
+            "type": "string"
+          },
+          "relation_id": {
+            "title": "Relation Id",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "ref_id",
+          "title",
+          "mentioned_at",
+          "relation_id"
+        ],
+        "title": "EntityMovableMention",
+        "type": "object"
+      },
+      "EntityMoveMentionsRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "relation_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 200,
+            "minItems": 1,
+            "title": "Relation Ids",
+            "type": "array"
+          },
+          "to_entity_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "To Entity Id",
+            "type": "string"
+          },
+          "to_version": {
+            "minimum": 1.0,
+            "title": "To Version",
+            "type": "integer"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "to_entity_id",
+          "relation_ids",
+          "version",
+          "to_version"
+        ],
+        "title": "EntityMoveMentionsRequest",
+        "type": "object"
+      },
+      "EntityMoveMentionsResponse": {
+        "properties": {
+          "moved": {
+            "title": "Moved",
+            "type": "integer"
+          },
+          "source": {
+            "$ref": "#/components/schemas/EntityCard"
+          },
+          "target": {
+            "$ref": "#/components/schemas/EntityCard"
+          }
+        },
+        "required": [
+          "moved",
+          "source",
+          "target"
+        ],
+        "title": "EntityMoveMentionsResponse",
+        "type": "object"
+      },
+      "EntityNotBlocked": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "reason": {
+            "enum": [
+              "used_by_other_entry",
+              "already_corrected"
+            ],
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "reason"
+        ],
+        "title": "EntityNotBlocked",
+        "type": "object"
+      },
       "EntitySearchResponse": {
         "properties": {
           "entities": {
@@ -5039,6 +6009,35 @@
           "entities"
         ],
         "title": "EntitySearchResponse",
+        "type": "object"
+      },
+      "EntityUndoMergeResponse": {
+        "properties": {
+          "mentions_since": {
+            "items": {
+              "$ref": "#/components/schemas/EntityMovableMention"
+            },
+            "title": "Mentions Since",
+            "type": "array"
+          },
+          "restored": {
+            "$ref": "#/components/schemas/EntityCard"
+          },
+          "skipped_rows": {
+            "default": 0,
+            "title": "Skipped Rows",
+            "type": "integer"
+          },
+          "survivor": {
+            "$ref": "#/components/schemas/EntityCard"
+          }
+        },
+        "required": [
+          "restored",
+          "survivor",
+          "mentions_since"
+        ],
+        "title": "EntityUndoMergeResponse",
         "type": "object"
       },
       "ExpectedOutcome": {
@@ -5369,6 +6368,41 @@
           "overall"
         ],
         "title": "HealthResponse",
+        "type": "object"
+      },
+      "HiddenEntry": {
+        "properties": {
+          "entity_id": {
+            "title": "Entity Id",
+            "type": "string"
+          },
+          "hidden_at": {
+            "format": "date-time",
+            "title": "Hidden At",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type"
+          }
+        },
+        "required": [
+          "entity_id",
+          "name",
+          "hidden_at"
+        ],
+        "title": "HiddenEntry",
         "type": "object"
       },
       "HouseholdConnectorCredentialList": {
@@ -6911,6 +7945,52 @@
         "title": "MePrivacyModeResponse",
         "type": "object"
       },
+      "MeShellState": {
+        "description": "What Lumogis Web's navigation shell shows for the signed-in user.\n\nEvery field is required: a flag the server could not compute is sent as\n``false`` / ``0`` (never omitted), so a client never has to guess a default.",
+        "properties": {
+          "can_act": {
+            "description": "Lumogis can act for the user: a mailbox with sending on, a healthy capability tool with a write scope, or an item already waiting.",
+            "title": "Can Act",
+            "type": "boolean"
+          },
+          "email_connected": {
+            "description": "The user has at least one email (IMAP) source.",
+            "title": "Email Connected",
+            "type": "boolean"
+          },
+          "knowledge_graph_on": {
+            "description": "The knowledge graph is enabled.",
+            "title": "Knowledge Graph On",
+            "type": "boolean"
+          },
+          "online_ai_allowed": {
+            "description": "The effective privacy mode allows remote (online) AI models.",
+            "title": "Online Ai Allowed",
+            "type": "boolean"
+          },
+          "pending_approvals": {
+            "description": "Approvals, pending proposals and recoverable sends awaiting the user.",
+            "minimum": 0.0,
+            "title": "Pending Approvals",
+            "type": "integer"
+          },
+          "voice_available": {
+            "description": "A speech-to-text backend is configured.",
+            "title": "Voice Available",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "email_connected",
+          "can_act",
+          "pending_approvals",
+          "voice_available",
+          "online_ai_allowed",
+          "knowledge_graph_on"
+        ],
+        "title": "MeShellState",
+        "type": "object"
+      },
       "MeToolsItem": {
         "description": "One user-safe tool row — observational only; not an execution contract.",
         "properties": {
@@ -7262,7 +8342,6 @@
             "type": "string"
           },
           "user_id": {
-            "default": "default",
             "title": "User Id",
             "type": "string"
           },
@@ -7273,7 +8352,8 @@
         },
         "required": [
           "winner_id",
-          "loser_id"
+          "loser_id",
+          "user_id"
         ],
         "title": "MergeRequest",
         "type": "object"
@@ -7407,6 +8487,115 @@
           "models"
         ],
         "title": "ModelsResponse",
+        "type": "object"
+      },
+      "NameRuleBlock": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "document_count": {
+            "title": "Document Count",
+            "type": "integer"
+          },
+          "entity_type": {
+            "title": "Entity Type",
+            "type": "string"
+          },
+          "name_norm": {
+            "title": "Name Norm",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name_norm",
+          "display_name",
+          "entity_type",
+          "document_count",
+          "created_at"
+        ],
+        "title": "NameRuleBlock",
+        "type": "object"
+      },
+      "NameRuleCorrection": {
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "from_type": {
+            "title": "From Type",
+            "type": "string"
+          },
+          "name_norm": {
+            "title": "Name Norm",
+            "type": "string"
+          },
+          "to_type": {
+            "title": "To Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name_norm",
+          "display_name",
+          "from_type",
+          "to_type"
+        ],
+        "title": "NameRuleCorrection",
+        "type": "object"
+      },
+      "NameRulesResponse": {
+        "properties": {
+          "blocked": {
+            "items": {
+              "$ref": "#/components/schemas/NameRuleBlock"
+            },
+            "title": "Blocked",
+            "type": "array"
+          },
+          "blocked_total": {
+            "title": "Blocked Total",
+            "type": "integer"
+          },
+          "corrections": {
+            "items": {
+              "$ref": "#/components/schemas/NameRuleCorrection"
+            },
+            "title": "Corrections",
+            "type": "array"
+          },
+          "corrections_total": {
+            "title": "Corrections Total",
+            "type": "integer"
+          },
+          "hidden": {
+            "items": {
+              "$ref": "#/components/schemas/HiddenEntry"
+            },
+            "title": "Hidden",
+            "type": "array"
+          },
+          "hidden_total": {
+            "title": "Hidden Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "blocked",
+          "corrections",
+          "hidden",
+          "blocked_total",
+          "corrections_total",
+          "hidden_total"
+        ],
+        "title": "NameRulesResponse",
         "type": "object"
       },
       "NewUserSpec": {
@@ -9265,6 +10454,72 @@
         "title": "RelatedEntity",
         "type": "object"
       },
+      "RemoveNameRuleRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_type": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Entity Type",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "block",
+              "retype"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "name_norm": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Name Norm",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "name_norm",
+          "entity_type"
+        ],
+        "title": "RemoveNameRuleRequest",
+        "type": "object"
+      },
+      "RemoveNameRuleResponse": {
+        "properties": {
+          "removed": {
+            "default": true,
+            "title": "Removed",
+            "type": "boolean"
+          },
+          "reread_documents": {
+            "items": {
+              "$ref": "#/components/schemas/RereadDocument"
+            },
+            "title": "Reread Documents",
+            "type": "array"
+          },
+          "reread_more": {
+            "default": 0,
+            "title": "Reread More",
+            "type": "integer"
+          },
+          "restored_corrections": {
+            "items": {
+              "$ref": "#/components/schemas/NameRuleCorrection"
+            },
+            "title": "Restored Corrections",
+            "type": "array"
+          }
+        },
+        "required": [
+          "restored_corrections",
+          "reread_documents"
+        ],
+        "title": "RemoveNameRuleResponse",
+        "type": "object"
+      },
       "ReplyAllRequest": {
         "properties": {
           "signal_id": {
@@ -9346,6 +10601,24 @@
           "draft"
         ],
         "title": "ReplyDraftResponse",
+        "type": "object"
+      },
+      "RereadDocument": {
+        "properties": {
+          "document_id": {
+            "title": "Document Id",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "document_id",
+          "title"
+        ],
+        "title": "RereadDocument",
         "type": "object"
       },
       "RescanRequest": {
@@ -9744,6 +11017,286 @@
         "title": "SectionSummary",
         "type": "object"
       },
+      "SecureAddressEnableRequest": {
+        "additionalProperties": false,
+        "description": "``POST …/secure-address/enable`` — the address is always explicit.",
+        "properties": {
+          "lan_address": {
+            "title": "Lan Address",
+            "type": "string"
+          }
+        },
+        "required": [
+          "lan_address"
+        ],
+        "title": "SecureAddressEnableRequest",
+        "type": "object"
+      },
+      "SecureAddressLanAddressRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "lan_address": {
+            "title": "Lan Address",
+            "type": "string"
+          }
+        },
+        "required": [
+          "lan_address"
+        ],
+        "title": "SecureAddressLanAddressRequest",
+        "type": "object"
+      },
+      "SecureAddressPublic": {
+        "description": "``GET /api/v1/secure-address`` — what any signed-in member may know.",
+        "properties": {
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          }
+        },
+        "title": "SecureAddressPublic",
+        "type": "object"
+      },
+      "SecureAddressStatus": {
+        "description": "``GET /api/v1/admin/secure-address`` — read-only, from cached state.",
+        "properties": {
+          "certificate_valid_until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Certificate Valid Until"
+          },
+          "detection_unavailable_reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "docker_desktop",
+                  "not_rfc1918",
+                  "failed",
+                  "helper_image_missing"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detection Unavailable Reason"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "enum": [
+                  "worker_unreachable",
+                  "registration_refused",
+                  "registration_rate_limited",
+                  "clock_skew",
+                  "budget_exhausted",
+                  "lan_address_unknown",
+                  "caddy_volume_missing",
+                  "caddy_snippet_rejected",
+                  "caddy_reload_failed",
+                  "caddy_unreachable",
+                  "stack_control_outdated",
+                  "certificate_pending",
+                  "renewal_failing",
+                  "state_corrupt",
+                  "registration_retired",
+                  "caddy_image_outdated",
+                  "service_full"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "lan_address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lan Address"
+          },
+          "lan_address_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "detected",
+                  "request",
+                  "manual"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lan Address Source"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "name_changed": {
+            "default": false,
+            "title": "Name Changed",
+            "type": "boolean"
+          },
+          "name_new_until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name New Until"
+          },
+          "resolver": {
+            "default": "unknown",
+            "enum": [
+              "ok",
+              "blocked",
+              "pending",
+              "unknown"
+            ],
+            "title": "Resolver",
+            "type": "string"
+          },
+          "retry_after_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry After Seconds"
+          },
+          "sign_in_enabled": {
+            "title": "Sign In Enabled",
+            "type": "boolean"
+          },
+          "state": {
+            "enum": [
+              "off",
+              "needs_address",
+              "registering",
+              "issuing",
+              "ready",
+              "router_blocked",
+              "error"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "suggested_address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suggested Address"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          },
+          "warnings": {
+            "items": {
+              "enum": [
+                "caddy_unreachable",
+                "address_mismatch",
+                "two_computers",
+                "budget_exhausted"
+              ],
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "state",
+          "sign_in_enabled"
+        ],
+        "title": "SecureAddressStatus",
+        "type": "object"
+      },
+      "SecureAddressSummary": {
+        "description": "Secure-address row in ``StackStatusResponse`` (LUM-331).",
+        "properties": {
+          "state": {
+            "enum": [
+              "off",
+              "needs_address",
+              "registering",
+              "issuing",
+              "ready",
+              "router_blocked",
+              "error"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "SecureAddressSummary",
+        "type": "object"
+      },
       "SenderRuleRequest": {
         "additionalProperties": false,
         "properties": {
@@ -10123,6 +11676,39 @@
           }
         },
         "title": "SettingsUpdate",
+        "type": "object"
+      },
+      "SetupClaimRequest": {
+        "properties": {
+          "email": {
+            "format": "email",
+            "title": "Email",
+            "type": "string"
+          },
+          "password": {
+            "maxLength": 256,
+            "title": "Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ],
+        "title": "SetupClaimRequest",
+        "type": "object"
+      },
+      "SetupStatus": {
+        "properties": {
+          "needs_setup": {
+            "title": "Needs Setup",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "needs_setup"
+        ],
+        "title": "SetupStatus",
         "type": "object"
       },
       "ShareQueuedResponse": {
@@ -10510,6 +12096,16 @@
             },
             "title": "Ollama",
             "type": "array"
+          },
+          "secure_address": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SecureAddressSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "services": {
             "items": {
@@ -12489,6 +14085,98 @@
         ]
       }
     },
+    "/api/v1/admin/knowledge-graph": {
+      "get": {
+        "operationId": "get_knowledge_graph_status_api_v1_admin_knowledge_graph_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminKnowledgeGraphStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Knowledge Graph Status",
+        "tags": [
+          "v1",
+          "v1-admin-knowledge-graph"
+        ]
+      }
+    },
+    "/api/v1/admin/knowledge-graph/disable": {
+      "post": {
+        "operationId": "disable_knowledge_graph_api_v1_admin_knowledge_graph_disable_post",
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminKnowledgeGraphToggleResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "needs_confirmation, blocked (with ``block``) or busy."
+          }
+        },
+        "summary": "Disable Knowledge Graph",
+        "tags": [
+          "v1",
+          "v1-admin-knowledge-graph"
+        ]
+      }
+    },
+    "/api/v1/admin/knowledge-graph/enable": {
+      "post": {
+        "operationId": "enable_knowledge_graph_api_v1_admin_knowledge_graph_enable_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminKnowledgeGraphToggleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminKnowledgeGraphToggleResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "needs_confirmation, blocked (with ``block``) or busy."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Enable Knowledge Graph",
+        "tags": [
+          "v1",
+          "v1-admin-knowledge-graph"
+        ]
+      }
+    },
     "/api/v1/admin/notification-tier-policy": {
       "get": {
         "operationId": "get_notification_tier_policies_api_v1_admin_notification_tier_policy_get",
@@ -12847,6 +14535,173 @@
         "summary": "Run Safety Suite",
         "tags": [
           "admin-safety"
+        ]
+      }
+    },
+    "/api/v1/admin/secure-address": {
+      "get": {
+        "operationId": "get_secure_address_api_v1_admin_secure_address_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecureAddressStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Secure Address",
+        "tags": [
+          "admin-secure-address"
+        ]
+      }
+    },
+    "/api/v1/admin/secure-address/detect": {
+      "post": {
+        "description": "Look for this computer's home network address now and record the result.\n\nChanges no configuration (no audit row); while the feature is on, the next\nrefresh applies the usual rules for a detected address.",
+        "operationId": "detect_secure_address_api_v1_admin_secure_address_detect_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecureAddressStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Detect Secure Address",
+        "tags": [
+          "admin-secure-address"
+        ]
+      }
+    },
+    "/api/v1/admin/secure-address/disable": {
+      "post": {
+        "operationId": "disable_secure_address_api_v1_admin_secure_address_disable_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecureAddressStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Disable Secure Address",
+        "tags": [
+          "admin-secure-address"
+        ]
+      }
+    },
+    "/api/v1/admin/secure-address/enable": {
+      "post": {
+        "operationId": "enable_secure_address_api_v1_admin_secure_address_enable_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SecureAddressEnableRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecureAddressStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Enable Secure Address",
+        "tags": [
+          "admin-secure-address"
+        ]
+      }
+    },
+    "/api/v1/admin/secure-address/lan-address": {
+      "put": {
+        "operationId": "put_lan_address_api_v1_admin_secure_address_lan_address_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SecureAddressLanAddressRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecureAddressStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Lan Address",
+        "tags": [
+          "admin-secure-address"
+        ]
+      }
+    },
+    "/api/v1/admin/secure-address/retry": {
+      "post": {
+        "operationId": "retry_secure_address_api_v1_admin_secure_address_retry_post",
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecureAddressStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Retry Secure Address",
+        "tags": [
+          "admin-secure-address"
         ]
       }
     },
@@ -15115,26 +16970,8 @@
     },
     "/api/v1/auth/logout": {
       "post": {
-        "description": "Revoke the refresh session server-side and expire the cookie.",
+        "description": "Revoke the refresh session(s) server-side and expire the cookie.\n\nEvery ``lumogis_refresh`` value that verifies is revoked (normally exactly\none). ``require_same_origin`` stops a sibling household's page from signing\nthis household out on a secure address (LUM-331).",
         "operationId": "logout_api_v1_auth_logout_post",
-        "parameters": [
-          {
-            "in": "cookie",
-            "name": "lumogis_refresh",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Lumogis Refresh"
-            }
-          }
-        ],
         "responses": {
           "200": {
             "content": {
@@ -15147,16 +16984,6 @@
               }
             },
             "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
           }
         },
         "summary": "Logout",
@@ -15191,24 +17018,6 @@
       "post": {
         "description": "Rotate the refresh JWT via ``auth_sessions`` and issue a new access token.",
         "operationId": "refresh_api_v1_auth_refresh_post",
-        "parameters": [
-          {
-            "in": "cookie",
-            "name": "lumogis_refresh",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Lumogis Refresh"
-            }
-          }
-        ],
         "responses": {
           "200": {
             "content": {
@@ -15219,16 +17028,6 @@
               }
             },
             "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
           }
         },
         "summary": "Refresh",
@@ -18895,7 +20694,176 @@
         ]
       }
     },
+    "/api/v1/kg/entities": {
+      "get": {
+        "description": "The entries the caller may see, grouped by kind, with counts (LUM-161).",
+        "operationId": "list_entities_route_api_v1_kg_entities_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "person",
+                    "org",
+                    "project",
+                    "concept",
+                    "other"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          },
+          {
+            "in": "query",
+            "name": "shared",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "only",
+                    "exclude"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Shared"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "default": "mentions",
+              "enum": [
+                "mentions",
+                "recent",
+                "name"
+              ],
+              "title": "Sort",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 10000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Entities Route",
+        "tags": [
+          "v1",
+          "v1-kg"
+        ]
+      }
+    },
     "/api/v1/kg/entities/{entity_id}": {
+      "delete": {
+        "description": "Delete the caller's own entry and keep Lumogis from learning its names again (LUM-966).\n\nOwner only: another member's personal entry is a 404, the household copy of\nanother member's entry is a 403 ``not_owner`` (hide it instead).",
+        "operationId": "delete_entity_api_v1_kg_entities__entity_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entity_id",
+            "required": true,
+            "schema": {
+              "title": "Entity Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "minimum": 0,
+              "title": "Version",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityDeleteResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Entity",
+        "tags": [
+          "v1",
+          "v1-kg"
+        ]
+      },
       "get": {
         "operationId": "get_entity_api_v1_kg_entities__entity_id__get",
         "parameters": [
@@ -18932,6 +20900,364 @@
           }
         },
         "summary": "Get Entity",
+        "tags": [
+          "v1",
+          "v1-kg"
+        ]
+      },
+      "patch": {
+        "description": "Rename an entry, change its other names, or change its kind (owner only).\n\nOne change at a time: ``entity_type`` (LUM-967) cannot be combined with a\nname or other-name change.",
+        "operationId": "edit_entity_api_v1_kg_entities__entity_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entity_id",
+            "required": true,
+            "schema": {
+              "title": "Entity Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EntityEditRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityCard"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Edit Entity",
+        "tags": [
+          "v1",
+          "v1-kg"
+        ]
+      }
+    },
+    "/api/v1/kg/entities/{entity_id}/hide": {
+      "delete": {
+        "description": "Show a hidden entry again. Idempotent (LUM-966).",
+        "operationId": "unhide_entity_api_v1_kg_entities__entity_id__hide_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entity_id",
+            "required": true,
+            "schema": {
+              "title": "Entity Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityHideResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Unhide Entity",
+        "tags": [
+          "v1",
+          "v1-kg"
+        ]
+      },
+      "post": {
+        "description": "Hide another member's shared entry from the caller's own list, search and chat (LUM-966).",
+        "operationId": "hide_entity_api_v1_kg_entities__entity_id__hide_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entity_id",
+            "required": true,
+            "schema": {
+              "title": "Entity Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityHideResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Hide Entity",
+        "tags": [
+          "v1",
+          "v1-kg"
+        ]
+      }
+    },
+    "/api/v1/kg/entities/{entity_id}/history": {
+      "get": {
+        "description": "Merges into (and, once undone, out of) this entry, newest first (owner only).",
+        "operationId": "entity_history_api_v1_kg_entities__entity_id__history_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entity_id",
+            "required": true,
+            "schema": {
+              "title": "Entity Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityHistoryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Entity History",
+        "tags": [
+          "v1",
+          "v1-kg"
+        ]
+      }
+    },
+    "/api/v1/kg/entities/{entity_id}/mentions": {
+      "get": {
+        "description": "Items that mention an entry **and that the caller can open** (LUM-161).",
+        "operationId": "entity_mentions_api_v1_kg_entities__entity_id__mentions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entity_id",
+            "required": true,
+            "schema": {
+              "title": "Entity Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 10000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityMentionsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Entity Mentions",
+        "tags": [
+          "v1",
+          "v1-kg"
+        ]
+      }
+    },
+    "/api/v1/kg/entities/{entity_id}/mentions/move": {
+      "post": {
+        "description": "Move mentions (by id) from this entry to another of the caller's own entries.",
+        "operationId": "move_entity_mentions_api_v1_kg_entities__entity_id__mentions_move_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entity_id",
+            "required": true,
+            "schema": {
+              "title": "Entity Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EntityMoveMentionsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityMoveMentionsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Move Entity Mentions",
+        "tags": [
+          "v1",
+          "v1-kg"
+        ]
+      }
+    },
+    "/api/v1/kg/entities/{entity_id}/merge": {
+      "post": {
+        "description": "Merge another of the caller's own entries into this one (this entry survives).\n\nRecords what moved so the merge can be undone from the entry's History.",
+        "operationId": "merge_entity_api_v1_kg_entities__entity_id__merge_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entity_id",
+            "required": true,
+            "schema": {
+              "title": "Entity Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EntityMergeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityMergeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Merge Entity",
         "tags": [
           "v1",
           "v1-kg"
@@ -18987,6 +21313,116 @@
           }
         },
         "summary": "Related Entities",
+        "tags": [
+          "v1",
+          "v1-kg"
+        ]
+      }
+    },
+    "/api/v1/kg/merges/{merge_id}/undo": {
+      "post": {
+        "description": "Undo one of the caller's merges (newest first per entry).",
+        "operationId": "undo_merge_api_v1_kg_merges__merge_id__undo_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "merge_id",
+            "required": true,
+            "schema": {
+              "title": "Merge Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityUndoMergeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Undo Merge",
+        "tags": [
+          "v1",
+          "v1-kg"
+        ]
+      }
+    },
+    "/api/v1/kg/name-rules": {
+      "get": {
+        "description": "The caller's names Lumogis won't learn, kind corrections and hidden entries (LUM-966).",
+        "operationId": "list_name_rules_api_v1_kg_name_rules_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NameRulesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Name Rules",
+        "tags": [
+          "v1",
+          "v1-kg"
+        ]
+      }
+    },
+    "/api/v1/kg/name-rules/remove": {
+      "post": {
+        "description": "Remove a name from the won't-learn list, or a kind correction (LUM-966).\n\nA POST with a body, not ``DELETE /name-rules/{type}/{name}``: names contain\nspaces, slashes and non-ASCII, and a body avoids path-encoding bugs. Removing\na name offers a re-read of the documents that mentioned it.",
+        "operationId": "remove_name_rule_api_v1_kg_name_rules_remove_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RemoveNameRuleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemoveNameRuleResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Name Rule",
         "tags": [
           "v1",
           "v1-kg"
@@ -20302,6 +22738,28 @@
         ]
       }
     },
+    "/api/v1/me/shell": {
+      "get": {
+        "operationId": "get_my_shell_state_api_v1_me_shell_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeShellState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get My Shell State",
+        "tags": [
+          "v1",
+          "v1-me-shell"
+        ]
+      }
+    },
     "/api/v1/me/tools": {
       "get": {
         "description": "Observational list of tools Core knows about (LLM, MCP, capabilities, actions).\n\nDoes **not** invoke tools, grant permissions, or return secrets or raw\nJSON Schemas. Rows mirror :func:`services.unified_tools.build_tool_catalog_for_user`\nincluding ``permission_mode`` (``ask`` / ``do`` / ``blocked`` / ``unknown``)\nfrom :func:`permissions.get_connector_mode` where a tool maps to a connector.",
@@ -20905,6 +23363,27 @@
         ]
       }
     },
+    "/api/v1/secure-address": {
+      "get": {
+        "operationId": "get_public_secure_address_api_v1_secure_address_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecureAddressPublic"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Public Secure Address",
+        "tags": [
+          "secure-address"
+        ]
+      }
+    },
     "/api/v1/sessions/{session_id}/publish": {
       "delete": {
         "operationId": "unpublish_session_api_v1_sessions__session_id__publish_delete",
@@ -20992,6 +23471,70 @@
         "summary": "Publish Session",
         "tags": [
           "scope"
+        ]
+      }
+    },
+    "/api/v1/setup/claim": {
+      "post": {
+        "description": "Create the first admin and sign them in.\n\n* ``200`` — a ``LoginResponse`` and the ``lumogis_refresh`` cookie.\n* ``409`` — setup is not open (sign-in off, already claimed, or lost a race).\n* ``403`` — ``setup_host_not_allowed`` or ``origin mismatch``.\n* ``422`` — email or password policy.\n* ``429`` — too many failed attempts.\n* ``503`` — ``database_unavailable``.",
+        "operationId": "claim_setup_api_v1_setup_claim_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetupClaimRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Claim Setup",
+        "tags": [
+          "setup"
+        ]
+      }
+    },
+    "/api/v1/setup/status": {
+      "get": {
+        "description": "``needs_setup`` is true only while the first admin can still be created.",
+        "operationId": "setup_status_api_v1_setup_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetupStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Setup Status",
+        "tags": [
+          "setup"
         ]
       }
     },
@@ -21577,7 +24120,7 @@
     },
     "/entities/merge": {
       "post": {
-        "description": "Manually merge two entities.\n\nAuth: no token required — intentionally unauthenticated, matching the\nexisting POST /backup and POST /restore pattern for this single-user,\nLAN-only deployment.\n\nPHASE 6 NOTE: When multi-user isolation lands, this endpoint (along with\nPOST /backup, POST /restore, and POST /review-queue/decide) must be gated\nbehind an admin token.  /entities/merge is destructive and irreversible\n(the loser entity is permanently deleted); it has higher consequence than\nthe read-only endpoints that share the same unauthenticated pattern today.\n\nValidates UUIDs before any DB call.  Calls merge_entities() which executes\na single Postgres transaction (Phase A) followed by best-effort Qdrant\ncleanup (Phase B).  Inserts a review_decisions audit row on success.\n\nResponse codes:\n  200  on success\n  400  same winner/loser, invalid UUID, or business rule violation (ValueError)\n  404  entity not found\n  500  SQL error during Phase A (transaction rolled back)",
+        "description": "Manually merge two of a member's entities (admin only).\n\nAuth: ``require_admin``. ``user_id`` (the member whose entries are merged)\nis required: a missing field is a 422, never a silent merge in ``default``.\n\nEvery merge writes an undo record (``entity_merges``, origin ``admin``) and\nthe member can undo it from the entry's History. A cross-kind merge also\nwrites the member's ``entity_name_rules`` retype rule (the survivor's kind\nwins). A merge that would change what the household sees (exactly one side\nis shared) is refused with ``409 sharing_differs``; the member merges those\nfrom the entry page, where Lumogis shows what becomes visible.\n\nValidates UUIDs before any DB call.  Calls merge_entities() which executes\na single Postgres transaction (Phase A) followed by best-effort Qdrant\ncleanup (Phase B).  Inserts a review_decisions audit row on success.\n\nResponse codes:\n  200  on success\n  400  same winner/loser, invalid UUID, or business rule violation (ValueError)\n  404  entity not found\n  409  sharing_differs (one side shared)\n  422  not_personal (a row is a shared copy) or a missing ``user_id``\n  500  SQL error during Phase A (transaction rolled back)",
         "operationId": "entities_merge_entities_merge_post",
         "requestBody": {
           "content": {

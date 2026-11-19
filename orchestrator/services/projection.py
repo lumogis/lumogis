@@ -700,8 +700,20 @@ def project_entity(
     new_pk = projection_pk("entities", src_pk, target_scope)
     point_id = projection_point_id("entities", src_pk, target_scope)
 
+    # A projection row moved by a merge keeps its original id (``projection_pk`` of
+    # the entry that was merged away), so the payload must name the row that exists,
+    # not the id this source would have minted: readers resolve the point by that id
+    # (``tools.py``, ``graph/query.py`` ``_fetch_entity_row_for_context``). LUM-965.
+    existing = config.get_metadata_store().fetch_one(
+        # SCOPE-EXEMPT: projection row looked up by its (published_from, scope) key.
+        "SELECT entity_id::text AS entity_id FROM entities "
+        "WHERE published_from = %s AND scope = %s",
+        (src_pk, target_scope),
+    )
+    row_id = str(existing["entity_id"]) if existing else new_pk
+
     payload = {
-        "entity_id": new_pk,
+        "entity_id": row_id,
         "name": src.get("name") or "",
         "entity_type": src.get("entity_type") or "",
         "user_id": actor.user_id,
@@ -968,8 +980,10 @@ def remap_published_from(
 ) -> None:
     """Repoint every projection row from ``loser_id`` to ``winner_id``.
 
-    Called from ``services/entity_merge.merge_entities`` after the
-    primary merge commits so dedup-driven merges keep household
+    The entity merge (``services/entity_merge``) used to call this and now runs
+    the same two statements inline (LUM-965), because it must capture the rows it
+    drops and moves into the undo record. Kept for its documented contract.
+    Originally called after the primary merge so dedup-driven merges keep household
     projections wired to the surviving canonical row (plan §2.11
     rule 31). Sweeps every projection-capable table because a single
     merge can touch any of them indirectly via attached projections.

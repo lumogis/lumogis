@@ -179,6 +179,13 @@ class EntityCard(BaseModel):
     # fetch guard on the publish route is the real boundary).
     share_status: Literal["personal", "shared"] = "personal"
     is_owner: bool = True
+    # LUM-161 — optimistic-concurrency token for ``PATCH /kg/entities/{id}``.
+    # Additive; ``None`` only where a row has no ``version`` column value.
+    version: Optional[int] = None
+    # LUM-966 — the caller hid this (another member's shared) entry from her own
+    # view. Only the full card (``GET /kg/entities/{id}``) is authoritative;
+    # search stubs never carry it.
+    hidden: bool = False
 
     @property
     def is_shared(self) -> bool:
@@ -201,6 +208,98 @@ class RelatedEntitiesResponse(BaseModel):
 class EntitySearchResponse(BaseModel):
     model_config = _RES
     entities: List[EntityCard]
+
+
+# ── KG: "What Lumogis knows" browser (LUM-161) ───────────────────────
+
+EntityKind = Literal["person", "org", "project", "concept", "other"]
+
+
+class EntityListItem(BaseModel):
+    model_config = _RES
+    entity_id: str
+    name: str
+    type: Optional[str] = None  # raw entity_type
+    kind: EntityKind
+    aliases: List[str] = []  # first 5 stored aliases (the list shows up to 3)
+    alias_count: int = 0  # total stored aliases
+    scope: Literal["personal", "shared", "system"] = "personal"
+    share_status: Literal["personal", "shared"] = "personal"
+    is_owner: bool = True
+    # Items that mention the entry and still exist (not the extraction-pass
+    # column ``entities.mention_count``). ``None`` unless the caller owns the row:
+    # another member's counts and dates are not exposed (LUM-161 Decision 7).
+    mention_count: Optional[int] = None
+    last_mentioned_at: Optional[datetime] = None
+
+
+class EntityKindCounts(BaseModel):
+    model_config = _RES
+    person: int = 0
+    org: int = 0
+    project: int = 0
+    concept: int = 0
+    other: int = 0
+
+
+class EntityListResponse(BaseModel):
+    model_config = _RES
+    entities: List[EntityListItem]
+    counts: EntityKindCounts  # all filters except ``kind``
+    total: int  # all filters incl. ``kind`` (for paging)
+
+
+# Only kinds a shipping writer of ``entity_relations`` produces (DOCUMENT from
+# ingest, SESSION from session end, MEMORY from the MCP write tools). Add note /
+# voice-memo kinds here when a writer emits NOTE / AUDIO evidence — considered,
+# not filed (LUM-161).
+MentionKind = Literal["document", "chat", "ai_tool"]
+
+
+class EntityMention(BaseModel):
+    model_config = _RES
+    kind: MentionKind
+    ref_id: str  # file_index.id / session_id the VIEWER can open; evidence_id for ai_tool
+    title: str  # <= 120 chars
+    mentioned_at: datetime  # entity_relations.created_at
+
+
+class EntityMentionCounts(BaseModel):
+    model_config = _RES
+    document: int = 0
+    chat: int = 0
+    ai_tool: int = 0
+
+
+class EntityMentionsResponse(BaseModel):
+    model_config = _RES
+    mentions: List[EntityMention]
+    counts: EntityMentionCounts
+    total: int
+
+
+_EntityAlias = Annotated[str, Field(min_length=1, max_length=256)]
+
+
+class EntityEditRequest(BaseModel):
+    """``PATCH /api/v1/kg/entities/{id}`` — rename + other-name deltas (LUM-161), or kind (LUM-967).
+
+    One change at a time: ``entity_type`` alone, or the name / other-name fields.
+    ``entity_type`` is validated in the service (PERSON|ORG|PROJECT|CONCEPT,
+    case-insensitive) so every domain 422 keeps the same body shape.
+
+    Alias changes are *deltas* applied to the locked row, never a replacement
+    list (an alias added by extraction while the dialog was open survives).
+    "Nothing to change" is checked in the route, so every domain 422 has the
+    same ``{"detail": {"error", "code"}}`` body shape.
+    """
+
+    model_config = _REQ
+    name: Optional[str] = Field(default=None, min_length=1, max_length=256)
+    aliases_add: List[_EntityAlias] = Field(default_factory=list, max_length=50)
+    aliases_remove: List[_EntityAlias] = Field(default_factory=list, max_length=50)
+    entity_type: Optional[str] = Field(default=None, min_length=1, max_length=32)
+    version: int = Field(ge=1)
 
 
 # ── Approvals ────────────────────────────────────────────────────────
@@ -1163,12 +1262,33 @@ class AdminDiagnosticsWarning(BaseModel):
 class AdminDiagnosticsSpeechToText(BaseModel):
     """Speech-to-text readiness slice (foundation STT — see ``speech_to_text`` ADR chunk)."""
 
-    model_config = _RES
+    # ``model_state`` would otherwise trip pydantic's protected ``model_`` namespace.
+    model_config = ConfigDict(extra="ignore", protected_namespaces=())
     backend: Literal["none", "fake_stt", "whisper_sidecar"]
     transcribe_available: bool
     max_audio_bytes: int
     max_duration_sec: int
     endpoint: str = Field(default="/api/v1/voice/transcribe")
+    model: Optional[str] = Field(
+        default=None, description="The configured ``STT_MODEL`` (a model id, not a secret)."
+    )
+    model_state: Optional[
+        Literal[
+            "not_applicable",
+            "unknown",
+            "installing",
+            "ready",
+            "unreachable",
+            "unknown_model",
+            "failed",
+        ]
+    ] = Field(
+        default=None,
+        description=(
+            "Whether the engine has the speech model: ``ready`` once installed. "
+            "``None`` when STT is off."
+        ),
+    )
 
 
 class AdminDiagnosticsInbox(BaseModel):
@@ -1311,6 +1431,87 @@ class StackStatusMeta(BaseModel):
     overall_status: Literal["ok", "degraded", "down"]
 
 
+# --- Secure address at home (Lumogis Home DNS, LUM-331) ---------------------
+
+SecureAddressState = Literal[
+    "off", "needs_address", "registering", "issuing", "ready", "router_blocked", "error"
+]
+SecureAddressErrorCode = Literal[
+    "worker_unreachable",
+    "registration_refused",
+    "registration_rate_limited",
+    "clock_skew",
+    "budget_exhausted",
+    "lan_address_unknown",
+    "caddy_volume_missing",
+    "caddy_snippet_rejected",
+    "caddy_reload_failed",
+    "caddy_unreachable",
+    "stack_control_outdated",
+    "certificate_pending",
+    "renewal_failing",
+    "state_corrupt",
+    "registration_retired",
+    "caddy_image_outdated",
+    "service_full",
+]
+SecureAddressWarning = Literal[
+    "caddy_unreachable", "address_mismatch", "two_computers", "budget_exhausted"
+]
+
+
+class SecureAddressSummary(BaseModel):
+    """Secure-address row in ``StackStatusResponse`` (LUM-331)."""
+
+    model_config = _RES
+    state: SecureAddressState
+    url: Optional[str] = None
+
+
+class SecureAddressStatus(BaseModel):
+    """``GET /api/v1/admin/secure-address`` — read-only, from cached state."""
+
+    model_config = _RES
+    state: SecureAddressState
+    name: Optional[str] = None
+    url: Optional[str] = None
+    lan_address: Optional[str] = None
+    lan_address_source: Optional[Literal["detected", "request", "manual"]] = None
+    suggested_address: Optional[str] = None
+    detection_unavailable_reason: Optional[
+        Literal["docker_desktop", "not_rfc1918", "failed", "helper_image_missing"]
+    ] = None
+    certificate_valid_until: Optional[datetime] = None
+    resolver: Literal["ok", "blocked", "pending", "unknown"] = "unknown"
+    error_code: Optional[SecureAddressErrorCode] = None
+    retry_after_seconds: Optional[int] = None
+    # Set for 35 min after the name was (re)registered and its address first
+    # published; devices may still hold a cached miss (LUM-996).
+    name_new_until: Optional[datetime] = None
+    name_changed: bool = False
+    sign_in_enabled: bool
+    warnings: List[SecureAddressWarning] = Field(default_factory=list)
+
+
+class SecureAddressEnableRequest(BaseModel):
+    """``POST …/secure-address/enable`` — the address is always explicit."""
+
+    model_config = _REQ
+    lan_address: str
+
+
+class SecureAddressLanAddressRequest(BaseModel):
+    model_config = _REQ
+    lan_address: str
+
+
+class SecureAddressPublic(BaseModel):
+    """``GET /api/v1/secure-address`` — what any signed-in member may know."""
+
+    model_config = _RES
+    url: Optional[str] = None
+
+
 class StackStatusResponse(BaseModel):
     """Response for ``GET /api/v1/admin/diagnostics/stack-status``."""
 
@@ -1320,6 +1521,7 @@ class StackStatusResponse(BaseModel):
     storage: List[StackStatusStorageItem]
     ollama: List[StackStatusOllamaModel]
     warnings: List[AdminDiagnosticsWarning] = Field(default_factory=list)
+    secure_address: Optional[SecureAddressSummary] = None
 
 
 HealthServiceState = Literal["healthy", "degraded", "down", "unknown", "not_configured"]
@@ -1789,6 +1991,116 @@ class FeatureFlagsResponse(BaseModel):
     flags: List[FeatureFlagState] = Field(description="All flags, sorted by ``key``.")
 
 
+KnowledgeGraphState = Literal[
+    "on",
+    "starting",
+    "stopping",
+    "start_failed",
+    "stop_failed",
+    "service_unreachable",
+    "service_wiring_failed",
+    "unsupported_mode",
+    "off",
+    "off_low_memory",
+]
+GraphModeToken = Literal["disabled", "inprocess", "service"]
+# ``busy`` is never a failure: it means another sequence is already running.
+ToggleFailedCode = Literal["compose_failed", "timeout", "unreachable"]
+TurnOnBlock = Literal[
+    "checkout",
+    "compose_too_old",
+    "stack_control_unreachable",
+    "env_unwritable",
+    "already_on",
+    "in_progress",
+]
+TurnOffBlock = Literal[
+    "checkout",
+    "compose_too_old",
+    "stack_control_unreachable",
+    "env_unwritable",
+    "already_off",
+    "in_progress",
+]
+
+
+class AdminKnowledgeGraphService(BaseModel):
+    """The ``lumogis-graph`` capability as Core's registry sees it (no URL)."""
+
+    model_config = _RES
+    registered: bool = Field(description="Registry has a manifest with id ``lumogis-graph``.")
+    healthy: Optional[bool] = Field(default=None, description="``None`` when not registered.")
+    last_seen_healthy: Optional[datetime] = None
+    last_unhealthy_reason: Optional[str] = Field(
+        default=None, description="Coarse code from the registry; ``None`` when healthy."
+    )
+
+
+class AdminKnowledgeGraphMemory(BaseModel):
+    model_config = _RES
+    total_bytes: Optional[int] = Field(default=None, ge=0, description="``None`` when unreadable.")
+    required_bytes: int = Field(ge=0, description="Memory the graph needs in total.")
+    enough: Optional[bool] = Field(default=None, description="``None`` when total is unknown.")
+
+
+class AdminKnowledgeGraphTurnOn(BaseModel):
+    """Whether the Turn on button is offered, computed server-side (LUM-989)."""
+
+    model_config = _RES
+    available: bool
+    block: Optional[TurnOnBlock] = Field(default=None, description="Why not, when unavailable.")
+    needs_confirmation: bool = Field(
+        default=False,
+        description="The memory verdict is False: ask for the low-memory confirmation.",
+    )
+
+
+class AdminKnowledgeGraphTurnOff(BaseModel):
+    model_config = _RES
+    available: bool
+    block: Optional[TurnOffBlock] = Field(default=None, description="Why not, when unavailable.")
+
+
+class AdminKnowledgeGraphStatus(BaseModel):
+    """``GET /api/v1/admin/knowledge-graph`` (LUM-937, LUM-989).
+
+    Admin-only; mode tokens only, no URLs or secrets.
+    """
+
+    model_config = _RES
+    state: KnowledgeGraphState
+    mode: GraphModeToken = Field(description="Effective mode: ``config.get_graph_mode()``.")
+    configured_mode: GraphModeToken = Field(
+        description="Mode requested by the environment: ``config.read_graph_mode_from_env()``."
+    )
+    service: AdminKnowledgeGraphService
+    memory: AdminKnowledgeGraphMemory
+    install_kind: Literal["release", "checkout", "unknown"] = Field(
+        description="``release``: the two Release files; ``checkout``: a git checkout."
+    )
+    turn_on: AdminKnowledgeGraphTurnOn
+    turn_off: AdminKnowledgeGraphTurnOff
+    failed_code: Optional[ToggleFailedCode] = Field(
+        default=None, description="With ``start_failed`` / ``stop_failed``."
+    )
+
+
+class AdminKnowledgeGraphToggleRequest(BaseModel):
+    """``POST .../enable`` and ``.../disable`` body. One boolean; nothing else is accepted."""
+
+    model_config = ConfigDict(extra="forbid")
+    confirm_low_memory: bool = Field(
+        default=False,
+        strict=True,  # "yes" and 1 are refused: a consent flag must be a real boolean
+        description="Confirms Turn on although the memory check says short. Ignored by disable.",
+    )
+
+
+class AdminKnowledgeGraphToggleResponse(BaseModel):
+    model_config = _RES
+    state: Literal["starting", "stopping"]
+
+
 class ErrorResponse(BaseModel):
     model_config = _RES
     error: str  # stable machine code
@@ -1877,3 +2189,197 @@ __all__ = [
     "IngestBatchSummaryResponse",
     "ErrorResponse",
 ]
+
+
+# ── KG: merge two entries, with undo (LUM-965) ───────────────────────
+
+
+class EntityMergeRequest(BaseModel):
+    """``POST /api/v1/kg/entities/{id}/merge`` — the path entry survives."""
+
+    model_config = _REQ
+    other_id: str = Field(min_length=1, max_length=64)
+    version: int = Field(ge=1)  # the survivor's (path entry's) version
+    other_version: int = Field(ge=1)
+    keep_name: Literal["this", "other"] = "this"
+
+
+class EntityMergeResponse(BaseModel):
+    model_config = _RES
+    entry: EntityCard  # the survivor after the merge
+    merge_id: str
+
+
+class EntityMergeHistoryItem(BaseModel):
+    model_config = _RES
+    merge_id: str
+    # merged_in: this entry is the survivor. merged_out: this entry was merged
+    # away and the merge was undone.
+    direction: Literal["merged_in", "merged_out"]
+    other_entity_id: str
+    other_name: str
+    origin: Literal["member", "auto_dedup", "review_queue", "admin"]
+    merged_at: datetime
+    undone_at: Optional[datetime] = None
+    # merged_in, not undone, and the newest open merge into this entry.
+    can_undo: bool
+    # Set when merged_in and open but not the newest: the merge to undo first.
+    newer_merge_id: Optional[str] = None
+    # Undo would put a shared copy of the other entry back.
+    restores_sharing: bool = False
+
+
+class EntityHistoryResponse(BaseModel):
+    model_config = _RES
+    items: List[EntityMergeHistoryItem]  # newest first, at most 50
+
+
+class EntityMovableMention(EntityMention):
+    model_config = _RES
+    relation_id: int
+
+
+class EntityUndoMergeResponse(BaseModel):
+    model_config = _RES
+    restored: EntityCard
+    survivor: EntityCard
+    # On the survivor, added after the merge and not from it (at most 200).
+    mentions_since: List[EntityMovableMention]
+    # Recorded rows that could not be put back (moved on, purged, or slot taken).
+    skipped_rows: int = 0
+
+
+class EntityMoveMentionsRequest(BaseModel):
+    model_config = _REQ
+    to_entity_id: str = Field(min_length=1, max_length=64)
+    relation_ids: List[int] = Field(min_length=1, max_length=200)
+    version: int = Field(ge=1)  # the source (path) entry
+    to_version: int = Field(ge=1)
+
+
+class EntityMoveMentionsResponse(BaseModel):
+    model_config = _RES
+    moved: int
+    source: EntityCard
+    target: EntityCard
+
+
+# ── delete, hide, names Lumogis won't learn (LUM-966) ───────────────────────
+
+
+class EntityNotBlocked(BaseModel):
+    model_config = _RES
+    name: str
+    # used_by_other_entry: another live entry of the same kind uses the name, so it
+    # keeps learning it. already_corrected: a kind correction already sends the
+    # name elsewhere.
+    reason: Literal["used_by_other_entry", "already_corrected"]
+
+
+class EntityDeleteResponse(BaseModel):
+    model_config = _RES
+    deleted: bool = True
+    entity_id: str
+    # Display forms, canonical name first.
+    blocked_names: List[str]
+    not_blocked: List[EntityNotBlocked]
+    # A shared/system copy existed and went with the entry.
+    household_copy_removed: bool
+    # entity_merges rows removed (the entry as winner, cascaded, and as loser).
+    merges_removed: int
+
+
+class EntityHideResponse(BaseModel):
+    model_config = _RES
+    entity_id: str
+    hidden: bool
+
+
+class NameRuleBlock(BaseModel):
+    model_config = _RES
+    name_norm: str
+    display_name: str
+    entity_type: str
+    document_count: int
+    created_at: datetime
+
+
+class NameRuleCorrection(BaseModel):
+    model_config = _RES
+    name_norm: str
+    display_name: str
+    from_type: str
+    to_type: str
+
+
+class HiddenEntry(BaseModel):
+    model_config = _RES
+    entity_id: str
+    name: str
+    type: Optional[str] = None
+    hidden_at: datetime
+
+
+class NameRulesResponse(BaseModel):
+    model_config = _RES
+    blocked: List[NameRuleBlock]
+    corrections: List[NameRuleCorrection]
+    hidden: List[HiddenEntry]
+    # Uncapped counts: each list is cut at 500 (newest first).
+    blocked_total: int
+    corrections_total: int
+    hidden_total: int
+
+
+class RemoveNameRuleRequest(BaseModel):
+    model_config = _REQ
+    kind: Literal["block", "retype"]
+    name_norm: str = Field(min_length=1, max_length=512)
+    # block: the blocked kind; retype: the kind the correction starts from.
+    entity_type: str = Field(min_length=1, max_length=32)
+
+
+class RereadDocument(BaseModel):
+    model_config = _RES
+    document_id: int
+    title: str
+
+
+class RemoveNameRuleResponse(BaseModel):
+    model_config = _RES
+    removed: bool = True
+    restored_corrections: List[NameRuleCorrection]
+    # The caller's current documents only (at most 50, most recent mention first).
+    reread_documents: List[RereadDocument]
+    reread_more: int = 0
+
+
+# ── Me / shell state (navigation shell) ─────────────────────────────
+
+
+class MeShellState(BaseModel):
+    """What Lumogis Web's navigation shell shows for the signed-in user.
+
+    Every field is required: a flag the server could not compute is sent as
+    ``false`` / ``0`` (never omitted), so a client never has to guess a default.
+    """
+
+    model_config = _RES
+    email_connected: bool = Field(
+        description="The user has at least one email (IMAP) source.",
+    )
+    can_act: bool = Field(
+        description=(
+            "Lumogis can act for the user: a mailbox with sending on, a healthy "
+            "capability tool with a write scope, or an item already waiting."
+        ),
+    )
+    pending_approvals: int = Field(
+        ge=0,
+        description="Approvals, pending proposals and recoverable sends awaiting the user.",
+    )
+    voice_available: bool = Field(description="A speech-to-text backend is configured.")
+    online_ai_allowed: bool = Field(
+        description="The effective privacy mode allows remote (online) AI models.",
+    )
+    knowledge_graph_on: bool = Field(description="The knowledge graph is enabled.")

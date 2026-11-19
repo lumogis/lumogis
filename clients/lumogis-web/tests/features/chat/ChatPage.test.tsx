@@ -15,10 +15,10 @@
 // human-readable error in the UI.
 //
 // LUM-853: the empty-library state is client logic (thread empty AND the caller's document list
-// loaded with zero rows), so Vitest is its layer; the auth-unset -> offer join is test 14
-// (single-user boot + empty library); the server inputs are pinned by test 13 in
-// orchestrator/tests/test_me_onboarding_routes.py. There is no auth-off browser lane
-// (LUM-894 Later).
+// loaded with zero rows), so Vitest is its layer; the signed-in -> offer join is test 14
+// (signed-in member + empty library); the server inputs are pinned by test 13 in
+// orchestrator/tests/test_me_onboarding_routes.py. The first-admin boot states are pinned in
+// tests/auth/setupBoot.test.tsx (LUM-981).
 
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
@@ -28,7 +28,8 @@ import { clear } from "idb-keyval";
 import { ApiClient } from "../../../src/api/client";
 import { AccessTokenStore } from "../../../src/api/tokens";
 import type { DocumentSummary } from "../../../src/api/documents";
-import { AuthProvider, useAuth } from "../../../src/auth/AuthProvider";
+import { AuthProvider } from "../../../src/auth/AuthProvider";
+import { help } from "../../../src/copy/help";
 import { ChatPage, humaniseChatError } from "../../../src/features/chat/ChatPage";
 import * as drafts from "../../../src/pwa/drafts";
 import { getDraft, makeChatDraftKey } from "../../../src/pwa/drafts";
@@ -210,14 +211,16 @@ describe("humaniseChatError", () => {
 });
 
 describe("ChatPage — render + send", () => {
-  it("Phase 2B: chat layout root uses lumogis-chat for narrow-width constraints", async () => {
+  it("LUM-993: an empty chat is the Chat home — one heading, with the composer and model chip inside it", async () => {
     const client = buildClient();
     const tokens = new AccessTokenStore();
-    const { container } = renderChat(client, tokens);
-    await waitFor(() => {
-      expect(screen.getByTestId("chat-page")).toBeInTheDocument();
-    });
-    expect(container.querySelector(".lumogis-chat")).not.toBeNull();
+    renderChat(client, tokens);
+    const home = await screen.findByTestId("chat-home");
+    expect(within(home).getByRole("heading", { level: 1, name: "What can I help you with?" })).toBeInTheDocument();
+    expect(within(home).getByLabelText(/^message$/i)).toBeInTheDocument();
+    expect(within(home).getByRole("button", { name: "Send" })).toBeDisabled();
+    expect(await within(home).findByRole("combobox", { name: "Model" })).toBeInTheDocument();
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
   });
 
   it("Phase 2D: conversation transcript exposes log + polite live region", async () => {
@@ -419,7 +422,7 @@ describe("ChatPage — render + send", () => {
     renderChat(buildClient());
     await waitFor(() => screen.getByLabelText(/model$/i));
 
-    await user.click(screen.getByRole("button", { name: /\+ New chat/i }));
+    await user.click(screen.getByRole("button", { name: /^New chat$/i }));
 
     const titles = screen.getAllByText(/New chat/i);
     expect(titles.length).toBeGreaterThanOrEqual(2);
@@ -459,7 +462,7 @@ describe("ChatPage — render + send", () => {
     renderChat(buildClient());
     await waitFor(() => screen.getByLabelText(/model$/i));
 
-    await user.click(screen.getByRole("button", { name: /\+ New chat/i }));
+    await user.click(screen.getByRole("button", { name: /^New chat$/i }));
     const textarea = screen.getByLabelText(/^message$/i);
     await user.type(textarea, "typed before idb");
 
@@ -735,21 +738,23 @@ describe("ChatPage — empty library (LUM-853)", () => {
     });
     renderChat(client);
     const heading = await screen.findByRole("heading", { name: EMPTY_TITLE });
-    expect(screen.getByRole("link", { name: "Connect a source" })).toHaveAttribute("href", "/me/sources");
+    expect(screen.getByRole("link", { name: "Connect a source" })).toHaveAttribute("href", "/settings/sources");
     expect(screen.getByRole("link", { name: "Upload a file" })).toHaveAttribute("href", "/documents");
 
     const log = screen.getByRole("log", { name: /conversation transcript/i });
     expect(within(log).queryByRole("heading", { name: EMPTY_TITLE })).toBeNull();
     // After the transcript in document order.
     expect(log.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // The ephemeral-chat sentence stays inside the transcript, once.
-    const sentence = screen.getAllByText(/Lumogis chats are ephemeral and live only in this browser tab/);
-    expect(sentence).toHaveLength(1);
-    expect(log.contains(sentence[0]!)).toBe(true);
+    // LUM-993: one history line (not the three old "ephemeral" sentences), outside the transcript.
+    const line = screen.getAllByText(help.chat.history);
+    expect(line).toHaveLength(1);
+    expect(log.contains(line[0]!)).toBe(false);
+    expect(screen.queryByText(/ephemeral/i)).toBeNull();
 
-    // The guided cards are not gated on the library, and only the documents stream is open.
-    await screen.findByTestId("wow-gate");
+    // Decision 8: the library card takes the place of the suggestions, and only
+    // the documents stream is open.
     await waitFor(() => expect(openEventStreams(streams.spy)).toBe(1));
+    expect(screen.queryByTestId("wow-gate")).toBeNull();
   });
 
   it("2 keeps today's chat when the library has documents", async () => {
@@ -758,14 +763,14 @@ describe("ChatPage — empty library (LUM-853)", () => {
     await screen.findByTestId("wow-gate");
     expect(screen.queryByRole("heading", { name: EMPTY_TITLE })).toBeNull();
     expect(screen.queryByRole("link", { name: "Connect a source" })).toBeNull();
-    expect(screen.getByText(/Lumogis chats are ephemeral and live only in this browser tab/)).toBeInTheDocument();
+    expect(screen.getByText(help.chat.history)).toBeInTheDocument();
   });
 
   it("3 shows nothing new while the documents list is loading", async () => {
     renderChat(buildClient({ documents: () => new Promise<Response>(() => undefined) }));
     await screen.findByRole("combobox", { name: "Model" });
     expect(screen.queryByRole("heading", { name: EMPTY_TITLE })).toBeNull();
-    expect(screen.getByText(/Lumogis chats are ephemeral and live only in this browser tab/)).toBeInTheDocument();
+    expect(screen.getByText(help.chat.history)).toBeInTheDocument();
   });
 
   it("4 shows nothing new when the documents list fails", async () => {
@@ -842,14 +847,9 @@ describe("ChatPage — empty library (LUM-853)", () => {
     expect(openEventStreams(streams.spy)).toBe(0);
   });
 
-  it("14 auth unset end to end: single-user boot reaches chat and offers sources", async () => {
-    seedSignedInDevice("default");
+  it("14 a signed-in member with an empty library reaches chat and is offered sources", async () => {
+    seedSignedInDevice("u1");
     const { client } = buildClientWithSpy({
-      refresh: () => jsonResponse(503, { detail: "refresh is disabled in single-user dev mode" }),
-      me: (init) =>
-        new Headers(init?.headers).get("Authorization") === null
-          ? jsonResponse(200, { id: "default", email: "dev@local.lan", role: "admin" })
-          : jsonResponse(401, { error: "unexpected credential" }),
       documents: () => documentsResponse([]),
       wow: () =>
         jsonResponse(200, {
@@ -859,19 +859,9 @@ describe("ChatPage — empty library (LUM-853)", () => {
           onboarding_completed_at: "2026-01-01T00:00:00Z",
         }),
     });
-    function SingleUserProbe(): JSX.Element {
-      return <span data-testid="single-user">{String(useAuth().singleUser)}</span>;
-    }
-    renderWithRouter(
-      <AuthProvider client={client} tokens={new AccessTokenStore()}>
-        <SingleUserProbe />
-        <ChatPage />
-      </AuthProvider>,
-      { route: "/chat" },
-    );
+    renderChat(client);
     await screen.findByRole("heading", { name: EMPTY_TITLE });
     expect(screen.getByRole("link", { name: "Connect a source" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Sign in" })).toBeNull();
-    expect(screen.getByTestId("single-user")).toHaveTextContent("true");
   });
 });

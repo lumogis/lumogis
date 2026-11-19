@@ -6,8 +6,7 @@ import { useSearchParams } from "react-router-dom";
 import type { AuditListResponse } from "../../api/audit";
 import { buildAuditStreamUrl, mergeAuditRows } from "../../api/audit";
 import { useAuth } from "../../auth/AuthProvider";
-import { Button } from "../../components/Button";
-import { MeSubshell } from "../me/MeSubshell";
+import { Button } from "../../components/ui/button";
 import { AuditFilters, type DatePreset } from "./AuditFilters";
 import { AuditTable } from "./_shared/AuditTable";
 import { useAuditLiveTail } from "./useAuditLiveTail";
@@ -86,11 +85,10 @@ export function AuditLogView(): JSX.Element {
   const canNext = offset + PAGE_SIZE < total;
 
   return (
-    <MeSubshell>
-      <section className="lumogis-audit-page">
-        <h1>My activity</h1>
-        <p className="lumogis-prose-mono">Recent Lumogis activity for your account.</p>
-
+      <section>
+        <p className="mb-4 max-w-2xl text-sm text-muted-foreground">
+          What Lumogis did, and what was done with your account. Open Details on a line for the exact record.
+        </p>
         <AuditFilters
           scope="member"
           liveEnabled={liveEnabled}
@@ -116,10 +114,10 @@ export function AuditLogView(): JSX.Element {
           markCloudRows
         />
 
-        <div className="lumogis-pagination">
+        <div className="mt-4 flex items-center gap-3 text-sm">
           <Button
             type="button"
-            variant="secondary"
+            variant="outline"
             size="sm"
             disabled={!canPrev}
             onClick={() => updateParams({ offset: String(Math.max(0, offset - PAGE_SIZE)) })}
@@ -131,7 +129,7 @@ export function AuditLogView(): JSX.Element {
           </span>
           <Button
             type="button"
-            variant="secondary"
+            variant="outline"
             size="sm"
             disabled={!canNext}
             onClick={() => updateParams({ offset: String(offset + PAGE_SIZE) })}
@@ -140,6 +138,5 @@ export function AuditLogView(): JSX.Element {
           </Button>
         </div>
       </section>
-    </MeSubshell>
   );
 }

@@ -168,7 +168,7 @@ jobs:
 
           # LUM-980: every image a household pulls is published and attested. A
           # required list catches a deleted job; the sweep catches a new one.
-          REQUIRED=(publish-orchestrator publish-lumogis-web publish-stack-control publish-backup publish-caddy)
+          REQUIRED=(publish-orchestrator publish-lumogis-web publish-stack-control publish-backup publish-caddy publish-lumogis-graph)
           # Read once, then match: `yq | grep -q` under pipefail can fail on SIGPIPE.
           DIGEST_NEEDS="$(yq e '.jobs["record-publish-digests"].needs[]' "$PUBLISH")"
           for job in "${REQUIRED[@]}"; do

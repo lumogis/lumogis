@@ -12,6 +12,8 @@
 // an alive-ref so a mid-flight unmount can't setState or keep polling.
 import { useEffect, useRef, useState } from "react";
 import { ApiError, type ApiClient } from "../../api/client";
+import { Alert, AlertDescription } from "../../components/ui/alert";
+import { Button } from "../../components/ui/button";
 import {
   pollOAuthDevice,
   startOAuthDevice,
@@ -179,7 +181,7 @@ export function OAuthDevicePanel({
 
   if (phase === "connected") {
     return (
-      <div className="lumogis-oauth-device" role="status">
+      <div className="grid gap-2 text-sm" role="status">
         <p>
           <strong>{email}</strong> is connected.
           {verified
@@ -198,14 +200,14 @@ export function OAuthDevicePanel({
           ? "Sign-in was declined."
           : (error ?? "Sign-in failed.");
     return (
-      <div className="lumogis-oauth-device">
-        <p role="alert" className="lumogis-form-error">
-          {message}
-        </p>
+      <div className="grid gap-2">
+        <Alert variant="destructive">
+          <AlertDescription>{message}</AlertDescription>
+        </Alert>
         {onCancel ? (
-          <button type="button" onClick={onCancel}>
+          <Button type="button" variant="outline" className="justify-self-start" onClick={onCancel}>
             Try again
-          </button>
+          </Button>
         ) : null}
       </div>
     );
@@ -213,8 +215,8 @@ export function OAuthDevicePanel({
 
   // starting | waiting
   return (
-    <div className="lumogis-oauth-device" style={{ display: "grid", gap: "0.5rem" }}>
-      <h3>Connect {providerLabel}</h3>
+    <div className="grid gap-2 text-sm">
+      <h3 className="m-0 text-base font-semibold">Connect {providerLabel}</h3>
       {phase === "starting" || !flow ? (
         <p role="status">Starting sign-in…</p>
       ) : (
@@ -222,13 +224,14 @@ export function OAuthDevicePanel({
           <p>
             To connect <strong>{email}</strong>, open the sign-in page and enter this code:
           </p>
-          <p aria-label="Device code" style={{ fontSize: "1.5rem", fontWeight: 700, letterSpacing: "0.1em" }}>
+          <p aria-label="Device code" className="m-0 font-mono text-2xl font-bold tracking-widest">
             {flow.user_code}
           </p>
           <a
             href={flow.verification_uri_complete || flow.verification_uri}
             target="_blank"
             rel="noreferrer noopener"
+            className="text-accent-text underline underline-offset-2"
           >
             Open the {providerLabel} sign-in page
           </a>
@@ -237,9 +240,9 @@ export function OAuthDevicePanel({
         </>
       )}
       {onCancel ? (
-        <button type="button" onClick={onCancel} style={{ justifySelf: "start" }}>
+        <Button type="button" variant="ghost" className="justify-self-start" onClick={onCancel}>
           Cancel
-        </button>
+        </Button>
       ) : null}
     </div>
   );

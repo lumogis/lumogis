@@ -4,18 +4,19 @@
 // Vitest — QuickCapture (Phase 5E).
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { onlineManager } from "@tanstack/react-query";
 
 import { ApiClient } from "../../../src/api/client";
 import { AccessTokenStore } from "../../../src/api/tokens";
 import { AuthProvider, useAuth } from "../../../src/auth/AuthProvider";
-import { NAV_ITEMS } from "../../../src/components/BottomNav";
+import { CORE_ITEMS } from "../../../src/components/shell/navItems";
 import { QuickCapturePage } from "../../../src/features/capture/QuickCapturePage";
 import {
   __setCaptureOutboxBackendForTests,
   addTextUrlOutboxItem,
+  listLegacyOutboxItems,
   listOutboxItems,
 } from "../../../src/pwa/captureOutbox";
 import { installMockMediaRecorder } from "../../helpers/mockMediaRecorder";
@@ -139,7 +140,7 @@ function renderPage(client: ApiClient, initialEntries: string[] = ["/capture"]) 
 
 describe("QuickCapturePage", () => {
   it("schema includes /capture navigation target", () => {
-    expect(NAV_ITEMS.some((i) => i.href === "/capture" && i.key === "capture")).toBe(true);
+    expect(CORE_ITEMS.some((i) => i.href === "/capture" && i.key === "capture")).toBe(true);
   });
 
   it("Archive tab renders the read-only archive (LUM-607)", async () => {
@@ -177,7 +178,16 @@ describe("QuickCapturePage", () => {
     await waitFor(() => {
       expect(screen.getByTestId("quick-capture-page")).toBeInTheDocument();
     });
-    expect(screen.getByTestId("quick-capture-add-memory")).toBeDisabled();
+    // Nothing saved yet: the whole "Saved capture" section (and Add to memory) is hidden,
+    // and the empty attachments/transcript sections are not drawn as empty boxes.
+    expect(screen.queryByTestId("quick-capture-add-memory")).toBeNull();
+    expect(screen.queryByTestId("quick-capture-detail")).toBeNull();
+    expect(screen.queryByTestId("quick-capture-transcribe-btn")).toBeNull();
+    expect(screen.queryByTestId("quick-capture-image-input")).toBeNull();
+    expect(screen.getByTestId("quick-capture-attachments-locked")).toBeInTheDocument();
+    // One primary Save while online; the device-only save is not a second button.
+    expect(screen.getByTestId("quick-capture-save-server")).toBeInTheDocument();
+    expect(screen.queryByTestId("quick-capture-save-local")).toBeNull();
   });
 
   it("Add to memory disabled when offline after capture exists", async () => {
@@ -290,10 +300,10 @@ describe("QuickCapturePage", () => {
     await user.type(screen.getByPlaceholderText(/short note/i), "pic");
     await user.click(screen.getByTestId("quick-capture-save-server"));
 
-    await waitFor(() => expect(screen.getByLabelText(/image \(jpeg/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByLabelText(/photo \(jpeg/i)).toBeInTheDocument());
 
     const file = new File([new Uint8Array([1, 2, 3])], "test.png", { type: "image/png" });
-    await user.upload(screen.getByLabelText(/image \(jpeg/i), file);
+    await user.upload(screen.getByLabelText(/photo \(jpeg/i), file);
 
     await waitFor(() => {
       expect(screen.getByTestId("quick-capture-attachment-list").textContent).toContain("image");
@@ -383,10 +393,10 @@ describe("QuickCapturePage", () => {
     await user.click(screen.getByTestId("quick-capture-save-server"));
 
     await waitFor(() =>
-      expect(screen.getByLabelText(/audio file → server/i)).toBeInTheDocument(),
+      expect(screen.getByLabelText(/upload an audio file/i)).toBeInTheDocument(),
     );
     const audioFile = new File([new Uint8Array([1])], "clip.webm", { type: "audio/webm" });
-    await user.upload(screen.getByLabelText(/audio file → server/i), audioFile);
+    await user.upload(screen.getByLabelText(/upload an audio file/i), audioFile);
 
     await waitFor(() => expect(screen.getByTestId("quick-capture-transcribe-btn")).not.toBeDisabled());
 
@@ -453,9 +463,9 @@ describe("QuickCapturePage", () => {
     await user.click(screen.getByTestId("quick-capture-save-server"));
     const audioFile = new File([new Uint8Array([1])], "clip.webm", { type: "audio/webm" });
     await waitFor(() =>
-      expect(screen.getByLabelText(/audio file → server/i)).toBeInTheDocument(),
+      expect(screen.getByLabelText(/upload an audio file/i)).toBeInTheDocument(),
     );
-    await user.upload(screen.getByLabelText(/audio file → server/i), audioFile);
+    await user.upload(screen.getByLabelText(/upload an audio file/i), audioFile);
 
     await waitFor(() => expect(screen.getByTestId("quick-capture-transcribe-btn")).not.toBeDisabled());
     expect(screen.getByTestId("quick-capture-add-memory")).toBeDisabled();
@@ -616,9 +626,11 @@ describe("QuickCapturePage", () => {
     renderPage(client);
 
     await waitFor(() => expect(screen.getByTestId("quick-capture-offline")).toBeInTheDocument());
-    expect(screen.getByTestId("quick-capture-add-memory")).toBeDisabled();
+    expect(screen.queryByTestId("quick-capture-add-memory")).toBeNull();
     await user.type(screen.getByPlaceholderText(/short note/i), "x");
-    expect(screen.getByTestId("quick-capture-save-server")).toBeDisabled();
+    // Offline the single Save keeps the note on this device; there is no server save.
+    expect(screen.queryByTestId("quick-capture-save-server")).toBeNull();
+    expect(screen.getByTestId("quick-capture-save-local")).toBeEnabled();
 
     const capturePosts = (fetchImpl.mock.calls as [RequestInfo, RequestInit?][]).filter(
       ([u, i]) => pathnameOf(u) === "/api/v1/captures" && i?.method === "POST",
@@ -898,9 +910,34 @@ describe("QuickCapturePage", () => {
       expect(list.textContent).not.toContain(full);
       expect(screen.getByRole("button", { name: "Sync to my account" })).toBeEnabled();
       expect(screen.getByRole("button", { name: "Discard" })).toBeEnabled();
+      expect(screen.queryByText(/Nothing waiting on this device/)).toBeNull();
       // not counted in the member's stats and not in the member's own list
       expect(screen.getByTestId("capture-outbox-stats").textContent).toMatch(/Pending:\s*0/);
       expect(screen.queryByTestId("capture-outbox-list")).toBeNull();
+    });
+
+    it("Discard asks first: Cancel keeps the item, confirming removes it", async () => {
+      const store = installOutboxMemory();
+      seedLegacy(store, "legacy-1");
+      const user = userEvent.setup();
+
+      renderPage(meOnlyClient());
+      await screen.findByTestId("reconciled");
+      await user.click(screen.getByTestId("capture-tab-outbox"));
+      await user.click(await screen.findByRole("button", { name: "Discard" }));
+
+      const dialog = await screen.findByRole("alertdialog");
+      expect(dialog.textContent).toMatch(/deletes it for good/i);
+      await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+      await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+      expect(screen.getByTestId("capture-outbox-legacy-list").querySelectorAll("li")).toHaveLength(1);
+
+      await user.click(screen.getByRole("button", { name: "Discard" }));
+      await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Discard" }));
+      await waitFor(() => expect(screen.queryByTestId("capture-outbox-legacy-list")).toBeNull());
+      expect(await listLegacyOutboxItems()).toHaveLength(0);
+      // Both lists are now empty: the empty state offers the next step.
+      expect(await screen.findByText(/Nothing waiting on this device/)).toBeInTheDocument();
     });
 
     it("Sync to my account claims and uploads only that row", async () => {

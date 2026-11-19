@@ -14,11 +14,11 @@ test.describe("Me MCP token scope selection (LUM-527)", () => {
 
   test("mints a read-only token via the scope selector and shows its access label", async ({ page }) => {
     await loginWithSmokeCredentials(page);
-    await page.goto("/me/mcp-tokens");
-    await expect(page).toHaveURL(/\/me\/mcp-tokens/);
+    await page.goto("/settings/connected-apps");
+    await expect(page).toHaveURL(/\/settings\/connected-apps$/);
 
     const main = page.locator("#lumogis-main");
-    await expect(main.getByRole("heading", { name: /^mcp tokens$/i })).toBeVisible();
+    await expect(main.getByRole("heading", { level: 1, name: "Connected AI apps" })).toBeVisible();
 
     // Least-privilege is the visible default: Read-only is pre-selected.
     const readOnly = page.getByRole("radio", { name: /^read-only$/i });
@@ -27,21 +27,24 @@ test.describe("Me MCP token scope selection (LUM-527)", () => {
     await expect(readWrite).toBeVisible();
     await expect(readOnly).toBeChecked();
 
-    // Mint a read-only token (leave the default selection).
+    // Create a read-only key (leave the default selection).
     const label = `e2e-scope-${Date.now()}`;
-    await page.getByPlaceholder(/label/i).fill(label);
-    await page.getByRole("button", { name: /^mint$/i }).click();
+    await page.getByLabel("Key name").fill(label);
+    await page.getByRole("button", { name: /^create a key$/i }).click();
 
-    // The plaintext shows once in the copy-once modal.
-    await expect(page.getByRole("heading", { name: /new mcp token/i })).toBeVisible();
+    // The key shows once in the dialog.
+    await expect(page.getByRole("dialog").getByRole("heading", { name: /your new key/i })).toBeVisible();
     await page.getByRole("button", { name: /^close$/i }).click();
 
-    // The new token appears in the list tagged Read-only.
+    // The new key appears in the list, described as Read-only.
     const row = main.locator("li", { hasText: label });
     await expect(row).toBeVisible();
-    await expect(row.getByText(/\[Read-only\]/)).toBeVisible();
+    await expect(row.getByText(/Read-only/)).toBeVisible();
 
-    // Tidy up so the smoke account doesn't accumulate tokens.
-    await row.getByRole("button", { name: /^revoke$/i }).click();
+    // Tidy up so the smoke account doesn't accumulate keys: Revoke is in the row menu and confirmed.
+    await row.getByRole("button", { name: `Actions for ${label}` }).click();
+    await page.getByRole("menuitem", { name: /^revoke$/i }).click();
+    await page.getByRole("alertdialog").getByRole("button", { name: /^revoke$/i }).click();
+    await expect(row).toHaveCount(0);
   });
 });

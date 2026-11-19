@@ -5,7 +5,9 @@ import { Link } from "react-router-dom";
 import type { JSX } from "react";
 
 import type { WowTopEntity } from "../../api/meWow";
-import styles from "./wow.module.css";
+import { Button } from "../../components/ui/button";
+
+import { CHIP } from "./chip";
 
 export interface EntityDiscoveryCardProps {
   entities: WowTopEntity[];
@@ -21,46 +23,36 @@ export function EntityDiscoveryCard({
   isDismissing = false,
 }: EntityDiscoveryCardProps): JSX.Element {
   return (
-    <section
-      className={styles.card}
-      data-testid="wow-discovery-card"
-      aria-labelledby="wow-discovery-title"
-    >
-      <h2 id="wow-discovery-title" className={styles.cardTitle}>
-        Entities Lumogis found
-      </h2>
-      <p className={styles.cardIntro}>
-        These show up across your ingested content. Ask about one or browse all in Search.
-      </p>
-      <ul className={styles.entityList} role="list">
+    <section data-testid="wow-discovery-card" aria-labelledby="wow-discovery-title" className="flex flex-col gap-2">
+      <div className="flex items-center justify-between gap-2">
+        <h2 id="wow-discovery-title" className="m-0 text-xs font-medium text-muted-foreground">
+          Ask about what Lumogis found
+        </h2>
+        <span className="flex items-center gap-1">
+          <Link to="/entities" className="text-xs text-accent-text">
+            See all
+          </Link>
+          <Button variant="ghost" size="xs" onClick={() => void onDismiss()} disabled={isDismissing}>
+            Dismiss
+          </Button>
+        </span>
+      </div>
+      <ul className="m-0 flex list-none flex-wrap gap-2 p-0" role="list">
         {entities.map((entity) => (
-          <li key={entity.entity_id} className={styles.entityRow}>
-            <div>
-              <strong>{entity.name}</strong>
-              <span className={styles.entityMeta}>
-                {" "}
-                · {entity.entity_type} · {entity.mention_count} mentions
-              </span>
-            </div>
-            <button type="button" onClick={() => onAskAbout(entity.name)}>
-              Ask Lumogis about {entity.name}
-            </button>
+          <li key={entity.entity_id} className="min-w-0">
+            <Button
+              type="button"
+              variant="outline"
+              className={CHIP}
+              aria-label={`Ask Lumogis about ${entity.name}`}
+              title={`${entity.entity_type} · ${entity.mention_count} mentions`}
+              onClick={() => onAskAbout(entity.name)}
+            >
+              {entity.name}
+            </Button>
           </li>
         ))}
       </ul>
-      <div className={styles.actions}>
-        <Link to="/search" className={styles.secondaryLink}>
-          View all entities
-        </Link>
-        <button
-          type="button"
-          className={styles.dismissButton}
-          onClick={() => void onDismiss()}
-          disabled={isDismissing}
-        >
-          Dismiss
-        </button>
-      </div>
     </section>
   );
 }

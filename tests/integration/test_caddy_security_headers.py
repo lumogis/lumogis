@@ -95,6 +95,11 @@ def test_caddy_required_security_headers(caddy_reachable: bool) -> None:
     assert xcto.lower() == "nosniff" or "nosniff" in xcto.lower()
     assert refpol, "Referrer-Policy must be set"
     assert perms, "Permissions-Policy must be set"
+    # LUM-331: the microphone is allowed for this origin (voice capture), the
+    # camera stays off, and CSP lets the page probe the household secure address.
+    assert "microphone=(self)" in perms, perms
+    assert "camera=()" in perms, perms
+    assert "https://*.homes.lumogis.app" in csp, csp
     is_https = WEB_BASE.lower().startswith("https://")
     if is_https:
         assert hsts, "Strict-Transport-Security must be present for HTTPS base URL"

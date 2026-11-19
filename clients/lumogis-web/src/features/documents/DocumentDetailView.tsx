@@ -5,14 +5,34 @@
 
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { ChevronDown } from "lucide-react";
 
 import { useAuth } from "../../auth/AuthProvider";
 import { MetadataCaption } from "../../components/MetadataCaption";
-import { Button } from "../../components/Button";
+import { ErrorState } from "../../components/page/ErrorState";
+import { LoadingPlaceholder, SkeletonText } from "../../components/page/LoadingState";
+import { PageHeader } from "../../components/page/PageHeader";
+import { PageSection, Row } from "../../components/page/PageSection";
+import { RowActions, type RowAction } from "../../components/page/RowActions";
+import { Alert, AlertDescription } from "../../components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "../../components/ui/alert-dialog";
+import { Badge } from "../../components/ui/badge";
+import { Button } from "../../components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../../components/ui/collapsible";
 import {
   documentMetadataCaption,
   humanizeStoredName,
 } from "../../util/humanizeStoredName";
+import { formatDateTime } from "../../util/formatTimestamp";
 import {
   useDeleteDocument,
   useDocument,
@@ -55,6 +75,7 @@ export function DocumentDetailView(): JSX.Element {
   const deleteMutation = useDeleteDocument(client);
   const reingestMutation = useReingestDocument(client);
   const [deleteErrors, setDeleteErrors] = useState<string[] | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   useDocumentsSseInvalidation(tokens);
 
@@ -67,35 +88,33 @@ export function DocumentDetailView(): JSX.Element {
   const { data: shareProgress } = useIngestJobProgress(client, shareJobId);
 
   if (documentId === null) {
-    return <p role="alert">Invalid document id.</p>;
+    return (
+      <Alert variant="destructive">
+        <AlertDescription>Invalid document id.</AlertDescription>
+      </Alert>
+    );
   }
 
   if (isLoading) {
-    return <p>Loading document…</p>;
+    return (
+      <LoadingPlaceholder label="Loading document…" className="max-w-2xl">
+        <SkeletonText lines={6} />
+      </LoadingPlaceholder>
+    );
   }
 
   if (error || !doc) {
     return (
-      <p role="alert">
-        Document not found.{" "}
-        <Link to="/documents">Back to library</Link>
-      </p>
+      <ErrorState
+        title="Document not found"
+        message="Lumogis couldn't find this document. It may have been deleted."
+        actions={[{ label: "Back to library", href: "/documents" }]}
+        doctorHint={false}
+      />
     );
   }
 
-  const handleDelete = async () => {
-    if (!window.confirm(`Delete "${doc.display_name}" permanently?`)) {
-      return;
-    }
-    const res = await deleteMutation.mutateAsync(documentId);
-    if (!res.partial) {
-      navigate("/documents");
-      return;
-    }
-    setDeleteErrors(res.errors);
-  };
-
-  const handleRetry = async () => {
+  const runDelete = async () => {
     const res = await deleteMutation.mutateAsync(documentId);
     if (!res.partial) {
       navigate("/documents");
@@ -109,68 +128,82 @@ export function DocumentDetailView(): JSX.Element {
   };
 
   const title = humanizeStoredName(doc.display_name, doc.file_path);
+  const external = isExternal(doc.file_path);
+
+  // Actions beyond the page itself live in "…". Reading again needs the file on
+  // disk (an external document is read by its own system); Delete is last.
+  const actions: RowAction[] = [];
+  if (!external && doc.source_available) {
+    actions.push(
+      { label: "Check for changes", onSelect: () => void handleReingest(false) },
+      { label: "Read again", onSelect: () => void handleReingest(true) },
+    );
+  }
+  if (doc.scope === "personal" && deleteErrors === null) {
+    actions.push({
+      label: "Delete document",
+      destructive: true,
+      onSelect: () => setConfirmDelete(true),
+    });
+  }
 
   return (
-    <section className="lumogis-document-detail" data-testid="document-detail">
-      <p>
-        <Link to="/documents">← Library</Link>
+    <section data-testid="document-detail">
+      <p className="mb-2">
+        <Link to="/documents" className="text-accent-text underline underline-offset-2">
+          ← Library
+        </Link>
       </p>
-      <h1>{title}</h1>
-      <MetadataCaption
-        value={documentMetadataCaption(documentId, doc.display_name, doc.file_path)}
-        label="Copy id"
+      <PageHeader
+        title={title}
+        action={actions.length > 0 ? <RowActions label={`More actions for ${title}`} items={actions} /> : undefined}
       />
       {deleteErrors !== null && (
-        <div role="alert" className="lumogis-document-detail__partial-alert">
-          <p>Deletion incomplete:</p>
-          <ul>
-            {categorizeDeleteErrors(deleteErrors).map((msg) => (
-              <li key={msg}>{msg}</li>
-            ))}
-          </ul>
-          {deleteMutation.isPending ? (
-            <p>Retrying…</p>
-          ) : (
-            <>
-              <Button type="button" variant="secondary" size="sm" onClick={() => void handleRetry()}>
-                Retry cleanup
-              </Button>
-              <p className="lumogis-document-detail__partial-escalation">
-                If this persists after retrying, contact your administrator.
-                Reference: document #{documentId}.
-              </p>
-            </>
-          )}
-        </div>
+        <Alert variant="destructive" className="mb-4 max-w-2xl">
+          <AlertDescription>
+            <p className="m-0">Deletion incomplete:</p>
+            <ul className="m-0 pl-5">
+              {categorizeDeleteErrors(deleteErrors).map((msg) => (
+                <li key={msg}>{msg}</li>
+              ))}
+            </ul>
+            {deleteMutation.isPending ? (
+              <p className="m-0 mt-2">Retrying…</p>
+            ) : (
+              <>
+                <Button type="button" variant="outline" size="sm" className="mt-2" onClick={() => void runDelete()}>
+                  Retry cleanup
+                </Button>
+                <p className="m-0 mt-2">
+                  If this persists after retrying, contact your administrator.
+                  Reference: document #{documentId}.
+                </p>
+              </>
+            )}
+          </AlertDescription>
+        </Alert>
       )}
-      <dl className="lumogis-document-detail__meta lumogis-kv-list">
-        <div className="lumogis-kv-row">
-          <dt className="lumogis-kv-row__label">Status</dt>
-          <dd className="lumogis-kv-row__value">
-            <span className={`lumogis-documents__status lumogis-documents__status--${doc.status}`}>
+      <PageSection title="About this document">
+        <dl className="m-0">
+          <Row label="Status">
+            <Badge variant={doc.status === "failed" ? "destructive" : "secondary"}>
               {statusLabel(doc.status)}
-            </span>
-          </dd>
-        </div>
-        {doc.status === "indexing" && activeJobId && ingestProgress ? (
-          <div className="lumogis-kv-row">
-            <dt className="lumogis-kv-row__label">Progress</dt>
-            <dd className="lumogis-kv-row__value">
+            </Badge>
+          </Row>
+          {doc.status === "indexing" && activeJobId && ingestProgress ? (
+            <Row label="Progress">
               <IngestProgressBar
                 stage={ingestProgress.stage}
                 progressPct={ingestProgress.progress_pct ?? 0}
                 statusMessage={ingestProgress.status_message}
               />
-            </dd>
-          </div>
-        ) : null}
-        <div className="lumogis-kv-row">
-          <dt className="lumogis-kv-row__label">Sharing</dt>
-          <dd className="lumogis-kv-row__value">
+            </Row>
+          ) : null}
+          <Row label="Sharing">
             {/* LUM-724: the server refuses with 409, but a control that fails
                 on click is worse than one that explains first — the reason is
                 not something a user could guess. */}
-            {isExternal(doc.file_path) ? (
+            {external ? (
               <span data-testid="share-unavailable">{EXTERNAL_SHARE_EXPLANATION}</span>
             ) : (
               <ShareToggle
@@ -189,64 +222,83 @@ export function DocumentDetailView(): JSX.Element {
                 statusMessage={shareProgress.status_message}
               />
             ) : null}
-          </dd>
-        </div>
-        <div className="lumogis-kv-row">
-          <dt className="lumogis-kv-row__label">Chunks</dt>
-          <dd className="lumogis-kv-row__value">{doc.chunk_count}</dd>
-        </div>
-        <div className="lumogis-kv-row">
-          <dt className="lumogis-kv-row__label">Entities</dt>
-          <dd className="lumogis-kv-row__value">{doc.entity_count}</dd>
-        </div>
+          </Row>
+          <Row label="Indexed">{formatDateTime(doc.indexed_at)}</Row>
+          <Row label="Passages">{doc.chunk_count}</Row>
+          <Row label="Entities">{doc.entity_count}</Row>
+        </dl>
         {doc.error_message ? (
-          <div className="lumogis-kv-row">
-            <dt className="lumogis-kv-row__label">Error</dt>
-            <dd className="lumogis-kv-row__value">{doc.error_message}</dd>
-          </div>
+          <Alert variant="destructive" className="mt-3">
+            <AlertDescription>{doc.error_message}</AlertDescription>
+          </Alert>
         ) : null}
-      </dl>
-      {doc.entities.length > 0 ? (
-        <section>
-          <h2>Linked entities</h2>
-          <ul>
-            {doc.entities.map((e) => (
-              <li key={e.entity_id}>
-                <Link to={`/entities/${encodeURIComponent(e.entity_id)}`}>
-                  {e.name}
-                </Link>{" "}
-                <span className="lumogis-document-detail__entity-type">({e.entity_type})</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-      <div className="lumogis-document-detail__actions lumogis-form-actions">
-        {doc.scope === "personal" && deleteErrors === null ? (
-          <Button type="button" variant="danger-solid" onClick={() => void handleDelete()}>
-            Delete document
-          </Button>
-        ) : null}
-        {isExternal(doc.file_path) ? (
+        {external ? (
           // Re-ingest reads the file from disk, which a logical path does not
           // name. The server already refuses; "source unavailable" would read as
           // a bug, so the origin is named instead.
-          <span data-testid="reingest-unavailable">
+          <p className="m-0 mt-3 text-sm text-muted-foreground" data-testid="reingest-unavailable">
             {EXTERNAL_REINGEST_EXPLANATION[originOf(doc.file_path) as "paperless" | "email"]}
-          </span>
-        ) : doc.source_available ? (
-          <>
-            <Button type="button" variant="secondary" onClick={() => void handleReingest(false)}>
-              Re-ingest
-            </Button>
-            <Button type="button" variant="secondary" onClick={() => void handleReingest(true)}>
-              Force re-ingest
-            </Button>
-          </>
-        ) : (
-          <p>Source file is no longer on disk — re-upload via Capture to index again.</p>
-        )}
-      </div>
+          </p>
+        ) : !doc.source_available ? (
+          <p className="m-0 mt-3 text-sm text-muted-foreground">
+            Source file is no longer on disk — re-upload via Capture to index again.
+          </p>
+        ) : null}
+      </PageSection>
+      {doc.entities.length > 0 ? (
+        <PageSection title="Linked entities">
+          <ul className="m-0 list-none p-0">
+            {doc.entities.map((e) => (
+              <li key={e.entity_id} className="py-1 text-sm">
+                <Link
+                  to={`/entities/${encodeURIComponent(e.entity_id)}`}
+                  className="text-accent-text underline underline-offset-2"
+                >
+                  {e.name}
+                </Link>{" "}
+                <span className="text-muted-foreground">({e.entity_type})</span>
+              </li>
+            ))}
+          </ul>
+        </PageSection>
+      ) : null}
+      <Collapsible className="max-w-2xl">
+        <CollapsibleTrigger
+          render={<Button type="button" variant="ghost" size="sm" className="-ml-2 group/trigger" />}
+        >
+          <ChevronDown aria-hidden="true" className="transition-transform group-aria-expanded/trigger:rotate-180" />
+          Details
+        </CollapsibleTrigger>
+        <CollapsibleContent className="flex flex-col gap-2 pt-2 text-sm">
+          <p className="m-0 text-muted-foreground">Where Lumogis keeps this file, for whoever runs it.</p>
+          <MetadataCaption
+            value={documentMetadataCaption(documentId, doc.display_name, doc.file_path)}
+            label="Copy id"
+          />
+        </CollapsibleContent>
+      </Collapsible>
+      <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this document?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {`"${doc.display_name}" will be deleted permanently, with its search index and the knowledge it added. This can't be undone.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructiveSolid"
+              onClick={() => {
+                setConfirmDelete(false);
+                void runDelete();
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   );
 }

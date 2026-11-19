@@ -237,7 +237,7 @@ describe("ApprovalsPage", () => {
     await userEvent.click(
       screen.getByRole("button", { name: /switch capability\.notes to do mode/i }),
     );
-    const dialog = await waitFor(() => screen.getByRole("dialog"));
+    const dialog = await waitFor(() => screen.getByRole("alertdialog"));
     await userEvent.click(
       within(dialog).getByRole("button", { name: /switch capability\.notes to do mode/i }),
     );
@@ -312,24 +312,21 @@ describe("ApprovalsPage", () => {
     await userEvent.click(btn);
 
     await waitFor(() => {
-      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      expect(screen.getByRole("alertdialog")).toBeInTheDocument();
     });
     expect(screen.getByText(/switch connector to do mode/i)).toBeInTheDocument();
   });
 
-  /** Phase 2B — modal regions for compact full-viewport + scrollable body CSS */
-  it("confirmation modal exposes scrollable body and footer action regions", async () => {
+  it("confirmation dialog has a description and exactly two footer buttons", async () => {
     mountApprovals([DENIED_ITEM]);
     await waitFor(() => {
       expect(screen.getByText("filesystem")).toBeInTheDocument();
     });
 
     await userEvent.click(screen.getByRole("button", { name: /switch filesystem to do mode/i }));
-    const dialog = await waitFor(() => screen.getByRole("dialog"));
-    expect(dialog.querySelector(".lumogis-approvals__modal-body")).not.toBeNull();
-    const footer = dialog.querySelector(".lumogis-approvals__modal-footer");
-    expect(footer).not.toBeNull();
-    expect(footer?.querySelectorAll("button").length).toBe(2);
+    const dialog = await waitFor(() => screen.getByRole("alertdialog"));
+    expect(within(dialog).getByText(/without asking/i)).toBeInTheDocument();
+    expect(within(dialog).getAllByRole("button")).toHaveLength(2);
   });
 
   it("modal Cancel button is focused by default", async () => {
@@ -340,11 +337,11 @@ describe("ApprovalsPage", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /switch filesystem to do mode/i }));
     await waitFor(() => {
-      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      expect(screen.getByRole("alertdialog")).toBeInTheDocument();
     });
 
     const cancelBtn = screen.getByRole("button", { name: /cancel/i });
-    expect(document.activeElement).toBe(cancelBtn);
+    await waitFor(() => expect(document.activeElement).toBe(cancelBtn));
   });
 
   it("closes modal when Cancel is clicked", async () => {
@@ -355,12 +352,12 @@ describe("ApprovalsPage", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /switch filesystem to do mode/i }));
     await waitFor(() => {
-      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      expect(screen.getByRole("alertdialog")).toBeInTheDocument();
     });
 
     await userEvent.click(screen.getByRole("button", { name: /cancel/i }));
     await waitFor(() => {
-      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(screen.queryByRole("alertdialog")).toBeNull();
     });
   });
 
@@ -374,14 +371,50 @@ describe("ApprovalsPage", () => {
     const trigger = screen.getByRole("button", { name: /switch filesystem to do mode/i });
     await userEvent.click(trigger);
     await waitFor(() => {
-      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      expect(screen.getByRole("alertdialog")).toBeInTheDocument();
     });
 
     await userEvent.click(screen.getByRole("button", { name: /cancel/i }));
     await waitFor(() => {
-      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(screen.queryByRole("alertdialog")).toBeNull();
     });
     expect(document.activeElement).toBe(trigger);
+  });
+
+  it("keeps only the first five items open and folds the rest into a collapsed section", async () => {
+    const many = Array.from({ length: 7 }, (_, n) => ({
+      ...DENIED_ITEM,
+      action_log_id: 100 + n,
+      connector: `conn-${n}`,
+    }));
+    mountApprovals(many);
+    await waitFor(() => {
+      expect(screen.getByText("conn-0")).toBeInTheDocument();
+    });
+    expect(screen.getByText("conn-4")).toBeVisible();
+    const trigger = screen.getByRole("button", { name: /show 2 older items/i });
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(trigger);
+    expect(screen.getByText("conn-6")).toBeVisible();
+  });
+
+  it("shows a retryable error state when the list cannot load", async () => {
+    const { tokens } = buildClient([]);
+    const fetchImpl = vi.fn(async (input: RequestInfo) => {
+      const url = String(input);
+      if (url.includes("/auth/refresh")) return refreshResponse();
+      if (url.includes("/auth/me")) return meResponse();
+      if (url.includes("/approvals/pending")) return jsonResponse(500, { detail: "boom" });
+      return jsonResponse(200, { proposals: [], failed: [], items: [] });
+    });
+    const client = new ApiClient({ tokens, fetchImpl: fetchImpl as unknown as typeof fetch });
+    render(
+      <AuthProvider client={client} tokens={tokens}>
+        <ApprovalsPage />
+      </AuthProvider>,
+    );
+    expect(await screen.findByText(/failed to load pending approvals/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /try again/i })).toBeInTheDocument();
   });
 
   it("closes modal on Escape (Phase 2D)", async () => {
@@ -392,12 +425,12 @@ describe("ApprovalsPage", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /switch filesystem to do mode/i }));
     await waitFor(() => {
-      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      expect(screen.getByRole("alertdialog")).toBeInTheDocument();
     });
 
     await userEvent.keyboard("{Escape}");
     await waitFor(() => {
-      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(screen.queryByRole("alertdialog")).toBeNull();
     });
   });
 
@@ -411,11 +444,11 @@ describe("ApprovalsPage", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /switch filesystem to do mode/i }));
     await waitFor(() => {
-      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      expect(screen.getByRole("alertdialog")).toBeInTheDocument();
     });
 
     // Confirm inside the dialog (same label as the row trigger).
-    const dialog = screen.getByRole("dialog");
+    const dialog = screen.getByRole("alertdialog");
     const modalConfirm = within(dialog).getByRole("button", {
       name: /switch filesystem to do mode/i,
     });
@@ -426,7 +459,7 @@ describe("ApprovalsPage", () => {
     });
     // After action, modal closed
     await waitFor(() => {
-      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(screen.queryByRole("alertdialog")).toBeNull();
     });
   });
 
@@ -440,11 +473,11 @@ describe("ApprovalsPage", () => {
     await userEvent.click(btn);
 
     await waitFor(() => {
-      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      expect(screen.getByRole("alertdialog")).toBeInTheDocument();
     });
     // The modal heading ends with "?" so use a broader pattern scoped to the dialog
-    const dialog = screen.getByRole("dialog");
-    expect(dialog.querySelector("#approvals-modal-title")?.textContent).toMatch(
+    const dialog = screen.getByRole("alertdialog");
+    expect(within(dialog).getByTestId("approvals-modal-title").textContent).toMatch(
       /always allow this action type/i,
     );
   });
@@ -457,12 +490,12 @@ describe("ApprovalsPage", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /switch filesystem to do mode/i }));
     await waitFor(() => {
-      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      expect(screen.getByRole("alertdialog")).toBeInTheDocument();
     });
 
     await userEvent.keyboard("{Escape}");
     await waitFor(() => {
-      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(screen.queryByRole("alertdialog")).toBeNull();
     });
   });
 });
@@ -472,23 +505,23 @@ describe("ApprovalsPage", () => {
 describe("RiskBadge", () => {
   it("renders low tier", () => {
     const { container } = render(<RiskBadge tier="low" />);
-    expect(container.querySelector(".lumogis-risk-badge--low")).toBeTruthy();
+    expect(container.querySelector('[data-risk="low"]')).toBeTruthy();
     expect(container.textContent).toMatch(/low risk/i);
   });
 
   it("renders medium tier", () => {
     const { container } = render(<RiskBadge tier="medium" />);
-    expect(container.querySelector(".lumogis-risk-badge--medium")).toBeTruthy();
+    expect(container.querySelector('[data-risk="medium"]')).toBeTruthy();
   });
 
   it("renders high tier", () => {
     const { container } = render(<RiskBadge tier="high" />);
-    expect(container.querySelector(".lumogis-risk-badge--high")).toBeTruthy();
+    expect(container.querySelector('[data-risk="high"]')).toBeTruthy();
   });
 
   it("renders hard_limit tier", () => {
     const { container } = render(<RiskBadge tier="hard_limit" />);
-    expect(container.querySelector(".lumogis-risk-badge--hard-limit")).toBeTruthy();
+    expect(container.querySelector('[data-risk="hard_limit"]')).toBeTruthy();
     expect(container.textContent).toMatch(/hard limit/i);
   });
 });

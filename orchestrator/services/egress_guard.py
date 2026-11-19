@@ -432,6 +432,16 @@ def _ceiling_extra_hosts() -> frozenset[str]:
         "CALENDAR_CALDAV_URL",
     ):
         _add_env_host(extra, os.environ.get(env_name))
+    # LUM-331 — Lumogis Home DNS is an intentional, opt-in outbound to Lumogis
+    # infrastructure (the secure address at home). Resolved the way Core resolves
+    # it (code default included), plus the in-network TLS probe to Caddy.
+    try:
+        from services.home_dns.validate import server_url as _home_dns_server_url
+
+        _add_env_host(extra, _home_dns_server_url())
+    except Exception:
+        _log.warning("ceiling: home DNS host enumeration failed", exc_info=True)
+    extra.add("caddy")
     # CAPABILITY_SERVICE_URLS is a comma/space-separated list (GRAPH_MODE=service
     # KG service etc.) — split and add each.
     raw_caps = os.environ.get("CAPABILITY_SERVICE_URLS", "") or ""

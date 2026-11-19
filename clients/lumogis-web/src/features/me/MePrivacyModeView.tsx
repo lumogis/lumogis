@@ -1,11 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Lumogis
+//
+// Your own "Online or local AI" choice, on the shared components (LUM-993 plan B
+// Pass 6): the household rule and your effective rule as facts, and one switch
+// to keep your own AI local when the household would allow online.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { fetchMePrivacyMode, patchMePrivacyMode } from "../../api/privacyMode";
 import { ApiError } from "../../api/client";
 import { useAuth } from "../../auth/AuthProvider";
+import { ErrorState } from "../../components/page/ErrorState";
+import { LoadingPlaceholder, SkeletonText } from "../../components/page/LoadingState";
+import { PageSection, Row } from "../../components/page/PageSection";
+import { Alert, AlertDescription } from "../../components/ui/alert";
+import { Label } from "../../components/ui/label";
+import { Switch } from "../../components/ui/switch";
+import { privacyWords } from "../admin/privacyWords";
 
 function errMsg(e: unknown): string {
   if (e instanceof ApiError) return e.detail;
@@ -32,8 +43,21 @@ export function MePrivacyModeView(): JSX.Element {
     },
   });
 
-  if (q.isLoading) return <p>Loading…</p>;
-  if (q.isError) return <p role="alert">{errMsg(q.error)}</p>;
+  if (q.isLoading) {
+    return (
+      <LoadingPlaceholder label="Loading your privacy setting…" className="max-w-2xl">
+        <SkeletonText lines={3} />
+      </LoadingPlaceholder>
+    );
+  }
+  if (q.isError) {
+    return (
+      <ErrorState
+        message="Lumogis couldn't load your privacy setting."
+        onRetry={() => void q.refetch()}
+      />
+    );
+  }
 
   const data = q.data!;
   const furtherRestrict = data.user_restriction === "local_only";
@@ -42,33 +66,39 @@ export function MePrivacyModeView(): JSX.Element {
 
   return (
     <section>
-      <h1>Privacy mode</h1>
-      <p style={{ maxWidth: "42rem", opacity: 0.9 }}>
-        Household policy: <strong>{data.instance.privacy_effective.replace("_", " ")}</strong>.
-        Your effective policy: <strong>{data.privacy_effective.replace("_", " ")}</strong>.
-      </p>
-      {canToggle ? (
-        <label style={{ display: "block", marginTop: "1rem" }}>
-          <input
-            type="checkbox"
-            checked={furtherRestrict}
-            disabled={mutation.isPending}
-            onChange={(e) => mutation.mutate(e.target.checked)}
-          />{" "}
-          Further restrict to local-only (you cannot enable cloud beyond household policy)
-        </label>
-      ) : (
-        <p style={{ marginTop: "1rem", opacity: 0.85 }}>
-          {data.instance.privacy_mode_locked
-            ? "Household privacy mode is locked to local-only."
-            : "Household policy is already local-only; per-user cloud access is not available."}
-        </p>
-      )}
-      {mutation.isError ? (
-        <p role="alert" style={{ color: "#c62828", marginTop: "0.75rem" }}>
-          {errMsg(mutation.error)}
-        </p>
-      ) : null}
+      <PageSection
+        title="Which AI may Lumogis use for you?"
+        description="Your household decides whether online AI services may be used. You can keep your own AI local, but you cannot turn online AI on beyond what the household allows."
+      >
+        <dl className="m-0">
+          <Row label="Household rule">{privacyWords(data.instance.privacy_effective)}</Row>
+          <Row label="For you">{privacyWords(data.privacy_effective)}</Row>
+        </dl>
+        {canToggle ? (
+          <div className="mt-4 flex items-start gap-3">
+            <Switch
+              id="me-privacy-local-only"
+              checked={furtherRestrict}
+              disabled={mutation.isPending}
+              onCheckedChange={(c) => mutation.mutate(c)}
+            />
+            <Label htmlFor="me-privacy-local-only" className="font-normal">
+              Keep my AI on this machine (local only)
+            </Label>
+          </div>
+        ) : (
+          <p className="m-0 mt-4 text-sm text-muted-foreground">
+            {data.instance.privacy_mode_locked
+              ? "Your household has locked Lumogis to local AI only."
+              : "Your household uses local AI only, so online AI is not available to you."}
+          </p>
+        )}
+        {mutation.isError ? (
+          <Alert variant="destructive" className="mt-3">
+            <AlertDescription>{errMsg(mutation.error)}</AlertDescription>
+          </Alert>
+        ) : null}
+      </PageSection>
     </section>
   );
 }

@@ -24,64 +24,33 @@ import { listSources } from "./api/emailSources";
 import { EmailAttachmentsPage } from "./features/email/EmailAttachmentsPage";
 import { EmailInboxView } from "./features/email/EmailInboxView";
 import { isEmailActivated, readCachedEmailActivated, writeCachedEmailActivated } from "./features/email/activation";
-import { AppShell } from "./components/AppShell";
+import { AppShell, type ShellNav } from "./components/AppShell";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
-import { NAV_ITEMS, type NavItem } from "./components/BottomNav";
+import { buildShellNav, pathToNavKey } from "./components/shell/navItems";
+import { useShellState } from "./api/meShell";
 import { ChatPage } from "./features/chat/ChatPage";
 import { SearchPage } from "./features/memory/SearchPage";
 import { ApprovalsPage } from "./features/approvals/ApprovalsPage";
-import { MePage } from "./features/me/MePage";
-import { MeAppearanceView } from "./features/me/MeAppearanceView";
-import { MeProfileView } from "./features/me/MeProfileView";
-import { MeConnectorsView } from "./features/me/MeConnectorsView";
-import { SourcesView } from "./features/me/SourcesView";
-import { MeEmailLabelsView } from "./features/me/MeEmailLabelsView";
-import { MeRelevanceView } from "./features/me/MeRelevanceView";
-import { MePermissionsView } from "./features/me/MePermissionsView";
-import { MeLlmProvidersView } from "./features/me/MeLlmProvidersView";
-import { MeMcpTokensView } from "./features/me/MeMcpTokensView";
-import { MeSharedItemsView } from "./features/me/MeSharedItemsView";
-import { MeNotificationsView } from "./features/me/MeNotificationsView";
-import { MeExportView } from "./features/me/MeExportView";
-import { MePrivacyModeView } from "./features/me/MePrivacyModeView";
-import { EmailSignalsView } from "./features/signals/EmailSignalsView";
-import { MeToolsCapabilitiesView } from "./features/me/MeToolsCapabilitiesView";
-import { AdminPage } from "./features/admin/AdminPage";
-import { AdminUsersView } from "./features/admin/AdminUsersView";
-import { AdminConnectorCredentialsView } from "./features/admin/AdminConnectorCredentialsView";
-import { AdminConnectorPermissionsView } from "./features/admin/AdminConnectorPermissionsView";
-import { AdminMcpTokensView } from "./features/admin/AdminMcpTokensView";
-import { AdminAuditView } from "./features/admin/AdminAuditView";
-import { AdminSharedItemsView } from "./features/admin/AdminSharedItemsView";
-import { AdminDiagnosticsView } from "./features/admin/AdminDiagnosticsView";
-import { AdminSystemStatusView } from "./features/admin/AdminSystemStatusView";
-import { AdminSafetyPlaygroundView } from "./features/admin/AdminSafetyPlaygroundView";
-import { AdminPrivacyModeView } from "./features/admin/AdminPrivacyModeView";
-import { AdminSearchSettingsView } from "./features/admin/AdminSearchSettingsView";
-import { AdminFeatureFlagsView } from "./features/admin/AdminFeatureFlagsView";
 import { QuickCapturePage } from "./features/capture/QuickCapturePage";
 import { DocumentChatPage } from "./features/document-chat/DocumentChatPage";
 import { DocumentsPage } from "./features/documents/DocumentsPage";
 import { DocumentDetailView } from "./features/documents/DocumentDetailView";
 import { EntityDetailPage } from "./features/entities/EntityDetailPage";
+import { EntityListPage } from "./features/entities/EntityListPage";
 import { InviteRedemptionPage } from "./features/invite/InviteRedemptionPage";
 import { ForgotPasswordPage } from "./features/auth/ForgotPasswordPage";
 import { ResetPasswordPage } from "./features/auth/ResetPasswordPage";
-import { AdminSystemMailView } from "./features/admin/AdminSystemMailView";
-import { AuditLogView } from "./features/audit/AuditLogView";
+import { SetupPage } from "./features/setup/SetupPage";
 import { OnboardingGate } from "./features/onboarding/OnboardingGate";
+import { RouteFlash } from "./components/RouteFlash";
+import { LegacyRedirect } from "./features/settings/LegacyRedirect";
+import { SettingsIndex } from "./features/settings/SettingsHome";
+import { SettingsLayout } from "./features/settings/SettingsLayout";
+import { SettingsPage } from "./features/settings/SettingsPage";
+import { legacyRedirectMap } from "./features/settings/settingsNav";
 
-function pathToNavKey(pathname: string): string {
-  if (pathname.startsWith("/documents")) return "documents";
-  if (pathname.startsWith("/email")) return "email";
-  if (pathname.startsWith("/search")) return "search";
-  if (pathname.startsWith("/capture")) return "capture";
-  if (pathname.startsWith("/approvals")) return "approvals";
-  if (pathname.startsWith("/me")) return "me";
-  if (pathname.startsWith("/audit")) return "me";
-  if (pathname.startsWith("/admin")) return "admin";
-  return "chat";
-}
+const LEGACY_REDIRECTS = legacyRedirectMap();
+import { Toaster } from "./components/ui/sonner";
 
 export function App(): JSX.Element {
   return (
@@ -95,6 +64,8 @@ export function App(): JSX.Element {
               one who cannot sign in. */}
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
           <Route path="/reset-password" element={<ResetPasswordPage />} />
+          {/* LUM-981: the first-admin setup page, also outside <RequireAuth>. */}
+          <Route path="/setup" element={<SetupPage />} />
           <Route
             path="/*"
             element={
@@ -109,11 +80,6 @@ export function App(): JSX.Element {
     </BrowserRouter>
   );
 }
-
-const EXTRA_NAV: ReadonlyArray<NavItem> = [
-  { key: "me", label: "Settings", href: "/me" },
-  { key: "admin", label: "Admin", href: "/admin" },
-];
 
 function ShellRoutes(): JSX.Element {
   const navigate = useNavigate();
@@ -140,31 +106,19 @@ function ShellRoutes(): JSX.Element {
     if (freshEmailActive !== undefined) writeCachedEmailActivated(freshEmailActive);
   }, [freshEmailActive]);
 
-  const navItems = useMemo((): ReadonlyArray<NavItem> => {
-    const base = [...NAV_ITEMS];
-    if (emailActive) base.push({ key: "email", label: "Email", href: "/email" });
-    const extra = [EXTRA_NAV[0]!];
-    if (user?.role === "admin") {
-      extra.push(EXTRA_NAV[1]!);
-    }
-    return [...base, ...extra];
-  }, [user?.role, emailActive]);
+  // LUM-993 Decision 16: Approvals appears only once something that can act is
+  // connected (or an item is waiting); hidden until /api/v1/me/shell answers.
+  const shell = useShellState();
+  const canAct = shell?.can_act === true;
+  const pendingApprovals = shell?.pending_approvals;
 
-  const handleNavigate = useCallback(
-    (key: string) => {
-      if (key === "chat" || key === "search" || key === "capture" || key === "approvals" || key === "documents" || key === "email" || key === "me" || key === "admin") {
-        if (key === "chat") navigate("/chat");
-        else if (key === "search") navigate("/search");
-        else if (key === "capture") navigate("/capture");
-        else if (key === "approvals") navigate("/approvals");
-        else if (key === "documents") navigate("/documents");
-        else if (key === "email") navigate("/email");
-        else if (key === "me") navigate("/me");
-        else if (key === "admin") navigate("/admin");
-      }
-    },
-    [navigate],
+  const nav = useMemo(
+    (): ShellNav =>
+      buildShellNav({ emailActive, canAct, isAdmin: user?.role === "admin", pendingApprovals }),
+    [user?.role, emailActive, canAct, pendingApprovals],
   );
+
+  const handleNavigate = useCallback((href: string) => navigate(href), [navigate]);
 
   return (
     // Outer boundary: last-resort net for crashes in the shell/nav itself.
@@ -172,7 +126,8 @@ function ShellRoutes(): JSX.Element {
     <AppErrorBoundary>
       <OnboardingGate />
       <RouteFlash />
-      <AppShell activeKey={activeKey} onNavigate={handleNavigate} navItems={navItems}>
+      <Toaster position="top-center" />
+      <AppShell activeKey={activeKey} onNavigate={handleNavigate} nav={nav}>
         <AppErrorBoundary>
         <Routes>
           <Route path="/" element={<Navigate to="/chat" replace />} />
@@ -188,84 +143,26 @@ function ShellRoutes(): JSX.Element {
           <Route path="/approvals" element={<ApprovalsPage />} />
           <Route path="/documents" element={<DocumentsPage />} />
           <Route path="/documents/:documentId" element={<DocumentDetailView />} />
+          {/* LUM-161: nested under Search (LUM-742 rule) so no new top-level nav
+              item is needed — `pathToNavKey` maps /entities* to "search". */}
+          <Route path="/entities" element={<EntityListPage />} />
           <Route path="/entities/:entityId" element={<EntityDetailPage />} />
-          <Route path="/audit" element={<AuditLogView />} />
-          <Route path="/me" element={<MePage />}>
-            <Route index element={<Navigate to="profile" replace />} />
-            <Route path="profile" element={<MeProfileView />} />
-            <Route path="appearance" element={<MeAppearanceView />} />
-            <Route path="connectors" element={<MeConnectorsView />} />
-            <Route path="sources" element={<SourcesView />} />
-            <Route path="email-signals" element={<EmailSignalsView />} />
-            <Route path="email-labels" element={<MeEmailLabelsView />} />
-            <Route path="relevance" element={<MeRelevanceView />} />
-            <Route path="permissions" element={<MePermissionsView />} />
-            <Route path="tools-capabilities" element={<MeToolsCapabilitiesView />} />
-            <Route path="llm-providers" element={<MeLlmProvidersView />} />
-            <Route path="mcp-tokens" element={<MeMcpTokensView />} />
-            <Route path="shared-items" element={<MeSharedItemsView />} />
-            <Route path="notifications" element={<MeNotificationsView />} />
-            <Route path="privacy-mode" element={<MePrivacyModeView />} />
-            <Route path="export" element={<MeExportView />} />
-            <Route path="*" element={<Navigate to="profile" replace />} />
+          {/* LUM-993 Pass 3: one Settings. Every page comes from settingsNav. */}
+          <Route path="/settings" element={<SettingsLayout />}>
+            <Route index element={<SettingsIndex />} />
+            <Route path=":slug" element={<SettingsPage />} />
+            <Route path="*" element={<Navigate to="/settings/profile" replace />} />
           </Route>
-          <Route path="/admin" element={<AdminPage />}>
-            <Route index element={<Navigate to="users" replace />} />
-            <Route path="users" element={<AdminUsersView />} />
-            <Route path="connector-credentials" element={<AdminConnectorCredentialsView />} />
-            <Route path="system-mail" element={<AdminSystemMailView />} />
-            <Route path="connector-permissions" element={<AdminConnectorPermissionsView />} />
-            <Route path="mcp-tokens" element={<AdminMcpTokensView />} />
-            <Route path="shared-items" element={<AdminSharedItemsView />} />
-            <Route path="audit" element={<AdminAuditView />} />
-            <Route path="diagnostics" element={<AdminDiagnosticsView />} />
-            <Route path="system-status" element={<AdminSystemStatusView />} />
-            <Route path="privacy-mode" element={<AdminPrivacyModeView />} />
-            <Route path="search-settings" element={<AdminSearchSettingsView />} />
-            <Route path="feature-flags" element={<AdminFeatureFlagsView />} />
-            <Route path="safety" element={<AdminSafetyPlaygroundView />} />
-            <Route path="*" element={<Navigate to="users" replace />} />
-          </Route>
+          {/* Old addresses (/me/..., /admin/..., /audit) open their new page. */}
+          {Object.entries(LEGACY_REDIRECTS).map(([from, to]) => (
+            <Route key={from} path={from} element={<LegacyRedirect to={to} />} />
+          ))}
+          <Route path="/me/*" element={<LegacyRedirect to="/settings/profile" />} />
+          <Route path="/admin/*" element={<LegacyRedirect to="/settings/members" />} />
           <Route path="*" element={<Navigate to="/chat" replace />} />
         </Routes>
         </AppErrorBoundary>
       </AppShell>
     </AppErrorBoundary>
-  );
-}
-
-function RouteFlash(): JSX.Element | null {
-  const loc = useLocation();
-  const nav = useNavigate();
-  const toast = (loc.state as { toast?: string } | null)?.toast;
-
-  useEffect(() => {
-    if (!toast) return;
-    const t = window.setTimeout(() => {
-      const s = (loc.state ?? {}) as { toast?: string } & Record<string, unknown>;
-      const rest = { ...s };
-      delete rest.toast;
-      nav(
-        { pathname: loc.pathname, search: loc.search, hash: loc.hash },
-        { replace: true, state: Object.keys(rest).length ? rest : null },
-      );
-    }, 6000);
-    return () => window.clearTimeout(t);
-  }, [toast, loc.pathname, loc.search, loc.hash, loc.state, nav]);
-
-  if (!toast) return null;
-  return (
-    <p
-      role="status"
-      style={{
-        margin: 0,
-        padding: "0.5rem 1rem",
-        background: "rgba(255, 180, 50, 0.12)",
-        borderBottom: "1px solid rgba(255, 200, 100, 0.25)",
-        textAlign: "center",
-      }}
-    >
-      {toast}
-    </p>
   );
 }

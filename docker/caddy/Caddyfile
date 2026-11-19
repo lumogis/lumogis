@@ -55,33 +55,32 @@
 	}
 }
 
-{$CADDY_DOMAIN} {
+# Everything a Lumogis site serves: compression, the common security headers,
+# every route and the access log. The main site and the household's secure
+# address (LUM-331) both import it, so they serve exactly the same app.
+(lumogis_routes) {
 	encode zstd gzip
 
-	# Common security headers (all responses, HTTP or HTTPS). HSTS is added
-	# only for TLS requests — see the @https matcher at the end of the block.
-	# Do not set HSTS for plain-HTTP CADDY_DOMAIN=:80; the @https matcher
-	# prevents emitting it for cleartext responses.
+	# Common security headers (all responses, HTTP or HTTPS). HSTS is not here:
+	# the main site adds it for TLS requests only, and household secure-address
+	# sites never send it (see below).
 	header {
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "strict-origin-when-cross-origin"
 		# Tighten over time: connect-src is widened for same-origin + SSE/WebSocket
-		Content-Security-Policy "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss:; form-action 'self'"
-		Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=(), interest-cohort=()"
+		# LUM-331: microphone=(self) lets Lumogis Web record voice memos and dictation;
+		# microphone=() blocked getUserMedia on every page served here. connect-src
+		# allows https://*.homes.lumogis.app so a page on the home-network address can
+		# check whether this device reaches the household's secure address (CSP applies
+		# to no-cors fetches too); ws:/wss: already allowed any WebSocket host.
+		Content-Security-Policy "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss: https://*.homes.lumogis.app; form-action 'self'"
+		Permissions-Policy "geolocation=(), microphone=(self), camera=(), payment=(), interest-cohort=()"
 		# Caddy sets Server by default; reduce fingerprinting slightly.
 		-Server
 	}
 
 	# Core trusts only this container (LUMOGIS_TRUSTED_PROXIES=caddy) and reads
 	# the single X-Forwarded-For value set by `header_up` in to_orchestrator.
-
-	# HSTS: only for HTTPS. With CADDY_DOMAIN=:80 this matcher never matches.
-	@https {
-		protocol https
-	}
-	header @https {
-		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
-	}
 
 	# Orchestrator root health (not served by the SPA).
 	handle /health {
@@ -167,7 +166,13 @@
 	handle /dashboard* {
 		import to_orchestrator
 	}
-	handle /settings* {
+	# LUM-993: /settings/... is also Lumogis Web's Settings; browser page loads
+	# go to the SPA, the legacy /settings API (JSON clients) still reaches Core.
+	@legacy_settings_api {
+		path /settings*
+		not header Accept *text/html*
+	}
+	handle @legacy_settings_api {
 		import to_orchestrator
 	}
 	handle /graph* {
@@ -194,7 +199,15 @@
 	handle /export {
 		import to_orchestrator
 	}
-	handle /entities* {
+	# LUM-161: `/entities` and `/entities/<id>` are also Lumogis Web pages
+	# ("What Lumogis knows"). Browser navigations stay with the SPA; the legacy
+	# JSON routes (`GET /entities`, `/entities/merge`, `/entities/<id>/publish`…)
+	# keep reaching the orchestrator, as for `/search` and `/audit` above.
+	@legacy_entities_api {
+		path /entities*
+		not header Accept *text/html*
+	}
+	handle @legacy_entities_api {
 		import to_orchestrator
 	}
 
@@ -212,6 +225,29 @@
 		format console
 	}
 }
+
+{$CADDY_DOMAIN} {
+	import lumogis_routes
+
+	# HSTS: only for HTTPS, and only on this site. With CADDY_DOMAIN=:80 this
+	# matcher never matches. Household secure-address sites send no HSTS: a
+	# one-year pin (with preload) on a name whose certificate can lapse would
+	# lock the household out of it.
+	@https {
+		protocol https
+	}
+	header @https {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+	}
+}
+
+# LUM-331 — the household's secure address at home (Admin → Secure address).
+# Core writes one site here (home.caddy, in the caddy-home volume): the name
+# <id>.homes.lumogis.app, a DNS-01 certificate through Lumogis Home DNS, and
+# `import lumogis_routes`. No file means no extra site; an empty match is valid.
+# stack-control validates a new site (validate-home.sh) before it is placed, and
+# preflight.sh starts Caddy without this line if a placed site stops validating.
+import /etc/caddy/home.d/*.caddy
 
 # ------------------------------------------------------------------------
 # LAN-only example (uncomment + comment the block above).

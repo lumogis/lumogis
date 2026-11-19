@@ -7,7 +7,19 @@
 // card stays HOOK-FREE — it's a pure <li> that receives named callbacks; all
 // mutation state lives in EmailInboxView (so hook count never varies per render).
 
+import { ChevronDown } from "lucide-react";
 import { useCallback, useState } from "react";
+
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 import { ApiError } from "../../api/client";
 import type { ApiClient } from "../../api/client";
@@ -21,6 +33,7 @@ import type { EmailSignalRow, TriageStatus } from "../../api/emailSources";
 import { AttachmentList } from "./AttachmentList";
 import { EmailBody } from "./EmailBody";
 import { NEEDS_YOU_IMPORTANCE } from "./lanes";
+import { formatDateTime } from "../../util/formatTimestamp";
 import { SNOOZE_PRESETS } from "./triage";
 
 /** What the card holds for the body: the wire response, or a client-synthesised
@@ -66,12 +79,7 @@ function timeLabel(signal: EmailSignalRow): string {
   if (!ts) return "";
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  return formatDateTime(ts);
 }
 
 export interface EmailSignalCardProps {
@@ -224,37 +232,43 @@ export function EmailSignalCard({
   const isSnoozed = triaged === "snoozed";
 
   return (
-    <li className="lumogis-email-card" data-testid={`email-card-${signal.signal_id}`}>
-      <div className="lumogis-email-card__head">
+    <li
+      className="list-none rounded-lg border bg-card p-3 text-card-foreground"
+      data-testid={`email-card-${signal.signal_id}`}
+    >
+      <div className="flex flex-wrap items-center gap-2">
         {/* LUM-696: the checkbox is also the KEYBOARD CURSOR anchor — moving the
             cursor calls .focus() on it, so the browser's native :focus-visible
             ring is the visible focus state, screen readers announce the row, and
             the visual cursor cannot drift from real focus. No
             aria-activedescendant bookkeeping. */}
         {onToggleSelect ? (
-          <input
-            type="checkbox"
-            className="lumogis-email-card__select"
+          <Checkbox
             data-triage-checkbox={signal.signal_id}
             aria-label={`Select: ${signal.title} from ${senderLabel(signal)}`}
             checked={selected}
-            onChange={(e) =>
+            onCheckedChange={(_checked, details) =>
               onToggleSelect(
                 signal.signal_id,
-                // jsdom and browsers both set shiftKey on the synthesized click;
-                // a keyboard Space yields false, which is the correct plain
-                // toggle.
-                Boolean((e.nativeEvent as MouseEvent).shiftKey),
+                // The synthesized click carries shiftKey in jsdom and browsers
+                // alike; a keyboard Space yields false, which is the correct
+                // plain toggle.
+                Boolean((details?.event as MouseEvent | undefined)?.shiftKey),
               )
             }
           />
         ) : null}
         {important ? (
-          <span className="lumogis-email-card__important" aria-label="Important" title="Important">
+          <span
+            className="text-accent-text"
+            aria-label="Important"
+            title="Important"
+            role="img"
+          >
             ●
           </span>
         ) : null}
-        <span className="lumogis-email-card__sender">{senderLabel(signal)}</span>
+        <span className="font-medium">{senderLabel(signal)}</span>
         {/* LUM-821: which mailbox this arrived in, on a multi-mailbox account.
             On screen the chip sits beside the sender and reads as what it is.
             Announced bare it would be one more proper noun in a row of them, so
@@ -265,104 +279,120 @@ export function EmailSignalCard({
             queries the attribute rather than the computed name.
             `title` stays for the mouse, and carries the untruncated name. */}
         {mailboxLabel ? (
-          <span className="lumogis-email-card__mailbox" title={`Mailbox: ${mailboxLabel}`}>
-            <span className="lumogis-visually-hidden">Mailbox: </span>
+          <Badge
+            variant="outline"
+            data-testid="email-card-mailbox"
+            title={`Mailbox: ${mailboxLabel}`}
+          >
+            <span className="sr-only">Mailbox: </span>
             {mailboxLabel}
-          </span>
+          </Badge>
         ) : null}
-        {time ? <time className="lumogis-email-card__time">{time}</time> : null}
+        {time ? <time className="ml-auto text-xs text-muted-foreground">{time}</time> : null}
       </div>
-      <div className="lumogis-email-card__title">{signal.title}</div>
+      <div className="mt-1 font-semibold">{signal.title}</div>
       {signal.content_summary ? (
-        <p className="lumogis-email-card__summary">{signal.content_summary}</p>
+        <p className="m-0 mt-1 text-sm text-muted-foreground">{signal.content_summary}</p>
       ) : null}
       {signal.category_label ? (
-        <span className="lumogis-email-card__chip" data-category-slug={signal.category}>
+        <Badge variant="secondary" className="mt-2" data-category-slug={signal.category}>
           {signal.category_label}
-        </span>
+        </Badge>
       ) : null}
 
-      <div className="lumogis-email-card__actions" role="group" aria-label="Triage actions">
+      <div
+        className="mt-3 flex flex-wrap items-center gap-2"
+        role="group"
+        aria-label="Triage actions"
+      >
         {isDone || isSnoozed ? (
-          <button
+          <Button
             type="button"
-            className="lumogis-email-card__action"
+            variant="outline"
+            size="sm"
             disabled={pending}
             onClick={() => onClearTriage(signal.signal_id)}
           >
             {isSnoozed ? "Un-snooze" : "Reopen"}
-          </button>
+          </Button>
         ) : (
           <>
             {canReply ? (
-              <button
+              <Button
                 type="button"
-                className="lumogis-email-card__action"
+                variant="outline"
+                size="sm"
                 disabled={pending}
                 onClick={() => onReply?.(signal)}
               >
                 Reply
-              </button>
+              </Button>
             ) : null}
             {canReply && onReplyAll ? (
-              <button
+              <Button
                 type="button"
-                className="lumogis-email-card__action"
+                variant="outline"
+                size="sm"
                 disabled={pending}
                 onClick={() => onReplyAll(signal)}
               >
                 Reply all
-              </button>
+              </Button>
             ) : null}
             {canForward ? (
-              <button
+              <Button
                 type="button"
-                className="lumogis-email-card__action"
+                variant="outline"
+                size="sm"
                 disabled={pending}
                 onClick={() => onForward?.(signal)}
               >
                 Forward
-              </button>
+              </Button>
             ) : null}
-            <button
+            <Button
               type="button"
-              className="lumogis-email-card__action"
+              size="sm"
               disabled={pending}
               onClick={() => onSetTriage(signal.signal_id, "done")}
             >
               Done
-            </button>
-            <details className="lumogis-email-card__snooze">
-              <summary>Snooze</summary>
-              <ul className="lumogis-email-card__snooze-menu">
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={<Button type="button" variant="outline" size="sm" disabled={pending} />}
+              >
+                Snooze
+                <ChevronDown aria-hidden="true" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-auto min-w-40">
                 {SNOOZE_PRESETS.map((preset) => (
-                  <li key={preset.label}>
-                    <button
-                      type="button"
-                      disabled={pending}
-                      onClick={() =>
-                        onSetTriage(signal.signal_id, "snoozed", preset.at().toISOString())
-                      }
-                    >
-                      {preset.label}
-                    </button>
-                  </li>
+                  <DropdownMenuItem
+                    key={preset.label}
+                    onClick={() =>
+                      onSetTriage(signal.signal_id, "snoozed", preset.at().toISOString())
+                    }
+                  >
+                    {preset.label}
+                  </DropdownMenuItem>
                 ))}
-              </ul>
-            </details>
-            <button
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <Button
               type="button"
-              className="lumogis-email-card__action"
+              variant="ghost"
+              size="sm"
               aria-label="Flag more like this"
               title="Flag more like this"
               disabled={pending}
               onClick={() => onFeedback(signal.signal_id, true)}
             >
               👍
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              className="lumogis-email-card__action"
+              variant="ghost"
+              size="sm"
               disabled={pending}
               onClick={() => {
                 // LUM-649: "Not important" both reclassifies the lane AND teaches
@@ -372,66 +402,85 @@ export function EmailSignalCard({
               }}
             >
               Not important
-            </button>
+            </Button>
           </>
         )}
       </div>
 
       {/* LUM-695: lazy by design — the fetch fires on first open, not on render,
-          so an inbox of 200 cards is 200 requests only if the user opens 200. */}
+          so an inbox of 200 cards is 200 requests only if the user opens 200.
+          `keepMounted` keeps the closed panel in the DOM, as <details> did. */}
       {bodyClient ? (
         readable ? (
-          <details
-            className="lumogis-email-card__body"
+          <Collapsible
+            className="mt-2 border-t pt-2"
             data-testid={`body-${signal.signal_id}`}
-            onToggle={(e) => {
-              if ((e.currentTarget as HTMLDetailsElement).open) void loadBody();
+            onOpenChange={(open) => {
+              if (open) void loadBody();
             }}
           >
-            <summary>Message</summary>
-            <EmailBody
-              body={body?.body ?? ""}
-              // LUM-860: "not fetched yet" is loading too. Opening the
-              // disclosure shows its content in the same frame, before the
-              // toggle event has started the fetch; without `body === null`
-              // that frame is an empty body under a "Showing text only" footer.
-              loading={bodyLoading || body === null}
-              truncated={body?.truncated ?? false}
-              degraded={body?.degraded ?? false}
-              reason={body?.reason ?? "ok"}
-              inlineImages={body?.inline_images ?? []}
-              inlineImagesTruncated={body?.inline_images_truncated ?? false}
-              onRetry={() => void loadBody(true)}
-            />
-          </details>
+            <DisclosureTrigger>Message</DisclosureTrigger>
+            <CollapsibleContent keepMounted className="pt-2">
+              <EmailBody
+                body={body?.body ?? ""}
+                // LUM-860: "not fetched yet" is loading too. Opening the
+                // disclosure shows its content in the same frame, before the
+                // toggle event has started the fetch; without `body === null`
+                // that frame is an empty body under a "Showing text only" footer.
+                loading={bodyLoading || body === null}
+                truncated={body?.truncated ?? false}
+                degraded={body?.degraded ?? false}
+                reason={body?.reason ?? "ok"}
+                inlineImages={body?.inline_images ?? []}
+                inlineImagesTruncated={body?.inline_images_truncated ?? false}
+                onRetry={() => void loadBody(true)}
+              />
+            </CollapsibleContent>
+          </Collapsible>
         ) : (
           // Decided client-side from the ownership predicate, never by probing
           // the route and reading a 404 — a probing implementation invites
           // someone to "fix" that 404 later.
-          <p className="lumogis-email-card__body-unavailable" role="note">
+          <p className="m-0 mt-2 border-t pt-2 text-sm text-muted-foreground" role="note">
             Shared by {senderLabel(signal)} · only they can open this message
           </p>
         )
       ) : null}
       {attachmentClient ? (
-        <details
-          className="lumogis-email-card__attachments"
+        <Collapsible
+          className="mt-2 border-t pt-2"
           data-testid={`attachments-${signal.signal_id}`}
-          onToggle={(e) => {
-            if ((e.currentTarget as HTMLDetailsElement).open) void loadAttachments();
+          onOpenChange={(open) => {
+            if (open) void loadAttachments();
           }}
         >
-          <summary>Attachments</summary>
-          <AttachmentList
-            signalId={signal.signal_id}
-            rows={attachments ?? []}
-            available={attachmentsAvailable}
-            loading={attachmentsLoading}
-            error={attachmentsError}
-            client={attachmentClient}
-          />
-        </details>
+          <DisclosureTrigger>Attachments</DisclosureTrigger>
+          <CollapsibleContent keepMounted className="pt-2">
+            <AttachmentList
+              signalId={signal.signal_id}
+              rows={attachments ?? []}
+              available={attachmentsAvailable}
+              loading={attachmentsLoading}
+              error={attachmentsError}
+              client={attachmentClient}
+            />
+          </CollapsibleContent>
+        </Collapsible>
       ) : null}
     </li>
+  );
+}
+
+function DisclosureTrigger({ children }: { children: string }): JSX.Element {
+  return (
+    <CollapsibleTrigger
+      render={<Button type="button" variant="ghost" size="sm" className="group/trigger -ml-2" />}
+    >
+      <ChevronDown
+        aria-hidden="true"
+        className="transition-transform group-aria-expanded/trigger:rotate-180"
+      />
+      {children}
+    </CollapsibleTrigger>
   );
 }

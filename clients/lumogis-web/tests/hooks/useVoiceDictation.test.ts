@@ -8,6 +8,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { ApiError } from "../../src/api/client";
 import { useVoiceDictation } from "../../src/hooks/useVoiceDictation";
 import { installMockMediaRecorder } from "../helpers/mockMediaRecorder";
 
@@ -69,6 +70,34 @@ describe("useVoiceDictation", () => {
     });
     expect(onError).toHaveBeenCalled();
     expect(result.current.status).toBe("idle");
+    h.uninstall();
+  });
+
+  it("maps stt_model_missing to the downloading message, and clears it on the next start", async () => {
+    const h = installMockMediaRecorder();
+    let fail = true;
+    const transcribe = vi.fn(async () => {
+      if (fail) throw new ApiError(503, "m", "stt_model_missing");
+      return "ok";
+    });
+    const { result } = renderHook(() =>
+      useVoiceDictation({ transcribe, onTranscript: vi.fn() }),
+    );
+    await act(async () => {
+      await result.current.start();
+    });
+    await act(async () => {
+      await result.current.stop();
+    });
+    expect(result.current.error).toBe(
+      "The speech model is still downloading. Try again in a minute.",
+    );
+    fail = false;
+    await act(async () => {
+      await result.current.start();
+    });
+    expect(result.current.error).toBeNull();
+    expect(result.current.stream).not.toBeNull();
     h.uninstall();
   });
 

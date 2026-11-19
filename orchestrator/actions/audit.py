@@ -41,6 +41,12 @@ def _audit_logger():
     return structlog.get_logger("lumogis.audit")
 
 
+# Six services keep a private ``_emit_audit`` wrapper around this function
+# (auth_sessions, mcp_tokens, user_invites, system_mail, _credential_internals,
+# password_reset; connector_credentials goes through _credential_internals'
+# copy). New callers use ``write_audit``
+# directly, as services/home_dns does (LUM-331); converge the wrappers when
+# one of those files is next reworked.
 def write_audit(entry: AuditEntry, reverse_token: Optional[str] = None) -> Optional[int]:
     """Insert an AuditEntry into audit_log. Returns the row id, or None on failure.
 

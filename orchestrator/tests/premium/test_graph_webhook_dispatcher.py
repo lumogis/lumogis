@@ -339,6 +339,7 @@ def test_register_core_callbacks_wires_every_event():
         WebhookEvent.ENTITY_CREATED,
         WebhookEvent.SESSION_ENDED,
         WebhookEvent.ENTITY_MERGED,
+        WebhookEvent.ENTITY_DELETED,
         WebhookEvent.NOTE_CAPTURED,
         WebhookEvent.AUDIO_TRANSCRIBED,
         WebhookEvent.DOCUMENT_SHARED,

@@ -4,7 +4,7 @@
 // Phase 4C — enrol this browser for Web Push via user gesture only.
 // Phase 4D — SW push + notificationclick in `src/pwa/sw.ts` + `src/pwa/swPush.ts` — see README.
 
-import { useCallback, useMemo, useState, type CSSProperties } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -19,6 +19,23 @@ import {
 } from "../../api/webPush";
 import { ApiError } from "../../api/client";
 import { useAuth } from "../../auth/AuthProvider";
+import { PageSection } from "../../components/page/PageSection";
+import { RowActions } from "../../components/page/RowActions";
+import { Alert, AlertDescription } from "../../components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "../../components/ui/alert-dialog";
+import { Button } from "../../components/ui/button";
+import { Checkbox } from "../../components/ui/checkbox";
+import { Label } from "../../components/ui/label";
+import { formatDateTime } from "../../util/formatTimestamp";
 import {
   createBrowserPushSubscription,
   isWebPushSupported,
@@ -27,19 +44,6 @@ import {
 
 const VAPID_QK = ["notifications", "vapid-public-key"] as const;
 const SUBS_QK = ["notifications", "web-push-subscriptions"] as const;
-
-const tap: CSSProperties = {
-  minHeight: "var(--lumogis-tap-target-min, 44px)",
-  minWidth: "var(--lumogis-tap-target-min, 44px)",
-};
-
-function formatWhen(iso: string): string {
-  try {
-    return new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-  } catch {
-    return iso;
-  }
-}
 
 export function PushOptIn(): JSX.Element {
   const { client, status } = useAuth();
@@ -105,11 +109,9 @@ export function PushOptIn(): JSX.Element {
       const result = await Notification.requestPermission();
       setNotifPermission(result);
       if (result !== "granted") {
-        setActionMessage(
-          result === "denied"
-            ? "Notifications are blocked for this site. Allow them in the browser settings for this origin, then try again."
-            : "Notifications were not allowed.",
-        );
+        // A refusal is explained by the standing "blocked" message below (notifPermission),
+        // so only the dismissed-without-choosing case needs its own line.
+        if (result !== "denied") setActionMessage("Notifications were not allowed.");
         return;
       }
 
@@ -140,24 +142,24 @@ export function PushOptIn(): JSX.Element {
     }
   }, [busy, client, qc, supported]);
 
+  const title = "On this device";
+
   if (!authed) {
     return (
-      <section aria-labelledby="web-push-heading" style={{ marginTop: "var(--lumogis-space-5, 1.5rem)" }}>
-        <h3 id="web-push-heading">Browser push (this device)</h3>
-        <p style={{ maxWidth: "42rem" }}>Sign in to enrol this browser for Web Push.</p>
-      </section>
+      <PageSection title={title}>
+        <p className="m-0 text-sm text-muted-foreground">Sign in to turn on notifications in this browser.</p>
+      </PageSection>
     );
   }
 
   if (!supported) {
     return (
-      <section aria-labelledby="web-push-heading" style={{ marginTop: "var(--lumogis-space-5, 1.5rem)" }}>
-        <h3 id="web-push-heading">Browser push (this device)</h3>
-        <p role="status" style={{ maxWidth: "42rem" }}>
-          Browser push is not supported in this environment. Use a recent desktop or mobile browser over HTTPS (or
-          localhost for development), with service workers and notifications enabled.
+      <PageSection title={title}>
+        <p role="status" className="m-0 text-sm text-muted-foreground">
+          This browser can't show notifications from Lumogis. Use a recent desktop or phone browser over a secure
+          (https) connection, with notifications turned on.
         </p>
-      </section>
+      </PageSection>
     );
   }
 
@@ -170,82 +172,75 @@ export function PushOptIn(): JSX.Element {
       : describeApiError(vapidQ.error)
     : null;
 
-  return (
-    <section aria-labelledby="web-push-heading" style={{ marginTop: "var(--lumogis-space-5, 1.5rem)" }}>
-      <h3 id="web-push-heading">Browser push (this device)</h3>
-      <p style={{ maxWidth: "42rem", opacity: 0.9 }}>
-        Registers this browser so Lumogis can send Web Push deliveries. After enrolment, the Lumogis service worker can show
-        a system notification and open **/**, **`/chat`**, **`/approvals`**, or **`/me/notifications`** when you tap it
-        — exact tray behaviour varies by OS and browser.
-      </p>
+  const rows = subsQ.data?.subscriptions ?? [];
+  const pending = patchMut.isPending || deleteMut.isPending;
 
+  return (
+    <PageSection
+      title={title}
+      description="Turn this on to get a notification in this browser when something needs you. Tapping one opens Lumogis on the right page; how it looks depends on your device."
+    >
       {vapidQ.isPending ? (
-        <p aria-busy="true">Checking push configuration…</p>
+        <p aria-busy="true" className="m-0 text-sm text-muted-foreground">
+          Checking whether notifications are set up…
+        </p>
       ) : vapidUnavailable ? (
-        <p role="status" style={{ maxWidth: "42rem", color: "var(--lumogis-warn, #b76e00)" }}>
-          Web Push is not configured on this Lumogis server. Ask whoever runs Lumogis to set the VAPID keys for the
-          orchestrator.
+        <p role="status" className="m-0 text-sm text-muted-foreground">
+          Browser notifications are not set up on this Lumogis yet. Ask whoever runs Lumogis to turn them on.
         </p>
       ) : vapidQ.isError ? (
-        <p role="alert">{serverMsg ?? "Could not load push configuration."}</p>
+        <Alert variant="destructive">
+          <AlertDescription>{serverMsg ?? "Could not check whether notifications are set up."}</AlertDescription>
+        </Alert>
       ) : null}
 
       {notifPermission === "denied" && !vapidUnavailable && !vapidQ.isPending && (
-        <p role="status" style={{ maxWidth: "42rem" }}>
-          Notifications were blocked for this origin. Adjust the permission in your browser&apos;s site settings, then
-          reload this page if you change it.
+        <p role="status" className="m-0 text-sm">
+          Notifications are blocked for this site in your browser settings. Allow them there, then reload this page.
         </p>
       )}
 
       {!vapidUnavailable && !vapidQ.isPending && vapidQ.data && notifPermission !== "denied" ? (
-        <div style={{ marginTop: "0.75rem" }}>
-          <button
-            type="button"
-            className="lumogis-push-opt-in__enable"
-            onClick={() => void onEnableBrowserPush()}
-            disabled={
-              busy ||
-              patchMut.isPending ||
-              deleteMut.isPending
-            }
-            style={tap}
-          >
+        <div className="mt-3">
+          <Button type="button" onClick={() => void onEnableBrowserPush()} disabled={busy || pending}>
             {busy ? "Working…" : "Enable browser push on this device"}
-          </button>
+          </Button>
         </div>
       ) : null}
 
       {actionMessage ? (
-        <p role="status" style={{ marginTop: "0.75rem", maxWidth: "42rem" }}>
+        <p role="status" className="mt-3 mb-0 text-sm">
           {actionMessage}
         </p>
       ) : null}
 
       {subsQ.isError ? (
-        <p role="alert" style={{ marginTop: "0.75rem" }}>
-          {subsQ.error instanceof ApiError ? formatWebPushUserMessage(subsQ.error.status, subsQ.error.detail) : "Could not load subscriptions."}
-        </p>
+        <Alert variant="destructive" className="mt-3">
+          <AlertDescription>
+            {subsQ.error instanceof ApiError
+              ? formatWebPushUserMessage(subsQ.error.status, subsQ.error.detail)
+              : "Could not load your browsers."}
+          </AlertDescription>
+        </Alert>
       ) : subsQ.isPending && !vapidUnavailable ? (
-        <p aria-busy="true" style={{ marginTop: "0.75rem" }}>
-          Loading subscriptions…
+        <p aria-busy="true" className="mt-3 mb-0 text-sm text-muted-foreground">
+          Loading your browsers…
         </p>
       ) : subsQ.data ? (
-        subsQ.data.subscriptions.length > 0 ? (
+        rows.length > 0 ? (
           <WebPushSubscriptionList
-            rows={subsQ.data.subscriptions}
+            rows={rows}
             onPatch={(id, patch) => patchMut.mutate({ id, patch })}
             onDelete={(id) => deleteMut.mutate(id)}
-            patchPending={patchMut.isPending}
-            deletePending={deleteMut.isPending}
+            pending={pending}
           />
         ) : (
-          <p style={{ marginTop: "1rem", opacity: 0.9 }} role="status">
-            No browsers are registered for Web Push on this account yet. Use Enable browser push after granting
-            notification permission for this origin.
+          <p role="status" className="mt-3 mb-0 text-sm text-muted-foreground">
+            No browser is signed up for notifications yet. Use the button above to allow them in this one.
           </p>
         )
       ) : null}
-    </section>
+    </PageSection>
   );
 }
 
@@ -253,102 +248,85 @@ function WebPushSubscriptionList(props: {
   rows: WebPushSubscriptionRedacted[];
   onPatch: (id: number, patch: { notify_on_signals?: boolean; notify_on_shared_scope?: boolean }) => void;
   onDelete: (id: number) => void;
-  patchPending: boolean;
-  deletePending: boolean;
+  pending: boolean;
 }): JSX.Element {
-  const { rows, onPatch, onDelete, patchPending, deletePending } = props;
+  const { rows, onPatch, onDelete, pending } = props;
+  const [removing, setRemoving] = useState<WebPushSubscriptionRedacted | null>(null);
   return (
-    <div style={{ marginTop: "1rem", display: "flex", flexDirection: "column", gap: "1rem" }}>
-      <h4 style={{ fontSize: "1rem", margin: 0 }}>Registered browsers</h4>
-      {rows.map((row) => (
-        <article
-          key={row.id}
-          style={{
-            border: "1px solid var(--lumogis-border, #d6dae4)",
-            borderRadius: "var(--lumogis-radius-md, 8px)",
-            padding: "0.85rem",
-            background: "var(--lumogis-surface, #fff)",
-            maxWidth: "42rem",
-          }}
-        >
-          <div style={{ fontWeight: 600, marginBottom: "0.35rem", wordBreak: "break-word" }}>
-            {row.endpoint_origin}
-          </div>
-          <dl
-            style={{
-              margin: 0,
-              display: "grid",
-              gap: "0.25rem",
-              fontSize: "0.9rem",
-              opacity: 0.95,
-            }}
-          >
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem 1rem" }}>
-              <dt style={{ opacity: 0.75 }}>Created</dt>
-              <dd style={{ margin: 0 }}>{formatWhen(row.created_at)}</dd>
-            </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem 1rem" }}>
-              <dt style={{ opacity: 0.75 }}>Last seen</dt>
-              <dd style={{ margin: 0 }}>{formatWhen(row.last_seen_at)}</dd>
-            </div>
-            {row.last_error ? (
-              <div>
-                <dt style={{ opacity: 0.75 }}>Last delivery note</dt>
-                <dd style={{ margin: 0 }}>{row.last_error}</dd>
+    <div className="mt-4">
+      <h3 className="m-0 text-sm font-semibold">Browsers signed up</h3>
+      <ul role="list" className="m-0 mt-1 flex list-none flex-col divide-y divide-border p-0">
+        {rows.map((row) => (
+          <li key={row.id} role="group" aria-label={row.endpoint_origin} className="flex flex-col gap-2 py-3">
+            <div className="flex items-start gap-2">
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium break-words">{row.endpoint_origin}</div>
+                <div className="text-xs text-muted-foreground">
+                  Added {formatDateTime(row.created_at)}. Last used {formatDateTime(row.last_seen_at)}.
+                </div>
+                {row.last_error ? (
+                  <div className="text-xs text-muted-foreground">Last problem: {row.last_error}</div>
+                ) : null}
+                {row.user_agent ? (
+                  <div className="text-xs break-words text-muted-foreground">{row.user_agent}</div>
+                ) : null}
               </div>
-            ) : null}
-            {row.user_agent ? (
-              <div style={{ wordBreak: "break-word" }}>
-                <dt style={{ opacity: 0.75 }}>User-Agent</dt>
-                <dd style={{ margin: 0 }}>{row.user_agent}</dd>
-              </div>
-            ) : null}
-          </dl>
-          <div style={{ marginTop: "0.75rem", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-            <label
-              style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start", minHeight: tap.minHeight }}
-            >
-              <input
-                type="checkbox"
+              <RowActions
+                label={`Actions for ${row.endpoint_origin}`}
+                items={[
+                  { label: "Remove this browser", destructive: true, disabled: pending, onSelect: () => setRemoving(row) },
+                ]}
+              />
+            </div>
+            <div className="flex items-start gap-2">
+              <Checkbox
+                id={`push-signals-${row.id}`}
                 checked={row.notify_on_signals}
-                disabled={patchPending || deletePending}
-                onChange={(e) =>
-                  onPatch(row.id, { notify_on_signals: e.target.checked })
-                }
-                aria-label={`Notify on signals for ${row.endpoint_origin}`}
+                disabled={pending}
+                onCheckedChange={(checked) => onPatch(row.id, { notify_on_signals: checked === true })}
               />
-              <span>
-                Notify on emails that need you — sends the email sender and subject to
-                this device
-              </span>
-            </label>
-            <label
-              style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start", minHeight: tap.minHeight }}
-            >
-              <input
-                type="checkbox"
+              <Label htmlFor={`push-signals-${row.id}`} className="font-normal">
+                Tell me about emails that need me (the sender and subject are sent to this device)
+              </Label>
+            </div>
+            <div className="flex items-start gap-2">
+              <Checkbox
+                id={`push-shared-${row.id}`}
                 checked={row.notify_on_shared_scope}
-                disabled={patchPending || deletePending}
-                onChange={(e) =>
-                  onPatch(row.id, { notify_on_shared_scope: e.target.checked })
-                }
-                aria-label={`Notify on shared scope for ${row.endpoint_origin}`}
+                disabled={pending}
+                onCheckedChange={(checked) => onPatch(row.id, { notify_on_shared_scope: checked === true })}
               />
-              <span>Notify on shared-scope events</span>
-            </label>
-          </div>
-          <button
-            type="button"
-            style={{ ...tap, marginTop: "0.75rem", borderRadius: "var(--lumogis-radius-md, 8px)" }}
-            disabled={patchPending || deletePending}
-            onClick={() => {
-              if (globalThis.confirm("Remove this browser from Web Push for your account?")) onDelete(row.id);
-            }}
-          >
-            {deletePending ? "Removing…" : "Remove this browser"}
-          </button>
-        </article>
-      ))}
+              <Label htmlFor={`push-shared-${row.id}`} className="font-normal">
+                Tell me when something is shared with the household
+              </Label>
+            </div>
+          </li>
+        ))}
+      </ul>
+
+      <AlertDialog open={removing !== null} onOpenChange={(open) => (open ? undefined : setRemoving(null))}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove this browser?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {removing?.endpoint_origin} will stop getting notifications from Lumogis. You can turn them on again
+              from that browser later.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructiveSolid"
+              onClick={() => {
+                if (removing) onDelete(removing.id);
+                setRemoving(null);
+              }}
+            >
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

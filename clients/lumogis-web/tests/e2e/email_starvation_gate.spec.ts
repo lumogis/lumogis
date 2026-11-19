@@ -266,7 +266,7 @@ function installMocks(
 }
 
 async function openOrganizePanel(page: Page) {
-  await page.goto("/me/email-signals");
+  await page.goto("/settings/email");
   await expect(page.getByTestId("email-signals-view")).toBeVisible({ timeout: 15_000 });
   await page.getByText("Organize this mailbox").click();
   await expect(page.getByRole("heading", { name: "Organize my mailbox" })).toBeVisible();
@@ -283,7 +283,7 @@ test.describe("organize starvation gate (LUM-735)", () => {
     installMocks(page, { refuseTimes: 1 });
     await openOrganizePanel(page);
 
-    await page.getByLabel(/Sort my emails into folders/).check();
+    await page.getByRole("checkbox", { name: /Sort my emails into folders/ }).check();
     await page.getByRole("button", { name: "Save" }).click();
 
     const dialog = page.getByTestId("starvation-warning");
@@ -305,7 +305,7 @@ test.describe("organize starvation gate (LUM-735)", () => {
     const rec = installMocks(page, { refuseTimes: 1 });
     await openOrganizePanel(page);
 
-    await page.getByLabel(/Sort my emails into folders/).check();
+    await page.getByRole("checkbox", { name: /Sort my emails into folders/ }).check();
     await page.getByRole("button", { name: "Save" }).click();
     await expect(page.getByTestId("starvation-warning")).toBeVisible();
 
@@ -326,8 +326,8 @@ test.describe("organize starvation gate (LUM-735)", () => {
     const rec = installMocks(page, { refuseTimes: 1 });
     await openOrganizePanel(page);
 
-    await page.getByLabel(/Sort my emails into folders/).check();
-    await page.getByLabel(/Also apply to existing mail/).check();
+    await page.getByRole("checkbox", { name: /Sort my emails into folders/ }).check();
+    await page.getByRole("checkbox", { name: /Also apply to existing mail/ }).check();
     await page.getByRole("button", { name: "Save" }).click();
 
     await expect(page.getByTestId("starvation-warning")).toBeVisible();
@@ -344,11 +344,11 @@ test.describe("organize starvation gate (LUM-735)", () => {
     installMocks(page, { refuseTimes: 1 });
     await openOrganizePanel(page);
 
-    await page.getByLabel(/Sort my emails into folders/).check();
+    await page.getByRole("checkbox", { name: /Sort my emails into folders/ }).check();
     await page.getByRole("button", { name: "Save" }).click();
     await expect(page.getByTestId("starvation-warning")).toBeVisible();
 
-    await page.getByLabel(/Label my emails/).check();
+    await page.getByRole("checkbox", { name: /Label my emails/ }).check();
     await expect(page.getByTestId("starvation-warning")).toHaveCount(0);
   });
 
@@ -359,7 +359,7 @@ test.describe("organize starvation gate (LUM-735)", () => {
     installMocks(page, { refuseTimes: 1, code: "some_other_validation_error" });
     await openOrganizePanel(page);
 
-    await page.getByLabel(/Sort my emails into folders/).check();
+    await page.getByRole("checkbox", { name: /Sort my emails into folders/ }).check();
     await page.getByRole("button", { name: "Save" }).click();
 
     await expect(page.getByTestId("starvation-warning")).toHaveCount(0);
@@ -371,7 +371,7 @@ test.describe("organize starvation gate (LUM-735)", () => {
     const rec = installMocks(page, { refuseTimes: 0 });
     await openOrganizePanel(page);
 
-    await page.getByLabel(/Sort my emails into folders/).check();
+    await page.getByRole("checkbox", { name: /Sort my emails into folders/ }).check();
     await page.getByRole("button", { name: "Save" }).click();
 
     await expect(page.getByTestId("organize-save-msg")).toContainText(/Lumogis will organize/i);
@@ -384,7 +384,7 @@ test.describe("organize starvation gate (LUM-735)", () => {
     // The third arm, and a different component (EmailCleanupPass) reading the
     // same refusal through the same helper.
     installMocks(page, { cleanupRefuse: true });
-    await page.goto("/me/email-signals");
+    await page.goto("/settings/email");
     await expect(page.getByTestId("email-signals-view")).toBeVisible({ timeout: 15_000 });
 
     await page.getByText("Clean up this mailbox").click();
@@ -394,7 +394,7 @@ test.describe("organize starvation gate (LUM-735)", () => {
     // Starting the pass writes nothing and cannot starve anything, so it is not
     // gated. Selecting a category to MOVE and approving is the armed action.
     await expect(page.getByTestId("cleanup-proposals")).toBeVisible({ timeout: 15_000 });
-    await page.getByLabel(/Promotional \/ bulk/).check();
+    await page.getByRole("checkbox", { name: /Promotional \/ bulk/ }).check();
     await page.getByRole("button", { name: /File selected into folders/ }).click();
 
     const warning = page.getByTestId("cleanup-starvation-warning");

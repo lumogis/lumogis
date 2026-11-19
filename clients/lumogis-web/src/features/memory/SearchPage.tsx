@@ -8,8 +8,7 @@
 //   2. GET /api/v1/kg/search      — entity name-search (KG)
 //
 // Selecting a hit from either list opens the EntityCard panel (item 10).
-// The two results lists are shown side-by-side on desktop (≥720 px) and
-// stacked on mobile via the existing CSS container-query breakpoints.
+// The two results lists are shown side-by-side on desktop and stacked on mobile.
 //
 // Co-located helpers follow the same pattern as ChatPage.tsx; the
 // react-refresh rule is suppressed once for the whole file.
@@ -23,6 +22,8 @@ import {
   type ChangeEvent,
 } from "react";
 
+import { Link } from "react-router-dom";
+
 import { useAuth } from "../../auth/AuthProvider";
 import type { ApiClient } from "../../api/client";
 import {
@@ -30,8 +31,16 @@ import {
   kgSearch,
   isEntityShared,
   type EntityCard,
+  type MemoryScope,
   type MemorySearchHit,
 } from "../../api/search";
+import { Alert, AlertDescription } from "../../components/ui/alert";
+import { Badge } from "../../components/ui/badge";
+import { Button } from "../../components/ui/button";
+import { Checkbox } from "../../components/ui/checkbox";
+import { Input } from "../../components/ui/input";
+import { Label } from "../../components/ui/label";
+import { PageHeader } from "../../components/page/PageHeader";
 import { EntityCardPanel } from "./EntityCard";
 
 // ── Debounce hook ─────────────────────────────────────────────────────────
@@ -155,69 +164,72 @@ export function SearchPage(): JSX.Element {
   }, []);
 
   return (
-    <section className="lumogis-search" aria-label="Memory search">
-      <header className="lumogis-search__header">
-        <h1 className="lumogis-search__title">Search</h1>
-        <div className="lumogis-search__input-wrap">
-          <input
-            type="text"
-            className="lumogis-search__input"
-            placeholder="Search memories and entities…"
-            value={rawQuery}
-            onChange={handleInput}
-            aria-label="Search query"
-            aria-busy={loading}
-            autoComplete="off"
-            spellCheck={false}
+    <section aria-label="Memory search">
+      <PageHeader
+        title="Search"
+        description={
+          <Link to="/entities" className="text-accent-text underline underline-offset-2">
+            Browse what Lumogis knows →
+          </Link>
+        }
+      />
+      <div className="relative mb-4 max-w-xl">
+        <Input
+          type="text"
+          placeholder="Search memories and entities…"
+          value={rawQuery}
+          onChange={handleInput}
+          aria-label="Search query"
+          aria-busy={loading}
+          autoComplete="off"
+          spellCheck={false}
+        />
+        {loading && (
+          <span
+            className="absolute right-3 top-1/2 size-4 -translate-y-1/2 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground"
+            aria-hidden="true"
           />
-          {loading && (
-            <span className="lumogis-search__spinner" aria-hidden="true" />
-          )}
-        </div>
-      </header>
+        )}
+      </div>
 
       {error && (
-        <p className="lumogis-search__error" role="alert">
-          {error}
-        </p>
+        <Alert variant="destructive" className="mb-4">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       )}
 
       {degraded && !error && (
-        <p className="lumogis-search__degraded" role="status">
-          Memory search is degraded — results may be incomplete.
-        </p>
+        <Alert className="mb-4" role="status">
+          <AlertDescription>
+            Memory search is degraded — results may be incomplete.
+          </AlertDescription>
+        </Alert>
       )}
 
-      <div className="lumogis-search__body">
+      <div className="grid gap-6 md:grid-cols-2">
         {/* Memory hits */}
-        <section
-          className="lumogis-search__col"
-          aria-label="Memory results"
-        >
-          <h2 className="lumogis-search__col-title">Memories</h2>
+        <section aria-label="Memory results" className="min-w-0 space-y-3">
+          <h2 className="m-0 text-base font-semibold">Memories</h2>
           {!query.trim() && (
-            <p className="lumogis-search__empty">Type to search your memories.</p>
+            <p className="m-0 text-sm text-muted-foreground">Type to search your memories.</p>
           )}
           {query.trim() && memoryHits.length === 0 && !loading && (
-            <p className="lumogis-search__empty">No memory hits.</p>
+            <p className="m-0 text-sm text-muted-foreground">No memory hits.</p>
           )}
-          <ul className="lumogis-search__hits" role="list">
+          <ul className="m-0 list-none space-y-2 p-0" role="list">
             {memoryHits.map((hit) => (
-              <li key={hit.id} className="lumogis-search__hit lumogis-search__hit--memory">
-                <div className="lumogis-search__hit-title">
-                  {hit.title ?? hit.id}
-                </div>
+              <li
+                key={hit.id}
+                className="space-y-1 rounded-lg border border-border bg-card p-3 text-card-foreground"
+              >
+                <div className="text-sm font-medium">{hit.title ?? hit.id}</div>
                 {hit.snippet && (
-                  <p className="lumogis-search__hit-snippet">{hit.snippet}</p>
+                  <p className="m-0 text-sm text-muted-foreground">{hit.snippet}</p>
                 )}
-                <div className="lumogis-search__hit-meta">
-                  <ScopePill scope={hit.scope} />
-                  {hit.source && (
-                    <span className="lumogis-search__hit-source">{hit.source}</span>
-                  )}
-                  <span className="lumogis-search__hit-score">
-                    {(hit.score * 100).toFixed(0)}%
-                  </span>
+                <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  <ScopeBadge scope={hit.scope} />
+                  {hit.source && <span>{hit.source}</span>}
+                  <span>{(hit.score * 100).toFixed(0)}%</span>
                 </div>
               </li>
             ))}
@@ -225,57 +237,51 @@ export function SearchPage(): JSX.Element {
         </section>
 
         {/* Entity hits */}
-        <section
-          className="lumogis-search__col"
-          aria-label="Entity results"
-        >
-          <h2 className="lumogis-search__col-title">Entities</h2>
-          <label className="lumogis-search__filter">
-            <input
-              type="checkbox"
+        <section aria-label="Entity results" className="min-w-0 space-y-3">
+          <h2 className="m-0 text-base font-semibold">Entities</h2>
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="search-shared-only"
               checked={sharedOnly}
-              onChange={(e) => setSharedOnly(e.target.checked)}
+              onCheckedChange={(checked) => setSharedOnly(checked === true)}
               aria-label="Shared with household"
             />
-            <span>Shared with household</span>
-          </label>
+            <Label htmlFor="search-shared-only" className="font-normal">
+              Shared with household
+            </Label>
+          </div>
           {!query.trim() && (
-            <p className="lumogis-search__empty">Type to search entities.</p>
+            <p className="m-0 text-sm text-muted-foreground">Type to search entities.</p>
           )}
           {query.trim() && visibleEntities.length === 0 && !loading && (
-            <p className="lumogis-search__empty">
+            <p className="m-0 text-sm text-muted-foreground">
               {sharedOnly && entityHits.length > 0
                 ? "No shared entities."
                 : "No entity hits."}
             </p>
           )}
-          <ul className="lumogis-search__hits" role="list">
+          <ul className="m-0 list-none space-y-2 p-0" role="list">
             {visibleEntities.map((entity) => (
-              <li key={entity.entity_id} className="lumogis-search__hit lumogis-search__hit--entity">
-                <button
+              <li key={entity.entity_id}>
+                <Button
                   type="button"
-                  className={`lumogis-search__entity-btn${
-                    selectedEntityId === entity.entity_id
-                      ? " lumogis-search__entity-btn--active"
-                      : ""
-                  }`}
+                  variant={selectedEntityId === entity.entity_id ? "secondary" : "outline"}
+                  className="h-auto w-full justify-start gap-2 whitespace-normal py-2 text-left"
                   onClick={() => handleEntitySelect(entity.entity_id)}
                   aria-expanded={selectedEntityId === entity.entity_id}
                 >
-                  <span className="lumogis-search__entity-name">{entity.name}</span>
+                  <span className="font-medium">{entity.name}</span>
                   {entity.type && (
-                    <span className="lumogis-search__entity-type">{entity.type}</span>
+                    <span className="text-xs font-normal text-muted-foreground">{entity.type}</span>
                   )}
-                  <ScopePill scope={entity.scope} />
+                  {/* Personal is the default and stays unmarked; only shared
+                      entries get a badge (state shown once, LUM-993). */}
                   {isEntityShared(entity.share_status) && (
-                    <span
-                      className="lumogis-search__shared-badge"
-                      aria-label="Shared with household"
-                    >
+                    <Badge variant="secondary" aria-label="Shared with household">
                       Shared
-                    </span>
+                    </Badge>
                   )}
-                </button>
+                </Button>
 
                 {selectedEntityId === entity.entity_id && (
                   <EntityCardPanel
@@ -283,6 +289,8 @@ export function SearchPage(): JSX.Element {
                     client={client}
                     initialCard={entity}
                     onShareChanged={() => void refetchEntities()}
+                    // LUM-966: a Hide or Show again changes what the search returns.
+                    onEdited={() => void refetchEntities()}
                   />
                 )}
               </li>
@@ -294,15 +302,14 @@ export function SearchPage(): JSX.Element {
   );
 }
 
-// ── Scope pill ────────────────────────────────────────────────────────────
+// ── Scope badge ───────────────────────────────────────────────────────────
 
-function ScopePill({ scope }: { scope: string }): JSX.Element {
-  return (
-    <span
-      className={`lumogis-scope-pill lumogis-scope-pill--${scope}`}
-      aria-label={`Scope: ${scope}`}
-    >
-      {scope}
-    </span>
-  );
+const SCOPE_LABELS: Record<MemoryScope, string> = {
+  personal: "Personal",
+  shared: "Shared",
+  system: "Built in",
+};
+
+function ScopeBadge({ scope }: { scope: MemoryScope }): JSX.Element {
+  return <Badge variant="outline">{SCOPE_LABELS[scope] ?? scope}</Badge>;
 }

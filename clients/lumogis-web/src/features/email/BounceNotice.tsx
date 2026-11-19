@@ -22,6 +22,9 @@
 import { useCallback, useEffect, useState } from "react";
 import type { JSX } from "react";
 
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+
 import type { EmailBounce } from "../../api/emailBounces";
 
 export interface BounceNoticeProps {
@@ -62,30 +65,33 @@ export function BounceNotice(props: BounceNoticeProps): JSX.Element | null {
   if (bounces.length === 0) return null;
 
   return (
-    <section className="lumogis-bounce-notice" role="alert" aria-label="Undelivered messages">
-      <h2 className="lumogis-bounce-notice__title">
+    <Alert variant="destructive" aria-label="Undelivered messages" className="mb-4">
+      <AlertTitle>
         {bounces.length === 1
           ? "A message you sent did not arrive"
           : `${bounces.length} messages you sent did not arrive`}
-      </h2>
-      <ul className="lumogis-bounce-notice__list">
-        {bounces.map((b) => (
-          <li key={b.id} className="lumogis-bounce-notice__item">
-            <span className="lumogis-bounce-notice__what">
-              {b.subject ? <strong>{b.subject}</strong> : <em>a message</em>} did not reach{" "}
-              <span className="lumogis-bounce-notice__addr">{b.recipient}</span>
-            </span>
-            <button
-              type="button"
-              className="lumogis-bounce-notice__dismiss"
-              onClick={() => dismiss(b.id)}
-              aria-label={`Dismiss notice for ${b.recipient}`}
-            >
-              Dismiss
-            </button>
-          </li>
-        ))}
-      </ul>
-    </section>
+      </AlertTitle>
+      <AlertDescription>
+        <ul className="m-0 flex list-none flex-col gap-2 p-0">
+          {bounces.map((b) => (
+            <li key={b.id} className="flex flex-wrap items-center justify-between gap-2">
+              <span>
+                {b.subject ? <strong>{b.subject}</strong> : <em>a message</em>} did not reach{" "}
+                <span className="break-all font-medium">{b.recipient}</span>
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => dismiss(b.id)}
+                aria-label={`Dismiss notice for ${b.recipient}`}
+              >
+                Dismiss
+              </Button>
+            </li>
+          ))}
+        </ul>
+      </AlertDescription>
+    </Alert>
   );
 }

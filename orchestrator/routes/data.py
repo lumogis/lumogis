@@ -24,6 +24,7 @@ from pydantic import field_validator
 from services.batch_queue import enqueue
 from services.ingest import enqueue_library_rescan
 from services.search import semantic_search
+from visibility import not_hidden_sql
 from visibility import visible_filter
 
 import config
@@ -211,6 +212,10 @@ def list_entities(
     user = get_user(request)
     ms = config.get_metadata_store()
     where_clause, where_params = visible_filter(user, _coerce_scope_filter(scope))
+    # LUM-966: an entry the caller hid stays out of the dashboard Entities panel.
+    hidden_clause, hidden_params = not_hidden_sql(user.user_id)
+    where_clause = f"{where_clause} AND {hidden_clause}"
+    where_params = (*where_params, *hidden_params)
 
     try:
         if type:

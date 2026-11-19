@@ -201,6 +201,7 @@ def _run_weekly_review(*, user_id: str) -> str:
     # surfaces use the household visibility helper so the user sees their
     # own personal items plus all shared/system items.
     from auth import UserContext
+    from visibility import not_hidden_sql
     from visibility import visible_filter
 
     vis_clause, vis_params = visible_filter(UserContext(user_id=user_id))
@@ -212,10 +213,12 @@ def _run_weekly_review(*, user_id: str) -> str:
         vis_params,
     )
 
+    hidden_clause, hidden_params = not_hidden_sql(user_id)  # LUM-966: Hide
     entities = ms.fetch_all(
-        f"SELECT name, entity_type, mention_count FROM entities WHERE {vis_clause} "
+        f"SELECT name, entity_type, mention_count FROM entities "
+        f"WHERE {vis_clause} AND {hidden_clause} "
         "ORDER BY mention_count DESC LIMIT 10",
-        vis_params,
+        (*vis_params, *hidden_params),
     )
 
     # 5 most recent session summaries from Qdrant conversations collection.

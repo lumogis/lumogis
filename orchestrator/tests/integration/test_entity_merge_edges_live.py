@@ -88,7 +88,7 @@ def _merge(ms, winner, loser, uid):
         patch.object(config, "get_embedder", return_value=MagicMock()),
         patch("services.entity_merge.hooks.fire_background"),
     ):
-        return merge_entities(winner, loser, uid)
+        return merge_entities(winner, loser, uid, origin="member")
 
 
 @pytest.fixture

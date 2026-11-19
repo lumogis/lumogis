@@ -81,6 +81,8 @@ def read_dotenv(path: Path) -> dict[str, str]:
 
 
 def parse_compose_ps(raw: str) -> list[dict]:
+    # Keep in step with Compose.ps_json in scripts/release/smoke/release_smoke.py
+    # (LUM-997); a third copy moves both into a shared module.
     raw = raw.strip()
     if not raw:
         return []

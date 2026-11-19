@@ -118,7 +118,7 @@ test.describe("email organize settings", () => {
 
   test("open organize panel → enable label → Save PATCHes", async ({ page }) => {
     const mocks = installMocks(page);
-    await page.goto("/me/email-signals");
+    await page.goto("/settings/email");
     await expect(page.getByTestId("email-signals-view")).toBeVisible({ timeout: 15_000 });
 
     // Open the per-mailbox organize panel.
@@ -126,7 +126,7 @@ test.describe("email organize settings", () => {
     await expect(page.getByRole("heading", { name: "Organize my mailbox" })).toBeVisible();
 
     // Enable labelling and save.
-    await page.getByLabel(/Label my emails/).check();
+    await page.getByRole("checkbox", { name: /Label my emails/ }).check();
     await page.getByRole("button", { name: "Save" }).click();
 
     await expect(page.getByTestId("organize-save-msg")).toContainText(/Lumogis will organize/i, {

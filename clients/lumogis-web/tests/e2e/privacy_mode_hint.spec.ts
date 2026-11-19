@@ -5,7 +5,7 @@
 // credential row -> `disabled_reason` -> hint -> link.
 //
 // Nothing here is mocked (no `page.route` for /api/v1/models or
-// /me/privacy-mode): mocking them would only re-assert the fixture.
+// /settings/privacy): mocking them would only re-assert the fixture.
 //
 // Run (see `make web-e2e-prove`):
 //   export LUMOGIS_WEB_SMOKE_EMAIL=...  LUMOGIS_WEB_SMOKE_PASSWORD='...'  # >= 12 chars
@@ -76,12 +76,12 @@ async function deleteKey(request: APIRequestContext, token: string): Promise<voi
 }
 
 async function saveKeyOnConnectorsPage(page: Page): Promise<void> {
-  await page.goto("/me/connectors");
-  const card = page.locator("article", {
-    // The heading also carries the status chip ("llm_anthropicNot configured").
-    has: page.getByRole("heading", { name: /^llm_anthropic/ }),
-  });
+  await page.goto("/settings/connections");
+  // LUM-993 Pass 5: one card per service, named in plain words ("Anthropic
+  // (Claude)"); the form sits behind the card's Connect button.
+  const card = page.getByTestId("connector-llm_anthropic");
   await expect(card).toBeVisible({ timeout: 60_000 });
+  await card.getByRole("button", { name: "Connect", exact: true }).click();
   await card.getByLabel("API key").fill(DUMMY_KEY);
   await card.getByRole("button", { name: "Save" }).click();
   await expect(page.getByText("Saved.", { exact: true })).toBeVisible();
@@ -125,7 +125,7 @@ test.describe("LUM-881 privacy-mode hint (live)", () => {
     test.skip(skipReason !== "", skipReason);
   });
 
-  test("desktop: save a key -> key-save hint -> picker explains -> link goes to Privacy mode", async ({ page }) => {
+  test("desktop: save a key -> key-save hint -> picker explains -> link goes to Online or local AI", async ({ page }) => {
     await loginWithSmokeCredentials(page);
 
     await saveKeyOnConnectorsPage(page);
@@ -137,7 +137,8 @@ test.describe("LUM-881 privacy-mode hint (live)", () => {
     const hint = page.getByTestId("privacy-blocked-hint");
     await expect(hint).toBeVisible();
     await hint.getByRole("link").click();
-    await expect(page).toHaveURL(/\/admin\/privacy-mode$/);
+    await expect(page).toHaveURL(/\/settings\/privacy\?view=household$/);
+    await expect(page.getByRole("heading", { level: 1, name: "Online or local AI" })).toBeVisible();
   });
 
   test.describe("mobile (390x844)", () => {

@@ -100,7 +100,7 @@ describe("CaptureArchiveView", () => {
     const panel = await screen.findByLabelText("Committed capture");
     // provenance shown
     expect(within(panel).getByText(/Committed to memory \(note abcd1234/i)).toBeTruthy();
-    expect(within(panel).getByText(/Committed 7\/10\/2026/)).toBeTruthy();
+    expect(within(panel).getByText(/Committed 10 Jul 2026/)).toBeTruthy();
 
     // READ-ONLY guard (ALLOWLIST, not blocklist): the archive detail renders
     // exactly one button — "Close". This catches any differently-named mutate

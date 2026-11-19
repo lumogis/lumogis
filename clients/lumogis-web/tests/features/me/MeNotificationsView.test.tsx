@@ -4,6 +4,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 import { ApiClient } from "../../../src/api/client";
 import { AccessTokenStore } from "../../../src/api/tokens";
@@ -150,10 +151,9 @@ describe("MeNotificationsView", () => {
     );
 
     await waitFor(() => expect(url).toContain("/api/v1/me/notifications"));
-    await waitFor(() => expect(screen.getByLabelText(/Total channels: 2/)).toBeInTheDocument());
-    expect(screen.getByLabelText(/Configured channels: 1/)).toBeInTheDocument();
-    expect(screen.getByLabelText(/Not configured: 1/)).toBeInTheDocument();
-    expect(screen.getByLabelText(/Paused channels: 0/)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByText(/2 channels, 1 set up, 1 not set up, 0 paused/)).toBeInTheDocument(),
+    );
   });
 
   it("renders channels status table — no send/save/reveal on status rows", async () => {
@@ -247,9 +247,12 @@ describe("MeNotificationsView", () => {
       </AuthProvider>,
     );
 
-    await waitFor(() => expect(screen.getByLabelText(/ntfy paused/)).toBeInTheDocument());
-    fireEvent.change(screen.getByLabelText("Filter channels"), { target: { value: "configured" } });
-    expect(screen.queryByLabelText(/ntfy paused/)).toBeNull();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Details" }));
+    expect(await screen.findByRole("row", { name: /ntfy.*Paused/s })).toBeInTheDocument();
+    await user.click(screen.getByRole("combobox", { name: "Filter channels" }));
+    await user.click(await screen.findByRole("option", { name: "Configured only" }));
+    await waitFor(() => expect(screen.queryByRole("row", { name: /ntfy.*Paused/s })).toBeNull());
   });
 
   it("renders preference matrix with checkboxes", async () => {
@@ -268,7 +271,7 @@ describe("MeNotificationsView", () => {
     );
 
     await waitFor(() => expect(screen.getByLabelText("Notification preference matrix")).toBeInTheDocument());
-    expect(screen.getByLabelText("Signal received — ntfy")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Signal received — ntfy" })).toBeInTheDocument();
     expect(screen.getByText("Not available yet")).toBeInTheDocument();
   });
 
@@ -292,8 +295,8 @@ describe("MeNotificationsView", () => {
       </AuthProvider>,
     );
 
-    await waitFor(() => expect(screen.getByLabelText("Signal received — ntfy")).toBeInTheDocument());
-    fireEvent.click(screen.getByLabelText("Signal received — ntfy"));
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: "Signal received — ntfy" })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("checkbox", { name: "Signal received — ntfy" }));
     await waitFor(() => expect(patched).toBe(true));
   });
 
@@ -312,7 +315,12 @@ describe("MeNotificationsView", () => {
       </AuthProvider>,
     );
 
-    await waitFor(() => expect(screen.getByLabelText("Consolidation done — ntfy")).toBeDisabled());
+    await waitFor(() =>
+      expect(screen.getByRole("checkbox", { name: "Consolidation done — ntfy" })).toHaveAttribute(
+        "aria-disabled",
+        "true",
+      ),
+    );
   });
 
   it("renders quiet hours controls seeded from the current preferences", async () => {
@@ -340,10 +348,10 @@ describe("MeNotificationsView", () => {
     );
 
     await waitFor(() =>
-      expect(screen.getByLabelText("Quiet hours timezone")).toHaveValue("Europe/Berlin"),
+      expect(screen.getByRole("combobox", { name: "Timezone" })).toHaveTextContent("Europe/Berlin"),
     );
-    expect(screen.getByLabelText("Quiet hours start")).toHaveValue("22:00");
-    expect(screen.getByLabelText("Quiet hours end")).toHaveValue("07:00");
+    expect(screen.getByLabelText("From")).toHaveValue("22:00");
+    expect(screen.getByLabelText("Until")).toHaveValue("07:00");
     expect(screen.getByRole("button", { name: "Clear quiet hours" })).toBeInTheDocument();
   });
 
@@ -362,7 +370,7 @@ describe("MeNotificationsView", () => {
       </AuthProvider>,
     );
 
-    await waitFor(() => expect(screen.getByLabelText("Quiet hours timezone")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Timezone" })).toBeInTheDocument());
     expect(screen.queryByRole("button", { name: "Clear quiet hours" })).toBeNull();
   });
 
@@ -386,10 +394,10 @@ describe("MeNotificationsView", () => {
       </AuthProvider>,
     );
 
-    await waitFor(() => expect(screen.getByLabelText("Quiet hours timezone")).toBeInTheDocument());
-    fireEvent.change(screen.getByLabelText("Quiet hours timezone"), {
-      target: { value: "Asia/Tokyo" },
-    });
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Timezone" })).toBeInTheDocument());
+    await user.click(screen.getByRole("combobox", { name: "Timezone" }));
+    await user.click(await screen.findByRole("option", { name: "Asia/Tokyo" }));
     await waitFor(() => expect(patchedBody).toEqual({ timezone: "Asia/Tokyo" }));
   });
 
@@ -413,9 +421,9 @@ describe("MeNotificationsView", () => {
       </AuthProvider>,
     );
 
-    await waitFor(() => expect(screen.getByLabelText("Quiet hours start")).toBeInTheDocument());
-    fireEvent.change(screen.getByLabelText("Quiet hours start"), { target: { value: "22:00" } });
-    fireEvent.blur(screen.getByLabelText("Quiet hours start"));
+    await waitFor(() => expect(screen.getByLabelText("From")).toBeInTheDocument());
+    fireEvent.change(screen.getByLabelText("From"), { target: { value: "22:00" } });
+    fireEvent.blur(screen.getByLabelText("From"));
     await waitFor(() => expect(patchedBody).toEqual({ quiet_hours_start: "22:00" }));
   });
 
@@ -472,5 +480,58 @@ describe("MeNotificationsView", () => {
     );
 
     await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+  });
+
+  it("shows the ntfy steps in plain words and keeps tier names out of the main view", async () => {
+    const fetchImpl = mockFetch(async (input: RequestInfo) => {
+      const u = String(input);
+      if (u.includes("/api/v1/me/notifications")) return jsonResponse(200, samplePayload);
+      return jsonResponse(404, {});
+    });
+    const store = new AccessTokenStore();
+    const client = new ApiClient({ tokens: store, fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    render(
+      <AuthProvider client={client} tokens={store} skipRefreshOnMount>
+        <MeNotificationsView />
+      </AuthProvider>,
+    );
+
+    expect(await screen.findByText("Install the ntfy app on your phone.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Connected services" })).toHaveAttribute("href", "/settings/connections");
+    // Tiers, ids and VAPID sit behind the closed Details.
+    expect(screen.getByRole("button", { name: "Details" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("cell", { name: "web_push" })).toBeNull();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Details" }));
+    expect(await screen.findByRole("cell", { name: "web_push" })).toBeInTheDocument();
+    expect(screen.getByText("Signal received: informational")).toBeInTheDocument();
+  });
+
+  it("shows an error with retry when the choices cannot load", async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo, init?: RequestInit) => {
+      const u = String(input);
+      if (u.includes("/api/v1/auth/me")) return jsonResponse(200, user);
+      if (u.includes("/api/v1/notifications/vapid-public-key")) {
+        return jsonResponse(503, { detail: { error: "webpush_not_configured" } });
+      }
+      if (/\/api\/v1\/notifications\/subscriptions$/.test(u)) return jsonResponse(200, { subscriptions: [] });
+      if (u.includes("/api/v1/me/notification-preferences") && init?.method !== "PATCH") {
+        return jsonResponse(500, { detail: "boom" });
+      }
+      if (u.includes("/api/v1/me/notifications")) return jsonResponse(200, samplePayload);
+      return jsonResponse(404, {});
+    });
+    const store = new AccessTokenStore();
+    const client = new ApiClient({ tokens: store, fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    render(
+      <AuthProvider client={client} tokens={store} skipRefreshOnMount>
+        <MeNotificationsView />
+      </AuthProvider>,
+    );
+
+    expect(await screen.findByText(/couldn't load your notification choices/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
   });
 });

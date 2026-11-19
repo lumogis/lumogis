@@ -31,19 +31,20 @@ export function IngestProgressBar({
   const label = statusMessage ?? STAGE_LABELS[stage] ?? stage;
   const pct = Math.min(100, Math.max(0, progressPct));
 
+  // A native <progress> (implicit progressbar role) so the fill needs no inline
+  // width; the aria values stay explicit for the tests and older readers.
   return (
-    <div className="lumogis-ingest-progress" data-testid="ingest-progress-bar">
-      <div
-        className="lumogis-ingest-progress__track"
-        role="progressbar"
+    <div className="flex flex-col gap-1" data-testid="ingest-progress-bar">
+      <progress
+        value={pct}
+        max={100}
         aria-valuenow={pct}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-label={label}
-      >
-        <div className="lumogis-ingest-progress__fill" style={{ width: `${pct}%` }} />
-      </div>
-      <span className="lumogis-ingest-progress__label">{label}</span>
+        className="h-2 w-full overflow-hidden rounded-full bg-muted [&::-moz-progress-bar]:bg-primary [&::-webkit-progress-bar]:bg-muted [&::-webkit-progress-value]:bg-primary [&::-webkit-progress-value]:transition-all"
+      />
+      <span className="text-xs text-muted-foreground">{label}</span>
     </div>
   );
 }

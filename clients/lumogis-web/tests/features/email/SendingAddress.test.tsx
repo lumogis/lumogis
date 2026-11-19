@@ -51,7 +51,7 @@ function renderReplyBare(extra: Record<string, unknown> = {}) {
 }
 
 describe("LUM-831 — the From picker names the address", () => {
-  it("labels each option Name — address", () => {
+  it("labels each option Name — address", async () => {
     render(
       <EmailComposer
         open
@@ -61,11 +61,12 @@ describe("LUM-831 — the From picker names the address", () => {
         onClose={vi.fn()}
       />,
     );
-    expect(screen.getByRole("option", { name: "Work — alice@acme.com" })).toBeTruthy();
-    expect(screen.getByRole("option", { name: "Personal — alice@fastmail.com" })).toBeTruthy();
+    await userEvent.click(screen.getByRole("combobox", { name: "From" }));
+    expect(await screen.findByRole("option", { name: "Work — alice@acme.com" })).toBeTruthy();
+    expect(await screen.findByRole("option", { name: "Personal — alice@fastmail.com" })).toBeTruthy();
   });
 
-  it("falls back to the bare name when an address did not resolve", () => {
+  it("falls back to the bare name when an address did not resolve", async () => {
     render(
       <EmailComposer
         open
@@ -77,7 +78,8 @@ describe("LUM-831 — the From picker names the address", () => {
     );
     // Still offered — dropping it would remove a mailbox the user can genuinely
     // send from, which is the LUM-719 mistake in a new place.
-    expect(screen.getByRole("option", { name: "Broken" })).toBeTruthy();
+    await userEvent.click(screen.getByRole("combobox", { name: "From" }));
+    expect(await screen.findByRole("option", { name: "Broken" })).toBeTruthy();
   });
 
   it("shows the degraded note with two mailboxes and no addresses", () => {

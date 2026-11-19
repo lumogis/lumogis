@@ -656,6 +656,54 @@ def test_bootstrap_if_empty_refuses_short_password(users_store, monkeypatch):
     assert users_svc.count_users() == 0
 
 
+def test_b2_bootstrap_if_empty_with_no_env_and_auth_on_logs_info_not_critical(
+    users_store, auth_env, monkeypatch, caplog
+):
+    """LUM-981: nothing is wrong, the first visitor creates the admin."""
+    import logging
+
+    import services.users as users_svc
+
+    monkeypatch.delenv("LUMOGIS_BOOTSTRAP_ADMIN_EMAIL", raising=False)
+    monkeypatch.delenv("LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD", raising=False)
+    monkeypatch.delenv("LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD_FILE", raising=False)
+    with caplog.at_level(logging.INFO, logger="services.users"):
+        assert users_svc.bootstrap_if_empty() is None
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert "wait for the first visitor" in caplog.text
+
+
+def test_b2_a_half_set_bootstrap_env_still_logs_critical(
+    users_store, auth_env, monkeypatch, caplog
+):
+    """An email without a password is a misconfiguration, not "waiting for setup"."""
+    import logging
+
+    import services.users as users_svc
+
+    monkeypatch.setenv("LUMOGIS_BOOTSTRAP_ADMIN_EMAIL", "admin@home.lan")
+    monkeypatch.delenv("LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD", raising=False)
+    monkeypatch.delenv("LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD_FILE", raising=False)
+    with caplog.at_level(logging.INFO, logger="services.users"):
+        assert users_svc.bootstrap_if_empty() is None
+    assert [r for r in caplog.records if r.levelno == logging.CRITICAL]
+
+
+def test_b2_bootstrap_if_empty_with_no_env_and_auth_off_stays_critical(
+    users_store, dev_env, monkeypatch, caplog
+):
+    import logging
+
+    import services.users as users_svc
+
+    monkeypatch.delenv("LUMOGIS_BOOTSTRAP_ADMIN_EMAIL", raising=False)
+    monkeypatch.delenv("LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD", raising=False)
+    monkeypatch.delenv("LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD_FILE", raising=False)
+    with caplog.at_level(logging.INFO, logger="services.users"):
+        assert users_svc.bootstrap_if_empty() is None
+    assert [r for r in caplog.records if r.levelno == logging.CRITICAL]
+
+
 def test_bootstrap_if_empty_refuses_reserved_tld_email(users_store, monkeypatch):
     import services.users as users_svc
 
@@ -842,13 +890,89 @@ def test_enforce_auth_consistency_refuses_dev_mode_with_multiple_users(
         main._enforce_auth_consistency()
 
 
-def test_enforce_auth_consistency_refuses_true_mode_with_no_users(
-    users_store, auth_env, no_skip_consistency
-):
-    import main
+@pytest.fixture
+def boot_state(monkeypatch):
+    """Force the setup boot state the gate sees (G-tests), with no users."""
+    import services.instance_setup as setup
+    import services.users as users_svc
 
-    with pytest.raises(RuntimeError, match="AUTH_ENABLED=true"):
+    monkeypatch.setattr(users_svc, "count_users", lambda: 0)
+
+    def force(state):
+        monkeypatch.setattr(setup, "evaluate_boot_state", lambda: state)
+
+    yield force
+    setup._reset_for_tests()
+
+
+def test_enforce_auth_consistency_opens_setup_on_empty_install(
+    users_store, auth_env, no_skip_consistency, boot_state
+):
+    """G1 (LUM-981): sign-in on, no users, no bootstrap env is no longer a refusal."""
+    import main
+    from services.instance_setup import BootState
+
+    boot_state(BootState.OPEN)
+    main._enforce_auth_consistency()  # no raise
+
+
+@pytest.mark.parametrize(
+    ("state_name", "message"),
+    [
+        (
+            "BLOCKED_NO_MIGRATION",
+            "AUTH_ENABLED=true but the instance_setup table is missing: database "
+            "migration 085 did not apply. Check the migration lines above, fix the "
+            "cause, and restart.",
+        ),
+        (
+            "BLOCKED_SETUP_DONE_NO_USERS",
+            "Setup was completed on this install, but no user account remains. Set "
+            "LUMOGIS_BOOTSTRAP_ADMIN_EMAIL and LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD in "
+            ".env to create a new admin, then restart.",
+        ),
+    ],
+)
+def test_enforce_auth_consistency_refuses_blocked_setup_states(
+    users_store, auth_env, no_skip_consistency, boot_state, state_name, message
+):
+    """G2: a missing migration and a completed-but-empty install each refuse, exactly."""
+    import main
+    from services.instance_setup import BootState
+
+    boot_state(BootState[state_name])
+    with pytest.raises(RuntimeError) as exc:
         main._enforce_auth_consistency()
+    assert str(exc.value) == message
+
+
+def test_enforce_auth_consistency_refuses_when_bootstrap_env_set_but_no_user(
+    users_store, auth_env, no_skip_consistency, boot_state
+):
+    """G3: the bootstrap env was set and produced no user; the message is today's, minus
+    the "set AUTH_ENABLED=false" clause (Lumogis Web does not work with sign-in off)."""
+    import main
+    from services.instance_setup import BootState
+
+    boot_state(BootState.BLOCKED_BOOTSTRAP_FAILED)
+    with pytest.raises(RuntimeError, match="AUTH_ENABLED=true but users table is empty") as exc:
+        main._enforce_auth_consistency()
+    assert "LUMOGIS_BOOTSTRAP_ADMIN_EMAIL" in str(exc.value)
+    assert "AUTH_ENABLED=false" not in str(exc.value)
+
+
+def test_enforce_auth_consistency_evaluates_setup_state_for_a_populated_install(
+    users_store, auth_env, no_skip_consistency, monkeypatch
+):
+    """With users present the gate still sets the setup state (NOT_APPLICABLE)."""
+    import main
+    import services.instance_setup as setup
+    import services.users as users_svc
+
+    users_svc.create_user("a@home.lan", "verylongpassword12", "admin")
+    setup._reset_for_tests(setup.BootState.OPEN)
+    main._enforce_auth_consistency()
+    assert setup.is_open() is False
 
 
 def test_enforce_auth_consistency_passes_dev_mode_one_user(

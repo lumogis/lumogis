@@ -2,8 +2,13 @@
 // Copyright (C) 2026 Lumogis
 //
 // LUM-216 — wow cards on /chat only; dismiss persists.
+//
+// Since LUM-993 Pass 2b the Chat home shows the library card instead while the
+// library is empty, so each test gives the smoke user a one-document library
+// (a mocked GET /api/v1/documents). Without it the spec passed only on stacks
+// that happened to hold documents (a fresh release-candidate stack has none).
 
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page, type Route } from "@playwright/test";
 
 import {
   ensureOnboardingCompletedAt,
@@ -18,6 +23,35 @@ import {
   smokeEmail,
 } from "./smoke-auth";
 
+async function withOneDocumentLibrary(page: Page): Promise<void> {
+  await page.route("**/api/v1/documents", async (route: Route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        documents: [
+          {
+            document_id: 9_216,
+            display_name: "household-notes.md",
+            file_path: "/library/household-notes.md",
+            file_type: "md",
+            chunk_count: 3,
+            entity_count: 3,
+            scope: "personal",
+            status: "indexed",
+            indexed_at: "2026-11-19T08:00:00+00:00",
+            error_message: null,
+            share_status: "personal",
+            in_flight_share_job_id: null,
+            is_owner: true,
+          },
+        ],
+      }),
+    });
+  });
+}
+
 async function expectWowCardsVisible(page: Page): Promise<void> {
   await expect(page.getByTestId("wow-guided-card")).toBeVisible({ timeout: 30_000 });
 }
@@ -31,10 +65,11 @@ test.describe("LUM-216 wow path gating", () => {
 
   test.skip(!hasSmokeCreds, smokeCredsSkipMessage);
 
-  test.beforeEach(() => {
+  test.beforeEach(async ({ page }) => {
     resetWowDismissedAt(smokeEmail);
     ensureOnboardingCompletedAt(smokeEmail);
     seedWowEntitiesForSmokeUser(smokeEmail, 3);
+    await withOneDocumentLibrary(page);
   });
 
   test("wow cards appear on /chat but not on /search", async ({ page }) => {

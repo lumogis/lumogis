@@ -4,16 +4,20 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 import { ApiClient } from "../../../src/api/client";
 import { AccessTokenStore } from "../../../src/api/tokens";
 import { AuthProvider } from "../../../src/auth/AuthProvider";
 import { MeToolsCapabilitiesView } from "../../../src/features/me/MeToolsCapabilitiesView";
 import { jsonResponse } from "../../helpers/jsonResponse";
+import { seedSignedInDevice } from "../../helpers/signedInDevice";
 
 describe("MeToolsCapabilitiesView", () => {
   let originalFetch: typeof fetch;
   beforeEach(() => {
+    // LUM-886: a real AuthProvider wipes the query cache on a device's first sign-in; mark it reconciled.
+    seedSignedInDevice("u1");
     originalFetch = globalThis.fetch;
   });
   afterEach(() => {
@@ -162,9 +166,14 @@ describe("MeToolsCapabilitiesView", () => {
       </AuthProvider>,
     );
 
-    await waitFor(() => {
-      expect(screen.getByRole("alert")).toBeInTheDocument();
-    });
+    // Two round trips (auth/me, then tools) can exceed waitFor's 1 s default when
+    // the whole suite runs in parallel (flaked once in the LUM-993 Pass 1 run).
+    await waitFor(
+      () => {
+        expect(screen.getByRole("alert")).toBeInTheDocument();
+      },
+      { timeout: 5_000 },
+    );
     expect(screen.getByRole("alert").textContent).toMatch(/server oops|500/i);
   });
 
@@ -189,5 +198,32 @@ describe("MeToolsCapabilitiesView", () => {
     });
     expect(screen.queryAllByRole("button")).toHaveLength(0);
     expect(screen.queryByRole("button", { name: /run/i })).toBeNull();
+  });
+
+  it("filters by availability and shows an empty state when nothing matches", async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo) => {
+      const u = String(input);
+      if (u.includes("/api/v1/auth/me")) return jsonResponse(200, user);
+      if (u.includes("/api/v1/me/tools")) return jsonResponse(200, samplePayload);
+      return jsonResponse(404, {});
+    });
+    const store = new AccessTokenStore();
+    const client = new ApiClient({ tokens: store, fetchImpl: fetchImpl as unknown as typeof fetch });
+    render(
+      <AuthProvider client={client} tokens={store} skipRefreshOnMount>
+        <MeToolsCapabilitiesView />
+      </AuthProvider>,
+    );
+    const u = userEvent.setup();
+    await screen.findByText("Search files");
+
+    await u.click(screen.getByRole("combobox", { name: "Filter by availability" }));
+    await u.click(await screen.findByRole("option", { name: "Unavailable" }));
+    expect(screen.queryByText("Search files")).toBeNull();
+    expect(screen.getByText("Oop X")).toBeInTheDocument();
+
+    await u.click(screen.getByRole("combobox", { name: "Filter by source" }));
+    await u.click(await screen.findByRole("option", { name: "Core" }));
+    expect(screen.getByText("No tools match the current filters.")).toBeInTheDocument();
   });
 });

@@ -141,7 +141,7 @@ test.describe("email cleanup pass", () => {
 
   test("open cleanup panel → start a date-range pass → progress shows", async ({ page }) => {
     const mocks = installMocks(page);
-    await page.goto("/me/email-signals");
+    await page.goto("/settings/email");
     await expect(page.getByTestId("email-signals-view")).toBeVisible({ timeout: 15_000 });
 
     await page.getByText("Clean up this mailbox").click();

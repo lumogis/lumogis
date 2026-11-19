@@ -27,6 +27,40 @@ describe("OnboardingModal", () => {
     expect(onComplete).toHaveBeenCalledTimes(1);
   });
 
+  it("Escape skips (and so persists the dismissal), but a click outside the dialog does not", async () => {
+    const user = userEvent.setup();
+    const onComplete = vi.fn().mockResolvedValue(undefined);
+    render(
+      <MemoryRouter>
+        <OnboardingModal
+          inviteOnboarding={null}
+          onComplete={onComplete}
+          completeError={null}
+          onClearCompleteError={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    await user.click(document.body);
+    expect(onComplete).not.toHaveBeenCalled();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(onComplete).toHaveBeenCalledTimes(1));
+  });
+
+  it("shows a completion failure as an alert", () => {
+    render(
+      <MemoryRouter>
+        <OnboardingModal
+          inviteOnboarding={null}
+          onComplete={vi.fn()}
+          completeError="Could not save"
+          onClearCompleteError={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent("Could not save");
+  });
+
   it("Next advances step copy", async () => {
     const user = userEvent.setup();
     render(

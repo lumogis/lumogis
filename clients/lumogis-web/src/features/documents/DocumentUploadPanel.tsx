@@ -9,10 +9,16 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ApiClient } from "../../api/client";
 import { ApiError } from "../../api/client";
 import { getIngestBatch, uploadIngestFile } from "../../api/ingest";
-import { Button } from "../../components/Button";
+import { PageSection } from "../../components/page/PageSection";
+import { Alert, AlertDescription } from "../../components/ui/alert";
+import { Badge } from "../../components/ui/badge";
+import { Button } from "../../components/ui/button";
+import { Input } from "../../components/ui/input";
+import { cn } from "cn";
 import { IngestProgressBar } from "./IngestProgressBar";
 import { documentsQueryKey } from "./useDocuments";
 import { useIngestJobProgress } from "./useIngestJobProgress";
+import { randomUuid } from "../../util/uuid";
 
 /** Align with orchestrator extractor extensions (common document types). */
 export const INGEST_UPLOAD_ACCEPT =
@@ -35,8 +41,8 @@ function UploadRowProgress({
 }): JSX.Element {
   const { data } = useIngestJobProgress(client, row.jobId);
   return (
-    <li className="lumogis-ingest-upload__row" data-job-id={row.jobId}>
-      <span className="lumogis-ingest-upload__file-name">{row.fileName}</span>
+    <li className="flex flex-col gap-1 py-2" data-job-id={row.jobId}>
+      <span className="break-all text-sm font-medium">{row.fileName}</span>
       {data ? (
         <IngestProgressBar
           stage={data.stage}
@@ -44,7 +50,7 @@ function UploadRowProgress({
           statusMessage={data.status_message}
         />
       ) : (
-        <span>Queued…</span>
+        <span className="text-xs text-muted-foreground">Queued…</span>
       )}
     </li>
   );
@@ -52,7 +58,9 @@ function UploadRowProgress({
 
 export function DocumentUploadPanel({ client }: { client: ApiClient }): JSX.Element {
   const qc = useQueryClient();
-  const inputRef = useRef<HTMLInputElement | null>(null);
+  // ui Input is a plain function component (no ref), so the hidden file input is
+  // reached through its wrapper.
+  const dropRef = useRef<HTMLDivElement | null>(null);
   const [rows, setRows] = useState<UploadRow[]>([]);
   const [selectedNames, setSelectedNames] = useState<string[]>([]);
   const [batchId, setBatchId] = useState<string | null>(null);
@@ -77,7 +85,7 @@ export function DocumentUploadPanel({ client }: { client: ApiClient }): JSX.Elem
     async (fileList: FileList | null) => {
       if (!fileList || fileList.length === 0) return;
       const files = Array.from(fileList);
-      const bid = crypto.randomUUID();
+      const bid = randomUuid();
       setBatchId(bid);
       setTotalFiles(files.length);
       setSelectedNames(files.map((f) => f.name));
@@ -125,80 +133,82 @@ export function DocumentUploadPanel({ client }: { client: ApiClient }): JSX.Elem
       : selectedNames;
 
   return (
-    <section className="lumogis-ingest-upload" data-testid="document-upload-panel">
-      <h2>Upload documents</h2>
-      <div
-        className={[
-          "lumogis-ingest-upload__dropzone",
-          dragOver ? "lumogis-ingest-upload__dropzone--active" : "",
-        ]
-          .filter(Boolean)
-          .join(" ")}
-        onDragEnter={(e) => {
-          e.preventDefault();
-          if (!uploading) setDragOver(true);
-        }}
-        onDragOver={(e) => {
-          e.preventDefault();
-          if (!uploading) setDragOver(true);
-        }}
-        onDragLeave={(e) => {
-          e.preventDefault();
-          if (e.currentTarget === e.target) setDragOver(false);
-        }}
-        onDrop={onDrop}
-      >
-        <input
-          ref={inputRef}
-          type="file"
-          multiple
-          accept={INGEST_UPLOAD_ACCEPT}
-          disabled={uploading}
-          className="lumogis-ingest-upload__input"
-          onChange={(e) => {
-            void onFilesSelected(e.target.files);
-            e.target.value = "";
+    <div data-testid="document-upload-panel">
+      <PageSection title="Upload documents">
+        <div
+          ref={dropRef}
+          className={cn(
+            "flex flex-col items-center gap-3 rounded-lg border border-dashed p-6 text-center",
+            dragOver ? "border-primary bg-muted" : "border-border",
+          )}
+          onDragEnter={(e) => {
+            e.preventDefault();
+            if (!uploading) setDragOver(true);
           }}
-        />
-        <p className="lumogis-ingest-upload__hint">
-          Drop files here or choose from your device.
-        </p>
-        <Button
-          type="button"
-          variant="secondary"
-          size="md"
-          disabled={uploading}
-          onClick={() => inputRef.current?.click()}
+          onDragOver={(e) => {
+            e.preventDefault();
+            if (!uploading) setDragOver(true);
+          }}
+          onDragLeave={(e) => {
+            e.preventDefault();
+            if (e.currentTarget === e.target) setDragOver(false);
+          }}
+          onDrop={onDrop}
         >
-          Choose files
-        </Button>
-      </div>
-      {chipNames.length > 0 ? (
-        <ul className="lumogis-ingest-upload__chips" aria-label="Selected files">
-          {chipNames.map((name) => (
-            <li key={name} className="lumogis-ingest-upload__chip">
-              {name}
-            </li>
-          ))}
-        </ul>
-      ) : null}
-      {showCounter ? (
-        <p className="lumogis-ingest-upload__counter" data-testid="ingest-batch-counter">
-          {finishedCount} of {totalFiles}
-        </p>
-      ) : null}
-      {error ? (
-        <p role="alert" className="lumogis-ingest-upload__error">
-          {error}
-        </p>
-      ) : null}
-      {rows.length > 0 ? (
-        <ul className="lumogis-ingest-upload__list">
-          {rows.map((row) => (
-            <UploadRowProgress key={row.jobId} client={client} row={row} />
-          ))}
-        </ul>
-      ) : null}
-    </section>
+          <Input
+            type="file"
+            multiple
+            accept={INGEST_UPLOAD_ACCEPT}
+            disabled={uploading}
+            aria-label="Choose files to upload"
+            tabIndex={-1}
+            className="sr-only"
+            onChange={(e) => {
+              void onFilesSelected(e.target.files);
+              e.target.value = "";
+            }}
+          />
+          <p className="m-0 text-sm text-muted-foreground">
+            Drop files here or choose from your device.
+          </p>
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={uploading}
+            onClick={() => dropRef.current?.querySelector("input")?.click()}
+          >
+            Choose files
+          </Button>
+        </div>
+        {chipNames.length > 0 ? (
+          <ul className="m-0 mt-3 flex list-none flex-wrap gap-2 p-0" aria-label="Selected files">
+            {chipNames.map((name) => (
+              <li key={name}>
+                <Badge variant="secondary" className="h-auto whitespace-normal break-all">
+                  {name}
+                </Badge>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {showCounter ? (
+          <p className="m-0 mt-3 text-sm text-muted-foreground" data-testid="ingest-batch-counter">
+            {finishedCount} of {totalFiles}
+          </p>
+        ) : null}
+        {error ? (
+          <Alert variant="destructive" className="mt-3">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        ) : null}
+        {rows.length > 0 ? (
+          <ul className="m-0 mt-3 list-none divide-y divide-border p-0">
+            {rows.map((row) => (
+              <UploadRowProgress key={row.jobId} client={client} row={row} />
+            ))}
+          </ul>
+        ) : null}
+      </PageSection>
+    </div>
   );
 }

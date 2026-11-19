@@ -73,8 +73,7 @@ ENV PATH="/opt/venv/bin:$PATH" \
 RUN pip install --no-cache-dir \
         "pytest>=8.0.0" \
         "pytest-asyncio>=0.24.0" \
-        "ruff>=0.4.0" \
-        "pyjwt>=2.8.0"
+        "ruff>=0.4.0"
 
 WORKDIR /app
 COPY services/lumogis-graph/ /app/
@@ -130,6 +129,12 @@ USER lumogis
 # "uvicorn isn't accepting connections" rather than a transient app error.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD curl --fail --silent --show-error http://127.0.0.1:8001/health > /dev/null || exit 1
+
+# LUM-989: the version this image was built as (dev for a local build, X.Y.Z for a
+# release), as the other household images. Last before CMD so a new version
+# rebuilds no other layer.
+ARG LUMOGIS_IMAGE_VERSION=dev
+ENV LUMOGIS_IMAGE_VERSION=$LUMOGIS_IMAGE_VERSION
 
 # `main:app` — top-level module resolution from /app. NOT
 # `services.lumogis-graph.main:app` (dir name has a hyphen, not importable).

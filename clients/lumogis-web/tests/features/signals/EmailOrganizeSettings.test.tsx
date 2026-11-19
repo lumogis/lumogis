@@ -52,13 +52,13 @@ describe("EmailOrganizeSettings", () => {
 
   it("shows the label caveat on a non-Gmail provider once label is on", async () => {
     renderView(baseFetch(), false);
-    fireEvent.click(screen.getByLabelText(/Label my emails/i));
+    fireEvent.click(screen.getByRole("checkbox", { name: /Label my emails/i }));
     await waitFor(() => expect(screen.getByTestId("label-caveat")).toBeInTheDocument());
   });
 
   it("folder picker excludes the protected 'other' category", async () => {
     renderView(baseFetch(), true);
-    fireEvent.click(screen.getByLabelText(/Sort my emails into folders/i));
+    fireEvent.click(screen.getByRole("checkbox", { name: /Sort my emails into folders/i }));
     // Wait for the taxonomy query to resolve and the category rows to render.
     expect(await screen.findByRole("checkbox", { name: /Bills & finance/ })).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: /Promotional/ })).toBeInTheDocument();
@@ -75,7 +75,7 @@ describe("EmailOrganizeSettings", () => {
       return undefined;
     });
     renderView(fetchImpl, true);
-    fireEvent.click(screen.getByLabelText(/Label my emails/i));
+    fireEvent.click(screen.getByRole("checkbox", { name: /Label my emails/i }));
     fireEvent.click(screen.getByText("Save"));
     await waitFor(() => expect(patched).not.toBeNull());
     expect((patched as { organize_label: boolean }).organize_label).toBe(true);

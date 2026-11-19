@@ -3,8 +3,10 @@
 # Copyright (C) 2026 Lumogis
 #
 # LUM-187 — roll the stack back to the image refs captured by the last
-# `make update` (scripts/update/update.sh). Pins the previous images via
-# rollback-compose.override.yml and restarts. Schema migrations are
+# `make update` (scripts/update/update.sh). Pins the local rollback tags that
+# `make update` made (lumogis-rollback/<project>/<service>:<time>, LUM-984),
+# through rollback-compose.override.yml, which is generated from the state file on
+# each run, and restarts. Schema migrations are
 # forward-only and NOT reverted here — a rollback that crosses a migration
 # boundary needs a data restore, so this script REQUIRES a recent backup
 # (LUM-185) before proceeding.
@@ -29,6 +31,9 @@ BACKUP_MAX_AGE_HOURS="${LUMOGIS_BACKUP_MAX_AGE_HOURS:-24}"
 command -v docker >/dev/null 2>&1 || die "docker not found on PATH"
 docker compose version >/dev/null 2>&1 || die "docker compose v2 required"
 [[ -s "$STATE_FILE" ]] || die "no rollback state at $STATE_FILE — run 'make update' first (it records previous images)"
+# Before the backup check (which builds the backup image): local, cheap, and
+# nothing has happened yet (LUM-984).
+check_rollback_images_present "$STATE_FILE"
 
 # --- Require a recent backup (LUM-185) ------------------------------------
 log "checking for a backup snapshot within ${BACKUP_MAX_AGE_HOURS}h"
@@ -53,26 +58,31 @@ fi
 log "backup OK (newest snapshot ${newest_age_min}min old)"
 
 # --- Confirmation ---------------------------------------------------------
+log "rolling back to (datastore images such as postgres and qdrant go back too; if this update changed their version, restore the backup afterwards):"
+cut -f1,3 "$STATE_FILE" | sed 's/^/  /'
 if [[ "${LUMOGIS_ASSUME_YES:-}" != "1" ]]; then
-  echo "About to pin previously-running images and restart:"
-  cut -f3 "$STATE_FILE" 2>/dev/null | sed 's/^/  /' || cut -f2 "$STATE_FILE" | sed 's/^/  /'
+  echo "About to pin previously-running images and restart."
   read -r -p "Proceed with rollback? [y/N] " reply
   [[ "$reply" =~ ^[Yy]$ ]] || die "aborted by operator"
 fi
 
 # --- Re-pin previous images + restart -------------------------------------
-log "pulling previous image digests"
-while IFS=$'\t' read -r _svc _img ref; do
-  [[ -z "$ref" ]] && continue
-  docker pull "$ref" || warn "could not pull $ref (may already be local)"
-done <"$STATE_FILE"
+log "pulling previous registry images (local rollback tags are not pulled)"
+pull_rollback_registry_refs "$STATE_FILE"
 
+# The override is derived from the state file every time, so a deleted or stale
+# one cannot block a rollback (LUM-984).
+WRITE_OVERRIDE="$ROOT/scripts/update/write_rollback_override.py"
+write_rollback_override_from_state "$STATE_FILE" "$OVERRIDE_FILE" "$WRITE_OVERRIDE"
 compose_with_rollback_override "$OVERRIDE_FILE"
 
 log "restarting stack on previous images (compose override pinned)"
-docker compose up -d
+docker compose up -d \
+  || die "starting the previous images failed (see above). Some services may already run the previous images and others the new ones; 'docker compose ps' shows which. Fix the cause and run 'make rollback' again; if data changed under the new version, restore with: make restore SNAPSHOT=<id>"
 
 # --- Health + migration gate ----------------------------------------------
 wait_for_stack_ready "$(orchestrator_health_url)" "$HEALTH_RETRIES"
+# The stack is back on the recorded images and healthy: no update is unfinished.
+finish_update_marker "$STATE_FILE"
 log "rollback complete — orchestrator healthy"
 log "if data changed under the new version, restore with: make restore SNAPSHOT=<id>"

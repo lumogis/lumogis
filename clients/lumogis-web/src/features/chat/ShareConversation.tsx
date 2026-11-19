@@ -17,6 +17,11 @@ import {
   publishConversation,
   unpublishConversation,
 } from "../../api/conversations";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { LoadingPlaceholder, SkeletonText } from "@/components/page/LoadingState";
 
 export interface ShareConversationProps {
   client: ApiClient;
@@ -80,14 +85,19 @@ export function ShareConversation({
     onError: (e) => setErr(errMsg(e)),
   });
 
-  if (detailQ.isPending) return <p role="status">Loading…</p>;
+  if (detailQ.isPending)
+    return (
+      <LoadingPlaceholder label="Loading…">
+        <SkeletonText lines={1} />
+      </LoadingPlaceholder>
+    );
   if (!detail) return null;
 
   // Non-owner: read-only indicator, no mutation affordance.
   if (detail.is_owner === false) {
     return (
-      <div className="lumogis-share-conversation" data-testid="conversation-share-indicator">
-        <span className="lumogis-share-toggle__readonly">Shared with your household</span>
+      <div className="flex flex-col gap-2" data-testid="conversation-share-indicator">
+        <Badge variant="secondary">Shared with your household</Badge>
       </div>
     );
   }
@@ -95,8 +105,8 @@ export function ShareConversation({
   // Owner but not shareable yet (web-only / un-summarized conversation).
   if (detail.can_share === false) {
     return (
-      <div className="lumogis-share-conversation" data-testid="conversation-share">
-        <span className="lumogis-share-toggle__readonly">
+      <div className="flex flex-col gap-2" data-testid="conversation-share">
+        <span className="text-sm text-muted-foreground">
           You can share this once it&apos;s been summarized.
         </span>
       </div>
@@ -106,21 +116,23 @@ export function ShareConversation({
   const pending = publishM.isPending || unshareM.isPending;
 
   return (
-    <div className="lumogis-share-conversation" data-testid="conversation-share">
+    <div className="flex flex-col gap-3" data-testid="conversation-share">
       {err && (
-        <p role="alert" style={{ color: "#c62828" }}>
-          {err}
-        </p>
+        <Alert variant="destructive">
+          <AlertDescription>{err}</AlertDescription>
+        </Alert>
       )}
 
       {!editing ? (
         shared ? (
-          <div>
-            <span className="lumogis-share-toggle__readonly" data-testid="conversation-shared-badge">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="secondary" data-testid="conversation-shared-badge">
               Shared with your household
-            </span>{" "}
-            <button
+            </Badge>
+            <Button
               type="button"
+              variant="outline"
+              size="sm"
               disabled={pending}
               onClick={() => {
                 setErr(null);
@@ -128,9 +140,11 @@ export function ShareConversation({
               }}
             >
               Edit summary
-            </button>{" "}
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="outline"
+              size="sm"
               disabled={pending}
               data-testid="conversation-unshare"
               onClick={() => {
@@ -139,50 +153,56 @@ export function ShareConversation({
               }}
             >
               Unshare
-            </button>
+            </Button>
           </div>
         ) : (
-          <button
-            type="button"
-            disabled={pending}
-            data-testid="conversation-share-start"
-            onClick={() => {
-              setErr(null);
-              setEditing(true);
-            }}
-          >
-            Share with your household
-          </button>
+          <div>
+            <Button
+              type="button"
+              size="sm"
+              disabled={pending}
+              data-testid="conversation-share-start"
+              onClick={() => {
+                setErr(null);
+                setEditing(true);
+              }}
+            >
+              Share with your household
+            </Button>
+          </div>
         )
       ) : (
-        <div>
-          <label>
+        <div className="flex flex-col gap-3">
+          <label className="flex flex-col gap-1.5 text-sm font-medium">
             Summary shared with your household (edit if the AI got it wrong)
-            <textarea
+            <Textarea
               data-testid="conversation-share-summary"
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               rows={4}
             />
           </label>
-          <p className="lumogis-share-toggle__hint" data-testid="conversation-snapshot-notice">
+          <p className="m-0 text-xs text-muted-foreground" data-testid="conversation-snapshot-notice">
             You&apos;re sharing this as it is now — new messages won&apos;t be shared
             automatically.
           </p>
-          <button
-            type="button"
-            disabled={pending}
-            data-testid="conversation-share-confirm"
-            onClick={() => {
-              setErr(null);
-              publishM.mutate();
-            }}
-          >
-            {shared ? "Update shared summary" : "Share"}
-          </button>{" "}
-          <button type="button" disabled={pending} onClick={() => setEditing(false)}>
-            Cancel
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              size="sm"
+              disabled={pending}
+              data-testid="conversation-share-confirm"
+              onClick={() => {
+                setErr(null);
+                publishM.mutate();
+              }}
+            >
+              {shared ? "Update shared summary" : "Share"}
+            </Button>
+            <Button type="button" variant="outline" size="sm" disabled={pending} onClick={() => setEditing(false)}>
+              Cancel
+            </Button>
+          </div>
         </div>
       )}
     </div>

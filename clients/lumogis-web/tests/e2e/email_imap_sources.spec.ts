@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Lumogis
 //
-// LUM-627 — Email IMAP flow: add mailbox → sync now → category chip visible.
+// LUM-627 — Email IMAP flow: add mailbox → sync now. (The sorted-mail list moved to the
+// Email page in LUM-993; this page only links to it.)
 // Hybrid: smoke login + page.route mocks (same pattern as documents.spec.ts).
 
 import { test, expect, type Page } from "@playwright/test";
@@ -188,8 +189,8 @@ test.describe("email IMAP sources", () => {
     await loginWithSmokeCredentials(page);
   });
 
-  test("add mailbox → sync now → school category chip visible", async ({ page }) => {
-    await page.goto("/me/email-signals");
+  test("add mailbox → sync now → link to the Email page", async ({ page }) => {
+    await page.goto("/settings/email");
     await expect(page.getByTestId("email-signals-view")).toBeVisible({ timeout: 15_000 });
 
     // LUM-644 turned this into a guided on-ramp. Before it, the credential
@@ -216,13 +217,11 @@ test.describe("email IMAP sources", () => {
 
     await expect(page.getByLabel("Sync now Email (personal)")).toBeVisible({ timeout: 15_000 });
     await page.getByLabel("Sync now Email (personal)").click();
-    // Scoped, not bare: the probe leaves "Connected — N messages" on screen as a
-    // second role="status", so an unscoped match is a strict-mode violation.
-    await expect(page.getByRole("status").filter({ hasText: /sync queued/i })).toBeVisible();
+    // Success is a toast now (sonner), not a role="status" line.
+    await expect(page.getByText(/sync queued/i)).toBeVisible();
 
-    await expect(page.getByTestId("category-chip").filter({ hasText: "School" })).toBeVisible({
-      timeout: 15_000,
-    });
-    await expect(page.getByText("Field trip permission")).toBeVisible();
+    // The sorted-mail list is not on this page any more; it points at /email.
+    await expect(page.getByRole("link", { name: "Email page" })).toHaveAttribute("href", "/email");
+    await expect(page.getByTestId("category-chip")).toHaveCount(0);
   });
 });

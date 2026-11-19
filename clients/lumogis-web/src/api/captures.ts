@@ -70,6 +70,12 @@ export function formatCaptureErrorMessage(status: number, detailPayload: string)
       if (o.code === "stt_disabled" || o.code === "stt_processing_error") {
         return "Transcription is unavailable on the server. Your audio is still saved as an attachment if upload succeeded.";
       }
+      if (o.code === "stt_model_missing") {
+        return "The speech model is still downloading. Your audio is saved; transcribe it again in a minute.";
+      }
+      if (o.code === "stt_unreachable") {
+        return "The speech engine isn't answering yet. Your audio is saved; transcribe it again in a few minutes.";
+      }
       return o.message;
     }
     if (typeof o.code === "string" && o.code.length > 0) {

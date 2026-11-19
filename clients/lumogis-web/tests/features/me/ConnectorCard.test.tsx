@@ -27,6 +27,10 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 
+// Plain success is a toast (LUM-993 Pass 5); the suite asserts on the call.
+const toastMock = vi.hoisted(() => vi.fn());
+vi.mock("sonner", () => ({ toast: toastMock }));
+
 import { ApiClient } from "../../../src/api/client";
 import { AccessTokenStore } from "../../../src/api/tokens";
 import { AuthProvider } from "../../../src/auth/AuthProvider";
@@ -38,7 +42,21 @@ import { seedSignedInDevice } from "../../helpers/signedInDevice";
 // first-sign-in wipe does not remove the view's own queries.
 beforeEach(() => {
   seedSignedInDevice("u1");
+  toastMock.mockClear();
 });
+
+/** The form sits behind the card's primary button (Connect, or Edit once saved). */
+async function openForm(u: ReturnType<typeof userEvent.setup>, within_?: HTMLElement) {
+  const scope = within_ ? within(within_) : screen;
+  await u.click(await scope.findByRole("button", { name: /^(Connect|Edit)$/ }));
+}
+
+/** "…" menu, Disconnect, then confirm in the dialog. */
+async function disconnect(u: ReturnType<typeof userEvent.setup>) {
+  await u.click(await screen.findByRole("button", { name: /^More actions for / }));
+  await u.click(await screen.findByRole("menuitem", { name: "Disconnect" }));
+  await u.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Disconnect" }));
+}
 
 const authUser = { id: "u1", email: "u@home.lan", role: "user" as const };
 
@@ -240,6 +258,7 @@ describe("ConnectorCard — field presence", () => {
     expect(line.textContent).toMatch(/API token/);
     expect(line.textContent).not.toMatch(/●|\*{3}|•/);
 
+    await openForm(userEvent.setup());
     const secretInput = document.querySelector<HTMLInputElement>('input[type="password"]');
     expect(secretInput, "the typed form rendered no password input to check").not.toBeNull();
     expect(secretInput!.value).toBe("");
@@ -261,7 +280,7 @@ describe("ConnectorCard — the enable toggle", () => {
     const calls = mount({ rows: [configuredRow()] });
     const u = userEvent.setup();
 
-    await u.click(await screen.findByRole("checkbox", { name: /on/i }));
+    await u.click(await screen.findByRole("switch", { name: /^on$/i }));
 
     await waitFor(() => {
       const patch = calls.find((c) => c.method === "PATCH");
@@ -275,6 +294,7 @@ describe("ConnectorCard — the enable toggle", () => {
     // Editable while disabled on purpose: a user needs to fix a credential
     // BEFORE switching it back on, and saving does not re-enable.
     mount({ rows: [configuredRow({ enabled: false })] });
+    await openForm(userEvent.setup());
     expect(await screen.findByLabelText(/server address/i)).toBeInTheDocument();
   });
 
@@ -297,8 +317,8 @@ describe("ConnectorCard — the enable toggle", () => {
   it("no toggle renders for a connector that is not configured yet", async () => {
     // There is no row to enable or disable; the PATCH would 404.
     mount({ rows: [] });
-    await screen.findByText("paperless");
-    expect(screen.queryByRole("checkbox", { name: /on/i })).not.toBeInTheDocument();
+    await screen.findByRole("heading", { name: /^Paperless documents/ });
+    expect(screen.queryByRole("switch", { name: /^on$/i })).not.toBeInTheDocument();
   });
 
   it("does not issue a second enable PATCH while the first is in flight", async () => {
@@ -344,13 +364,13 @@ describe("ConnectorCard — the enable toggle", () => {
     );
 
     const u = userEvent.setup();
-    const toggle = await screen.findByRole("checkbox", { name: /on/i });
+    const toggle = await screen.findByRole("switch", { name: /^on$/i });
     await u.click(toggle);
-    await waitFor(() => expect(toggle).toBeDisabled());
+    await waitFor(() => expect(toggle).toHaveAttribute("aria-disabled", "true"));
 
     await u.click(toggle);
     releasePatch();
-    await waitFor(() => expect(toggle).not.toBeDisabled());
+    await waitFor(() => expect(toggle).not.toHaveAttribute("aria-disabled", "true"));
 
     const patches = calls.filter((c) => c.method === "PATCH");
     expect(patches).toHaveLength(1);
@@ -372,15 +392,15 @@ describe("ConnectorCard — the four surfaces", () => {
 
   it("the enable toggle renders on /me and NOT on an admin basePath", async () => {
     mount({ rows: [configuredRow()] });
-    expect(await screen.findByRole("checkbox", { name: /on/i })).toBeInTheDocument();
+    expect(await screen.findByRole("switch", { name: /^on$/i })).toBeInTheDocument();
   });
 
   it("no enable toggle on an admin basePath — there is no admin PATCH", async () => {
     // `enabled` is a column on the per-user table only. Rendering a control
     // with no route behind it is a button that lies about what it does.
     mount({ rows: [configuredRow()], basePath: ADMIN_BASE });
-    await screen.findByText("paperless");
-    expect(screen.queryByRole("checkbox", { name: /on/i })).not.toBeInTheDocument();
+    await screen.findByRole("heading", { name: /^Paperless documents/ });
+    expect(screen.queryByRole("switch", { name: /^on$/i })).not.toBeInTheDocument();
   });
 
   it("renders NO Ask/Do control, on any surface", async () => {
@@ -398,13 +418,13 @@ describe("ConnectorCard — the four surfaces", () => {
     // produce, and passed. That is §5a exactly: a fake that does not fail the
     // way the real collaborator fails. It now asserts the control is absent.
     mount({ rows: [configuredRow()], permissions: [{ connector: "paperless", mode: "ASK" }] });
-    await screen.findByText("paperless");
+    await screen.findByRole("heading", { name: /^Paperless documents/ });
     expect(screen.queryByLabelText(/when lumogis wants to act/i)).not.toBeInTheDocument();
   });
 
   it("no Ask/Do control on an admin basePath either", async () => {
     mount({ rows: [configuredRow()], basePath: ADMIN_BASE });
-    await screen.findByText("paperless");
+    await screen.findByRole("heading", { name: /^Paperless documents/ });
     expect(screen.queryByLabelText(/when lumogis wants to act/i)).not.toBeInTheDocument();
   });
 
@@ -415,7 +435,7 @@ describe("ConnectorCard — the four surfaces", () => {
     // has no control to spend.
     for (const basePath of [undefined, ADMIN_BASE]) {
       const calls = mount({ rows: [configuredRow()], basePath });
-      await screen.findByText("paperless");
+      await screen.findByRole("heading", { name: /^Paperless documents/ });
       expect(calls.some((c) => c.url.includes("/api/v1/me/permissions"))).toBe(false);
       cleanup();
     }
@@ -442,7 +462,7 @@ describe("ConnectorCard — the four surfaces", () => {
       "/api/v1/admin/connector-credentials/system",
     ]) {
       mount({ rows: [configuredRow()], basePath: tier });
-      await screen.findByText("paperless");
+      await screen.findByRole("heading", { name: /^Paperless documents/ });
       expect(screen.queryByText(/field details appear after the next save/i)).not.toBeInTheDocument();
       expect(screen.queryAllByRole("listitem")).toHaveLength(0);
       cleanup();
@@ -454,7 +474,7 @@ describe("ConnectorCard — the four surfaces", () => {
     // presence from every admin surface, which would be wrong for per-user:
     // that tab reads `user_connector_credentials`, the table the column is on.
     mount({ rows: [configuredRow()], basePath: "/api/v1/admin/users/alice/connector-credentials" });
-    await screen.findByText("paperless");
+    await screen.findByRole("heading", { name: /^Paperless documents/ });
     expect(await screen.findAllByRole("listitem")).not.toHaveLength(0);
   });
 
@@ -470,7 +490,7 @@ describe("ConnectorCard — the four surfaces", () => {
       ],
       rows: [configuredRow()],
     });
-    await screen.findByText("caldav");
+    await screen.findByRole("heading", { name: /^Calendar/ });
 
     const gets = calls.filter((c) => c.method === "GET" && !c.url.includes("/api/v1/auth/me"));
     expect(gets.map((g) => g.url).sort()).toHaveLength(2);
@@ -503,7 +523,7 @@ describe("ConnectorCard — imap and smtp (LUM-848)", () => {
     // not. Caught by the §5b mutation check — removing the hide filter left
     // this test green, which is the definition of a test that asserts nothing.
     mount({ registry: REG_WITH_EMAIL });
-    await screen.findByText("paperless");
+    await screen.findByRole("heading", { name: /^Paperless documents/ });
     expect(screen.queryByRole("heading", { name: /^imap/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: /^smtp/ })).not.toBeInTheDocument();
   });
@@ -513,22 +533,22 @@ describe("ConnectorCard — imap and smtp (LUM-848)", () => {
     // minus the exclusion, a card for a non-hidden connector renders through
     // the identical code path and IS found by the identical query shape.
     mount({ registry: REG_WITH_EMAIL });
-    expect(await screen.findByRole("heading", { name: /^paperless/ })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /^Paperless documents/ })).toBeInTheDocument();
   });
 
   it("imap and smtp are replaced by a signpost, not by silence", async () => {
     // Hiding alone recreates the same defect pointing the other way: the user
     // looking for "where do I configure my email?" finds NOTHING.
     mount({ registry: REG_WITH_EMAIL });
-    expect(await screen.findByRole("link", { name: /email signals/i })).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: /email accounts/i })).toBeInTheDocument();
   });
 
   it("the signpost does not render on an admin basePath", async () => {
-    // `/me/email-signals` is a ME page — pointing an admin at their own
+    // `/settings/email` is a ME page — pointing an admin at their own
     // mailboxes from a tier tab is the wrong-question bug in miniature.
     mount({ registry: REG_WITH_EMAIL, basePath: "/api/v1/admin/connector-credentials/household" });
-    await screen.findByText("paperless");
-    expect(screen.queryByRole("link", { name: /email signals/i })).not.toBeInTheDocument();
+    await screen.findByRole("heading", { name: /^Paperless documents/ });
+    expect(screen.queryByRole("link", { name: /email accounts/i })).not.toBeInTheDocument();
   });
 
   it("the signpost does not render on the LLM-providers surface", async () => {
@@ -537,8 +557,8 @@ describe("ConnectorCard — imap and smtp (LUM-848)", () => {
       llmOnly: true,
       basePath: ME_CONNECTORS_BASE,
     });
-    await screen.findByText("llm_anthropic");
-    expect(screen.queryByRole("link", { name: /email signals/i })).not.toBeInTheDocument();
+    await screen.findByRole("heading", { name: /^Anthropic/ });
+    expect(screen.queryByRole("link", { name: /email accounts/i })).not.toBeInTheDocument();
   });
 });
 
@@ -574,14 +594,16 @@ describe("ConnectorCard — per-card mutations", () => {
   };
 
   async function applyPaperless(u: ReturnType<typeof userEvent.setup>) {
-    const card = screen.getByRole("heading", { name: /^paperless/ }).closest("article")!;
+    const card = screen.getByRole("heading", { name: /^Paperless documents/ }).closest('[data-slot="card"]')! as HTMLElement;
+    await openForm(u, card);
     await u.type(within(card).getByLabelText(/server address/i), "https://p.example");
     await u.type(within(card).getByLabelText(/api token/i), "0123456789012345");
     await u.click(within(card).getByRole("button", { name: /apply/i }));
   }
 
   async function applyCaldav(u: ReturnType<typeof userEvent.setup>) {
-    const card = screen.getByRole("heading", { name: /^caldav/ }).closest("article")!;
+    const card = screen.getByRole("heading", { name: /^Calendar/ }).closest('[data-slot="card"]')! as HTMLElement;
+    await openForm(u, card);
     await u.clear(within(card).getByLabelText(/base url/i));
     await u.type(within(card).getByLabelText(/base url/i), "https://cal.example");
     await u.clear(within(card).getByLabelText(/username/i));
@@ -594,11 +616,11 @@ describe("ConnectorCard — per-card mutations", () => {
     const { hold, release } = deferredPut();
     mount({ ...TWO_CONNECTORS, putHold: hold });
     const u = userEvent.setup();
-    await screen.findByText("caldav");
+    await screen.findByRole("heading", { name: /^Calendar/ });
 
     try {
       await applyPaperless(u);
-      const card = screen.getByRole("heading", { name: /^paperless/ }).closest("article")!;
+      const card = screen.getByRole("heading", { name: /^Paperless documents/ }).closest('[data-slot="card"]')! as HTMLElement;
       await waitFor(() => {
         expect(within(card).getByRole("button", { name: /apply/i })).toBeDisabled();
       });
@@ -615,11 +637,11 @@ describe("ConnectorCard — per-card mutations", () => {
     const { hold, release } = deferredPut();
     mount({ ...TWO_CONNECTORS, putHold: hold });
     const u = userEvent.setup();
-    await screen.findByText("caldav");
+    await screen.findByRole("heading", { name: /^Calendar/ });
 
     try {
       await applyPaperless(u);
-      const paperlessCard = screen.getByRole("heading", { name: /^paperless/ }).closest("article")!;
+      const paperlessCard = screen.getByRole("heading", { name: /^Paperless documents/ }).closest('[data-slot="card"]')! as HTMLElement;
       const paperlessApply = within(paperlessCard).getByRole("button", { name: /apply/i });
       await waitFor(() => expect(paperlessApply).toBeDisabled());
 
@@ -636,7 +658,7 @@ describe("ConnectorCard — per-card mutations", () => {
     const { hold, release } = deferredPut();
     mount({ ...TWO_CONNECTORS, putStatus: 500, putHold: hold });
     const u = userEvent.setup();
-    await screen.findByText("caldav");
+    await screen.findByRole("heading", { name: /^Calendar/ });
 
     try {
       await applyPaperless(u);
@@ -645,7 +667,7 @@ describe("ConnectorCard — per-card mutations", () => {
       release();
     }
 
-    const paperlessCard = screen.getByRole("heading", { name: /^paperless/ }).closest("article")!;
+    const paperlessCard = screen.getByRole("heading", { name: /^Paperless documents/ }).closest('[data-slot="card"]')! as HTMLElement;
     await waitFor(() => {
       expect(within(paperlessCard).getByRole("alert").textContent).toMatch(/save failed/i);
     });
@@ -655,13 +677,13 @@ describe("ConnectorCard — per-card mutations", () => {
     const { hold, release } = deferredPut();
     mount({ ...TWO_CONNECTORS, putHold: hold });
     const u = userEvent.setup();
-    await screen.findByText("caldav");
+    await screen.findByRole("heading", { name: /^Calendar/ });
 
     try {
       await applyPaperless(u);
-      const card = screen.getByRole("heading", { name: /^paperless/ }).closest("article")!;
+      const card = screen.getByRole("heading", { name: /^Paperless documents/ }).closest('[data-slot="card"]')! as HTMLElement;
       await waitFor(() => {
-        expect(within(card).getByRole("checkbox", { name: /on/i })).toBeDisabled();
+        expect(within(card).getByRole("switch", { name: /^on$/i })).toHaveAttribute("aria-disabled", "true");
       });
     } finally {
       release();
@@ -679,29 +701,29 @@ describe("ConnectorCard — the four-state chip", () => {
     vi.restoreAllMocks();
   });
 
-  it("an unconfigured connector reads 'Not configured'", async () => {
+  it("an unconfigured connector reads 'Not connected'", async () => {
     mount({ rows: [] });
-    expect(await screen.findByText(/Not configured/)).toBeInTheDocument();
+    expect(await screen.findByText(/Not connected/)).toBeInTheDocument();
   });
 
-  it("a configured but untested connector reads 'Configured (untested)'", async () => {
+  it("a configured but untested connector reads 'Connected'", async () => {
     // NOTE: `last_test_ok_at` is not persisted, so "untested" is only true
     // within a session — a reload shows this again for a connector that was
     // verified a moment ago. Recorded as a known limitation rather than
     // asserted as a durable claim; if persistence lands, this arm becomes
     // meaningful across reloads.
     mount({ rows: [configuredRow()] });
-    expect(await screen.findByText(/Configured \(untested\)/)).toBeInTheDocument();
+    expect(await screen.findByText(/^Connected$/)).toBeInTheDocument();
   });
 
-  it("'Not configured' comes from the row's absence, not from the test result", async () => {
+  it("'Not connected' comes from the row's absence, not from the test result", async () => {
     // The chip's first arm is about whether a credential EXISTS. Deriving it
     // from `ok` would make an untested-but-configured connector read as
     // unconfigured, which is the collapse ADR-218 §3 froze the tri-state to
     // prevent.
     mount({ rows: [configuredRow()] });
-    await screen.findByText(/Configured \(untested\)/);
-    expect(screen.queryByText(/Not configured/)).not.toBeInTheDocument();
+    await screen.findByText(/^Connected$/);
+    expect(screen.queryByText(/Not connected/)).not.toBeInTheDocument();
   });
 });
 
@@ -709,7 +731,6 @@ describe("ConnectorCard — privacy-mode hint after an LLM key save (LUM-881)", 
   let originalFetch: typeof fetch;
   beforeEach(() => {
     originalFetch = globalThis.fetch;
-    vi.spyOn(window, "confirm").mockReturnValue(true);
   });
   afterEach(() => {
     globalThis.fetch = originalFetch;
@@ -728,6 +749,7 @@ describe("ConnectorCard — privacy-mode hint after an LLM key save (LUM-881)", 
 
   async function saveKey() {
     const u = userEvent.setup();
+    await openForm(u);
     await u.type(await screen.findByLabelText(/api key/i), KEY);
     await u.click(screen.getByRole("button", { name: "Save" }));
     return u;
@@ -743,10 +765,11 @@ describe("ConnectorCard — privacy-mode hint after an LLM key save (LUM-881)", 
   it("a non-LLM save requests neither the catalog nor the policy", async () => {
     const calls = mount({ models: BLOCKED, role: "admin" });
     const u = userEvent.setup();
+    await openForm(u);
     await u.type(await screen.findByLabelText(/server address/i), "http://paperless.lan");
     await u.type(screen.getByLabelText(/api token/i), "tok-0123456789abcdef");
     await u.click(screen.getByRole("button", { name: "Apply" }));
-    await screen.findByText("Saved.");
+    await waitFor(() => expect(toastMock).toHaveBeenCalledWith("Saved."));
     expect(calls.some((c) => c.method === "PUT")).toBe(true);
     expect(calls.some((c) => c.url.includes("/api/v1/models"))).toBe(false);
     expect(calls.some((c) => c.url.includes("/me/privacy-mode"))).toBe(false);
@@ -757,14 +780,14 @@ describe("ConnectorCard — privacy-mode hint after an LLM key save (LUM-881)", 
     // The auth-off Web-saved-key case: following the link would not turn Claude on.
     mount({ registry: LLM_REG, llmOnly: true, role: "admin", models: NO_KEY });
     await saveKey();
-    await screen.findByText("Saved.");
+    await waitFor(() => expect(toastMock).toHaveBeenCalledWith("Saved."));
     await waitFor(() => expect(screen.queryByTestId(HINT)).not.toBeInTheDocument());
   });
 
   it("a failed catalog read shows no hint and keeps 'Saved.'", async () => {
     mount({ registry: LLM_REG, llmOnly: true, role: "admin", models: 500 });
     await saveKey();
-    expect(await screen.findByText("Saved.")).toBeInTheDocument();
+    await waitFor(() => expect(toastMock).toHaveBeenCalledWith("Saved."));
     expect(screen.queryByTestId(HINT)).not.toBeInTheDocument();
   });
 
@@ -782,7 +805,7 @@ describe("ConnectorCard — privacy-mode hint after an LLM key save (LUM-881)", 
       },
     });
     await saveKey();
-    await screen.findByText("Saved.");
+    await waitFor(() => expect(toastMock).toHaveBeenCalledWith("Saved."));
     await waitFor(() => expect(screen.queryByTestId(HINT)).not.toBeInTheDocument());
   });
 
@@ -796,7 +819,7 @@ describe("ConnectorCard — privacy-mode hint after an LLM key save (LUM-881)", 
     await saveKey();
     const hint = await screen.findByTestId(HINT);
     expect(hint).toHaveTextContent("Cloud models stay off while household privacy mode is local-only.");
-    expect(within(hint).getByRole("link")).toHaveAttribute("href", "/admin/privacy-mode");
+    expect(within(hint).getByRole("link")).toHaveAttribute("href", "/settings/privacy?view=household");
   });
 
   it("a successful delete clears the hint; a failed delete keeps it", async () => {
@@ -811,7 +834,7 @@ describe("ConnectorCard — privacy-mode hint after an LLM key save (LUM-881)", 
     });
     const u = await saveKey();
     await screen.findByTestId(HINT);
-    await u.click(screen.getByRole("button", { name: "Delete" }));
+    await disconnect(u);
     await screen.findByText("nope");
     expect(screen.getByTestId(HINT)).toBeInTheDocument();
   });
@@ -826,8 +849,138 @@ describe("ConnectorCard — privacy-mode hint after an LLM key save (LUM-881)", 
     });
     const u = await saveKey();
     await screen.findByTestId(HINT);
-    await u.click(screen.getByRole("button", { name: "Delete" }));
-    await screen.findByText("Deleted.");
+    await disconnect(u);
+    await waitFor(() => expect(toastMock).toHaveBeenCalledWith("Disconnected."));
     await waitFor(() => expect(screen.queryByTestId(HINT)).not.toBeInTheDocument());
+  });
+});
+
+
+describe("ConnectorCard — plain words, Disconnect and Advanced (LUM-993 Pass 5)", () => {
+  let originalFetch: typeof fetch;
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+  });
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it("shows a plain name and purpose, and keeps the raw id out of the main view", async () => {
+    mount({ rows: [configuredRow()] });
+    await screen.findByRole("heading", { name: /^Paperless documents/ });
+    expect(screen.queryByText("paperless")).not.toBeInTheDocument();
+    const card = screen.getByTestId("connector-paperless");
+    await userEvent.setup().click(within(card).getByRole("button", { name: "Details" }));
+    expect(await within(card).findByText("paperless")).toBeInTheDocument();
+  });
+
+  it("an LLM key card is named for the provider, not llm_*", async () => {
+    mount({ registry: [{ id: "llm_anthropic", description: "x", fields: [] }], llmOnly: true });
+    expect(await screen.findByRole("heading", { name: /^Anthropic \(Claude\)/ })).toBeInTheDocument();
+    expect(screen.queryByText("llm_anthropic")).not.toBeInTheDocument();
+  });
+
+  it("offers Connect when nothing is saved and Edit once it is", async () => {
+    mount({ rows: [] });
+    expect(await screen.findByRole("button", { name: "Connect" })).toBeInTheDocument();
+    cleanup();
+    mount({ rows: [configuredRow()] });
+    expect(await screen.findByRole("button", { name: "Edit" })).toBeInTheDocument();
+  });
+
+  it("the form is hidden until Connect is pressed", async () => {
+    mount({ rows: [] });
+    await screen.findByRole("heading", { name: /^Paperless documents/ });
+    expect(screen.queryByLabelText(/server address/i)).not.toBeInTheDocument();
+    await openForm(userEvent.setup());
+    expect(await screen.findByLabelText(/server address/i)).toBeInTheDocument();
+  });
+
+  it("a saved form closes and says Saved", async () => {
+    mount({ rows: [] });
+    const u = userEvent.setup();
+    await openForm(u);
+    await u.type(await screen.findByLabelText(/server address/i), "https://p.example");
+    await u.type(screen.getByLabelText(/api token/i), "0123456789012345");
+    await u.click(screen.getByRole("button", { name: /apply/i }));
+    await waitFor(() => expect(toastMock).toHaveBeenCalledWith("Saved."));
+    await waitFor(() => expect(screen.queryByLabelText(/server address/i)).not.toBeInTheDocument());
+  });
+
+  it("Disconnect is in the More actions menu and asks first; Cancel changes nothing", async () => {
+    const calls = mount({ rows: [configuredRow()] });
+    const u = userEvent.setup();
+    expect(await screen.findByRole("button", { name: "Edit" })).toBeInTheDocument();
+    // Not a button on the card itself.
+    expect(screen.queryByRole("button", { name: "Disconnect" })).not.toBeInTheDocument();
+    await u.click(screen.getByRole("button", { name: "More actions for Paperless documents" }));
+    await u.click(await screen.findByRole("menuitem", { name: "Disconnect" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveTextContent(/Disconnect Paperless documents\?/);
+    await u.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    expect(calls.some((c) => c.method === "DELETE")).toBe(false);
+  });
+
+  it("confirming Disconnect deletes the credential and says so", async () => {
+    const calls = mount({ rows: [configuredRow()] });
+    const u = userEvent.setup();
+    await screen.findByRole("button", { name: "Edit" });
+    await disconnect(u);
+    await waitFor(() => {
+      const del = calls.find((c) => c.method === "DELETE");
+      expect(del?.url).toContain("/connector-credentials/paperless");
+    });
+    await waitFor(() => expect(toastMock).toHaveBeenCalledWith("Disconnected."));
+  });
+
+  it("a failed Disconnect shows the error in the card", async () => {
+    mount({ rows: [configuredRow()], deleteStatus: 500 });
+    const u = userEvent.setup();
+    await screen.findByRole("button", { name: "Edit" });
+    await disconnect(u);
+    expect(await screen.findByRole("alert")).toHaveTextContent("nope");
+  });
+
+  it("the test connector sits under a collapsed Advanced section", async () => {
+    mount({
+      registry: [
+        { id: "paperless", description: "P", fields: PAPERLESS_FIELDS },
+        { id: "testconnector", description: "Synthetic plumbing test (no real external system).", fields: [] },
+      ],
+    });
+    await screen.findByRole("heading", { name: /^Paperless documents/ });
+    expect(screen.queryByRole("heading", { name: /^Test connector/ })).not.toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: /advanced: test connector/i }));
+    expect(await screen.findByRole("heading", { name: /^Test connector/ })).toBeInTheDocument();
+  });
+
+  it("a connector with no guided form keeps its JSON box under Details, not in the main view", async () => {
+    mount({ registry: [{ id: "somethingelse", description: "", fields: [] }] });
+    await screen.findByRole("heading", { name: /^Somethingelse/ });
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^(Connect|Edit)$/ })).not.toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: /details and advanced setup/i }));
+    expect(await screen.findByRole("textbox", { name: /credential payload/i })).toBeInTheDocument();
+  });
+
+  it("a failed list load shows a retry, not an empty page", async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo) => {
+      const url = String(input);
+      if (url.includes("/api/v1/auth/me")) return jsonResponse(200, authUser);
+      if (url.includes("/registry")) return jsonResponse(200, { items: [] });
+      return jsonResponse(500, { detail: "boom" });
+    });
+    const store = new AccessTokenStore();
+    const client = new ApiClient({ tokens: store, fetchImpl: fetchImpl as unknown as typeof fetch });
+    render(
+      <MemoryRouter>
+        <AuthProvider client={client} tokens={store} skipRefreshOnMount>
+          <MeConnectorsView />
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByRole("button", { name: "Try again" })).toBeInTheDocument();
   });
 });

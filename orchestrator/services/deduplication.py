@@ -42,6 +42,8 @@ import os
 import time
 from pathlib import Path
 
+import psycopg2.errors
+
 import config
 
 _log = logging.getLogger(__name__)
@@ -583,9 +585,12 @@ def _route_pair(
         if mc_a >= _MIN_MENTION_COUNT_FOR_AUTO_MERGE and mc_b >= _MIN_MENTION_COUNT_FOR_AUTO_MERGE:
             winner_id, loser_id = _select_winner(e_a, e_b)
             try:
+                from services.entity_merge import MergeChangesSharing
                 from services.entity_merge import merge_entities
 
-                merge_entities(winner_id=winner_id, loser_id=loser_id, user_id=user_id)
+                merge_entities(
+                    winner_id=winner_id, loser_id=loser_id, user_id=user_id, origin="auto_dedup"
+                )
                 _log.info(
                     "dedup: auto-merged winner=%s loser=%s prob=%.4f",
                     winner_id,
@@ -593,6 +598,23 @@ def _route_pair(
                     prob,
                 )
                 return "auto_merged"
+            except psycopg2.errors.LockNotAvailable:
+                # The member lock is busy (a rename or merge is in flight). Leave the
+                # pair for the next run to re-score rather than queueing a transient failure.
+                _log.info(
+                    "dedup: member lock busy; leaving winner=%s loser=%s for the next run",
+                    winner_id,
+                    loser_id,
+                )
+                return "ignored"
+            except MergeChangesSharing:
+                _log.info(
+                    "dedup: merge would change what the household sees winner=%s loser=%s — "
+                    "routing to review queue",
+                    winner_id,
+                    loser_id,
+                )
+                # Fall through to queue
             except Exception:
                 _log.exception(
                     "dedup: auto-merge failed winner=%s loser=%s — routing to review queue",

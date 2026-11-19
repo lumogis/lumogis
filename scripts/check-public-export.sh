@@ -197,6 +197,8 @@ if tokens:
 # ---------- gate 2: runs-on allowlist ----------
 ALLOWED = {
     "ubuntu-latest", "ubuntu-24.04", "ubuntu-22.04", "ubuntu-20.04",
+    # GitHub-hosted arm64 Linux (free on public repos); the release smoke runs on it (LUM-997).
+    "ubuntu-24.04-arm", "ubuntu-22.04-arm",
     "windows-latest", "windows-2025", "windows-2022", "windows-2019",
     "macos-latest", "macos-15", "macos-14", "macos-13",
 }

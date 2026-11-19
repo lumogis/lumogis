@@ -12,11 +12,15 @@ import {
 } from "react";
 import { Link, useParams } from "react-router-dom";
 
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { cn } from "@/lib/utils";
+
 import type { ChatMessageDTO, DocumentCitationDTO } from "../../api/chat";
 import { CHAT_ERROR_LITERALS } from "../../api/chat";
 import { useAuth } from "../../auth/AuthProvider";
 import { ChatComposer } from "../../components/ChatComposer";
 import { transcribeVoice } from "../../api/voice";
+import { useShellState } from "../../api/meShell";
 import { MetadataCaption } from "../../components/MetadataCaption";
 import {
   documentMetadataCaption,
@@ -27,7 +31,10 @@ import { EmptyState } from "../_shared/EmptyState";
 import { PrivacyBlockedHint } from "../_shared/PrivacyBlockedHint";
 import { catalogHasPrivacyBlock } from "../_shared/privacyBlockCopy";
 import { useModelCatalog } from "../chat/ChatPage";
+import { AnswerText } from "../chat/AnswerText";
+import { ModelChip } from "../chat/ModelChip";
 import { ContextUsedStrip } from "./ContextUsedStrip";
+import { randomUuid } from "../../util/uuid";
 
 const DEFAULT_MODEL = "claude";
 
@@ -40,12 +47,13 @@ interface TurnMessage {
 }
 
 function generateId(prefix: string): string {
-  return `${prefix}-${crypto.randomUUID()}`;
+  return `${prefix}-${randomUuid()}`;
 }
 
 export function DocumentChatPage(): JSX.Element {
   const { documentId } = useParams<{ documentId: string }>();
   const { client } = useAuth();
+  const shell = useShellState();
   const [storedName, setStoredName] = useState<string | null>(null);
   const [filePath, setFilePath] = useState<string | null>(null);
   const [titleError, setTitleError] = useState<string | null>(null);
@@ -208,67 +216,54 @@ export function DocumentChatPage(): JSX.Element {
   }
 
   return (
-    <div className="lumogis-document-chat" data-testid="document-chat-page">
-      <header className="lumogis-document-chat__head">
-        <Link to={`/documents/${numericId}`} className="lumogis-document-chat__back">
+    <div className="mx-auto flex min-h-[calc(100dvh-var(--lumogis-shell-header-h)-var(--lumogis-shell-bottomnav-h)-2*var(--lumogis-space-4))] w-full max-w-4xl min-w-0 flex-col gap-3 @min-[720px]/layout:min-h-[calc(100dvh-var(--lumogis-shell-header-h)-2*var(--lumogis-space-4))]" data-testid="document-chat-page">
+      <header className="shrink-0">
+        <Link to={`/documents/${numericId}`} className="text-sm text-accent-text underline underline-offset-2">
           ← Back to document
         </Link>
-        <h1 className="lumogis-document-chat__title">{displayTitle}</h1>
+        <h1 className="mt-2 mb-0 text-xl font-bold">{displayTitle}</h1>
         <MetadataCaption
           value={documentMetadataCaption(numericId, storedName, filePath)}
           label="Copy id"
         />
-        {titleError !== null ? <p className="lumogis-document-chat__error">{titleError}</p> : null}
-        {models.length > 1 ? (
-          <label className="lumogis-chat__model-picker" style={{ marginTop: "0.5rem" }}>
-            Model
-            <select
-              value={model}
-              onChange={(ev) => setModel(ev.target.value)}
-              disabled={streaming}
-            >
-              {models.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : null}
+        {titleError !== null ? <p className="m-0 text-sm text-destructive">{titleError}</p> : null}
         {catalogHasPrivacyBlock(catalog) ? <PrivacyBlockedHint surface="picker" /> : null}
       </header>
 
-      <div className="lumogis-document-chat__surface">
-        <div className="lumogis-document-chat__messages" role="log" aria-live="polite">
+      <div className="grid min-h-0 flex-1 grid-rows-[1fr_auto] gap-3 rounded-xl border bg-card p-4">
+        <div className="flex min-h-0 flex-col gap-3 overflow-y-auto pr-1" role="log" aria-live="polite">
           {messages.length === 0 ? (
-            <p className="lumogis-document-chat__empty">
+            <p className="m-auto max-w-[42ch] text-center text-sm text-muted-foreground">
               Ask about this document — your questions use only chunks from this file.
             </p>
           ) : (
             messages.map((m) => (
               <div
                 key={m.id}
-                className={[
-                  "lumogis-document-chat__bubble",
-                  m.role === "user" ? "lumogis-document-chat__bubble--user" : "lumogis-document-chat__bubble--assistant",
-                ].join(" ")}
+                className={cn(
+                  "max-w-[min(80ch,90%)] rounded-lg border p-3 break-words whitespace-pre-wrap",
+                  m.role === "user" ? "self-end bg-muted" : "self-start",
+                )}
               >
                 {m.role === "assistant" &&
                 m.status === "streaming" &&
                 m.content.length === 0 &&
                 streamStatus !== null ? (
                   <span
-                    className="lumogis-document-chat__status"
+                    className="text-muted-foreground italic"
                     role="status"
                     data-testid="document-chat-stream-status"
                   >
                     {streamStatus}
                   </span>
+                ) : m.role === "assistant" ? (
+                  // Formatted like the chat page's answers (LUM-993 follow-up).
+                  <AnswerText text={m.content} />
                 ) : (
                   m.content
                 )}
                 {m.role === "assistant" && m.citations !== undefined ? (
-                  <div style={{ marginTop: "0.5rem", borderTop: "1px solid var(--lumogis-border)", paddingTop: "0.5rem" }}>
+                  <div className="mt-2 border-t pt-2">
                     <ContextUsedStrip citations={m.citations} />
                   </div>
                 ) : null}
@@ -278,14 +273,19 @@ export function DocumentChatPage(): JSX.Element {
         </div>
 
         {submitError !== null ? (
-          <p role="alert" className="lumogis-document-chat__error">
-            {submitError}
-          </p>
+          <Alert variant="destructive">
+            <AlertDescription>{submitError}</AlertDescription>
+          </Alert>
         ) : null}
 
         <ChatComposer
           id="lumogis-document-chat-input"
-          className="lumogis-document-chat__compose"
+          // LUM-993: the model choice sits inside the composer, as on the chat page.
+          modelSlot={
+            models.length > 1 ? (
+              <ModelChip models={models} value={model} onChange={setModel} disabled={streaming} error={null} onRetry={() => undefined} />
+            ) : undefined
+          }
           value={input}
           onChange={setInput}
           onSubmit={() => void sendMessage()}
@@ -293,10 +293,13 @@ export function DocumentChatPage(): JSX.Element {
           onStop={cancelStream}
           placeholder="Ask about this document…"
           showLabel={false}
-          minRows={3}
+          minRows={2}
           maxRows={8}
           textareaRef={composerRef}
-          voiceTranscribe={(blob) => transcribeVoice(client, blob).then((r) => r.text)}
+          // LUM-993 Decision 16: the microphone appears only while a speech engine runs.
+          voiceTranscribe={
+            shell?.voice_available === true ? (blob) => transcribeVoice(client, blob).then((r) => r.text) : undefined
+          }
         />
       </div>
     </div>

@@ -92,10 +92,10 @@ test("household KB demo: admin shares → member finds + asks", async ({ browser
     sharedDocId = await row.getAttribute("data-document-id");
 
     // Scene 2 — share it with the household (the differentiating beat).
-    admin.on("dialog", (dialog) => void dialog.accept());
     await admin.goto(`/documents/${sharedDocId}`);
     await beat(admin);
-    await admin.getByTestId("share-toggle").getByRole("switch").click(); // confirm auto-accepts (documents.spec.ts)
+    await admin.getByTestId("share-toggle").getByRole("switch").click();
+    await admin.getByRole("alertdialog").getByRole("button", { name: "Share", exact: true }).click(); // documents.spec.ts
     await admin.getByText("Everyone in your household can find and read this.").waitFor({ timeout: 30_000 });
     await beat(admin, 1800); // hold on the "Shared" state
   } finally {

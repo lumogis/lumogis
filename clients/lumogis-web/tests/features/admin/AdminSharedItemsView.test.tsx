@@ -4,7 +4,7 @@
 // the affordance mirrors the server admin gate (never renders for a member),
 // names the owner in the confirm, and surfaces errors.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { ApiClient } from "../../../src/api/client";
@@ -78,13 +78,14 @@ describe("AdminSharedItemsView", () => {
     expect(await screen.findByText("insurance.pdf")).toBeInTheDocument();
     expect(screen.getByText("grocery list")).toBeInTheDocument();
 
-    // Force unshare → inline confirm naming the owner.
-    await ev.click(screen.getByTestId("force-unshare-files:42"));
-    const confirm = screen.getByTestId("confirm-files:42");
-    expect(confirm).toHaveTextContent(/unshare bob's document from the household\?/i);
+    // Stop sharing → confirm naming the owner.
+    await ev.click(screen.getByRole("button", { name: "More actions for insurance.pdf" }));
+    await ev.click(await screen.findByRole("menuitem", { name: "Stop sharing" }));
+    const confirm = await screen.findByRole("alertdialog");
+    expect(confirm).toHaveTextContent(/stop sharing bob's document\?/i);
 
     // Confirm → DELETE to the admin route with the source pk.
-    await ev.click(screen.getByTestId("confirm-force-unshare-files:42"));
+    await ev.click(within(confirm).getByRole("button", { name: "Stop sharing" }));
     await waitFor(() => {
       const del = fetchImpl.mock.calls.filter(
         (c) =>
@@ -125,12 +126,29 @@ describe("AdminSharedItemsView", () => {
     renderView(client, tokens);
 
     await screen.findByText("insurance.pdf");
-    await ev.click(screen.getByTestId("force-unshare-files:42"));
-    await ev.click(screen.getByTestId("confirm-force-unshare-files:42"));
+    await ev.click(screen.getByRole("button", { name: "More actions for insurance.pdf" }));
+    await ev.click(await screen.findByRole("menuitem", { name: "Stop sharing" }));
+    await ev.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Stop sharing" }));
 
     // The human-authored message is surfaced, not the raw {"detail":{…}} blob.
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Couldn't fully unshare — please retry.");
     expect(alert.textContent ?? "").not.toContain("unshare_incomplete");
+  });
+
+  it("Cancel in the confirm dialog retracts nothing", async () => {
+    const { client, tokens, fetchImpl } = setup({ me: ADMIN });
+    const ev = userEvent.setup();
+    renderView(client, tokens);
+
+    await screen.findByText("insurance.pdf");
+    await ev.click(screen.getByRole("button", { name: "More actions for insurance.pdf" }));
+    await ev.click(await screen.findByRole("menuitem", { name: "Stop sharing" }));
+    await ev.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    expect(
+      fetchImpl.mock.calls.filter((c) => (c[1] as RequestInit)?.method === "DELETE"),
+    ).toHaveLength(0);
   });
 });

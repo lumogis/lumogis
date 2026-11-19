@@ -30,6 +30,7 @@ import hooks
 import mcp_server
 from auth import auth_middleware
 from correlation import correlation_middleware
+from events import Event
 from fastapi import FastAPI
 from fastapi import HTTPException
 from fastapi import Request
@@ -41,6 +42,8 @@ from routes.admin import router as admin_router
 from routes.admin_diagnostics import router as admin_diagnostics_router
 from routes.admin_ollama import router as admin_ollama_router
 from routes.admin_safety import router as admin_safety_router
+from routes.admin_secure_address import public_router as secure_address_public_router
+from routes.admin_secure_address import router as admin_secure_address_router
 from routes.admin_sharing import router as admin_sharing_router
 from routes.admin_system_mail import router as admin_system_mail_router
 from routes.admin_users import imports_router as admin_user_imports_router
@@ -67,6 +70,7 @@ from routes.me import router as me_router
 from routes.me_sessions import router as me_sessions_router
 from routes.password_reset import router as password_reset_router
 from routes.scope import router as scope_router
+from routes.setup import router as setup_router
 from routes.signals import router as signals_router
 from routes.web import router as web_router
 
@@ -223,18 +227,9 @@ def _run_post_bootstrap_default_user_remap() -> None:
     This pass is idempotent — when the pre-uvicorn remap already succeeded it
     is a no-op.
     """
-    try:
-        import db_default_user_remap
+    import db_default_user_remap
 
-        rc = db_default_user_remap.main(post_bootstrap=True)
-        if rc != 0:
-            _log.warning(
-                "post-bootstrap default-user remap exited %d — legacy "
-                "'default' rows may remain until the next restart",
-                rc,
-            )
-    except Exception:
-        _log.exception("post-bootstrap default-user remap failed")
+    db_default_user_remap.run_post_bootstrap_safely("post-bootstrap")
 
 
 def _enforce_auth_consistency() -> None:
@@ -248,19 +243,24 @@ def _enforce_auth_consistency() -> None:
           run after bootstrap so a fresh boot with bootstrap env set does
           not trigger the empty-table refusal.
 
-    Two refusal conditions, both raising ``RuntimeError`` (which crashes
-    the FastAPI startup and exits the container):
+    Refusal conditions, all raising ``RuntimeError`` (which crashes the FastAPI
+    startup and exits the container):
 
     * ``AUTH_ENABLED=false`` AND ``users`` has more than one row — the
       operator is in dev mode but has provisioned multiple accounts. We
       refuse so the wrong mental model doesn't silently succeed.
-    * ``AUTH_ENABLED=true`` AND ``users`` is empty (bootstrap already ran
-      and didn't create anyone — env unset or password too short) — the
-      LAN would have no way in. Refuse with a remediation hint.
+    * ``AUTH_ENABLED=true`` AND ``users`` is empty — LUM-981: this is no longer
+      a refusal by itself. With no bootstrap env, Core boots into the setup
+      state and the first visitor creates the admin. It still refuses when the
+      ``instance_setup`` table is missing (migration 085 did not apply), when
+      setup was completed but no user remains, or when the bootstrap env is set
+      but produced no user.
 
     With ``AUTH_ENABLED=true`` it also refuses a missing or placeholder
     ``AUTH_SECRET`` or ``LUMOGIS_CREDENTIAL_KEY[S]``, and (LUM-885) a missing
-    or placeholder refresh secret, or one equal to ``AUTH_SECRET``.
+    or placeholder refresh secret, or one equal to ``AUTH_SECRET``. The compose
+    entrypoint generates each of these on first start, so the refusal is a
+    backstop for a run that bypassed the entrypoint.
     """
     import hmac
 
@@ -281,8 +281,9 @@ def _enforce_auth_consistency() -> None:
             "AUTH_ENABLED=false — refusing to boot. Exposing Core beyond "
             "loopback without authentication would let anyone on the network "
             "read every user's data. Either bind to 127.0.0.1 (loopback) or "
-            "set AUTH_ENABLED=true with a bootstrap admin, AUTH_SECRET, and "
-            "LUMOGIS_CREDENTIAL_KEY. See LUM-473." % bind_host
+            "set AUTH_ENABLED=true (the first visitor then creates the admin; "
+            "the entrypoint generates AUTH_SECRET and LUMOGIS_CREDENTIAL_KEY). "
+            "See LUM-473." % bind_host
         )
 
     # Test-only escape hatch — NEVER set in production, NEVER read from
@@ -309,13 +310,35 @@ def _enforce_auth_consistency() -> None:
             "to a single user (single-user dev). See "
             ".cursor/plans/family_lan_multi_user.plan.md §2 D5." % n
         )
+    from services.instance_setup import BootState
+
+    from services import instance_setup
+
+    # Evaluated in every case, so the module state is set (NOT_APPLICABLE for
+    # sign-in off or users present). After the test hatch above: tests that set
+    # the hatch never reach the database here.
+    state = instance_setup.evaluate_boot_state()
     if enabled and n == 0:
-        raise RuntimeError(
-            "AUTH_ENABLED=true but users table is empty and no bootstrap admin "
-            "was created. Set LUMOGIS_BOOTSTRAP_ADMIN_EMAIL and "
-            "LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD (>=12 chars) in .env and restart, "
-            "or set AUTH_ENABLED=false for single-user dev."
-        )
+        if state is BootState.BLOCKED_NO_MIGRATION:
+            raise RuntimeError(
+                "AUTH_ENABLED=true but the instance_setup table is missing: "
+                "database migration 085 did not apply. Check the migration lines "
+                "above, fix the cause, and restart."
+            )
+        if state is BootState.BLOCKED_SETUP_DONE_NO_USERS:
+            raise RuntimeError(
+                "Setup was completed on this install, but no user account "
+                "remains. Set LUMOGIS_BOOTSTRAP_ADMIN_EMAIL and "
+                "LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD in .env to create a new admin, "
+                "then restart."
+            )
+        if state is not BootState.OPEN:
+            raise RuntimeError(
+                "AUTH_ENABLED=true but users table is empty and no bootstrap admin "
+                "was created. Set LUMOGIS_BOOTSTRAP_ADMIN_EMAIL and "
+                "LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD (>=12 chars) in .env and restart."
+            )
+        # OPEN: continue to the secret checks; the first visitor creates the admin.
 
     if enabled:
         # AUTH_SECRET hardening (post-/verify-plan follow-up): the orchestrator
@@ -329,13 +352,11 @@ def _enforce_auth_consistency() -> None:
         if secret in _PLACEHOLDER_KEYS:
             raise RuntimeError(
                 "AUTH_ENABLED=true but AUTH_SECRET is unset or a placeholder — "
-                "refusing to boot. Generate a real secret with "
-                '`openssl rand -hex 32` (or `python3 -c "import secrets; '
-                'print(secrets.token_hex(32))"`) and set it as AUTH_SECRET in '
-                ".env, then restart. The entrypoint auto-rotates JWT_SECRET / "
-                "JWT_REFRESH_SECRET / RESTART_SECRET but intentionally does NOT "
-                "auto-rotate AUTH_SECRET — operators flip family-LAN mode on "
-                "deliberately and must own the access-token signing secret."
+                "refusing to boot. The entrypoint generates AUTH_SECRET on first "
+                "start and saves it in .env, so this means it could not (a "
+                "read-only .env, or Core was started without the entrypoint). "
+                "Add AUTH_SECRET=<openssl rand -hex 32> to .env yourself, then "
+                "restart."
             )
 
         # Refresh-secret hardening (LUM-885, security audit #2 AUTH-002): the
@@ -389,9 +410,9 @@ def _enforce_auth_consistency() -> None:
         #   `${LUMOGIS_CREDENTIAL_KEYS:-${LUMOGIS_CREDENTIAL_KEY:-}}`.
         # We do NOT validate Fernet-key shape here — that is `_load_keys()`'s
         # job at request time. We only catch the unset / placeholder case.
-        # NOT auto-rotated by the entrypoint: losing this key makes every
-        # encrypted credential row in `user_connector_credentials`
-        # unrecoverable.
+        # The entrypoint generates this key on first start (LUM-981) and never
+        # replaces one that is set; losing it makes every encrypted credential
+        # row in `user_connector_credentials` unreadable.
         cred_keys = (
             os.environ.get("LUMOGIS_CREDENTIAL_KEYS", "").strip()
             or os.environ.get("LUMOGIS_CREDENTIAL_KEY", "").strip()
@@ -399,14 +420,85 @@ def _enforce_auth_consistency() -> None:
         if cred_keys in _PLACEHOLDER_KEYS:
             raise RuntimeError(
                 "AUTH_ENABLED=true but LUMOGIS_CREDENTIAL_KEY[S] is unset or a "
-                "placeholder — refusing to boot. Generate a real key with "
-                '`python3 -c "from cryptography.fernet import Fernet; '
-                'print(Fernet.generate_key().decode())"` and set it as '
-                "LUMOGIS_CREDENTIAL_KEY in .env (or LUMOGIS_CREDENTIAL_KEYS "
-                "for a CSV during rotation), then restart. The entrypoint "
-                "intentionally does NOT auto-rotate this key — losing it "
-                "makes every per-user connector credential unrecoverable."
+                "placeholder — refusing to boot. The entrypoint generates "
+                "LUMOGIS_CREDENTIAL_KEY on first start and saves it in .env, so "
+                "this means it could not (a read-only .env, or Core was started "
+                "without the entrypoint). Add LUMOGIS_CREDENTIAL_KEY=<a Fernet key> "
+                '(`python3 -c "from cryptography.fernet import Fernet; '
+                'print(Fernet.generate_key().decode())"`) to .env yourself, then '
+                "restart. Never replace a key that already protects saved "
+                "passwords."
             )
+
+
+def _enforce_credential_key_match() -> None:
+    """Warn (never refuse) when saved credentials were sealed with another key.
+
+    A re-copied ``.env`` brings a freshly generated ``LUMOGIS_CREDENTIAL_KEY``
+    that cannot open credentials stored under the old one (LUM-981). Losing
+    saved passwords is a bounded loss (each can be entered again), and refusing
+    to boot would be a total outage, so this only logs. Counts only; no key
+    material is ever logged.
+
+    A store failure propagates; :func:`_run_credential_key_check` (what the
+    lifespan calls) logs it, so it cannot stop the boot.
+    """
+    from services._credential_internals import CredentialUnavailable
+    from services._credential_internals import _key_fingerprint
+    from services._credential_internals import _load_keys
+
+    from services import connector_credentials as ccs
+    from services import credential_tiers as tiers
+
+    in_use: dict[int, int] = {}
+    for counts in (
+        ccs.count_rows_by_key_version(),
+        tiers.household_count_rows_by_key_version(),
+        tiers.system_count_rows_by_key_version(),
+    ):
+        for version, n in counts.items():
+            in_use[version] = in_use.get(version, 0) + n
+    if not in_use:
+        return
+
+    try:
+        loaded = {_key_fingerprint(k) for k in _load_keys()}
+    except CredentialUnavailable:
+        loaded = set()
+
+    total = sum(in_use.values())
+    if not (set(in_use) & loaded):
+        _log.warning(
+            "Saved passwords and logins (%d rows) were encrypted with a different "
+            "LUMOGIS_CREDENTIAL_KEY than the one in .env, so Lumogis cannot read "
+            "them. If you have your old .env, set "
+            "LUMOGIS_CREDENTIAL_KEYS=<the key now in .env>,<the old key> (new key "
+            "first) and restart, so passwords saved since are kept too. Otherwise "
+            "enter those passwords again in Lumogis.",
+            total,
+        )
+        return
+    unreadable = {v: n for v, n in in_use.items() if v not in loaded}
+    if unreadable:
+        _log.warning(
+            "Some saved credentials were encrypted with a key that is not loaded "
+            "(rows by key version: %s; loaded versions: %s). Those rows cannot be "
+            "read until their key is added to LUMOGIS_CREDENTIAL_KEYS or the "
+            "passwords are entered again.",
+            dict(sorted(unreadable.items())),
+            sorted(loaded),
+        )
+
+
+def _run_credential_key_check() -> None:
+    """Run :func:`_enforce_credential_key_match`; a failure is logged, never raised.
+
+    A warning-only check must not be able to stop the boot (LUM-981).
+    """
+    try:
+        _enforce_credential_key_match()
+    except Exception:
+        _log.exception("credential key check failed")
 
 
 def _requested_worker_count(argv=None, environ=None):
@@ -544,6 +636,7 @@ async def lifespan(app: FastAPI):
         _log.exception("Bootstrap admin creation hit an unexpected error")
     _run_post_bootstrap_default_user_remap()
     _enforce_auth_consistency()
+    _run_credential_key_check()
     # LUM-918: ACCESS_TOKEN_TTL_SECONDS is clamped to an hour; say so at boot
     # when the operator asked for more.
     from auth import warn_if_access_token_ttl_clamped
@@ -652,12 +745,46 @@ async def lifespan(app: FastAPI):
     scheduler.start()
     _log.info("APScheduler started")
 
+    # LUM-981: while the first admin is still to be created, repeat the
+    # claim-now reminder in the logs (once now, then every 5 minutes).
+    from services import instance_setup
+
+    if instance_setup.is_open():
+        instance_setup.log_claim_banner()
+        scheduler.add_job(
+            instance_setup.remind_if_open,
+            trigger="interval",
+            minutes=5,
+            id=instance_setup.REMINDER_JOB_ID,
+            name="First admin reminder",
+            replace_existing=True,
+        )
+
     if inbox_mode == "poll":
         schedule_inbox_poll()
 
     from signals import start_all as start_signal_monitors
 
     start_signal_monitors()
+
+    # LUM-331 — secure address at home: upkeep every 10 min (address, certificate,
+    # router check, owed Worker delete). Off-and-idle installs pay one file read.
+    from services.home_dns import service as home_dns_service
+
+    scheduler.add_job(
+        home_dns_service.refresh_job,
+        trigger="interval",
+        minutes=10,
+        id=home_dns_service.SLOW_JOB_ID,
+        name="Secure address upkeep",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    try:
+        home_dns_service.on_startup()
+    except Exception:
+        _log.exception("secure address: start-up resume failed")
 
     from services.egress_deny_tail import start as start_egress_deny_tail
 
@@ -895,6 +1022,32 @@ async def lifespan(app: FastAPI):
         )
         _log.info("Action proposals queue APScheduler stuck sweeper registered")
 
+    # LUM-966: a member's delete clears the entry's Qdrant points through a
+    # Core-side listener in EVERY graph mode (the graph arm has its own listener),
+    # and a sweep retries whatever is still uncleared.
+    from services import entity_deletions
+
+    hooks.register(Event.ENTITY_DELETED, entity_deletions.on_entity_deleted_points)
+
+    if scheduler:
+
+        def _entity_deletion_sweep() -> None:
+            try:
+                entity_deletions.sweep_entity_deletions()
+            except Exception:
+                _log.exception("entity_deletion_sweep failed")
+
+        scheduler.add_job(
+            _entity_deletion_sweep,
+            trigger="interval",
+            seconds=entity_deletions.SWEEP_INTERVAL_SECONDS,
+            id="entity_deletion_sweep",
+            name="Entity delete reconciliation sweeper",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+
     if scheduler:
         from services.memory_purge import PURGE_SWEEPER_INTERVAL_SECONDS
         from services.memory_purge import sweep_partial_purges
@@ -994,6 +1147,11 @@ async def lifespan(app: FastAPI):
                 _log.info("STT ping OK (%s)", type(stt).__name__)
             else:
                 _log.warning("STT ping failed (%s)", type(stt).__name__)
+            # LUM-995: install the speech model if the sidecar lacks it (background,
+            # never blocks start-up, never fatal).
+            from services import stt_model_readiness
+
+            stt_model_readiness.start(scheduler)
     except RuntimeError:
         raise
     except Exception as exc:
@@ -1155,23 +1313,9 @@ async def lifespan(app: FastAPI):
             )
             _log.info("Embedding readiness retry job registered (every 15 seconds)")
 
-    from librechat_config import generate_librechat_yaml
+    from librechat_config import sync_librechat
 
-    if generate_librechat_yaml():
-        import httpx as _httpx
-        from routes.admin import _current_restart_secret
-
-        _sc_url = os.environ.get("STACK_CONTROL_URL", "http://stack-control:9000")
-        try:
-            _httpx.post(
-                f"{_sc_url}/restart",
-                json={"services": ["librechat"]},
-                headers={"X-Lumogis-Restart-Token": _current_restart_secret()},
-                timeout=30,
-            )
-            _log.info("LibreChat restarted with generated config")
-        except Exception as exc:
-            _log.warning("Could not restart LibreChat: %s", exc)
+    sync_librechat("Core start")
 
     # MCP startup: build a fresh FastMCP, point the existing /mcp mount at
     # its Starlette sub-app, and enter session_manager.run() to start the
@@ -1333,9 +1477,12 @@ app.middleware("http")(correlation_middleware)
 app.middleware("http")(auth_middleware)
 app.include_router(auth_router)
 app.include_router(invites_router)
+app.include_router(setup_router)
 app.include_router(password_reset_router)
 app.include_router(altcha_router)
 app.include_router(admin_system_mail_router)
+app.include_router(admin_secure_address_router)
+app.include_router(secure_address_public_router)
 app.include_router(admin_users_router)
 app.include_router(admin_user_imports_router)
 app.include_router(me_router)

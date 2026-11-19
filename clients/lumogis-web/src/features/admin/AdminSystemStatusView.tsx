@@ -1,10 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Lumogis
 //
-// Admin System status: stack-status + Ollama pull/delete via legacy /settings/*.
+// Admin → Health and backups: stack-status + backups + updates + Ollama pull/delete
+// via legacy /settings/*. Rebuilt on the shared components in LUM-993 plan B Pass 6:
+// one plain summary line, Backups, then each service with a status badge and one
+// sentence. Versions, runtime kinds, raw codes and shell commands live in a collapsed
+// "Details" at the bottom (the secure-address summary text comes from
+// secureAddressCopy.ts).
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ChevronDown } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 
 import {
   deleteOllamaModel,
@@ -13,7 +20,11 @@ import {
   fetchOllamaPullJob,
   startOllamaPull,
 } from "../../api/adminOllama";
-import { fetchAdminStackStatus, type StackServiceState } from "../../api/adminStackStatus";
+import {
+  fetchAdminStackStatus,
+  type StackServiceState,
+  type StackStorageStatus,
+} from "../../api/adminStackStatus";
 import { fetchAdminBackupStatus } from "../../api/adminBackupStatus";
 import { fetchAdminUpdateStatus, type UpdateStatusResponse } from "../../api/adminUpdateStatus";
 import {
@@ -23,34 +34,54 @@ import {
 } from "../../api/searchSettings";
 import { ApiError } from "../../api/client";
 import { useAuth } from "../../auth/AuthProvider";
+import { GraphOfferLine } from "../../components/GraphOfferLine";
+import { ErrorState } from "../../components/page/ErrorState";
+import { LoadingPlaceholder, SkeletonText } from "../../components/page/LoadingState";
+import { PageSection, Row } from "../../components/page/PageSection";
+import { Alert, AlertDescription } from "../../components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "../../components/ui/alert-dialog";
+import { Badge } from "../../components/ui/badge";
+import { Button } from "../../components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../../components/ui/collapsible";
+import { Input } from "../../components/ui/input";
+import { Label } from "../../components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "../../components/ui/table";
+import { formatDateTime } from "../../util/formatTimestamp";
+import { SUMMARY_TEXT as SECURE_ADDRESS_SUMMARY } from "./secureAddressCopy";
 
-function stateColour(state: StackServiceState): string {
-  switch (state) {
-    case "healthy":
-      return "#2e7d32";
-    case "degraded":
-      return "#ed6c02";
-    case "down":
-      return "#c62828";
-    case "not_configured":
-      return "#757575";
-    default:
-      return "#616161";
-  }
-}
+type BadgeVariant = "default" | "secondary" | "destructive" | "outline";
 
-function storageBarColour(status: string): string {
-  switch (status) {
-    case "critical":
-      return "#c62828";
-    case "warn":
-      return "#ed6c02";
-    case "ok":
-      return "#2e7d32";
-    default:
-      return "#9e9e9e";
-  }
-}
+const SERVICE_BADGE: Record<StackServiceState, { text: string; variant: BadgeVariant; sentence: string }> = {
+  healthy: { text: "Running", variant: "default", sentence: "Working normally." },
+  degraded: { text: "Needs attention", variant: "destructive", sentence: "Running, but not as well as it should." },
+  down: { text: "Not running", variant: "destructive", sentence: "Lumogis cannot reach this right now." },
+  not_configured: { text: "Not set up", variant: "outline", sentence: "Not set up on this Lumogis." },
+  unknown: { text: "Unknown", variant: "secondary", sentence: "Lumogis could not tell whether this is working." },
+};
+
+const STORAGE_BADGE: Record<StackStorageStatus, { text: string; variant: BadgeVariant }> = {
+  ok: { text: "Plenty of space", variant: "default" },
+  warn: { text: "Getting full", variant: "destructive" },
+  critical: { text: "Almost full", variant: "destructive" },
+  unknown: { text: "Unknown", variant: "secondary" },
+};
 
 function formatBytes(n: number | null): string {
   if (n == null) return "—";
@@ -114,6 +145,15 @@ function writeDismissedVersion(version: string): void {
   }
 }
 
+/** True when the "newer release" notice is showing (not dismissed); the shell command for it lives in Details. */
+function updateNoticeShowing(data: UpdateStatusResponse | undefined, dismissedVersion: string | null): boolean {
+  if (!data) return false;
+  const { checked, update_available, latest_version } = data;
+  return Boolean(
+    checked && update_available && !(latest_version != null && dismissedVersion === latest_version),
+  );
+}
+
 function UpdateStatusCardBody({
   data,
   dismissedVersion,
@@ -130,38 +170,43 @@ function UpdateStatusCardBody({
 
   if (checked && update_available && !isDismissed) {
     return (
-      <>
-        <p role="alert" style={{ color: "#ed6c02", fontSize: "0.9rem" }}>
-          A newer Lumogis release is available: <strong>{current_version}</strong>
-          {latest_version != null ? (
-            <>
-              {" "}
-              → <strong>{latest_version}</strong>
-            </>
-          ) : null}
-          .
-        </p>
-        {release_url ? (
-          <p style={{ fontSize: "0.85rem", margin: "0.35rem 0" }}>
-            <a href={release_url} target="_blank" rel="noopener noreferrer">
-              Release notes
-            </a>
-          </p>
-        ) : null}
-        <p style={{ fontSize: "0.85rem", margin: "0.35rem 0" }}>
-          Update on the host with <code>make update</code> (see the reference manual — Update
-          mechanism).
-        </p>
-        {latest_version != null ? (
-          <button
-            type="button"
-            aria-label={`Dismiss update notification for version ${latest_version}`}
-            onClick={() => onDismiss(latest_version)}
-          >
-            Dismiss
-          </button>
-        ) : null}
-      </>
+      <Alert>
+        <AlertDescription className="flex flex-col gap-2">
+          <span>
+            A newer Lumogis release is available: <strong>{current_version}</strong>
+            {latest_version != null ? (
+              <>
+                {" "}
+                → <strong>{latest_version}</strong>
+              </>
+            ) : null}
+            . Ask whoever runs the server to update it (the steps are under Details).
+          </span>
+          <span className="flex flex-wrap items-center gap-2">
+            {release_url ? (
+              <a
+                href={release_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-accent-text underline underline-offset-2"
+              >
+                Release notes
+              </a>
+            ) : null}
+            {latest_version != null ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                aria-label={`Dismiss update notification for version ${latest_version}`}
+                onClick={() => onDismiss(latest_version)}
+              >
+                Dismiss
+              </Button>
+            ) : null}
+          </span>
+        </AlertDescription>
+      </Alert>
     );
   }
 
@@ -171,25 +216,23 @@ function UpdateStatusCardBody({
 
   if (checked && !update_available && !error) {
     return (
-      <p style={{ fontSize: "0.85rem", opacity: 0.85 }}>
+      <p className="m-0 text-sm text-muted-foreground">
         Running the latest release (<strong>{current_version}</strong>).
-        {checked_at ? ` Last checked: ${checked_at}.` : null}
+        {checked_at ? ` Last checked: ${formatDateTime(checked_at)}.` : null}
       </p>
     );
   }
 
   if (checked && !update_available && error) {
     return (
-      <p style={{ fontSize: "0.85rem", opacity: 0.85 }}>
+      <p className="m-0 text-sm text-muted-foreground">
         {error}
         {latest_version ? ` (${latest_version})` : null}
       </p>
     );
   }
 
-  return (
-    <p style={{ fontSize: "0.85rem", opacity: 0.85 }}>{error ?? "Update check unavailable."}</p>
-  );
+  return <p className="m-0 text-sm text-muted-foreground">{error ?? "Update check unavailable."}</p>;
 }
 
 export function AdminSystemStatusView(): JSX.Element {
@@ -204,6 +247,7 @@ export function AdminSystemStatusView(): JSX.Element {
     readDismissedVersion(),
   );
   const terminalHandledRef = useRef<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   const status = useQuery({
     queryKey: ["admin", "stack-status"],
@@ -327,11 +371,12 @@ export function AdminSystemStatusView(): JSX.Element {
     (activeJobId != null && pullJobQuery.isPending);
   const pullBusy = pullM.isPending || deleteM.isPending || pullInFlight;
 
-  const handleDelete = (name: string): void => {
+  // The words of the delete confirmation. Same facts as the old browser prompt: what it frees,
+  // and whether the model is the embedding model, the default chat model, or a registered one.
+  const deleteMessage = (name: string): string => {
     const disc = discovery.data;
-    if (!disc) return;
-
     let msg = `Remove "${name}" from Ollama? This frees disk space.`;
+    if (!disc) return msg;
     if (isEmbeddingModel(name, disc.embedding_model)) {
       msg += " This is the household embedding model.";
     } else if (isDefaultChatModel(name, disc.alias_map, disc.default_model)) {
@@ -342,16 +387,15 @@ export function AdminSystemStatusView(): JSX.Element {
         msg += ` This model is registered in the model config as ${alias}.`;
       }
     }
-    if (!window.confirm(msg)) return;
-    deleteM.mutate(name);
+    return msg;
   };
+
 
   if (status.isPending) {
     return (
-      <section aria-busy="true">
-        <h2>System status</h2>
-        <p>Loading…</p>
-      </section>
+      <LoadingPlaceholder label="Loading…" className="max-w-2xl">
+        <SkeletonText lines={6} />
+      </LoadingPlaceholder>
     );
   }
 
@@ -365,12 +409,7 @@ export function AdminSystemStatusView(): JSX.Element {
             ? "Admin role required for system status."
             : err.detail
         : "System status unavailable.";
-    return (
-      <section>
-        <h2>System status</h2>
-        <p role="alert">{detail}</p>
-      </section>
-    );
+    return <ErrorState message={detail} onRetry={() => void status.refetch()} />;
   }
 
   const d = status.data;
@@ -385,109 +424,79 @@ export function AdminSystemStatusView(): JSX.Element {
         : "Ollama discovery unavailable."
       : null;
 
+  const troubled = d.services.filter((s) => s.state === "degraded" || s.state === "down");
+  const summary =
+    d.meta.overall_status === "ok" && troubled.length === 0
+      ? "Everything is running."
+      : troubled.length > 0
+        ? `${d.meta.overall_status === "down" ? "Lumogis is not fully running" : "Lumogis is running, but some parts need attention"}: ${troubled.map((s) => s.display_name).join(", ")}.`
+        : d.meta.overall_status === "down"
+          ? "Lumogis is not fully running."
+          : "Lumogis is running, but some parts need attention.";
+  const summaryOk = d.meta.overall_status === "ok" && troubled.length === 0;
+
+  const backup = backupStatus.data;
+  const updateShowing = updateNoticeShowing(updateStatus.data, dismissedVersion);
+  const coverage = backup?.coverage ?? [];
+
   return (
-    <section className="lumogis-admin-dense-section">
-      <h2>System status</h2>
-      <p className="lumogis-prose-mono" style={{ opacity: 0.9 }}>
-        Live stack health for household operators — services, storage, and Ollama models on your hardware.
+    <section data-testid="system-status" className="flex flex-col gap-2">
+      <p
+        data-testid="system-status-summary"
+        className="m-0 flex max-w-2xl items-center gap-2 text-sm font-medium"
+      >
+        <Badge variant={summaryOk ? "default" : "destructive"}>{summaryOk ? "All good" : "Needs attention"}</Badge>
+        <span>{summary}</span>
       </p>
 
       {showStackControlBanner ? (
-        <p role="status" style={{ color: "#ed6c02", maxWidth: "42rem" }}>
-          Stack-control sidecar data is partial or unavailable. Service rows may rely on store
-          pings only.
+        <p role="status" className="m-0 max-w-2xl text-sm text-muted-foreground">
+          Lumogis cannot see every part of the system right now, so the list below may be incomplete.
         </p>
       ) : null}
 
-      <div style={{ margin: "1rem 0" }}>
-        <div style={{ fontSize: "0.85rem", opacity: 0.85 }}>
-          Overall: <strong>{d.meta.overall_status}</strong>
-          {d.meta.cache_age_sec != null ? ` (cache ${d.meta.cache_age_sec}s)` : null}
-        </div>
-        <div style={{ fontSize: "0.85rem", opacity: 0.85 }}>Generated: {d.meta.generated_at}</div>
-        {searchSettings.data &&
-        isRerankerBackendActive(searchSettings.data.reranker_backend_live) &&
-        !searchSettings.data.reranker_pending_restart ? (
-          <span
-            data-testid="reranker-active-chip"
-            style={{
-              display: "inline-block",
-              marginTop: "0.5rem",
-              padding: "0.2rem 0.5rem",
-              borderRadius: 4,
-              fontSize: "0.8rem",
-              background: "#e8f5e9",
-              color: "#2e7d32",
-            }}
-          >
-            Reranker active ({BGE_RERANKER_RAM_ESTIMATE})
-          </span>
-        ) : null}
-      </div>
-
-      {backupStatus.data ? (
-        <div
-          style={{
-            margin: "1rem 0",
-            padding: "0.75rem 1rem",
-            border: "1px solid #e0e0e0",
-            borderRadius: 6,
-            maxWidth: "42rem",
-          }}
+      {backup ? (
+        <PageSection
+          title="Backups"
+          description="A backup is a copy of your Lumogis data you can restore after a disk failure."
         >
-          <h3 style={{ fontSize: "1rem", margin: "0 0 0.5rem" }}>Disaster recovery backup</h3>
-          {backupStatus.data.stale || backupStatus.data.warnings.length > 0 ? (
-            <div role="alert" style={{ color: "#ed6c02", fontSize: "0.9rem" }}>
-              {backupStatus.data.warnings.length > 0 ? (
-                // Every warning, not the first: a stale-backup warning must not hide
-                // "files are missing from disk" (LUM-892).
-                backupStatus.data.warnings.map((w) => (
-                  <p key={w.code} style={{ margin: "0 0 0.25rem" }}>
-                    {w.message}
+          {backup.stale || backup.warnings.length > 0 ? (
+            <Alert variant="destructive" className="mb-3">
+              <AlertDescription className="flex flex-col gap-1">
+                {backup.warnings.length > 0 ? (
+                  // Every warning, not the first: a stale-backup warning must not hide
+                  // "files are missing from disk" (LUM-892).
+                  backup.warnings.map((w) => <p key={w.code} className="m-0">{w.message}</p>)
+                ) : (
+                  <p className="m-0">
+                    {`The last backup is more than ${backup.stale_threshold_hours} hours old. Ask whoever runs the server to take a new one (see Details).`}
                   </p>
-                ))
-              ) : (
-                <p style={{ margin: "0 0 0.25rem" }}>
-                  {`Last backup is older than ${backupStatus.data.stale_threshold_hours}h — run make backup on the host.`}
-                </p>
-              )}
-            </div>
+                )}
+              </AlertDescription>
+            </Alert>
           ) : null}
-          <div style={{ fontSize: "0.85rem", lineHeight: 1.5 }}>
-            <div>
-              Enabled: <strong>{backupStatus.data.enabled ? "yes" : "no"}</strong>
-            </div>
-            <div>
-              Last snapshot:{" "}
-              <strong>{backupStatus.data.last_snapshot_id ?? "none"}</strong>
-              {backupStatus.data.last_success_at ? ` (${backupStatus.data.last_success_at})` : null}
-            </div>
-            <div>
-              Age:{" "}
-              {backupStatus.data.age_hours != null
-                ? `${backupStatus.data.age_hours.toFixed(1)}h`
-                : "—"}
-              {" · "}
-              Size: {formatBytes(backupStatus.data.total_bytes)}
-            </div>
-            <div>
-              Stores:{" "}
-              {backupStatus.data.stores
-                .map((s) => {
-                  if (s.skipped) return `${s.id} (skipped)`;
-                  if (!s.present) return `${s.id} (missing)`;
-                  return s.id === "files" && s.file_count != null
-                    ? `files (${s.file_count} files)`
-                    : s.id;
-                })
-                .join(", ")}
-            </div>
-            <div>
-              Verify: <strong>{backupStatus.data.last_verify_status ?? "unknown"}</strong>
-            </div>
-          </div>
-          {(backupStatus.data.coverage ?? []).length > 0 ? (
-            <div style={{ fontSize: "0.85rem", lineHeight: 1.5, marginTop: "0.5rem" }}>
+          <dl className="m-0">
+            <Row label="Status">
+              <Badge variant={backup.enabled ? "default" : "outline"}>{backup.enabled ? "On" : "Off"}</Badge>
+            </Row>
+            <Row label="Last backup">
+              {backup.last_success_at ? formatDateTime(backup.last_success_at) : "No backup yet"}
+            </Row>
+            <Row label="Size">{formatBytes(backup.total_bytes)}</Row>
+            <Row label="Checked">
+              {backup.last_verify_status === "ok"
+                ? "The last backup checked out fine"
+                : backup.last_verify_status === "failed"
+                  ? "The last backup failed its check"
+                  : "Not checked yet"}
+            </Row>
+          </dl>
+          <p className="mt-3 mb-0 text-sm text-muted-foreground">
+            To restore, ask whoever runs the server. A restore is done on that computer, not from this page;
+            the steps are under Details.
+          </p>
+          {coverage.length > 0 ? (
+            <div className="mt-3 flex flex-col gap-3 text-sm">
               {(
                 [
                   ["Covered", true],
@@ -495,9 +504,9 @@ export function AdminSystemStatusView(): JSX.Element {
                 ] as const
               ).map(([heading, covered]) => (
                 <div key={heading}>
-                  <h4 style={{ fontSize: "0.9rem", margin: "0.5rem 0 0.25rem" }}>{heading}</h4>
-                  <ul style={{ margin: 0, paddingLeft: "1.25rem" }}>
-                    {(backupStatus.data.coverage ?? [])
+                  <h3 className="m-0 mb-1 text-sm font-semibold">{heading}</h3>
+                  <ul className="m-0 list-disc pl-5">
+                    {coverage
                       .filter((c) => c.covered === covered)
                       .map((c) => (
                         <li key={c.id}>{c.note ? `${c.label} — ${c.note}` : c.label}</li>
@@ -507,22 +516,48 @@ export function AdminSystemStatusView(): JSX.Element {
               ))}
             </div>
           ) : null}
-        </div>
+        </PageSection>
       ) : backupStatus.isError ? (
-        <p style={{ fontSize: "0.85rem", opacity: 0.85 }}>DR backup status unavailable.</p>
+        <p className="m-0 max-w-2xl text-sm text-muted-foreground">Backup status unavailable.</p>
       ) : null}
 
+      <PageSection title="Services" description="The parts Lumogis is made of.">
+        <dl className="m-0">
+          {d.services.map((s) => {
+            const b = SERVICE_BADGE[s.state] ?? SERVICE_BADGE.unknown;
+            return (
+              <Row key={s.id} label={s.display_name}>
+                <span className="flex flex-wrap items-center justify-end gap-2">
+                  <Badge variant={b.variant}>{b.text}</Badge>
+                  <span className="font-normal text-muted-foreground">{b.sentence}</span>
+                </span>
+              </Row>
+            );
+          })}
+        </dl>
+      </PageSection>
+
+      <PageSection title="Disk space">
+        <dl className="m-0">
+          {d.storage.map((row) => {
+            const b = STORAGE_BADGE[row.status] ?? STORAGE_BADGE.unknown;
+            return (
+              <Row key={row.mount_id} label={row.path_label}>
+                <span className="flex flex-wrap items-center justify-end gap-2">
+                  {row.used_bytes != null && row.total_bytes != null
+                    ? `${formatBytes(row.used_bytes)} of ${formatBytes(row.total_bytes)}`
+                    : "—"}
+                  {row.used_percent != null ? ` (${row.used_percent}% used)` : null}
+                  <Badge variant={b.variant}>{b.text}</Badge>
+                </span>
+              </Row>
+            );
+          })}
+        </dl>
+      </PageSection>
+
       {updateStatus.data ? (
-        <div
-          style={{
-            margin: "1rem 0",
-            padding: "0.75rem 1rem",
-            border: "1px solid #e0e0e0",
-            borderRadius: 6,
-            maxWidth: "42rem",
-          }}
-        >
-          <h3 style={{ fontSize: "1rem", margin: "0 0 0.5rem" }}>Software updates</h3>
+        <PageSection title="Software updates">
           <UpdateStatusCardBody
             data={updateStatus.data}
             dismissedVersion={dismissedVersion}
@@ -531,253 +566,304 @@ export function AdminSystemStatusView(): JSX.Element {
               setDismissedVersion(latestVersion);
             }}
           />
-        </div>
+        </PageSection>
       ) : updateStatus.isError ? (
-        <p style={{ fontSize: "0.85rem", opacity: 0.85 }}>Software update status unavailable.</p>
+        <p className="m-0 max-w-2xl text-sm text-muted-foreground">Software update status unavailable.</p>
       ) : null}
 
-      <h3 style={{ fontSize: "1rem", marginTop: "1.25rem" }}>Services</h3>
-      <div className="lumogis-table-scroll">
-        <table className="lumogis-dense-table lumogis-responsive-table">
-          <thead>
-            <tr>
-              <th>Service</th>
-              <th>State</th>
-              <th>Runtime</th>
-              <th>Note</th>
-            </tr>
-          </thead>
-          <tbody>
-            {d.services.map((s) => (
-              <tr key={s.id}>
-                <td data-label="Service" className="lumogis-cell-identifier">{s.display_name}</td>
-                <td data-label="State" className="lumogis-cell-identifier" style={{ color: stateColour(s.state), fontWeight: 600 }}>{s.state}</td>
-                <td data-label="Runtime" className="lumogis-cell-identifier" style={{ fontSize: "0.85rem" }}>{s.runtime_kind}</td>
-                <td data-label="Note" style={{ fontSize: "0.85rem" }} className="lumogis-long-text">
-                  {s.message ?? "—"}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {d.secure_address ? (
+        <p data-testid="system-status-secure-address" className="m-0 max-w-2xl text-sm">
+          Secure address: {SECURE_ADDRESS_SUMMARY[d.secure_address.state]}
+          {d.secure_address.url ? (
+            <>
+              {" "}
+              (
+              <a href={d.secure_address.url} className="text-accent-text underline underline-offset-2">
+                {d.secure_address.url}
+              </a>
+              )
+            </>
+          ) : null}{" "}
+          ·{" "}
+          <Link to="/settings/home-address" className="text-accent-text underline underline-offset-2">
+            Open Home address
+          </Link>
+        </p>
+      ) : null}
 
-      <h3 style={{ fontSize: "1rem", marginTop: "1.25rem" }}>Storage</h3>
-      <ul style={{ listStyle: "none", padding: 0, margin: "0.5rem 0" }}>
-        {d.storage.map((row) => (
-          <li key={row.mount_id} style={{ marginBottom: "0.75rem", maxWidth: "36rem" }}>
-            <div style={{ fontSize: "0.9rem", marginBottom: "0.25rem" }}>{row.path_label}</div>
-            {row.used_percent != null && row.mount_id !== "docker_breakdown" ? (
-              <div
-                style={{
-                  height: "8px",
-                  background: "#e0e0e0",
-                  borderRadius: 4,
-                  overflow: "hidden",
-                }}
-              >
-                <div
-                  style={{
-                    width: `${Math.min(100, row.used_percent)}%`,
-                    height: "100%",
-                    background: storageBarColour(row.status),
-                  }}
-                />
-              </div>
-            ) : null}
-            <div style={{ fontSize: "0.8rem", opacity: 0.85 }}>
-              {row.used_bytes != null && row.total_bytes != null
-                ? `${formatBytes(row.used_bytes)} / ${formatBytes(row.total_bytes)}`
-                : "—"}
-              {row.used_percent != null ? ` (${row.used_percent}% used, ${row.status})` : ` (${row.status})`}
-            </div>
-          </li>
-        ))}
-      </ul>
+      <GraphOfferLine />
 
       {/* LUM-792 — grouped so a test can say "no error from the Ollama mutation"
           without asserting on the whole System status section, which also carries the
           DR-backup staleness advisory (permanently present on a fresh stack, where no
-          backup has run). Also a real a11y gain: visual heading, no programmatic group. */}
-      <section aria-labelledby="ollama-models-heading">
-        <h3 id="ollama-models-heading" style={{ fontSize: "1rem", marginTop: "1.25rem" }}>
-          Ollama models
-        </h3>
+          backup has run). Also a real a11y gain: a named region. */}
+      <section aria-label="Ollama models">
+        <PageSection
+          title="Ollama models"
+          description="The language models stored on this computer. Pulling a model downloads it; deleting one frees disk space."
+        >
+          {discoveryError ? (
+            <Alert variant="destructive" className="mb-3">
+              <AlertDescription>{discoveryError}</AlertDescription>
+            </Alert>
+          ) : null}
 
-        {discoveryError ? (
-          <p role="alert" style={{ color: "#c62828", fontSize: "0.9rem" }}>
-            {discoveryError}
-          </p>
-        ) : null}
+          {ollamaActionError ? (
+            <Alert variant="destructive" className="mb-3">
+              <AlertDescription>{ollamaActionError}</AlertDescription>
+            </Alert>
+          ) : null}
 
-        {ollamaActionError ? (
-          <p role="alert" style={{ color: "#c62828", fontSize: "0.9rem" }}>
-            {ollamaActionError}
-          </p>
-        ) : null}
+          {ollamaPullWarning ? (
+            <p role="status" className="mb-3 text-sm text-destructive">
+              {ollamaPullWarning}
+            </p>
+          ) : null}
 
-        {ollamaPullWarning ? (
-          <p role="status" style={{ color: "#e65100", fontSize: "0.9rem" }}>
-            {ollamaPullWarning}
-          </p>
-        ) : null}
-
-        {disc ? (
-          <div
-            style={{ marginBottom: "1rem", maxWidth: "42rem" }}
-            aria-busy={pullInFlight ? "true" : undefined}
-          >
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", alignItems: "center" }}>
-              <label style={{ fontSize: "0.85rem" }}>
-                Catalog{" "}
-                <select
-                  value={selectedCatalogName}
-                  onChange={(e) => setSelectedCatalogName(e.target.value)}
-                  disabled={pullBusy}
-                  aria-label="Ollama catalog model"
-                >
-                  <option value="">— select —</option>
-                  {disc.catalog.map((entry) => (
-                    <option key={entry.name} value={entry.name}>
-                      {entry.display_name}
-                      {entry.installed ? " (installed)" : ""}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label style={{ fontSize: "0.85rem" }}>
-                Model name{" "}
-                <input
-                  type="text"
-                  value={pullNameInput}
-                  onChange={(e) => setPullNameInput(e.target.value)}
-                  placeholder="catalog or typed name"
-                  disabled={pullBusy}
-                  aria-label="Ollama model name to pull"
-                />
-              </label>
-              <button
-                type="button"
-                disabled={!pullTarget || pullBusy}
-                onClick={() => pullM.mutate(pullTarget)}
-              >
-                Pull
-              </button>
-            </div>
-            {pullTarget && isEmbeddingPullTarget(pullTarget, disc.embedding_model) ? (
-              <p style={{ fontSize: "0.85rem", color: "#ed6c02", margin: "0.5rem 0 0" }}>
-                Pulling the embedding model may re-initialize Qdrant collections.
-              </p>
-            ) : null}
-            {pullInFlight && pullJob ? (
-              <div style={{ margin: "0.5rem 0 0", maxWidth: "24rem" }}>
-                <p style={{ fontSize: "0.85rem", margin: "0 0 0.35rem" }}>
-                  Pulling {pullJob.model_name}
-                  {pullJob.status_message ? ` — ${pullJob.status_message}` : ""}
-                </p>
-                {pullJob.progress_pct != null ? (
-                  <progress
-                    value={pullJob.progress_pct}
-                    max={100}
-                    aria-label="Ollama pull progress"
-                    style={{ width: "100%" }}
+          {disc ? (
+            <div className="mb-4 flex flex-col gap-3" aria-busy={pullInFlight ? "true" : undefined}>
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="ollama-catalog">Catalog</Label>
+                  <Select
+                    value={selectedCatalogName}
+                    onValueChange={(v) => setSelectedCatalogName(String(v ?? ""))}
+                    disabled={pullBusy}
+                  >
+                    <SelectTrigger id="ollama-catalog" aria-label="Ollama catalog model" className="min-w-44">
+                      <SelectValue placeholder="— select —" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {disc.catalog.map((entry) => (
+                        <SelectItem key={entry.name} value={entry.name}>
+                          {entry.display_name}
+                          {entry.installed ? " (installed)" : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex min-w-0 flex-1 basis-48 flex-col gap-1.5">
+                  <Label htmlFor="ollama-model-name">Model name</Label>
+                  <Input
+                    id="ollama-model-name"
+                    type="text"
+                    value={pullNameInput}
+                    onChange={(e) => setPullNameInput(e.target.value)}
+                    placeholder="catalog or typed name"
+                    disabled={pullBusy}
+                    aria-label="Ollama model name to pull"
                   />
-                ) : (
-                  <p style={{ fontSize: "0.8rem", opacity: 0.85 }}>Preparing download…</p>
-                )}
+                </div>
+                <Button
+                  type="button"
+                  disabled={!pullTarget || pullBusy}
+                  onClick={() => pullM.mutate(pullTarget)}
+                >
+                  Pull
+                </Button>
               </div>
-            ) : null}
-          </div>
-        ) : null}
+              {pullTarget && isEmbeddingPullTarget(pullTarget, disc.embedding_model) ? (
+                <p className="m-0 text-sm text-destructive">
+                  Pulling the embedding model may re-initialize Qdrant collections.
+                </p>
+              ) : null}
+              {pullInFlight && pullJob ? (
+                <div className="max-w-sm">
+                  <p className="mt-0 mb-1 text-sm">
+                    Pulling {pullJob.model_name}
+                    {pullJob.status_message ? ` — ${pullJob.status_message}` : ""}
+                  </p>
+                  {pullJob.progress_pct != null ? (
+                    <progress
+                      value={pullJob.progress_pct}
+                      max={100}
+                      aria-label="Ollama pull progress"
+                      className="h-2 w-full"
+                    />
+                  ) : (
+                    <p className="m-0 text-sm text-muted-foreground">Preparing download…</p>
+                  )}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
 
-        {d.ollama.length === 0 ? (
-          <p style={{ fontSize: "0.9rem" }}>No local models reported (Ollama may be down).</p>
-        ) : (
-          <div className="lumogis-table-scroll">
-            <table className="lumogis-dense-table lumogis-responsive-table">
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Role</th>
-                  <th>Size</th>
-                  <th>Loaded</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
+          {d.ollama.length === 0 ? (
+            <p className="m-0 text-sm text-muted-foreground">
+              No local models reported (Ollama may be down). Pull one above once it is back.
+            </p>
+          ) : (
+            // On a phone the rows stack (as the Activity table does): five columns
+            // squeezed model names to one letter per line and cut off Delete.
+            <Table>
+              <TableHeader className="max-sm:hidden">
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Used for</TableHead>
+                  <TableHead>Size</TableHead>
+                  <TableHead>In memory</TableHead>
+                  <TableHead>
+                    <span className="sr-only">Actions</span>
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {d.ollama.map((m) => {
                   const registryAlias =
                     disc != null ? resolveRegistryAlias(m.name, disc.alias_map) : null;
                   const embedding =
                     disc != null && isEmbeddingModel(m.name, disc.embedding_model);
-                  const isDefault =
-                    disc != null &&
-                    isDefaultChatModel(m.name, disc.alias_map, disc.default_model);
 
                   return (
-                    <tr key={m.name}>
-                      <td data-label="Name" style={{ fontFamily: "monospace", fontSize: "0.85rem" }} className="lumogis-long-text">
+                    <TableRow key={m.name} className="max-sm:flex max-sm:flex-wrap max-sm:items-center max-sm:gap-x-3 max-sm:py-2">
+                      <TableCell className="font-mono text-xs break-all whitespace-normal max-sm:w-full max-sm:pb-0 max-sm:text-sm">
                         {m.name}
-                      </td>
-                      <td data-label="Role" style={{ fontSize: "0.85rem" }}>
+                      </TableCell>
+                      <TableCell>
                         {embedding ? (
-                          <span
-                            style={{
-                              background: "#e3f2fd",
-                              padding: "0.1rem 0.35rem",
-                              borderRadius: 3,
-                              fontWeight: isDefault ? 700 : 400,
-                            }}
-                          >
-                            embedding
-                          </span>
+                          <Badge variant="secondary">embedding</Badge>
                         ) : registryAlias ? (
-                          <span
-                            style={{
-                              background: "#f3e5f5",
-                              padding: "0.1rem 0.35rem",
-                              borderRadius: 3,
-                              fontWeight: isDefault ? 700 : 400,
-                            }}
-                          >
-                            {registryAlias}
-                          </span>
+                          <Badge variant="secondary">{registryAlias}</Badge>
                         ) : (
                           "—"
                         )}
-                      </td>
-                      <td data-label="Size">{formatBytes(m.size_bytes)}</td>
-                      <td data-label="Loaded">{m.loaded == null ? "—" : m.loaded ? "yes" : "no"}</td>
-                      <td data-label="Actions">
-                        <button
+                      </TableCell>
+                      <TableCell className="text-muted-foreground sm:text-foreground">{formatBytes(m.size_bytes)}</TableCell>
+                      <TableCell className="text-muted-foreground sm:text-foreground">
+                        <span className="sm:hidden">In memory: </span>
+                        {m.loaded == null ? "—" : m.loaded ? "yes" : "no"}
+                      </TableCell>
+                      <TableCell className="text-right max-sm:ml-auto">
+                        <Button
                           type="button"
-                          disabled={pullBusy}
-                          onClick={() => handleDelete(m.name)}
+                          variant="destructive"
+                          size="sm"
+                          aria-label={`Delete ${m.name}`}
+                          disabled={pullBusy || !disc}
+                          onClick={() => setConfirmDelete(m.name)}
                         >
                           Delete
-                        </button>
-                      </td>
-                    </tr>
+                        </Button>
+                      </TableCell>
+                    </TableRow>
                   );
                 })}
-              </tbody>
-            </table>
-          </div>
-        )}
+              </TableBody>
+            </Table>
+          )}
+        </PageSection>
       </section>
 
-      {d.warnings.length > 0 ? (
-        <>
-          <h3 style={{ fontSize: "1rem", marginTop: "1.25rem" }}>Warnings</h3>
-          <ul style={{ margin: "0.35rem 0", paddingLeft: "1.2rem", fontSize: "0.9rem" }}>
-            {d.warnings.map((w) => (
-              <li key={w.code}>
-                <code>{w.code}</code> — {w.message}
-              </li>
-            ))}
-          </ul>
-        </>
-      ) : null}
+      <AlertDialog open={confirmDelete !== null} onOpenChange={(open) => !open && setConfirmDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this model?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirmDelete !== null ? deleteMessage(confirmDelete) : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructiveSolid"
+              onClick={() => {
+                const name = confirmDelete;
+                setConfirmDelete(null);
+                if (name !== null) deleteM.mutate(name);
+              }}
+            >
+              Delete model
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <Collapsible className="max-w-2xl">
+        <CollapsibleTrigger
+          render={<Button type="button" variant="ghost" size="sm" className="-ml-2 group/trigger" />}
+        >
+          <ChevronDown aria-hidden="true" className="transition-transform group-aria-expanded/trigger:rotate-180" />
+          Details
+        </CollapsibleTrigger>
+        {/* keepMounted: the developer rows stay in the page (as they were) while closed. */}
+        <CollapsibleContent keepMounted className="flex flex-col gap-4 pt-2 text-sm">
+          <p className="m-0 text-muted-foreground">For whoever runs the server.</p>
+          <dl className="m-0">
+            <Row label="Overall status">
+              {d.meta.overall_status}
+              {d.meta.cache_age_sec != null ? ` (cache ${d.meta.cache_age_sec}s)` : null}
+            </Row>
+            <Row label="Generated">{formatDateTime(d.meta.generated_at)}</Row>
+            {searchSettings.data &&
+            isRerankerBackendActive(searchSettings.data.reranker_backend_live) &&
+            !searchSettings.data.reranker_pending_restart ? (
+              <Row label="Search ranking">
+                <Badge variant="secondary" data-testid="reranker-active-chip">
+                  Reranker active ({BGE_RERANKER_RAM_ESTIMATE})
+                </Badge>
+              </Row>
+            ) : null}
+          </dl>
+
+          <div>
+            <h3 className="m-0 mb-1 text-sm font-semibold">Services</h3>
+            <ul className="m-0 list-disc pl-5">
+              {d.services.map((s) => (
+                <li key={s.id}>{`${s.display_name}: ${s.state}, ${s.runtime_kind}${s.message ? ` — ${s.message}` : ""}`}</li>
+              ))}
+            </ul>
+          </div>
+
+          {backup ? (
+            <div>
+              <h3 className="m-0 mb-1 text-sm font-semibold">Backup</h3>
+              <ul className="m-0 list-disc pl-5">
+                <li>{`Last snapshot: ${backup.last_snapshot_id ?? "none"}`}</li>
+                <li>
+                  {`Age: ${backup.age_hours != null ? `${backup.age_hours.toFixed(1)}h` : "—"}`}
+                </li>
+                <li>
+                  Stores:{" "}
+                  {backup.stores
+                    .map((st) => {
+                      if (st.skipped) return `${st.id} (skipped)`;
+                      if (!st.present) return `${st.id} (missing)`;
+                      return st.id === "files" && st.file_count != null
+                        ? `files (${st.file_count} files)`
+                        : st.id;
+                    })
+                    .join(", ")}
+                </li>
+                <li>{`Verify: ${backup.last_verify_status ?? "unknown"}`}</li>
+                <li>
+                  Take a backup now with <code>make backup</code> on the host. Restoring is covered in the
+                  reference manual (Disaster recovery).
+                </li>
+              </ul>
+            </div>
+          ) : null}
+
+          {updateShowing ? (
+            <p className="m-0">
+              Update on the host with <code>make update</code> (see the reference manual — Update mechanism).
+            </p>
+          ) : null}
+
+          {d.warnings.length > 0 ? (
+            <div>
+              <h3 className="m-0 mb-1 text-sm font-semibold">Warnings</h3>
+              <ul className="m-0 list-disc pl-5">
+                {d.warnings.map((w) => (
+                  <li key={w.code}>
+                    <code>{w.code}</code> — {w.message}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </CollapsibleContent>
+      </Collapsible>
     </section>
   );
 }

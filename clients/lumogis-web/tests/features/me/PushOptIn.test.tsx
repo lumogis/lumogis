@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Lumogis
 
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { ApiClient } from "../../../src/api/client";
@@ -103,7 +103,7 @@ describe("PushOptIn", () => {
     });
     harness(fetchMock);
     await waitFor(() =>
-      expect(screen.getByText(/web push is not configured on this lumogis server/i)).toBeVisible(),
+      expect(screen.getByText(/browser notifications are not set up on this lumogis/i)).toBeVisible(),
     );
   });
 
@@ -165,7 +165,7 @@ describe("PushOptIn", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: /enable browser push/i })).toBeEnabled());
     await userEvent.click(screen.getByRole("button", { name: /enable browser push/i }));
 
-    await waitFor(() => expect(screen.getByText(/blocked for this origin/i)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/blocked for this site/i)).toBeTruthy());
     expect(posted).toBe(false);
   });
 
@@ -221,21 +221,28 @@ describe("PushOptIn", () => {
     await waitFor(() => expect(screen.getByText(/https:\/\/push.provider.test/i)).toBeVisible());
     expect(screen.queryByText(/super-secret-push-path/)).toBeNull();
 
-    const sig = screen.getByRole("checkbox", { name: /notify on signals/i });
+    const sig = screen.getByRole("checkbox", { name: /emails that need me/i });
     await userEvent.click(sig);
     await waitFor(() => expect(payloads[payloads.length - 1]).toEqual({ notify_on_signals: true }));
     await waitFor(() =>
       expect(String(patchUrl)).toMatch(/\/api\/v1\/notifications\/subscriptions\/51$/),
     );
 
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
-    await userEvent.click(screen.getByRole("button", { name: /remove this browser/i }));
-    expect(
-      fetchMock.mock.calls.some((c) => {
-        const innit = c[1] as RequestInit | undefined;
-        return String(c[0]).includes("/subscriptions/51") && innit?.method === "DELETE";
-      }),
-    ).toBe(true);
-    confirmSpy.mockRestore();
+    // Removing asks first: Cancel does nothing, Remove calls DELETE.
+    const isDelete = (c: unknown[]) => {
+      const innit = c[1] as RequestInit | undefined;
+      return String(c[0]).includes("/subscriptions/51") && innit?.method === "DELETE";
+    };
+    await userEvent.click(screen.getByRole("button", { name: /actions for https:\/\/push.provider.test/i }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: /remove this browser/i }));
+    const dialog = await screen.findByRole("alertdialog");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(fetchMock.mock.calls.some(isDelete)).toBe(false);
+
+    await userEvent.click(screen.getByRole("button", { name: /actions for https:\/\/push.provider.test/i }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: /remove this browser/i }));
+    await userEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Remove" }));
+    await waitFor(() => expect(fetchMock.mock.calls.some(isDelete)).toBe(true));
   });
 });

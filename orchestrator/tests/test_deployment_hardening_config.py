@@ -452,6 +452,17 @@ def test_update_flow_builds_and_rescues_before_recreate():
     rescue_stop = _line_index(update, "rescue-stop-entities.sh")  # LUM-922
     up = _line_index(update, "docker compose up -d")
     assert pull < build < rescue < rescue_stop < up
+    # LUM-984: the running images are tagged before anything is pulled or built, and
+    # old rollback tags are pruned and the unfinished-update marker cleared only after
+    # the health gate.
+    assert _line_index(update, "capture_rollback_state") < pull
+    ready = _line_index(update, 'wait_for_stack_ready "$(orchestrator_health_url)"')
+    assert (
+        up
+        < ready
+        < _line_index(update, "prune_rollback_tags")
+        < _line_index(update, "finish_update_marker")
+    )
     # LUM-900 / LUM-980: the Lumogis images are built here (pull_policy: build) and
     # have no tag to pull, so a plain `docker compose pull` would fail.
     assert "--ignore-buildable" in update[pull], (
@@ -481,7 +492,7 @@ def test_update_flow_builds_and_rescues_before_recreate():
     assert _line_index(dev, "rescue-stop-entities.sh") < _line_index(dev, "up --build")
 
 
-@pytest.mark.parametrize("script", ["rescue-captures.sh", "rescue-stop-entities.sh"])
+@pytest.mark.parametrize("script", ["rescue-captures.sh", "rescue-stop-entities.sh", "common.sh"])
 def test_rescue_script_is_host_portable(script):
     """It runs on the host, which may be macOS: no GNU-only or behaviour-changing flags."""
     text = _non_comment((_ROOT / "scripts" / "update" / script).read_text())
@@ -495,8 +506,27 @@ def test_rescue_script_is_host_portable(script):
         "sed -i",
         "-printf",
         "grep -P",
+        # bash 4+ only; macOS ships 3.2 (LUM-984)
+        "declare -A",
+        "mapfile",
+        "readarray",
+        ",,}",
+        "^^}",
+        "local -n",
+        "[[ -v ",
     ):
         assert banned not in text, f"{script} uses {banned!r}, which is not host-portable"
+
+
+def test_rollback_clears_the_update_marker_only_after_health():
+    """S1 (LUM-984): the presence check precedes the backup check, and the marker goes last."""
+    rollback = (_ROOT / "scripts" / "update" / "rollback.sh").read_text().splitlines()
+    assert _line_index(rollback, "check_rollback_images_present") < _line_index(
+        rollback, "docker compose run"
+    )
+    assert _line_index(rollback, 'wait_for_stack_ready "$(orchestrator_health_url)"') < _line_index(
+        rollback, "finish_update_marker"
+    )
 
 
 def test_backup_image_installs_rsync():

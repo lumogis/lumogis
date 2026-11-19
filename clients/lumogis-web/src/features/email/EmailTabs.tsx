@@ -27,7 +27,6 @@ export function EmailTabs({ active, pendingCount = 0 }: EmailTabsProps): JSX.Ele
   const navigate = useNavigate();
   return (
     <SegmentedControl
-      className="lumogis-email-tabs"
       ariaLabel="Email views"
       value={active}
       onChange={(v) => navigate(v === "triage" ? "/email" : "/email/attachments")}

@@ -57,6 +57,13 @@ class NodeLabel:
         "CONCEPT": CONCEPT,
     }
 
+    # The distinct entity-kind labels, in map order. The one list the orphan GC
+    # (reconcile) and the in-place relabel (writer._converge_entity_label, LUM-967)
+    # both walk, so a kind added to ENTITY_TYPE_MAP (LUM-533) reaches both.
+    ENTITY_LABELS: tuple[str, ...] = tuple(dict.fromkeys(ENTITY_TYPE_MAP.values()))
+    # Shared/system projection nodes carry this label (+ ``scope``); see projection.py.
+    SHARED_ENTITY = "Entity"
+
     @classmethod
     def for_entity_type(cls, entity_type: str) -> str:
         """Return the graph node label for a Postgres entity_type string.

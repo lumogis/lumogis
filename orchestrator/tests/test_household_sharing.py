@@ -241,7 +241,9 @@ class _ScopedStore:
         # ---- KG read: GET /kg/search (name ILIKE + owner-projection collapse)
         if q.startswith("select entity_id") and "from entities" in q and "ilike" in q:
             me = params[0]
-            pattern = str(params[1]).strip("%").lower()
+            # params: (me, hider, pattern, collapse_me, limit): visible_filter, then the
+            # LUM-966 Hide clause (not_hidden_sql), then the rest.
+            pattern = str(params[2]).strip("%").lower()
             limit = params[-1]
             out = []
             for k, r in self.rows.items():
@@ -575,14 +577,21 @@ def kg_app(store, monkeypatch):
     (``_derive_entity_share_fields`` + owner-projection collapse) against one
     store — the route-contract integration the ``_KgStore`` unit fake cannot
     prove on its own (LUM-581).
+
+    Runs in ``service`` mode — the mode that used to 502 (LUM-964).
     """
     from routes.api_v1.kg import router as kg_router
     from routes.scope import router as scope_router
 
+    import config as _config
+
+    _config.set_effective_graph_mode_for_process("service")
     application = FastAPI()
     application.include_router(scope_router)
     application.include_router(kg_router)
-    return application
+    yield application
+    _config.set_effective_graph_mode_for_process(None)
+    _config.clear_graph_mode_env_cache()
 
 
 def _override_kg_user(app, monkeypatch, user_id: str, role: str = "user") -> None:
@@ -591,17 +600,14 @@ def _override_kg_user(app, monkeypatch, user_id: str, role: str = "user") -> Non
     The KG handlers read ``get_user(request).user_id`` directly (imported into
     ``routes.api_v1.kg``), so overriding ``require_user`` alone is not enough.
     ``allows_shared=True`` keeps the household union without a users-service DB
-    read; ``get_graph_mode`` is pinned so ``_graph_mode_guard`` never 502s.
+    read.
     """
     import routes.api_v1.kg as kgmod
     from authz import require_user
 
-    import config as _config
-
     ctx = UserContext(user_id=user_id, is_authenticated=True, role=role, allows_shared=True)
     app.dependency_overrides[require_user] = lambda: ctx
     monkeypatch.setattr(kgmod, "get_user", lambda request: ctx)
-    monkeypatch.setattr(_config, "get_graph_mode", lambda: "disabled")
 
 
 # ---------------------------------------------------------------------------

@@ -18,9 +18,10 @@ These tests prevent that drift from re-emerging:
 2. ``orchestrator/docker-entrypoint.sh`` hunts for that exact sentinel
    when auto-rotating secrets — a typo here would silently leave installs
    shipping with the placeholder.
-3. The entrypoint has an ``AUTH_SECRET`` refusal block (auto-rotation is
-   intentionally NOT applied to ``AUTH_SECRET`` — see the .env.example
-   comment and ``main._enforce_auth_consistency``).
+3. The entrypoint has an ``AUTH_SECRET`` refusal backstop. LUM-981: the secrets
+   section now generates ``AUTH_SECRET`` on first start and never replaces a
+   real one, so the refusal only fires when that generation could not be saved
+   (see ``main._enforce_auth_consistency``).
 4. The legacy ``__GENERATE_ME__`` sentinel is rejected wherever
    ``change-me-in-production`` is rejected, so .env files copied from an
    older draft of the plan still fail closed instead of quietly running
@@ -89,33 +90,41 @@ def test_no_make_secrets_target_exists():
     """The Makefile must NOT define a ``make secrets`` target.
 
     Pinned reality: the plan briefly mentioned a ``make secrets`` target
-    that never landed. The entrypoint's auto-rotation loop covers
-    ``JWT_SECRET`` / ``JWT_REFRESH_SECRET`` / ``RESTART_SECRET``, and
-    ``AUTH_SECRET`` is operator-managed by design (see
-    ``main._enforce_auth_consistency``). Adding a ``make`` target later
+    that never landed. The entrypoint's secrets section covers the JWT
+    secrets, ``RESTART_SECRET``, ``AUTH_SECRET`` and ``LUMOGIS_CREDENTIAL_KEY``
+    (LUM-981). Adding a ``make`` target later
     would create two parallel paths to the same artefact and is rejected
     here so the docs and the Makefile stay in sync.
     """
     makefile = (_REPO_ROOT / "Makefile").read_text()
     assert not re.search(r"^secrets\s*:", makefile, re.MULTILINE), (
         "Makefile defines a `secrets` target — but the supported path is "
-        "entrypoint auto-rotation + manual AUTH_SECRET. Either delete the "
+        "entrypoint generation on first start. Either delete the "
         "target or update this test and the .env.example comment block."
     )
 
 
-def test_env_example_documents_auth_secret_is_not_auto_rotated():
-    """AUTH_SECRET section must call out that it is NOT auto-rotated.
+def test_env_example_documents_auth_secret_is_generated_and_never_replaced():
+    """AUTH_SECRET block must say it is generated on first start and kept.
 
-    Pins the documented operator contract: family-LAN flip-on requires a
-    deliberate AUTH_SECRET, otherwise both the entrypoint and the lifespan
-    gate refuse to boot (see test_auth_phase1.py).
+    LUM-981: the entrypoint writes AUTH_SECRET into ``.env`` when it is missing
+    or a placeholder, and never replaces a real one. The template says so, so an
+    operator who reads it is not told to type the secret by hand.
     """
     text = _env_example()
-    auth_block = text.split("AUTH_SECRET=", 1)[0]
-    assert "NOT auto-rotated" in auth_block or "not auto-rotated" in auth_block, (
-        ".env.example must explicitly state that AUTH_SECRET is not auto-rotated "
-        "by the entrypoint — that is the contract operators rely on."
+    auth_block = text.split("AUTH_SECRET=", 1)[0].lower()
+    assert "generated on first start" in auth_block, (
+        ".env.example must state that AUTH_SECRET is generated on first start."
+    )
+    assert "never replaced once set" in auth_block, (
+        ".env.example must state that AUTH_SECRET is never replaced once set."
+    )
+
+
+def test_env_example_ships_sign_in_on():
+    """LUM-981: a checkout ``cp .env.example .env`` gets sign-in on."""
+    assert re.search(r"^AUTH_ENABLED=true\s*$", _env_example(), re.MULTILINE), (
+        ".env.example must set AUTH_ENABLED=true (uncommented)."
     )
 
 

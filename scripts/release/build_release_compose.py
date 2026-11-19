@@ -3,14 +3,20 @@
 # Copyright (C) 2026 Lumogis
 """Generate the two files a household installs Lumogis from (LUM-980).
 
-Like Immich, a user downloads ``docker-compose.yml`` and ``example.env`` from a
+A user downloads ``docker-compose.yml`` and ``example.env`` from a
 GitHub Release and runs ``docker compose up -d``: nothing is built, nothing is
 read from a source checkout. This script derives that compose file from the
 repo's ``docker-compose.yml`` (which builds, for developers and CI):
 
 * every Lumogis service loses ``build:`` / ``pull_policy:`` and pulls
   ``ghcr.io/lumogis/<image>:${LUMOGIS_VERSION:-release}``;
-* profile-only services (LibreChat, MongoDB) are dropped;
+* profile-only services (LibreChat, MongoDB) are dropped, except the knowledge
+  graph (LUM-989): FalkorDB and ``lumogis-graph``, merged in from the two
+  overlays under a ``graph`` profile, so they do not run until Admin → Knowledge
+  graph (or ``COMPOSE_PROFILES=graph``) switches them on;
+* the speech-to-text sidecar (LUM-995): ``lumogis-stt``, read from
+  ``docker-compose.stt.yml`` and placed under an ``stt`` profile that the Release
+  ``example.env`` turns on (``COMPOSE_PROFILES=stt``);
 * three development mounts whose files are baked into the images are dropped
   (``init.sql``, the ``Caddyfile`` and ``preflight.sh``), and any other mount
   that points into the checkout is an error;
@@ -48,7 +54,25 @@ IMAGES: dict[str, str] = {
     "stack-control": "lumogis-stack-control",
     "backup": "lumogis-backup",
     "caddy": "lumogis-caddy",
+    "lumogis-graph": "lumogis-graph",
 }
+# The optional components a Release file carries, each switched on with its own
+# Compose profile: ``graph`` (LUM-989; off until Admin turns it on) and ``stt``
+# (LUM-995; on in the Release ``example.env``). A future optional component joins
+# this set deliberately, with its own rule in check().
+RELEASE_PROFILES = frozenset({"graph", "stt"})
+GRAPH_PROFILE = "graph"
+GRAPH_SERVICES = ("falkordb", "lumogis-graph")
+GRAPH_OVERLAYS = ("docker-compose.falkordb.yml", "docker-compose.premium.yml")
+STT_PROFILE = "stt"
+STT_SERVICE = "lumogis-stt"
+STT_OVERLAY = "docker-compose.stt.yml"
+STT_VOLUME = "lumogis_stt_models"
+STT_IMAGE_PREFIX = "ghcr.io/speaches-ai/speaches"
+# The Release pulls FalkorDB's engine-only image (no browser, no extras); a
+# checkout keeps the full image. A literal pin: in the base file FALKORDB_IMAGE is
+# the backup's build argument and defaults to the full image.
+RELEASE_FALKORDB_IMAGE = "falkordb/falkordb-server:v4.18.1"
 TAG = "${LUMOGIS_VERSION:-release}"
 
 # Development mounts whose contents ship inside the images.
@@ -165,11 +189,79 @@ def _reject_checkout_features(base: dict) -> None:
                 )
 
 
-def transform(base: dict) -> dict:
+def load_graph_overlays(compose_dir: Path) -> dict:
+    """Read the two graph overlays that sit next to the base compose file."""
+    docs = []
+    for name in GRAPH_OVERLAYS:
+        path = compose_dir / name
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise Violation(f"cannot read {path}: {exc}") from exc
+        _reject_yaml_features(text)
+        docs.append(yaml.safe_load(text) or {})
+    return {"falkordb": docs[0], "premium": docs[1]}
+
+
+def load_stt_overlay(compose_dir: Path) -> dict:
+    """Read the speech-to-text overlay that sits next to the base compose file."""
+    path = compose_dir / STT_OVERLAY
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise Violation(f"cannot read {path}: {exc}") from exc
+    _reject_yaml_features(text)
+    return yaml.safe_load(text) or {}
+
+
+def _stt_service(stt_overlay: dict) -> dict:
+    """The ``lumogis-stt`` service for the Release: the overlay's, under its profile."""
+    src = (stt_overlay.get("services") or {}).get(STT_SERVICE)
+    if not src:
+        raise Violation(f"{STT_OVERLAY} no longer defines {STT_SERVICE}")
+    svc = dict(src)
+    svc.pop("ports", None)  # no host port in a household install
+    env = dict(svc.get("environment") or {})
+    env.pop("DEFAULT_MODEL", None)  # Speaches 0.8 ignores it; Core installs the model
+    if env:
+        svc["environment"] = env
+    else:
+        svc.pop("environment", None)
+    svc["profiles"] = [STT_PROFILE]
+    return svc
+
+
+def _graph_services(overlays: dict, base: dict) -> tuple[dict, dict, dict]:
+    """Return (falkordb, lumogis-graph, backup volume additions) for the Release."""
+    fk_src = (overlays["falkordb"].get("services") or {}).get("falkordb")
+    lg_src = (overlays["premium"].get("services") or {}).get("lumogis-graph")
+    if not fk_src or not lg_src:
+        raise Violation("the graph overlays no longer define falkordb and lumogis-graph")
+    falkordb = dict(fk_src)
+    falkordb["image"] = RELEASE_FALKORDB_IMAGE
+    falkordb.pop("ports", None)  # no host port in a household install
+    falkordb["profiles"] = [GRAPH_PROFILE]
+
+    graph = dict(lg_src)
+    graph.pop("build", None)
+    graph.pop("pull_policy", None)
+    graph["image"] = f"ghcr.io/lumogis/{IMAGES['lumogis-graph']}:{TAG}"
+    graph = {"image": graph.pop("image"), **graph}
+    graph["profiles"] = [GRAPH_PROFILE]
+
+    backup_volume = "falkordb_data:/var/lib/falkordb/data"
+    return falkordb, graph, {"backup_volume": backup_volume}
+
+
+def transform(base: dict, overlays: dict | None = None, stt_overlay: dict | None = None) -> dict:
     _reject_checkout_features(base)
     services = base.get("services") or {}
     dropped = {name for name, svc in services.items() if svc.get("profiles")}
     out_services: dict = {}
+    graph_extra: dict = {}
+    if overlays is not None:
+        falkordb, graph, graph_extra = _graph_services(overlays, base)
+    stt_svc = _stt_service(stt_overlay) if stt_overlay is not None else None
     for name, svc in services.items():
         if name in dropped:
             continue
@@ -195,6 +287,11 @@ def transform(base: dict) -> dict:
                     continue
                 kept.append(vol)
             svc["volumes"] = kept
+        if name == "backup" and graph_extra:
+            # The overlay mounts the FalkorDB data volume into backup so it can
+            # copy the dump. Not its depends_on: an unprofiled service cannot wait
+            # for a profiled one.
+            svc["volumes"] = list(svc.get("volumes") or []) + [graph_extra["backup_volume"]]
         if name == "stack-control":
             env = dict(svc.get("environment") or {})
             env["HOST_PROJECT_DIR"] = "${PWD}"
@@ -202,8 +299,24 @@ def transform(base: dict) -> dict:
             svc["environment"] = env
             svc["volumes"] = list(svc.get("volumes") or []) + ["${PWD}:${PWD}:ro"]
         out_services[name] = svc
+    if overlays is not None:
+        out_services["falkordb"] = falkordb
+        out_services["lumogis-graph"] = graph
+    if stt_svc is not None:
+        out_services[STT_SERVICE] = stt_svc
     out = dict(base)
     out["services"] = out_services
+    if overlays is not None:
+        volumes = dict(base.get("volumes") or {})
+        for overlay in (overlays["falkordb"], overlays["premium"]):
+            for vol, spec in (overlay.get("volumes") or {}).items():
+                volumes.setdefault(vol, spec)
+        out["volumes"] = volumes
+    if stt_overlay is not None:
+        volumes = dict(out.get("volumes") or base.get("volumes") or {})
+        for vol, spec in (stt_overlay.get("volumes") or {}).items():
+            volumes.setdefault(vol, spec)
+        out["volumes"] = volumes
     return out
 
 
@@ -254,11 +367,93 @@ def check(doc: dict) -> list[str]:
                     problems.append(f"service {name!r} still mounts {source!r}")
             except Violation as exc:
                 problems.append(str(exc))
-        if svc.get("profiles"):
-            problems.append(f"service {name!r} is profile-only")
+        profiles = svc.get("profiles")
+        if profiles and not (set(profiles) <= RELEASE_PROFILES):
+            problems.append(
+                f"service {name!r} is profile-only ({sorted(profiles)}); "
+                f"a release file only carries {sorted(RELEASE_PROFILES)}"
+            )
+        if name in GRAPH_SERVICES and profiles != [GRAPH_PROFILE]:
+            problems.append(f"service {name!r} must sit under profiles: [{GRAPH_PROFILE}]")
+        if name == STT_SERVICE and profiles != [STT_PROFILE]:
+            problems.append(f"service {name!r} must sit under profiles: [{STT_PROFILE}]")
+        if name not in GRAPH_SERVICES + (STT_SERVICE,) and profiles:
+            problems.append(f"service {name!r} must not be in a profile in a release file")
     missing = set(IMAGES) - set(doc["services"])
     if missing:
         problems.append(f"missing Lumogis services: {sorted(missing)}")
+    missing_graph = set(GRAPH_SERVICES) - set(doc["services"])
+    if missing_graph:
+        problems.append(f"missing graph services: {sorted(missing_graph)}")
+    falkordb = doc["services"].get("falkordb") or {}
+    if falkordb:
+        if falkordb.get("image") != RELEASE_FALKORDB_IMAGE:
+            problems.append(f"falkordb image is {falkordb.get('image')!r}")
+        if falkordb.get("ports"):
+            problems.append("falkordb publishes a host port in a release file")
+    problems.extend(_stt_problems(doc))
+    problems.extend(_structural_problems(doc))
+    return problems
+
+
+def _stt_problems(doc: dict) -> list[str]:
+    """The speech-to-text rules (LUM-995). The image equals the overlay's by construction
+    (transform copies it, ``test_stt_image_is_the_overlay_digest`` pins it): check() sees
+    only the generated document, so it checks the shape, not the equality."""
+    problems: list[str] = []
+    stt = doc["services"].get(STT_SERVICE)
+    if not stt:
+        return [f"missing speech-to-text service: {STT_SERVICE!r}"]
+    if stt.get("ports"):
+        problems.append(f"{STT_SERVICE} publishes a host port in a release file")
+    image = str(stt.get("image") or "")
+    if not image.startswith(STT_IMAGE_PREFIX):
+        problems.append(f"{STT_SERVICE} image is {image!r}, not {STT_IMAGE_PREFIX}")
+    if "@sha256:" not in image:
+        problems.append(f"{STT_SERVICE} image is not pinned by digest: {image!r}")
+    env = stt.get("environment") or {}
+    if str(env.get("HF_HUB_DISABLE_TELEMETRY")) != "1":
+        problems.append(f"{STT_SERVICE} must set HF_HUB_DISABLE_TELEMETRY to 1 (telemetry off)")
+    for vol in (doc["services"].get("backup") or {}).get("volumes") or []:
+        source, _t, _r = _source_and_target(vol)
+        if source == STT_VOLUME:
+            problems.append(f"the speech model volume {STT_VOLUME!r} must not be backed up")
+    return problems
+
+
+def _depends_on_targets(svc: dict) -> list[str]:
+    deps = svc.get("depends_on")
+    if isinstance(deps, dict):
+        return list(deps)
+    if isinstance(deps, list):
+        return [str(d) for d in deps]
+    return []
+
+
+def _structural_problems(doc: dict) -> list[str]:
+    """No-Docker checks Compose would otherwise make: dangling names fail only at ``up``."""
+    problems: list[str] = []
+    services = doc["services"]
+    declared = set((doc.get("volumes") or {}).keys())
+    for name, svc in services.items():
+        for target in _depends_on_targets(svc):
+            if target not in services:
+                problems.append(f"service {name!r} depends_on {target!r}, which is not in the file")
+                continue
+            # An unprofiled service cannot wait for a profiled one: it would stop
+            # `docker compose up` before the profile is on.
+            if not svc.get("profiles") and services[target].get("profiles"):
+                problems.append(
+                    f"service {name!r} (no profile) depends_on {target!r}, which is profile-only"
+                )
+        for vol in svc.get("volumes") or []:
+            source, _t, _r = _source_and_target(vol)
+            try:
+                kind = classify_source(source)
+            except Violation:
+                continue
+            if kind == "named" and source not in declared:
+                problems.append(f"service {name!r} uses volume {source!r}, which is not declared")
     return problems
 
 
@@ -283,7 +478,11 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     try:
         _reject_yaml_features(text)
-        doc = transform(yaml.safe_load(text))
+        doc = transform(
+            yaml.safe_load(text),
+            load_graph_overlays(args.compose.parent),
+            load_stt_overlay(args.compose.parent),
+        )
     except Violation as exc:
         print(f"release-compose: {exc}", file=sys.stderr)
         return 1

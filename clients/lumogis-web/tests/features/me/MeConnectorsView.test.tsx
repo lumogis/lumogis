@@ -54,10 +54,16 @@ describe("MeConnectorsView", () => {
     );
     await waitFor(() => {
       expect(
-        screen.getByText(/Connector schema hints unavailable; using JSON fallback for listed connectors\./i),
+        screen.getByText(/Some setup hints could not be loaded, so each service below uses the advanced form\./i),
       ).toBeInTheDocument();
     });
-    expect(screen.getByText("cal_dav_1")).toBeInTheDocument();
+    // A listed id is made readable for the main view; the raw id is in Details.
+    expect(screen.getByRole("heading", { name: /^Cal dav 1/ })).toBeInTheDocument();
+    expect(screen.queryByText("cal_dav_1")).not.toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: /details and advanced setup/i }));
+    expect(await screen.findByText("cal_dav_1")).toBeInTheDocument();
+    // No guided form for it: the JSON box lives under Details, not in the main view.
+    expect(screen.getByRole("textbox", { name: /credential payload/i })).toBeInTheDocument();
   });
 });
 
@@ -156,9 +162,9 @@ describe("MeConnectorsView — test connection", () => {
       // a link — so render the link. `smtp` was the case a frontend
       // special-case for `imap` alone silently got wrong.
       mount([{ id: connector, description: "" }], () => jsonResponse(500, {}));
-      expect(await screen.findByRole("link", { name: /email signals/i })).toHaveAttribute(
+      expect(await screen.findByRole("link", { name: /email accounts/i })).toHaveAttribute(
         "href",
-        "/me/email-signals",
+        "/settings/email",
       );
       expect(screen.queryByRole("button", { name: /test connection/i })).not.toBeInTheDocument();
     },
@@ -187,8 +193,8 @@ describe("MeConnectorsView — test connection", () => {
       () => jsonResponse(500, {}),
       "/api/v1/admin/connector-credentials/household",
     );
-    await screen.findByText("paperless");
+    await screen.findByRole("heading", { name: /^Paperless documents/ });
     expect(screen.queryByRole("button", { name: /test connection/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /email signals/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /email accounts/i })).not.toBeInTheDocument();
   });
 });

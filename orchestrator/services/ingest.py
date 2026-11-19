@@ -31,6 +31,7 @@ from auth import UserContext
 from events import Event
 from models.ingest import IngestResult
 from models.ingest import IngestStats
+from services.entity_name_rules import NameRulesUnavailable
 from services.injection_sanitiser import sanitise_at_ingest
 from services.injection_sanitiser import sanitize_attribute_source_token
 from services.point_ids import document_chunk_point_id
@@ -358,6 +359,26 @@ def _emit_document_ingested_and_entities(
         return document_entity_cascade.prune_stale_document_entity_relations(
             config.get_metadata_store(), logical_path, user_id, entity_ids
         )
+    except NameRulesUnavailable:
+        # LUM-966: the member's name rules could not be read, so nothing was
+        # stored (fail closed: reading no rules would re-learn deleted names).
+        # Withhold the stored hash — and age the row for the poll-mode mtime
+        # fast path — so the next hash-based scan (start-up scan, admin Rescan,
+        # poll tick) re-reads the file. The same "hash deliberately not
+        # advanced" mechanism as blocked-high chunks above.
+        # NOTE: external documents and email attachments re-poll by cursor, not
+        # hash, so they keep no entities until re-read (residual 6, LUM-966).
+        _log.warning("entity extraction deferred: name rules unavailable; the next rescan re-reads")
+        try:
+            config.get_metadata_store().execute(
+                "UPDATE file_index SET file_hash = '', updated_at = to_timestamp(0) "
+                # SCOPE-EXEMPT: the member's own source row (published_from IS NULL).
+                "WHERE user_id = %s AND file_path = %s AND published_from IS NULL",
+                (user_id, logical_path),
+            )
+        except Exception:  # noqa: BLE001 - best effort; the store may be the outage
+            _log.warning("entity extraction deferred: could not clear the file hash")
+        return []
     except Exception:
         _log.exception("Entity extraction failed for document %s", logical_path)
         return []

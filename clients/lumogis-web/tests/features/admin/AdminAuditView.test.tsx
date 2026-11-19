@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Lumogis
 // Phase 3.5 — AdminAuditView reverse error handling.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { ApiClient } from "../../../src/api/client";
@@ -118,7 +118,7 @@ describe("AdminAuditView", () => {
     expect(screen.getByRole("button", { name: /^reverse$/i })).toBeInTheDocument();
   });
 
-  it("wraps the audit table in a bounded horizontal scroll region (Phase 2C)", async () => {
+  it("renders the audit table with plain column headings and the shared table scroll region", async () => {
     const { client, tokens } = setup(jsonResponse(400, { detail: { error: "reverse_failed" } }));
     render(
       <AuthProvider client={client} tokens={tokens} skipRefreshOnMount>
@@ -126,11 +126,12 @@ describe("AdminAuditView", () => {
       </AuthProvider>,
     );
     const table = await screen.findByRole("table");
-    expect(table.closest(".lumogis-table-scroll")).toBeTruthy();
-    expect(table).toHaveClass("lumogis-dense-table");
+    expect(table.parentElement).toHaveAttribute("data-slot", "table-container");
+    expect(screen.getByRole("columnheader", { name: "What happened" })).toBeInTheDocument();
+    expect(screen.getByRole("cell", { name: "Test action" })).toBeInTheDocument();
   });
 
-  it("uses shared household audit filters with styled admin fields", async () => {
+  it("uses shared household audit filters on the shared components", async () => {
     const { client, tokens } = setup(jsonResponse(400, { detail: { error: "reverse_failed" } }));
     render(
       <AuthProvider client={client} tokens={tokens} skipRefreshOnMount>
@@ -138,14 +139,27 @@ describe("AdminAuditView", () => {
       </AuthProvider>,
     );
     const filters = await screen.findByTestId("audit-household-filters");
-    expect(filters.querySelector(".lumogis-field__input")).toBeTruthy();
     expect(screen.getByRole("button", { name: /^live$/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^refresh$/i })).toBeInTheDocument();
-    expect(screen.getByLabelText(/limit \(1–200\)/i)).toHaveClass("lumogis-field__input");
-    expect(screen.getByLabelText(/connector filter/i)).toHaveClass("lumogis-field__input");
-    expect(screen.getByLabelText(/action type filter/i)).toHaveClass("lumogis-field__input");
+    expect(screen.getByLabelText(/how many to show/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/connector filter/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/action type filter/i)).toBeInTheDocument();
     await waitFor(() => {
-      expect(filters.querySelector("select.lumogis-field__select")).toBeTruthy();
+      expect(within(filters).getByRole("combobox", { name: /view as user/i })).toBeInTheDocument();
     });
+  });
+
+  it("keeps the raw codes in a Details row", async () => {
+    const { client, tokens } = setup(jsonResponse(400, { detail: { error: "reverse_failed" } }));
+    const user = userEvent.setup();
+    render(
+      <AuthProvider client={client} tokens={tokens} skipRefreshOnMount>
+        <AdminAuditView />
+      </AuthProvider>,
+    );
+    await user.click(await screen.findByRole("button", { name: /^details$/i }));
+    expect(screen.getByText("action.executed")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^hide$/i }));
+    expect(screen.queryByText("action.executed")).toBeNull();
   });
 });

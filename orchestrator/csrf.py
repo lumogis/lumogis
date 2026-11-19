@@ -21,9 +21,18 @@ raises ``HTTPException(403)`` on mismatch.
 Bypass conditions (intentional, narrow)
 ---------------------------------------
 1. ``LUMOGIS_PUBLIC_ORIGIN`` env var is unset / empty — the deployment
-   has not pinned a canonical origin yet (early bring-up). The
-   ``SameSite=Strict`` cookie remains the only defence; we log nothing
-   and pass through.
+   has not pinned a canonical origin. The request is then judged against
+   the **derived origin** (LUM-981): when an ``Origin`` header is present it
+   must equal the request's scheme plus ``Host`` (port kept; the scheme comes
+   from ``X-Forwarded-Proto`` only when the immediate peer is in
+   ``LUMOGIS_TRUSTED_PROXIES``), or ``https://`` plus the same ``Host`` (a TLS
+   terminator in front of Caddy reports ``http`` while the browser's Origin is
+   ``https``). A request with **no** ``Origin`` header is allowed: browsers
+   always send ``Origin`` on cross-site POSTs, and the refresh cookie is
+   ``SameSite=Strict``, which is then the only CSRF guard for requests that
+   carry only a ``Referer``. A secure-address host (``*.homes.lumogis.app``,
+   LUM-331) is different: the Origin must always equal ``https://`` + Host,
+   because households are same-site with each other.
 2. Request method is GET / HEAD / OPTIONS — these never mutate state and
    are not the CSRF surface.
 3. ``Authorization: Bearer ...`` is present — Bearer tokens are not
@@ -266,14 +275,9 @@ def _proxied_client_ip(request: Request) -> str:
         return "unknown"
     peer = request.client.host or "unknown"
 
+    if not _peer_is_trusted(request):
+        return peer
     networks = _trusted_proxy_networks()
-    try:
-        peer_addr = ipaddress.ip_address(peer)
-    except ValueError:
-        return peer
-
-    if not any(peer_addr in net for net in networks):
-        return peer
 
     raw_xff = request.headers.get("X-Forwarded-For", "").strip()
     if not raw_xff:
@@ -302,18 +306,87 @@ def _proxied_client_ip(request: Request) -> str:
     return candidates[0]
 
 
-def require_same_origin(request: Request) -> None:
-    """FastAPI dependency: enforce ``Origin == LUMOGIS_PUBLIC_ORIGIN`` for
-    cookie-authenticated browser writes.
+def _peer_is_trusted(request: Request) -> bool:
+    """True when the immediate peer is in ``LUMOGIS_TRUSTED_PROXIES``.
 
-    Returns ``None`` on success. Raises ``HTTPException(403)`` on
-    mismatch. See module docstring for the bypass matrix.
+    False for a missing client, an unparseable peer address, an empty list and
+    an unresolvable proxy hostname (the fail-safe direction).
     """
-    expected = _public_origin()
-    if not expected:
-        # Deployment hasn't pinned an origin — fall back to SameSite=Strict only.
-        return None
+    if request.client is None:
+        return False
+    try:
+        peer_addr = ipaddress.ip_address(request.client.host or "")
+    except ValueError:
+        return False
+    try:
+        networks = _trusted_proxy_networks()
+    except Exception:  # noqa: BLE001 — fail closed: trust nothing we could not resolve
+        _log.exception("csrf: trusted proxy lookup failed; ignoring forwarded headers")
+        return False
+    return any(peer_addr in net for net in networks)
 
+
+def _trusted_forwarded_proto(request: Request) -> str | None:
+    """``http`` or ``https`` from ``X-Forwarded-Proto``, only from a trusted peer.
+
+    The first comma-separated value, stripped and lower-cased. ``None`` for an
+    untrusted peer, a missing header or any other value.
+    """
+    if not _peer_is_trusted(request):
+        return None
+    first = request.headers.get("X-Forwarded-Proto", "").split(",", 1)[0].strip().lower()
+    return first if first in ("http", "https") else None
+
+
+def _request_scheme(request: Request) -> str:
+    """The scheme the browser used: trusted ``X-Forwarded-Proto``, else the socket's."""
+    return _trusted_forwarded_proto(request) or request.url.scheme
+
+
+def _origin_for(scheme: str, hostport: str) -> str:
+    """``scheme://host[:port]`` as a browser would write the Origin.
+
+    Lower-cased and stripped, and the default port (``:80`` for http, ``:443``
+    for https) is dropped. Any other port is kept. A trailing ``.`` on the host
+    is **kept**: browsers keep it in ``Origin`` (``http://lumogis.lan.``), so
+    dropping it here would refuse every same-origin POST on such a host. One
+    normaliser for the derived origin and the LUM-331 secure zone rule.
+    """
+    h = hostport.strip().lower().rstrip("/")
+    if h.startswith("["):
+        end = h.find("]")
+        name, port = (h[: end + 1], h[end + 1 :].lstrip(":")) if end != -1 else (h, "")
+    else:
+        name, _, port = h.partition(":") if h.count(":") == 1 else (h, "", "")
+    if (scheme == "http" and port == "80") or (scheme == "https" and port == "443"):
+        port = ""
+    return f"{scheme}://{name}" + (f":{port}" if port else "")
+
+
+def _derived_origin(request: Request) -> str:
+    """The origin this request was addressed to: scheme plus ``Host``."""
+    return _origin_for(_request_scheme(request), request.headers.get("Host", ""))
+
+
+def require_same_origin(request: Request) -> None:
+    """FastAPI dependency: refuse cross-site cookie-authenticated browser writes.
+
+    * **Secure-address hosts** (any ``*.homes.lumogis.app`` name, LUM-331): the
+      ``Origin`` must equal ``https://`` + the request's ``Host``, whatever
+      ``LUMOGIS_PUBLIC_ORIGIN`` says. Households share the registrable domain
+      ``lumogis.app`` (no Public Suffix List entry), so they are *same-site* with
+      each other and ``SameSite=Strict`` cookies alone do not separate them. The
+      rule needs no state: it holds even if the secure-address settings and the
+      served Caddy config disagree.
+    * **Every other host:** ``Origin == LUMOGIS_PUBLIC_ORIGIN`` when that is set
+      (exact, unchanged). With nothing pinned: a present ``Origin`` must equal the
+      derived origin (scheme plus ``Host``) or ``https://`` plus the same ``Host``;
+      an absent ``Origin`` passes (LUM-981).
+
+    Returns ``None`` on success; raises ``HTTPException(403)`` on mismatch. The
+    bypasses (safe methods, Bearer, auth off) apply to both branches; see the
+    module docstring.
+    """
     if request.method in _BYPASS_METHODS:
         return None
 
@@ -332,6 +405,47 @@ def require_same_origin(request: Request) -> None:
         return None
 
     presented = request.headers.get("Origin", "").strip().rstrip("/")
+
+    # Dependency-free (no I/O, no project imports), so safe on every write.
+    from services.home_dns.validate import is_secure_zone_host
+
+    host = request.headers.get("Host", "")
+    if is_secure_zone_host(host):
+        expected = _origin_for("https", host)
+        if presented.lower() != expected:
+            _log.warning(
+                "csrf: secure-address Origin mismatch path=%s presented=%r expected=%r",
+                request.url.path,
+                presented,
+                expected,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="origin mismatch",
+            )
+        return None
+
+    expected = _public_origin()
+    if not expected:
+        # No pinned origin (LUM-981): judge a present Origin against the address
+        # the request used. No Origin at all is not a browser cross-site write
+        # (browsers always send it), so it passes; SameSite=Strict covers the rest.
+        if not presented:
+            return None
+        derived = _derived_origin(request)
+        if presented.lower() in (derived, _origin_for("https", host)):
+            return None
+        _log.warning(
+            "csrf: Origin mismatch path=%s presented=%r expected=%r",
+            request.url.path,
+            presented,
+            derived,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="origin mismatch",
+        )
+
     if presented != expected:
         _log.warning(
             "csrf: Origin mismatch path=%s presented=%r expected=%r",
@@ -344,3 +458,73 @@ def require_same_origin(request: Request) -> None:
             detail="origin mismatch",
         )
     return None
+
+
+# ---------------------------------------------------------------------------
+# Setup claim host guard (LUM-981)
+# ---------------------------------------------------------------------------
+
+# Private-name suffixes: the true mirror of the *name* half of
+# ``docker/caddy/preflight.sh`` (``lumogis_host_is_private``): ``localhost`` and
+# ``*.localhost``, ``*.local``, ``*.lan``, ``*.home.arpa``, ``*.internal``,
+# ``*.test``, ``*.ts.net``, plus single-label names. Pinned both ways by
+# ``tests/test_csrf_derived_origin.py::test_H3``; change both lists together.
+PRIVATE_NAME_SUFFIXES: tuple[str, ...] = (
+    "localhost",
+    "local",
+    "lan",
+    "home.arpa",
+    "internal",
+    "test",
+    "ts.net",
+)
+
+
+def _is_ip_literal(host: str) -> bool:
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return True
+
+
+def is_private_name(host: str) -> bool:
+    """True for a *name* that cannot be a public internet name.
+
+    ``localhost``, anything under a private suffix, and single-label names.
+    An IP literal is not a name: it returns False (``claim_host_allowed``
+    accepts IP literals separately). Empty returns False.
+    """
+    from services.home_dns.validate import host_without_port
+
+    h = host_without_port(host)
+    if not h or _is_ip_literal(h):
+        return False
+    if "." not in h:
+        return True  # single label: never in public DNS
+    return any(h.endswith("." + suffix) for suffix in PRIVATE_NAME_SUFFIXES)
+
+
+def claim_host_allowed(request: Request) -> bool:
+    """Whether ``POST /api/v1/setup/claim`` may be served for this ``Host``.
+
+    DNS rebinding makes ``Origin == Host`` worthless for a cookie-less
+    endpoint, so the claim also requires a ``Host`` an attacker page cannot
+    rebind to: any IP literal, a private name, a secure-address name (the Home
+    DNS Worker accepts RFC1918 targets only), or the host of a pinned
+    ``LUMOGIS_PUBLIC_ORIGIN``. A missing or empty ``Host`` is refused.
+    """
+    from services.home_dns.validate import host_without_port
+    from services.home_dns.validate import is_secure_zone_host
+
+    raw = request.headers.get("Host", "")
+    host = host_without_port(raw)
+    if not host:
+        return False
+    if _is_ip_literal(host) or is_private_name(host) or is_secure_zone_host(raw):
+        return True
+    pinned = _public_origin()
+    if pinned:
+        netloc = pinned.split("://", 1)[-1].split("/", 1)[0]
+        return host == host_without_port(netloc)
+    return False

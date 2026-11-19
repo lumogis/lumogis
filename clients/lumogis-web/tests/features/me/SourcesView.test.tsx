@@ -8,14 +8,16 @@
 // server-computed and pinned in `orchestrator/tests/test_source_pause.py`; the
 // client half is here.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useRef, type ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
 
 import { ApiClient } from "../../../src/api/client";
 import { AccessTokenStore } from "../../../src/api/tokens";
 import { AuthProvider } from "../../../src/auth/AuthProvider";
 import { SourcesView } from "../../../src/features/me/SourcesView";
+import { SettingsHeadingContext } from "../../../src/features/settings/settingsHeading";
 import { jsonResponse } from "../../helpers/jsonResponse";
 import { LocationProbe } from "../../helpers/locationProbe";
 import { seedSignedInDevice } from "../../helpers/signedInDevice";
@@ -84,21 +86,47 @@ function setup(
 // LUM-282 added `useLocation()` to SourcesView (it reads the onboarding
 // handoff's navigation state to decide whether to take focus), so the view now
 // requires a Router in every test that renders it.
+// The page heading belongs to the Settings frame (LUM-993 Pass 3), which hands
+// its ref to the view through `SettingsHeadingContext`. Stand in for it.
+function FrameHeading({ children }: { children: ReactNode }): JSX.Element {
+  const ref = useRef<HTMLHeadingElement>(null);
+  return (
+    <SettingsHeadingContext.Provider value={ref}>
+      <h1 ref={ref} tabIndex={-1}>
+        Sources
+      </h1>
+      {children}
+    </SettingsHeadingContext.Provider>
+  );
+}
+
 function renderView(s: ReturnType<typeof setup>, opts: { fromOnboarding?: boolean } = {}) {
   render(
     <AuthProvider client={s.client} tokens={s.tokens} skipRefreshOnMount>
       <MemoryRouter
         initialEntries={[
           opts.fromOnboarding
-            ? { pathname: "/me/sources", state: { fromOnboarding: true } }
-            : { pathname: "/me/sources" },
+            ? { pathname: "/settings/sources", state: { fromOnboarding: true } }
+            : { pathname: "/settings/sources" },
         ]}
       >
         <LocationProbe stateKeys={["fromOnboarding"]} />
-        <SourcesView />
+        <FrameHeading>
+          <SourcesView />
+        </FrameHeading>
       </MemoryRouter>
     </AuthProvider>,
   );
+}
+
+async function openMenu(user: ReturnType<typeof userEvent.setup>, name: string, item: string) {
+  await user.click(await screen.findByRole("button", { name: `Actions for ${name}` }));
+  await user.click(await screen.findByRole("menuitem", { name: item }));
+}
+
+async function openRemove(user: ReturnType<typeof userEvent.setup>) {
+  await openMenu(user, "Household archive", "Remove");
+  await screen.findByRole("alertdialog");
 }
 
 describe("SourcesView", () => {
@@ -117,8 +145,10 @@ describe("SourcesView", () => {
     const s = setup();
     renderView(s);
     await screen.findByText("Household archive");
-    expect(screen.getByText("paperless")).toBeInTheDocument();
-    expect(screen.getByText("general")).toBeInTheDocument();
+    expect(screen.getByText("Document archive")).toBeInTheDocument();
+    expect(screen.getByText(/Category: general/)).toBeInTheDocument();
+    expect(screen.getByText(/Checked every hour/)).toBeInTheDocument();
+    expect(screen.getByText(/^Last checked 18 Aug 2026/)).toBeInTheDocument();
   });
 
   it("does not show mailboxes — they are managed on the email page", async () => {
@@ -142,7 +172,7 @@ describe("SourcesView", () => {
       sources: [sourceRow({ active: false, last_poll_error_code: "credential" })],
     });
     renderView(s);
-    expect(await screen.findByText(/^Paused/)).toBeInTheDocument();
+    expect(await screen.findByText(/^Paused\. The last check had a problem/)).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
@@ -157,20 +187,29 @@ describe("SourcesView", () => {
     const alert = await screen.findByRole("alert");
     // "credential" is the code `_poll_paperless_source` writes when
     // `pwc.load_connection` fails — a string that exists in production,
-    // not one invented for the test.
-    expect(alert.textContent).toContain("credential");
-    expect(screen.queryByText(/Last polled/)).not.toBeInTheDocument();
+    // not one invented for the test. It is worded as a sentence, not shown raw.
+    expect(alert.textContent).toContain("can't sign in");
+    expect(alert.textContent).not.toContain("credential");
+    expect(screen.queryByText(/Last checked/)).not.toBeInTheDocument();
   });
 
   it("removing asks for confirmation first", async () => {
     const s = setup();
     const user = userEvent.setup();
     renderView(s);
-    await user.click(await screen.findByRole("button", { name: /^Remove Household archive$/ }));
-    expect(
-      screen.getByRole("button", { name: /^Confirm remove Household archive$/ }),
-    ).toBeInTheDocument();
+    await openRemove(user);
+    expect(screen.getByRole("alertdialog")).toHaveTextContent("Remove Household archive?");
     // Nothing was sent by merely asking.
+    expect(s.calls.some((c) => c.method === "DELETE")).toBe(false);
+  });
+
+  it("cancelling the remove dialog sends nothing", async () => {
+    const s = setup();
+    const user = userEvent.setup();
+    renderView(s);
+    await openRemove(user);
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
     expect(s.calls.some((c) => c.method === "DELETE")).toBe(false);
   });
 
@@ -178,8 +217,8 @@ describe("SourcesView", () => {
     const s = setup();
     const user = userEvent.setup();
     renderView(s);
-    await user.click(await screen.findByRole("button", { name: /^Remove Household archive$/ }));
-    await user.click(screen.getByRole("button", { name: /^Confirm remove Household archive$/ }));
+    await openRemove(user);
+    await user.click(screen.getByRole("button", { name: /^Remove Household archive$/ }));
     await waitFor(() => expect(s.calls.some((c) => c.method === "DELETE")).toBe(true));
     expect(await screen.findByRole("status")).toHaveTextContent("Source removed.");
   });
@@ -194,8 +233,8 @@ describe("SourcesView", () => {
     });
     const user = userEvent.setup();
     renderView(s);
-    await user.click(await screen.findByRole("button", { name: /^Remove Household archive$/ }));
-    await user.click(screen.getByRole("button", { name: /^Confirm remove Household archive$/ }));
+    await openRemove(user);
+    await user.click(screen.getByRole("button", { name: /^Remove Household archive$/ }));
     const status = await screen.findByRole("status");
     expect(status).toHaveTextContent("Something went wrong — try again.");
     expect(document.body.textContent).not.toContain("postgres://");
@@ -230,10 +269,14 @@ describe("SourcesView", () => {
       ],
     });
     renderView(s);
-    expect(await screen.findByRole("button", { name: "Pause Household archive" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Resume Weather feed" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Pause Weather feed" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Resume Household archive" })).not.toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Actions for Household archive" }));
+    expect(await screen.findByRole("menuitem", { name: "Pause" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Resume" })).not.toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Actions for Weather feed" }));
+    expect(await screen.findByRole("menuitem", { name: "Resume" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Pause" })).not.toBeInTheDocument();
   });
 
   it("pausing sends only active:false", async () => {
@@ -248,7 +291,7 @@ describe("SourcesView", () => {
     });
     const user = userEvent.setup();
     renderView(s);
-    await user.click(await screen.findByRole("button", { name: "Pause Household archive" }));
+    await openMenu(user, "Household archive", "Pause");
     expect(await screen.findByRole("status")).toHaveTextContent(
       "Source paused. A check already in progress will finish; nothing new is checked until you resume it.",
     );
@@ -269,7 +312,7 @@ describe("SourcesView", () => {
     });
     const user = userEvent.setup();
     renderView(s);
-    await user.click(await screen.findByRole("button", { name: "Resume Household archive" }));
+    await openMenu(user, "Household archive", "Resume");
     expect(await screen.findByRole("status")).toHaveTextContent("Source resumed. Checking it now.");
     expect(s.patchBodies).toEqual([{ active: true }]);
   });
@@ -303,7 +346,7 @@ describe("SourcesView", () => {
     });
     const user = userEvent.setup();
     renderView(s);
-    await user.click(await screen.findByRole("button", { name: "Pause Household archive" }));
+    await openMenu(user, "Household archive", "Pause");
     expect(await screen.findByRole("status")).toHaveTextContent(
       "Something went wrong — try again.",
     );
@@ -323,7 +366,7 @@ describe("SourcesView", () => {
     });
     const user = userEvent.setup();
     renderView(s);
-    await user.click(await screen.findByRole("button", { name: "Resume Household archive" }));
+    await openMenu(user, "Household archive", "Resume");
     expect(await screen.findByRole("status")).toHaveTextContent(
       "Saved as resumed, but checking could not be restarted yet.",
     );
@@ -349,7 +392,7 @@ describe("SourcesView", () => {
     });
     const user = userEvent.setup();
     renderView(s);
-    await user.click(await screen.findByRole("button", { name: "Pause Household archive" }));
+    await openMenu(user, "Household archive", "Pause");
     expect(await screen.findByRole("status")).toHaveTextContent("Source resumed. Checking it now.");
     expect(document.body.textContent).not.toContain("Source paused");
   });
@@ -366,7 +409,7 @@ describe("SourcesView", () => {
     });
     const user = userEvent.setup();
     renderView(s);
-    await user.click(await screen.findByRole("button", { name: "Pause Household archive" }));
+    await openMenu(user, "Household archive", "Pause");
     expect(await screen.findByRole("status")).toHaveTextContent(
       "Saved as paused, but Lumogis could not confirm it stopped checking.",
     );
@@ -380,7 +423,7 @@ describe("SourcesView", () => {
     const s = setup({ patchResponse: jsonResponse(200, { status: "updated", source_id: "src-1" }) });
     const user = userEvent.setup();
     renderView(s);
-    await user.click(await screen.findByRole("button", { name: /^Edit Household archive$/ }));
+    await openMenu(user, "Household archive", "Edit");
     const nameInput = screen.getByLabelText("Name for Household archive");
     await user.clear(nameInput);
     await user.type(nameInput, "Archive");
@@ -391,6 +434,16 @@ describe("SourcesView", () => {
     expect(await screen.findByRole("status")).toHaveTextContent("Source updated.");
   });
 
+  it("cancelling an edit sends nothing and restores the row", async () => {
+    const s = setup();
+    const user = userEvent.setup();
+    renderView(s);
+    await openMenu(user, "Household archive", "Edit");
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(await screen.findByRole("button", { name: "Actions for Household archive" })).toBeInTheDocument();
+    expect(s.patchBodies).toHaveLength(0);
+  });
+
   it("says 'no changes' rather than 'saved' when the route reports unchanged", async () => {
     // `unchanged` means the values supplied already matched, so claiming a save
     // would assert a write that did not happen.
@@ -399,7 +452,7 @@ describe("SourcesView", () => {
     });
     const user = userEvent.setup();
     renderView(s);
-    await user.click(await screen.findByRole("button", { name: /^Edit Household archive$/ }));
+    await openMenu(user, "Household archive", "Edit");
     await user.click(screen.getByRole("button", { name: /^Save Household archive$/ }));
     expect(await screen.findByRole("status")).toHaveTextContent("No changes to save.");
   });
@@ -424,7 +477,7 @@ describe("SourcesView", () => {
     ).toBeInTheDocument();
     expect(screen.getByText(/Paperless-ngx archive/)).toBeInTheDocument();
     expect(screen.getByText(/save its address and API token first/)).toBeInTheDocument();
-    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Your sources" })).not.toBeInTheDocument();
     expect(screen.queryByText("No sources yet.")).not.toBeInTheDocument();
   });
 
@@ -446,7 +499,8 @@ describe("SourcesView", () => {
   it("drops the offer once a managed source exists", async () => {
     const s = setup({ sources: [sourceRow()] });
     renderView(s);
-    expect(await screen.findByRole("table")).toBeInTheDocument();
+    expect(await screen.findByText("Household archive")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Your sources" })).toBeInTheDocument();
     expect(
       screen.queryByRole("heading", {
         name: "No document archives, feeds or watched pages yet",
@@ -520,15 +574,17 @@ describe("SourcesView", () => {
     render(
       <AuthProvider client={client} tokens={tokens} skipRefreshOnMount>
         <MemoryRouter
-          initialEntries={[{ pathname: "/me/sources", state: { fromOnboarding: true } }]}
+          initialEntries={[{ pathname: "/settings/sources", state: { fromOnboarding: true } }]}
         >
-          <SourcesView />
+          <FrameHeading>
+            <SourcesView />
+          </FrameHeading>
         </MemoryRouter>
       </AuthProvider>,
       { container: root },
     );
 
-    await screen.findByText("Loading…");
+    await screen.findByText("Loading your sources…");
     await new Promise((r) => setTimeout(r, 0));
 
     root.removeAttribute("inert");
@@ -573,7 +629,8 @@ describe("SourcesView", () => {
   it("shows the error, not the offer, when the list cannot be loaded", async () => {
     const s = setup({ sourcesResponse: jsonResponse(500, { detail: "boom" }) });
     renderView(s);
-    expect(await screen.findByText("Sources unavailable.")).toBeInTheDocument();
+    expect(await screen.findByText("Lumogis couldn't load your sources.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
     expect(
       screen.queryByRole("heading", {
         name: "No document archives, feeds or watched pages yet",

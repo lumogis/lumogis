@@ -18,6 +18,7 @@ import httpx
 import ollama_client
 from models.api_v1 import AdminDiagnosticsStoreItem
 from models.api_v1 import AdminDiagnosticsWarning
+from models.api_v1 import SecureAddressSummary
 from models.api_v1 import StackStatusMeta
 from models.api_v1 import StackStatusOllamaModel
 from models.api_v1 import StackStatusResponse
@@ -27,10 +28,10 @@ from services.admin_diagnostics import _graph_store_row
 from services.admin_diagnostics import _store_row
 
 import config
+from services import stack_control
 
 _log = logging.getLogger(__name__)
 
-_STACK_CONTROL_URL = os.environ.get("STACK_CONTROL_URL", "http://stack-control:9000")
 _CACHE_TTL_SEC = float(os.environ.get("LUMOGIS_STACK_STATUS_CACHE_TTL_SEC", "60"))
 _HTTP_TIMEOUT_SEC = float(os.environ.get("LUMOGIS_STACK_STATUS_HTTP_TIMEOUT_SEC", "45"))
 _WARN_PERCENT = float(os.environ.get("LUMOGIS_STORAGE_WARN_PERCENT", "80"))
@@ -180,26 +181,14 @@ def _merge_compose_and_ping(
     return compose_state or "unknown", runtime_detail, None
 
 
-def _restart_secret() -> str:
-    from routes.admin import _current_restart_secret
-
-    return _current_restart_secret()
-
-
 def _fetch_stack_control_status_unlocked() -> tuple[dict[str, Any] | None, bool]:
     """Call stack-control ``GET /status``. Returns (payload, reachable)."""
-    secret = _restart_secret()
-    if not secret:
+    if not stack_control.token():
         _log.error("stack_status: RESTART_SECRET missing — stack-control call skipped")
         return None, False
 
-    url = f"{_STACK_CONTROL_URL.rstrip('/')}/status"
     try:
-        with httpx.Client(timeout=_HTTP_TIMEOUT_SEC) as client:
-            resp = client.get(
-                url,
-                headers={"X-Lumogis-Restart-Token": secret},
-            )
+        resp = stack_control.get("/status", timeout=_HTTP_TIMEOUT_SEC)
     except Exception as exc:
         _log.warning("stack_status: stack-control unreachable (%s)", exc.__class__.__name__)
         return None, False
@@ -476,6 +465,18 @@ def build_service_states() -> tuple[
     return overall, services
 
 
+def _secure_address_summary() -> SecureAddressSummary | None:
+    """The secure-address row (LUM-331); ``None`` if the state cannot be read."""
+    try:
+        from services.home_dns import service as home_dns_service
+
+        state, url = home_dns_service.summary_state()
+        return SecureAddressSummary(state=state, url=url)
+    except Exception:
+        _log.warning("stack_status: secure address summary unavailable", exc_info=True)
+        return None
+
+
 def build_stack_status_response() -> StackStatusResponse:
     """Assemble the wire DTO for ``GET /api/v1/admin/diagnostics/stack-status``."""
     generated_at = datetime.now(timezone.utc)
@@ -512,7 +513,7 @@ def build_stack_status_response() -> StackStatusResponse:
             )
         )
 
-    if not _restart_secret():
+    if not stack_control.token():
         warnings.append(
             AdminDiagnosticsWarning(
                 code="restart_secret_missing",
@@ -540,4 +541,5 @@ def build_stack_status_response() -> StackStatusResponse:
         storage=storage,
         ollama=ollama,
         warnings=warnings,
+        secure_address=_secure_address_summary(),
     )

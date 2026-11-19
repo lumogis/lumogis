@@ -18,7 +18,7 @@
 // extended to `features/approvals/`.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { ApiClient } from "../../../src/api/client";
@@ -320,12 +320,30 @@ describe("RecoverableSends actions", () => {
     expect(await screen.findByText(/actually sent/)).toBeInTheDocument();
   });
 
+  it("keeps the row and calls nothing when the dismiss confirm is cancelled", async () => {
+    const user = userEvent.setup();
+    const { client, calls } = buildClient([BASE_ITEM]);
+    render(<RecoverableSends client={client} />);
+
+    await user.click(await screen.findByRole("button", { name: "Dismiss" }));
+    await user.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Keep it" }),
+    );
+
+    expect(screen.getByTestId("recoverable-send")).toBeInTheDocument();
+    expect(calls.some((c) => c.includes("/dismiss"))).toBe(false);
+  });
+
   it("removes the row on dismiss", async () => {
     const user = userEvent.setup();
     const { client, calls } = buildClient([BASE_ITEM]);
     render(<RecoverableSends client={client} />);
 
     await user.click(await screen.findByRole("button", { name: "Dismiss" }));
+    // Dismissing throws the recoverable text away, so it is confirmed first.
+    await user.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Dismiss" }),
+    );
     await waitFor(() => expect(screen.queryByTestId("recoverable-send")).toBeNull());
     expect(
       calls.some((c) => c.startsWith("POST") && c.includes("/recoverable-sends/7/dismiss")),
@@ -338,6 +356,10 @@ describe("RecoverableSends actions", () => {
     render(<RecoverableSends client={client} />);
 
     await user.click(await screen.findByRole("button", { name: "Dismiss" }));
+    // Dismissing throws the recoverable text away, so it is confirmed first.
+    await user.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Dismiss" }),
+    );
     expect(await screen.findByText(/still here/)).toBeInTheDocument();
     expect(screen.getByTestId("recoverable-send")).toBeInTheDocument();
   });

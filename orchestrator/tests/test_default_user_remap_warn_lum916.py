@@ -68,6 +68,8 @@ class _FakeCursor:
         elif "information_schema.columns" in sql:
             if params[0] in self.db.default_rows:
                 self._row = (1,)
+        elif sql.startswith("SELECT to_regclass"):
+            self._row = (None,)  # LUM-981: instance_setup absent in these scenarios
         elif sql.startswith("SELECT 1 FROM users"):
             self._row = (1,) if self.db.users else None
         elif sql.startswith("SELECT id FROM users"):
@@ -165,3 +167,38 @@ def test_bootstrap_email_matching_nobody_still_warns(fake_db, monkeypatch, caplo
     warns = _warnings(caplog)
     assert any("no enabled user with that email" in w for w in warns)
     assert any("remain unattributed" in w for w in warns)
+
+
+def test_b1_waiting_for_setup_logs_info_not_warning_and_exits_0(fake_db, caplog):
+    """LUM-981: sign-in on, no users, no env, legacy rows: setup will create the admin.
+
+    The old WARNING advised setting a bootstrap email; following that would make the
+    next boot ``BLOCKED_BOOTSTRAP_FAILED``. Both passes must stay quiet and exit 0.
+    """
+    db = fake_db(_FakeDb(users=[], default_rows={"notes": 4, "sessions": 2}))
+    caplog.set_level(logging.INFO, logger="db_default_user_remap")
+
+    assert _main() == 0
+    assert _main(post_bootstrap=True) == 0
+
+    assert db.updates == []  # nothing moved yet
+    assert db.default_rows == {"notes": 4, "sessions": 2}
+    assert _warnings(caplog) == []
+    assert any("wait for the admin created at setup" in r.getMessage() for r in caplog.records)
+
+
+def test_b1_a_bootstrap_password_alone_is_not_setup_pending(fake_db, monkeypatch, caplog):
+    """Any bootstrap setting means the admin comes from env, not setup (code review)."""
+    monkeypatch.setenv("LUMOGIS_BOOTSTRAP_ADMIN_PASSWORD", "correct-horse-battery")
+    fake_db(_FakeDb(users=[], default_rows={"notes": 1}))
+    caplog.set_level(logging.INFO, logger="db_default_user_remap")
+    assert _main(post_bootstrap=True) == 2
+    assert not any("wait for the admin created at setup" in r.getMessage() for r in caplog.records)
+
+
+def test_b1_with_users_present_and_no_target_the_warning_still_fires(fake_db, caplog):
+    """The setup branch is only for an EMPTY users table."""
+    fake_db(_FakeDb(users=[("u1", "someone@home.lan")], default_rows={"notes": 3}))
+    caplog.set_level(logging.INFO, logger="db_default_user_remap")
+    assert _main(post_bootstrap=True) == 2
+    assert len(_warnings(caplog)) == 1

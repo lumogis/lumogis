@@ -17,6 +17,9 @@ import { useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Navigate } from "react-router-dom";
 
+import { PageHeader } from "@/components/page/PageHeader";
+import { PageSection } from "@/components/page/PageSection";
+import { Alert } from "@/components/ui/alert";
 import { useAuth } from "../../auth/AuthProvider";
 import { fetchCandidates } from "../../api/emailAttachmentIngest";
 import { listSources } from "../../api/emailSources";
@@ -60,7 +63,11 @@ export function EmailAttachmentsPage(): JSX.Element {
   };
 
   return (
-    <div className="lumogis-email-attachments">
+    <div className="flex flex-col gap-4">
+      <PageHeader
+        title="Email attachments"
+        description="Choose which attachments from your mailboxes get filed into your library."
+      />
       <EmailTabs active="attachments" pendingCount={candidatesQ.data?.pending_total ?? 0} />
 
       {!anyEnabled ? (
@@ -78,24 +85,25 @@ export function EmailAttachmentsPage(): JSX.Element {
               without it, "your window filled up" is indistinguishable from
               "nothing pending here". */}
           {(candidatesQ.data?.truncated_sources ?? []).length > 0 ? (
-            <p data-testid="attachments-truncated-sources">
+            <p className="text-sm text-muted-foreground" data-testid="attachments-truncated-sources">
               {`More attachments waiting in ${(candidatesQ.data?.truncated_sources ?? [])
                 .map((s) => s.source_name || s.source_id)
                 .join(", ")}`}
             </p>
           ) : null}
           {(candidatesQ.data?.errored_sources ?? []).length > 0 ? (
-            <p role="alert" data-testid="attachments-errored-sources">
+            <Alert variant="destructive" data-testid="attachments-errored-sources">
               {`Couldn't check ${(candidatesQ.data?.errored_sources ?? [])
                 .map((s) => s.source_name || s.source_id)
                 .join(", ")} just now — the rest of the list is still accurate.`}
-            </p>
+            </Alert>
           ) : null}
 
-          <section data-testid="attachments-filed">
-            <h2>Filed from email</h2>
-            <FiledFromEmailList client={client} />
-          </section>
+          <div data-testid="attachments-filed">
+            <PageSection title="Filed from email">
+              <FiledFromEmailList client={client} />
+            </PageSection>
+          </div>
         </>
       )}
     </div>

@@ -121,29 +121,54 @@ def main() -> int:
             )
 
     auth_raw = keys_found.get("AUTH_ENABLED", "false").strip().lower()
-    refresh_error_emitted = False
+    handled_watch_keys: set[str] = set()  # keys whose own row below replaces the generic warn
+
+    def _unq(name: str) -> str:
+        return keys_found.get(name, "").strip().strip('"').strip("'")
+
+    # LUM-981: the entrypoint generates these on first start and writes them to
+    # .env, so a missing or placeholder value is not a problem to fix by hand.
+    # The doctor does not guess whether .env is writable: when it is not, the
+    # orchestrator says so at start-up and refuses to boot with the fix.
+    generated_msg = (
+        "{name} is generated on first start (if Lumogis cannot write .env, "
+        "the orchestrator says so at start-up)"
+    )
+
     if auth_raw == "true":
-        if "LUMOGIS_PUBLIC_ORIGIN" not in keys_found:
+        # LUM-981: with no pinned origin Lumogis accepts the address in the browser.
+        if not _unq("LUMOGIS_PUBLIC_ORIGIN"):
             row(
                 "config",
                 "LUMOGIS_PUBLIC_ORIGIN",
-                "error",
-                "AUTH_ENABLED=true requires LUMOGIS_PUBLIC_ORIGIN in .env",
-                "Set LUMOGIS_PUBLIC_ORIGIN to the exact browser origin (scheme + host + optional port).",
+                "ok",
+                "LUMOGIS_PUBLIC_ORIGIN is not set; the origin is derived from the address in the browser",
+                "",
             )
+        if _unq("AUTH_SECRET") in PLACEHOLDERS:
+            handled_watch_keys.add("AUTH_SECRET")
+            row("config", "AUTH_SECRET", "ok", generated_msg.format(name="AUTH_SECRET"), "")
         # LUM-885: the orchestrator refuses to boot with auth on when its refresh
         # secret is missing, a placeholder, or equal to AUTH_SECRET. Resolve it
-        # the way auth._refresh_secret() does (first non-empty of the two names)
-        # so an upgrade is warned before the container exits. Values are never printed.
-        def _unq(name: str) -> str:
-            return keys_found.get(name, "").strip().strip('"').strip("'")
-
-        refresh_resolved = _unq("LUMOGIS_JWT_REFRESH_SECRET") or _unq("JWT_REFRESH_SECRET")
+        # the way auth._refresh_secret() does (first non-empty of the two names).
+        # The entrypoint generates JWT_REFRESH_SECRET when LUMOGIS_JWT_REFRESH_SECRET
+        # is unset and it is missing or a placeholder. Values are never printed.
+        lum_refresh = _unq("LUMOGIS_JWT_REFRESH_SECRET")
+        refresh_resolved = lum_refresh or _unq("JWT_REFRESH_SECRET")
         access_secret = _unq("AUTH_SECRET")
-        if refresh_resolved in PLACEHOLDERS or (
+        if not lum_refresh and refresh_resolved in PLACEHOLDERS:
+            handled_watch_keys.add("JWT_REFRESH_SECRET")
+            row(
+                "config",
+                "JWT_REFRESH_SECRET",
+                "ok",
+                generated_msg.format(name="JWT_REFRESH_SECRET"),
+                "",
+            )
+        elif refresh_resolved in PLACEHOLDERS or (
             access_secret and refresh_resolved == access_secret
         ):
-            refresh_error_emitted = True
+            handled_watch_keys.add("JWT_REFRESH_SECRET")
             row(
                 "config",
                 "JWT_REFRESH_SECRET",
@@ -152,11 +177,26 @@ def main() -> int:
                 "Set JWT_REFRESH_SECRET (or LUMOGIS_JWT_REFRESH_SECRET) to the output of: openssl rand -hex 32",
             )
 
+    # The credential key is generated in both modes, unless LUMOGIS_CREDENTIAL_KEYS is set.
+    if (
+        _unq("LUMOGIS_CREDENTIAL_KEY") in PLACEHOLDERS
+        and not _unq("LUMOGIS_CREDENTIAL_KEYS")
+        and (auth_raw == "true" or "LUMOGIS_CREDENTIAL_KEY" in keys_found)
+    ):
+        handled_watch_keys.add("LUMOGIS_CREDENTIAL_KEY")
+        row(
+            "config",
+            "LUMOGIS_CREDENTIAL_KEY",
+            "ok",
+            generated_msg.format(name="LUMOGIS_CREDENTIAL_KEY"),
+            "",
+        )
+
     for wk in sorted(WATCH_KEYS):
         if wk not in keys_found:
             continue
-        if wk == "JWT_REFRESH_SECRET" and refresh_error_emitted:
-            continue  # the error row above already covers it
+        if wk in handled_watch_keys:
+            continue  # the row above already covers it
         v = keys_found[wk].strip().strip('"').strip("'")
         if v in PLACEHOLDERS:
             row(
@@ -188,8 +228,7 @@ def main() -> int:
             )
 
     ok_required = all(rk in keys_found for rk in required)
-    auth_ok = auth_raw != "true" or "LUMOGIS_PUBLIC_ORIGIN" in keys_found
-    if ok_required and auth_ok:
+    if ok_required:
         row("config", "dotenv", "ok", ".env present with parseable assignments", "")
     return 0
 

@@ -1,25 +1,109 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Lumogis
 //
-// Read-only LLM providers — GET /api/v1/me/llm-providers. No editing.
+// Read-only AI services — GET /api/v1/me/llm-providers. No editing.
+//
+// Rebuilt on the shared components in LUM-993 plan B Pass 5: one list in plain
+// words (name, what it is, connected or not, where its key comes from), with the
+// provider id, dates and tier flags under "Details".
 
+import { ChevronDown } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 
 import { ApiError } from "../../api/client";
-import { fetchMeLlmProviders } from "../../api/meLlmProviders";
+import { fetchMeLlmProviders, type MeLlmProviderItem } from "../../api/meLlmProviders";
 import { useAuth } from "../../auth/AuthProvider";
+import { ErrorState } from "../../components/page/ErrorState";
+import { LoadingPlaceholder, SkeletonText } from "../../components/page/LoadingState";
+import { PageSection } from "../../components/page/PageSection";
+import { Badge } from "../../components/ui/badge";
+import { Button } from "../../components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../../components/ui/collapsible";
+import { Label } from "../../components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
+import { formatDateTime } from "../../util/formatTimestamp";
 
 const TIER_LABELS: Record<string, string> = {
   user: "Your account",
-  household: "Household shared",
-  system: "Instance / system",
-  env: "Environment fallback",
+  household: "Shared by the household",
+  system: "Set up by the administrator",
+  env: "Server default",
   none: "None",
 };
 
 function labelTier(raw: string): string {
   return TIER_LABELS[raw] ?? raw.replace(/_/g, " ");
+}
+
+const FILTERS = [
+  { value: "all", label: "All" },
+  { value: "configured", label: "Connected only" },
+  { value: "not_configured", label: "Not connected" },
+  { value: "user", label: "Key from your account" },
+  { value: "household", label: "Key shared by the household" },
+  { value: "system", label: "Key set up by the administrator" },
+  { value: "env", label: "Server default key" },
+  { value: "none", label: "No key" },
+];
+
+const LINK_CLASS = "text-accent-text underline underline-offset-2";
+
+function ProviderRow({ p }: { p: MeLlmProviderItem }): JSX.Element {
+  const description =
+    p.description && p.description.length > 220 ? `${p.description.slice(0, 217)}…` : p.description;
+  return (
+    <li data-provider={p.connector} className="grid gap-1 py-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="min-w-0 flex-1 text-sm font-medium">{p.label}</span>
+        {p.configured ? (
+          <Badge variant="secondary">Connected</Badge>
+        ) : (
+          <Badge variant="outline">Not connected</Badge>
+        )}
+      </div>
+      {description ? <p className="m-0 text-sm text-muted-foreground">{description}</p> : null}
+      {p.configured ? (
+        <p className="m-0 text-xs text-muted-foreground">Key from: {labelTier(p.active_tier)}</p>
+      ) : null}
+      <Collapsible>
+        <CollapsibleTrigger
+          render={<Button type="button" variant="ghost" size="sm" className="-ml-2 group/trigger" />}
+          aria-label={`Details for ${p.label}`}
+        >
+          <ChevronDown
+            aria-hidden="true"
+            className="transition-transform group-aria-expanded/trigger:rotate-180"
+          />
+          Details
+        </CollapsibleTrigger>
+        <CollapsibleContent className="grid gap-1 pt-1 text-sm">
+          <div>
+            <span className="text-muted-foreground">Technical name: </span>
+            <span className="font-mono break-all">{p.connector}</span>
+          </div>
+          {p.updated_at ? (
+            <div>
+              <span className="text-muted-foreground">Last saved: </span>
+              {formatDateTime(p.updated_at)}
+            </div>
+          ) : null}
+          {p.key_version != null ? (
+            <div>
+              <span className="text-muted-foreground">Key version: </span>
+              {p.key_version}
+            </div>
+          ) : null}
+          {p.user_credential_present ? <div>You have saved your own key.</div> : null}
+          {p.household_credential_available ? <div>The household has a shared key.</div> : null}
+          {p.system_credential_available ? <div>The administrator has set up a key.</div> : null}
+          {p.env_fallback_available ? <div>A server default key may apply.</div> : null}
+          {p.why_not_available ? <div>{p.why_not_available}</div> : null}
+        </CollapsibleContent>
+      </Collapsible>
+    </li>
+  );
 }
 
 export function MeLlmProvidersView(): JSX.Element {
@@ -41,10 +125,9 @@ export function MeLlmProvidersView(): JSX.Element {
 
   if (q.isPending) {
     return (
-      <section aria-busy="true">
-        <h2>LLM providers</h2>
-        <p>Loading…</p>
-      </section>
+      <LoadingPlaceholder label="Loading your AI services…" className="max-w-2xl">
+        <SkeletonText lines={5} />
+      </LoadingPlaceholder>
     );
   }
 
@@ -55,155 +138,92 @@ export function MeLlmProvidersView(): JSX.Element {
         ? err.status === 401
           ? "Your session expired or you are not signed in. Refresh the page or sign in again."
           : err.detail
-        : "Something went wrong loading LLM provider status.";
-    return (
-      <section>
-        <h2>LLM providers</h2>
-        <p role="alert">{detail}</p>
-      </section>
-    );
+        : "Something went wrong loading your AI services.";
+    return <ErrorState message={detail} onRetry={() => void q.refetch()} />;
   }
 
-  const { summary } = q.data!;
+  const { summary } = q.data;
 
   return (
-    <section className="lumogis-admin-dense-section">
-      <h2>LLM providers</h2>
-      <p style={{ maxWidth: "42rem", opacity: 0.9 }}>
-        Cloud API credentials for assistant models — read-only overview. This does not show keys or
-        edit credentials. Use <strong>Connectors</strong> to add or change keys.
+    <PageSection
+      title="Your AI services"
+      description={
+        <>
+          This list only shows what is connected; it never shows keys. To add or change a key, use{" "}
+          <Link to="/settings/connections" className={LINK_CLASS}>
+            Connected services
+          </Link>
+          .
+        </>
+      }
+    >
+      <p className="m-0 mb-3 text-sm" data-testid="llm-summary">
+        {summary.configured} of {summary.total} connected.
       </p>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(9rem, 1fr))",
-          gap: "0.75rem",
-          margin: "1rem 0",
-        }}
-      >
-        <div style={{ border: "1px solid rgba(128,128,128,0.25)", borderRadius: 8, padding: "0.75rem" }}>
-          <div style={{ fontSize: "0.8rem", opacity: 0.8 }}>Providers</div>
-          <div style={{ fontSize: "1.35rem", fontWeight: 700 }} aria-label={`Total providers: ${summary.total}`}>
-            {summary.total}
-          </div>
-        </div>
-        <div style={{ border: "1px solid rgba(128,128,128,0.25)", borderRadius: 8, padding: "0.75rem" }}>
-          <div style={{ fontSize: "0.8rem", opacity: 0.8 }}>Configured</div>
-          <div
-            style={{ fontSize: "1.35rem", fontWeight: 700 }}
-            aria-label={`Configured providers: ${summary.configured}`}
-          >
-            {summary.configured}
-          </div>
-        </div>
-        <div style={{ border: "1px solid rgba(128,128,128,0.25)", borderRadius: 8, padding: "0.75rem" }}>
-          <div style={{ fontSize: "0.8rem", opacity: 0.8 }}>Not configured</div>
-          <div
-            style={{ fontSize: "1.35rem", fontWeight: 700 }}
-            aria-label={`Not configured: ${summary.not_configured}`}
-          >
-            {summary.not_configured}
-          </div>
-        </div>
-      </div>
-
-      <div style={{ marginBottom: "0.75rem" }}>
-        <strong style={{ fontSize: "0.9rem" }}>By active tier</strong>
-        <ul style={{ margin: "0.35rem 0 0", paddingLeft: "1.2rem" }}>
-          {Object.entries(summary.by_active_tier)
-            .sort(([a], [b]) => a.localeCompare(b))
-            .map(([k, n]) => (
-              <li key={k}>
-                {labelTier(k)}: {n}
-              </li>
-            ))}
-        </ul>
-      </div>
-
-      <div style={{ marginBottom: "1rem" }}>
-        <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem", fontSize: "0.9rem" }}>
-          Filter
-          <select
-            value={tierFilter}
-            onChange={(e) => setTierFilter(e.target.value)}
-            aria-label="Filter providers"
-          >
-            <option value="all">All</option>
-            <option value="configured">Configured only</option>
-            <option value="not_configured">Not configured</option>
-            <option value="user">Active tier: your account</option>
-            <option value="household">Active tier: household</option>
-            <option value="system">Active tier: system</option>
-            <option value="env">Active tier: env fallback</option>
-            <option value="none">Active tier: none</option>
-          </select>
-        </label>
-      </div>
-
       {summary.configured === 0 ? (
-        <p>No cloud LLM credentials are configured yet. Use Connectors to add API keys (when signed in).</p>
+        <p className="m-0 mb-3 text-sm text-muted-foreground">
+          No AI service has a key yet. Add one under{" "}
+          <Link to="/settings/connections" className={LINK_CLASS}>
+            Connected services
+          </Link>
+          .
+        </p>
       ) : null}
 
-      <div className="lumogis-table-scroll">
-        <table className="lumogis-dense-table">
-          <thead>
-            <tr>
-              <th>Provider</th>
-              <th>Connector</th>
-              <th>Status</th>
-              <th>Active tier</th>
-              <th>Details</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((p) => (
-              <tr key={p.connector} style={{ verticalAlign: "top" }}>
-                <td style={{ padding: "0.5rem 0.35rem" }}>
-                  <div style={{ fontWeight: 600 }}>{p.label}</div>
-                  {p.description ? (
-                    <div style={{ fontSize: "0.8rem", marginTop: "0.25rem", opacity: 0.85 }}>
-                      {p.description.length > 220 ? `${p.description.slice(0, 217)}…` : p.description}
-                    </div>
-                  ) : null}
-                </td>
-                <td style={{ fontFamily: "monospace", fontSize: "0.8rem" }} className="lumogis-long-text">
-                  {p.connector}
-                </td>
-                <td style={{ padding: "0.5rem 0.35rem" }}>
-                  {p.configured ? (
-                    <span aria-label={`${p.label} configured`}>Configured</span>
-                  ) : (
-                    <span style={{ color: "var(--warn, #b45309)" }} aria-label={`${p.label} not configured`}>
-                      Not configured
-                    </span>
-                  )}
-                </td>
-                <td style={{ padding: "0.5rem 0.35rem" }}>{labelTier(p.active_tier)}</td>
-                <td style={{ padding: "0.5rem 0.35rem", fontSize: "0.85rem" }} className="lumogis-long-text">
-                  {p.updated_at ? (
-                    <div>
-                      <span style={{ opacity: 0.7 }}>Updated: </span>
-                      {p.updated_at}
-                    </div>
-                  ) : null}
-                  {p.key_version != null ? (
-                    <div>
-                      <span style={{ opacity: 0.7 }}>Key version: </span>
-                      {p.key_version}
-                    </div>
-                  ) : null}
-                  {p.user_credential_present ? <div>Your credential row present</div> : null}
-                  {p.household_credential_available ? <div>Household row present</div> : null}
-                  {p.system_credential_available ? <div>System row present</div> : null}
-                  {p.env_fallback_available ? <div>Env fallback may apply (single-user / auth off)</div> : null}
-                  {p.why_not_available ? <div style={{ opacity: 0.9 }}>{p.why_not_available}</div> : null}
-                </td>
-              </tr>
+      <div className="mb-2 flex max-w-xs flex-col gap-1.5">
+        <Label htmlFor="llm-filter">Show</Label>
+        <Select
+          value={tierFilter}
+          items={FILTERS}
+          onValueChange={(v) => setTierFilter(String(v ?? "all"))}
+        >
+          <SelectTrigger id="llm-filter" aria-label="Filter AI services" className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {FILTERS.map((f) => (
+              <SelectItem key={f.value} value={f.value}>
+                {f.label}
+              </SelectItem>
             ))}
-          </tbody>
-        </table>
+          </SelectContent>
+        </Select>
       </div>
-    </section>
+
+      {filtered.length === 0 ? (
+        <p className="m-0 py-3 text-sm text-muted-foreground">No AI services match this filter.</p>
+      ) : (
+        <ul role="list" className="m-0 flex list-none flex-col divide-y divide-border p-0">
+          {filtered.map((p) => (
+            <ProviderRow key={p.connector} p={p} />
+          ))}
+        </ul>
+      )}
+
+      <Collapsible className="mt-2 border-t pt-2">
+        <CollapsibleTrigger
+          render={<Button type="button" variant="ghost" size="sm" className="-ml-2 group/trigger" />}
+        >
+          <ChevronDown
+            aria-hidden="true"
+            className="transition-transform group-aria-expanded/trigger:rotate-180"
+          />
+          Details
+        </CollapsibleTrigger>
+        <CollapsibleContent className="pt-1 text-sm">
+          <p className="m-0 mb-1 text-muted-foreground">Where each connected key comes from</p>
+          <ul role="list" className="m-0 list-none p-0">
+            {Object.entries(summary.by_active_tier)
+              .sort(([a], [b]) => a.localeCompare(b))
+              .map(([k, n]) => (
+                <li key={k}>
+                  {labelTier(k)}: {n}
+                </li>
+              ))}
+          </ul>
+        </CollapsibleContent>
+      </Collapsible>
+    </PageSection>
   );
 }

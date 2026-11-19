@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Lumogis
-// `lumogis_web_admin_shell` plan — refetch /auth/me on /admin/* navigation when
-// data is older than 5s (stale-role hazard mitigation).
+// `lumogis_web_admin_shell` plan — refetch /auth/me on Settings navigation when
+// data is older than 5s (stale-role hazard mitigation). Household pages live
+// under /settings since LUM-993; /admin is kept for old links before they redirect.
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { useLocation } from "react-router-dom";
@@ -13,7 +14,7 @@ export function AuthAdminRouteRefetch(): null {
   const qc = useQueryClient();
 
   useEffect(() => {
-    if (!loc.pathname.startsWith("/admin")) return;
+    if (!loc.pathname.startsWith("/settings") && !loc.pathname.startsWith("/admin")) return;
     const st = qc.getQueryState(ME_KEY);
     const du = st?.dataUpdatedAt ?? 0;
     if (Date.now() - du <= 5000) return;

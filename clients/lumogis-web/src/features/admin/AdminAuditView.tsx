@@ -2,7 +2,9 @@
 // Copyright (C) 2026 Lumogis
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
+import { toast } from "sonner";
 import { useAuth, useUser } from "../../auth/AuthProvider";
+import { Alert, AlertDescription } from "../../components/ui/alert";
 import { ApiError } from "../../api/client";
 import type { AuditListResponse } from "../../api/audit";
 import { buildAuditStreamUrl, mergeAuditRows } from "../../api/audit";
@@ -63,6 +65,7 @@ export function AdminAuditView(): JSX.Element {
   const [actionType, setActionType] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [liveEnabled, setLiveEnabled] = useState(false);
+  const [expandedId, setExpandedId] = useState<number | null>(null);
 
   const auditUrl = useMemo(() => {
     const p = new URLSearchParams();
@@ -96,7 +99,8 @@ export function AdminAuditView(): JSX.Element {
   const revM = useMutation({
     mutationFn: (token: string) => client.postJson<Record<string, never>, { status: string }>(`/api/v1/audit/${encodeURIComponent(token)}/reverse`, {}),
     onSuccess: () => {
-      setMsg("Reversed.");
+      setMsg(null);
+      toast("Reversed.");
       void qc.invalidateQueries({ queryKey: ["admin", "audit"] });
     },
     onError: (e) => {
@@ -114,9 +118,15 @@ export function AdminAuditView(): JSX.Element {
   });
 
   return (
-    <section className="lumogis-admin-dense-section">
-      <h2>Household audit</h2>
-      {msg && <p role="status">{msg}</p>}
+    <section>
+      <p className="mb-4 max-w-2xl text-sm text-muted-foreground">
+        Everything Lumogis did for the household. Reverse undoes an action where that is possible.
+      </p>
+      {msg && (
+        <Alert role="status" variant="destructive" className="mb-4 max-w-2xl">
+          <AlertDescription>{msg}</AlertDescription>
+        </Alert>
+      )}
       <AuditFilters
         scope="household"
         liveEnabled={liveEnabled}
@@ -140,6 +150,8 @@ export function AdminAuditView(): JSX.Element {
         loading={listQ.isPending}
         error={listQ.isError}
         onRetry={() => void listQ.refetch()}
+        expandedId={expandedId}
+        onToggleExpand={(id) => setExpandedId((cur) => (cur === id ? null : id))}
         showReverse
         onReverse={(token) => {
           setMsg(null);

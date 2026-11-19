@@ -9,7 +9,7 @@
 #   COMPOSE_FILE=docker-compose.yml:docker-compose.test.yml:docker-compose.public-rc-stack.yml
 #
 # Host ports (integration tests / debugging only):
-#   - 18001 → KG /health
+#   - 18001 → KG /health and /mcp (bound to 127.0.0.1 only, LUM-915)
 #   - 18080 → mock capability /health + /capabilities
 
 services:
@@ -33,7 +33,7 @@ services:
     image: lumogis-graph:dev
     env_file: .env
     ports:
-      - "18001:8001"
+      - "127.0.0.1:18001:8001"
     environment:
       GRAPH_BACKEND: ${GRAPH_BACKEND:-falkordb}
       FALKORDB_URL: ${FALKORDB_URL:-redis://falkordb:6379}

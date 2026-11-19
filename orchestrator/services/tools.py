@@ -178,18 +178,21 @@ def _query_entity(input_: dict, *, user_id: str) -> str:
         # silently drop the shared row. See plan §2.6 retrieval rule and
         # §8 Qdrant filter shape.
         from auth import UserContext
+        from visibility import not_hidden_sql
         from visibility import visible_filter
         from visibility import visible_qdrant_filter
 
         ctx = UserContext(user_id=user_id)
         vis_clause, vis_params = visible_filter(ctx)
+        # LUM-966: an entry the member hid (or deleted) is not found here.
+        hidden_clause, hidden_params = not_hidden_sql(user_id)
         row = ms.fetch_one(
             "SELECT entity_id, name, entity_type, aliases, context_tags, mention_count "
             "FROM entities "
-            f"WHERE {vis_clause} "
+            f"WHERE {vis_clause} AND {hidden_clause} "
             "  AND (lower(name) = lower(%s) "
             "       OR lower(%s) = ANY(SELECT lower(a) FROM unnest(aliases) a))",
-            (*vis_params, name, name),
+            (*vis_params, *hidden_params, name, name),
         )
 
         if row:
@@ -216,12 +219,24 @@ def _query_entity(input_: dict, *, user_id: str) -> str:
                 return json.dumps({"found": False, "name": name})
             top_payload = hits[0].get("payload", {})
             entity_id = top_payload.get("entity_id")
+            # LUM-966: a point is a hint, not the truth. A point left behind by a
+            # delete (or for an entry the member hid) must not answer with a name
+            # that no longer exists, so read the row again under the same rules.
+            confirmed = ms.fetch_one(
+                "SELECT entity_id, name, entity_type, aliases, context_tags, mention_count "
+                "FROM entities "
+                f"WHERE {vis_clause} AND {hidden_clause} AND entity_id::text = %s",
+                (*vis_params, *hidden_params, str(entity_id) if entity_id else ""),
+            )
+            if not confirmed:
+                return json.dumps({"found": False, "name": name})
+            entity_id = confirmed["entity_id"]
             entity_meta = {
-                "name": top_payload.get("name", name),
-                "type": top_payload.get("entity_type"),
-                "aliases": top_payload.get("aliases", []),
-                "context_tags": top_payload.get("context_tags", []),
-                "mention_count": None,
+                "name": confirmed["name"],
+                "type": confirmed["entity_type"],
+                "aliases": confirmed["aliases"],
+                "context_tags": confirmed["context_tags"],
+                "mention_count": confirmed["mention_count"],
             }
 
         # Fetch provenance edges (last 10 distinct evidence mentions).

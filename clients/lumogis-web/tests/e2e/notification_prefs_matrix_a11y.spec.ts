@@ -20,13 +20,13 @@ const PREFS_MATRIX_SELECTOR = '[aria-label="Notification preference matrix"]';
 test.describe("LUM-481 notification prefs matrix a11y", () => {
   test.skip(!hasSmokeCreds, smokeCredsSkipMessage);
 
-  test("login, open /me/notifications, axe prefs matrix table", async ({ page }) => {
+  test("login, open /settings/notifications, axe prefs matrix table", async ({ page }) => {
     test.setTimeout(180_000);
     await loginWithSmokeCredentials(page);
 
-    await page.goto("/me/notifications");
-    await expect(page).toHaveURL(/\/me\/notifications$/);
-    await expect(page.getByRole("heading", { name: /^notifications$/i })).toBeVisible();
+    await page.goto("/settings/notifications");
+    await expect(page).toHaveURL(/\/settings\/notifications$/);
+    await expect(page.getByRole("heading", { level: 1, name: "Notifications" })).toBeVisible();
 
     const prefsTable = page.getByRole("table", { name: /notification preference matrix/i });
     await expect(prefsTable).toBeVisible({ timeout: 60_000 });

@@ -1,13 +1,13 @@
 # ADR-250: Chat session summaries stay on the box (LUM-899)
 **Status:** Finalised
 **Created:** 2026-11-10
-**Last updated:** 2026-11-10
+**Last updated:** 2026-11-16 (Decision addendum for LUM-983)
 **Decided by:** as-shipped implementation (retrospective)
 **Finalised by:** /record-retro 2026-11-10 (claude-opus-5-5)
 **Plan:** none. This shipped before a formal plan / verify cycle for the slice (`exec:claude` session).
 **Exploration:** `.cursor/explorations/session_summary_local_only_retro.md`
 **Draft mirror:** `.cursor/adrs/session_summary_local_only.md`
-**Linear:** LUM-899
+**Linear:** LUM-899; LUM-983 (Decision addendum, 2026-11-16)
 **Amends:** ADR 241 (`241-lum-877-task-model-routing.md`) §9 and §10. `session_summary` joins the `local_only` set.
 **Builds on:** ADR 174 (`174-email-imap-signal-source.md`, email content stays on the box), ADR 147 (privacy mode)
 
@@ -68,7 +68,29 @@ ADR 241 §9 should now be read as listing `session_summary` with `entity_extract
 ## Status history
 
 - 2026-11-10: Finalised by /record-retro (retrospective).
+- 2026-11-16: Decision addendum (LUM-983) added by /verify-plan --headless. The 2026-11-10 addendum's rule for `temporal_judge` was not enforced; it is now. Draft: `.cursor/adrs/LUM-983-temporal_judge_on_box.md`. Amends ADR 241 §8.
 
 ## Decision addendum (2026-11-10, before merge)
 
 On Thomas's decision, `temporal_extract` and `temporal_judge` are `local_only` as well, in the same branch. A listed off-box entry for either task is skipped (`not_on_box`) and the task falls back to its code default. Tests: `test_temporal_tasks_stay_on_box_because_session_summaries_feed_them`, `test_temporal_extract_off_box_entry_resolves_to_code_default`, and the updated registry table in `test_task_models.py`.
+
+## Decision addendum (2026-11-16, LUM-983)
+
+The 2026-11-10 addendum made `temporal_judge` `local_only`, but the resolver did not enforce it. ADR 241 §8 exempts a destructive task from every skip check, so `resolve_task_model` returned the judge's first listed entry unchecked. On an `allow_cloud` install, a cloud model listed first under `tasks.temporal_judge` received episode text: notes, voice memo transcripts and chat session summaries (`_HYDRATION_QUERIES`: `NOTE`, `SESSION`, `AUDIO`). The weekly code review found it.
+
+**Decision.** For a destructive task that is also `local_only`, the first listed entry is used only when it is **proven on-box**: it is found in one `_ModelLookup`, and `is_on_box_local(name, cfg=cfg)` is true. Otherwise the task uses its code default (`resolved_from="default"`): that covers an off-box entry, a host that does not resolve, an entry that is not found, and a lookup or on-box check that raises. The task still never moves to a later entry. There is still no key, privacy or switched-off check, so an on-box entry that is keyless, blocked or switched off fails at the call site into `judge_failed` (ADR 241 §8). One private helper, `_destructive_choice` in `orchestrator/services/task_models.py`, encodes the rule for both `resolve_task_model` and `explain_task`, so admin diagnostics report the model actually used. `resolve_task_model` logs one warning per process per task and reason, then DEBUG for later substitutions; `explain_task` does not spend the warning.
+
+**Alternatives not chosen** (`.cursor/explorations/LUM-983-temporal_judge_on_box.md`): gating only a proven off-box entry (an unknown dynamic alias could come back at the call site on a remote `OLLAMA_URL`); failing closed to `judge_failed` (contradicts the 2026-11-10 addendum and the `-> str` contract); a guard at the call site (diagnostics would stay wrong, and the rule would exist twice); the full skip check (would also swap keyless or blocked entries and read privacy per user).
+
+**Consequences.**
+
+- An unknown or misspelled first entry now runs the code default `llama` instead of ending `judge_failed`. The plugin's boot warning in `plugins/graph/__init__.py` now fires only when the default itself does not resolve.
+- `llama` is also the ADR 151 reference judge. A configuration that used to give proposals only (a cloud or misspelled first entry) now auto-applies its verdicts when `LUMOGIS_TEMPORAL_AUTO_APPLY=true`. This is intended: `_run_episode_check` resolves the judge once and passes that name to both `judge_contradictions` and `apply_or_propose`, so the pin is checked against the model that judged. The result is the same as having no `tasks.temporal_judge` entry.
+- A first entry that is only sometimes usable (an Ollama listing that times out, LAN DNS that fails) is decided per resolution: the operator's model when proven on-box, else `llama`. Before, those episodes ended `judge_failed` and were not retried.
+- A LAN Ollama whose `base_url` does not contain `ollama` is refused, as for every other `local_only` task.
+- Nothing is dialled for a substituted entry, so no `privacy_mode_block` audit row is written; the operator is told by boot check §3 (`task_model_unsatisfiable`), the warning, and admin diagnostics. `get_llm_provider`'s hard block for an explicit cloud model under `local_only` is unchanged.
+- **Residuals, stated:** "on-box" is `is_on_box_local`'s `base_url` host check; it ignores `proxy_url` and the adapter, a weakness shared by every `local_only` task and the email boundary (folded into LUM-914 "Later"). The code default is not on-box checked, as for every task without `email_boundary` (ADR 241 §9); `temporal_extract` reads the same text first with the same default.
+
+**Revisit.** If the ADR 151 eval fails `llama3.2:3b` (LUM-947), falling back to the default no longer means a measured judge, and failing closed should be reconsidered. A second destructive task that is not `local_only` keeps the unchecked first entry with no lookup.
+
+**Tests:** in `orchestrator/tests/test_task_models.py`, `test_temporal_judge_off_box_entry_resolves_to_code_default`, `test_temporal_judge_never_takes_a_later_entry`, `test_destructive_task_returns_on_box_first_entry_unchecked`, `test_temporal_judge_on_box_keyless_entry_is_still_the_judge`, `test_temporal_judge_first_entry_on_unresolved_or_public_host_resolves_to_default`, `test_temporal_judge_lookup_error_resolves_to_default_without_leaking`, `test_temporal_judge_dynamic_alias_must_be_on_box`, `test_temporal_judge_default_warning_logged_once_and_not_by_explain`, `test_temporal_judge_warning_after_boot_call_is_per_reason`, `test_temporal_judge_follows_a_flapping_first_entry` and `test_destructive_task_that_is_not_local_only_returns_first_entry_with_no_lookup`; in `orchestrator/tests/test_task_models_call_sites.py`, `test_temporal_judge_cloud_entry_never_reaches_the_cloud_under_allow_cloud`, `test_temporal_judge_cloud_entry_is_replaced_and_explicit_cloud_is_still_blocked`, `test_temporal_judge_never_falls_through_its_list`, `test_judge_boot_warning_fires_when_the_default_is_unresolvable` and `test_substituted_judge_is_the_reference_and_may_auto_apply`; in `orchestrator/tests/test_api_v1_admin_diagnostics.py`, `test_admin_diagnostics_temporal_judge_cloud_entry_reads_default`. With the resolver change reverted, 23 test cases from this list fail (the positive controls pass).

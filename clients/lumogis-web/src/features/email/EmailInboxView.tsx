@@ -14,6 +14,7 @@
 // snooze re-surface + default fallback) replaces LUM-642's read-only `deriveLane`.
 // Snoozed-not-due items live in a collapsible disclosure, out of the three lanes.
 
+import { formatDateTime } from "../../util/formatTimestamp";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
@@ -58,6 +59,17 @@ import { type Lane } from "./lanes";
 import { collapseProjections, effectiveLane, SNOOZE_PRESETS } from "./triage";
 import { isEmailActivated } from "./activation";
 import { fetchRecipientSuggestions } from "../../api/emailRecipients";
+import { EmptyState } from "@/components/page/EmptyState";
+import { ErrorState } from "@/components/page/ErrorState";
+import { LoadingPlaceholder, SkeletonText } from "@/components/page/LoadingState";
+import { PageHeader } from "@/components/page/PageHeader";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Input } from "@/components/ui/input";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { ChevronDown } from "lucide-react";
 import { fetchSignature } from "../../api/emailSignature";
 import { hasSmtpCredential, listMyCredentials } from "../../api/connectorCredentials";
 import { acknowledgeBounce, fetchBounces } from "../../api/emailBounces";
@@ -111,7 +123,7 @@ function healthLabel(sources: SourceRow[]): string {
     .sort();
   const oldest = polled[0];
   const anyIdle = imap.some((s) => !s.polling_active);
-  const when = oldest ? new Date(oldest).toLocaleString() : "never";
+  const when = oldest ? formatDateTime(oldest) : "never";
   const count = imap.length === 1 ? "1 mailbox" : `${imap.length} mailboxes`;
   return `${count} · last synced ${when}${anyIdle ? " · a mailbox is paused" : ""}`;
 }
@@ -210,6 +222,9 @@ class PartialBulkError extends Error {
     super("bulk triage partially applied");
   }
 }
+
+/** Toggle value standing for "no category filter" (slugs never start with `_`). */
+const ALL_CATEGORIES = "__all__";
 
 export function EmailInboxView(): JSX.Element {
   const { client, tokens } = useAuth();
@@ -603,7 +618,9 @@ export function EmailInboxView(): JSX.Element {
   const [bulkSnoozeOpen, setBulkSnoozeOpen] = useState(false);
   const [lastAction, setLastAction] = useState<TriageSnapshot[] | null>(null);
   const [bulkNotice, setBulkNotice] = useState<string | null>(null);
-  const filterRef = useRef<HTMLInputElement | null>(null);
+  // The ui Input is a plain function component (no ref on React 18), so the
+  // filter is reached through its wrapper.
+  const filterRef = useRef<HTMLDivElement | null>(null);
 
   /** The flattened rendered order: lanes in render order, then the snoozed
    *  disclosure. Shift-ranges and cursor movement both walk this. */
@@ -889,7 +906,7 @@ export function EmailInboxView(): JSX.Element {
         const row = cursorId ? rowsById.get(cursorId) : undefined;
         if (row) setForwardSignal(row);
       },
-      focusFilter: () => filterRef.current?.focus(),
+      focusFilter: () => filterRef.current?.querySelector("input")?.focus(),
       toggleHelp: () => setHelpOpen((v) => !v),
     }),
     [order, cursorId, rowsById, runBulk, actionTargets, undoLast, advanceCursorPastAction],
@@ -952,148 +969,173 @@ export function EmailInboxView(): JSX.Element {
   // --- Three distinct route states (never conflate loading with unconfigured) ---
   if (sourcesQ.isLoading || signalsQ.isLoading || triagedQ.isLoading) {
     return (
-      <section className="lumogis-email" data-testid="email-inbox-view">
-        <h2>Email</h2>
-        <p className="lumogis-email__loading" role="status">
-          Loading your email…
-        </p>
+      <section data-testid="email-inbox-view">
+        <PageHeader title="Email" />
+        <LoadingPlaceholder label="Loading your email…">
+          <SkeletonText lines={5} />
+        </LoadingPlaceholder>
       </section>
     );
   }
   if (sourcesQ.isError || signalsQ.isError || triagedQ.isError) {
     return (
-      <section className="lumogis-email" data-testid="email-inbox-view">
-        <h2>Email</h2>
-        <p role="alert">Couldn't load email.</p>
-        <button
-          type="button"
-          onClick={() => {
+      <section data-testid="email-inbox-view">
+        <PageHeader title="Email" />
+        <ErrorState
+          title="Couldn't load email"
+          message="Your mail could not be loaded. Check your connection and try again."
+          retryLabel="Retry"
+          onRetry={() => {
             void sourcesQ.refetch();
             void signalsQ.refetch();
             void triagedQ.refetch();
           }}
-        >
-          Retry
-        </button>
+        />
       </section>
     );
   }
   if (!isEmailActivated(sources)) {
     return (
-      <section className="lumogis-email" data-testid="email-inbox-view">
-        <h2>Email</h2>
-        <p>No mailbox connected yet.</p>
-        <Link to="/me/email-signals">Connect a mailbox in Settings →</Link>
+      <section data-testid="email-inbox-view">
+        <PageHeader title="Email" />
+        <EmptyState
+          title="No mailbox connected yet"
+          helperText="Connect a mailbox and Lumogis will sort your mail into what needs you and what can wait."
+          actions={[{ label: "Connect a mailbox in Settings →", href: "/settings/email", primary: true }]}
+        />
       </section>
     );
   }
 
   return (
-    <section className="lumogis-email" data-testid="email-inbox-view">
-      <h2>Email</h2>
+    <section data-testid="email-inbox-view" className="flex flex-col gap-3">
+      <PageHeader
+        title="Email"
+        description="What needs you, what is good to know, and what is done."
+        action={
+          sendableMailboxes.length > 0 ? (
+            // LUM-830 — the only way to start a message rather than answer one.
+            // In the header because writing is a primary action, not something
+            // to find.
+            <Button type="button" onClick={() => setComposeOpen(true)}>
+              New message
+            </Button>
+          ) : undefined
+        }
+      />
       {/* LUM-742: the ONLY change to this file. Everything else about /email —
           the three lanes, filters, bulk triage, shortcuts — is untouched. */}
       <EmailTabs active="triage" pendingCount={pendingAttachments} />
-      {/* LUM-830 — the only way to start a message rather than answer one.
-          Directly under the tabs because writing is a primary action, not
-          something to find. */}
-      {sendableMailboxes.length > 0 ? (
-        <button
-          type="button"
-          className="lumogis-email__compose"
-          onClick={() => setComposeOpen(true)}
-        >
-          New message
-        </button>
-      ) : noMailboxCanSend ? (
+      {sendableMailboxes.length === 0 && noMailboxCanSend ? (
         // Not a missing button: sending is something the user can switch on, so
         // silence here is a dead end. Says what is missing and where to fix it.
-        <p className="lumogis-email__compose-off" role="status">
+        <p className="m-0 text-sm text-muted-foreground" role="status">
           Turn on sending for a mailbox to write new messages.{" "}
-          <Link to="/me/email-signals">Mailbox settings →</Link>
+          <Link to="/settings/email" className="text-accent-text underline underline-offset-2">
+            Mailbox settings →
+          </Link>
         </p>
       ) : null}
       {/* LUM-820 — above the lanes on purpose. A message that did not arrive is
           not triage: the lanes are organised around what to do NEXT, and a
           failed send is something already believed done. */}
       <BounceNotice fetchBounces={bounceApi.list} acknowledge={bounceApi.acknowledge} />
-      <p className="lumogis-email__health" role="status">
+      <p className="m-0 text-sm text-muted-foreground" role="status">
         {healthLabel(sources ?? [])}
       </p>
 
       {triageMutation.isError ? (
-        <p className="lumogis-email__mutation-error" role="alert">
-          Couldn't update — retry
-        </p>
+        <Alert variant="destructive">
+          <AlertDescription>Couldn't update — retry</AlertDescription>
+        </Alert>
       ) : null}
 
       {feedbackToast !== null ? (
-        <p className="lumogis-email__feedback-toast" role="status">
-          <button type="button" onClick={() => setFeedbackToast(null)}>
+        <p className="m-0" role="status">
+          <Button type="button" variant="secondary" size="sm" onClick={() => setFeedbackToast(null)}>
             {feedbackToast}
-          </button>
+          </Button>
         </p>
       ) : null}
 
       {categories.length > 0 ? (
-        <div className="lumogis-email__filters" role="group" aria-label="Category filters">
-          <button
-            type="button"
-            aria-pressed={selectedCategory === null}
-            onClick={() => setSelectedCategory(null)}
-          >
+        <ToggleGroup
+          variant="outline"
+          size="sm"
+          spacing={1}
+          aria-label="Category filters"
+          className="flex-wrap"
+          value={[selectedCategory ?? ALL_CATEGORIES]}
+          onValueChange={(next: unknown[]) => {
+            // Pressing the selected pill again would clear the group; keep it.
+            const picked = next[0];
+            if (typeof picked !== "string") return;
+            setSelectedCategory(picked === ALL_CATEGORIES ? null : picked);
+          }}
+        >
+          <ToggleGroupItem value={ALL_CATEGORIES} className="rounded-full">
             All
-          </button>
+          </ToggleGroupItem>
           {categories.map((c) => (
-            <button
+            <ToggleGroupItem
               key={c.slug}
-              type="button"
-              aria-pressed={selectedCategory === c.slug}
+              value={c.slug}
+              className="rounded-full"
               data-category-slug={c.slug}
-              onClick={() => setSelectedCategory(c.slug)}
             >
               {c.label}
-            </button>
+            </ToggleGroupItem>
           ))}
-        </div>
+        </ToggleGroup>
       ) : null}
 
-      <input
-        ref={filterRef}
-        type="search"
-        className="lumogis-email__search"
-        placeholder="Filter loaded email…"
-        aria-label="Filter loaded email"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-      />
-      <Link className="lumogis-email__search-all" to="/search">
-        Search all email →
-      </Link>
+      <div ref={filterRef} className="flex flex-wrap items-center gap-x-4 gap-y-1">
+        <Input
+          type="search"
+          className="max-w-sm"
+          placeholder="Filter loaded email…"
+          aria-label="Filter loaded email"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+        />
+        <Link to="/search" className="text-sm text-accent-text underline underline-offset-2">
+          Search all email →
+        </Link>
+      </div>
 
-      <p className="lumogis-email__shortcut-hint">
-        Press <kbd>?</kbd> for keyboard shortcuts
+      <p className="m-0 text-xs text-muted-foreground">
+        Press <kbd className="rounded border bg-muted px-1 font-mono">?</kbd> for keyboard shortcuts
       </p>
 
       {bulkNotice !== null ? (
-        <p className="lumogis-email__bulk-notice" role="alert">
-          {bulkNotice}
-        </p>
+        <Alert variant="destructive">
+          <AlertDescription>{bulkNotice}</AlertDescription>
+        </Alert>
       ) : null}
 
       {/* The undo banner persists until the next action or an explicit dismiss —
           no timer. An undo that vanishes while the user is still deciding is
           worse than a banner that lingers. */}
       {lastAction !== null && lastAction.length > 0 ? (
-        <p className="lumogis-email__undo" role="status" data-testid="undo-banner">
+        <div
+          className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/50 px-3 py-2 text-sm"
+          role="status"
+          data-testid="undo-banner"
+        >
           <span>{lastAction.length} updated.</span>
-          <button type="button" onClick={undoLast}>
+          <Button type="button" variant="outline" size="sm" onClick={undoLast}>
             Undo
-          </button>
-          <button type="button" aria-label="Dismiss" onClick={() => setLastAction(null)}>
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Dismiss"
+            onClick={() => setLastAction(null)}
+          >
             ×
-          </button>
-        </p>
+          </Button>
+        </div>
       ) : null}
 
       {/* LUM-819: the bulk bar acts on the LANE selection, so under an active
@@ -1142,22 +1184,22 @@ export function EmailInboxView(): JSX.Element {
             const laneIds = byLane[lane].map((s) => s.signal_id);
             const allSelected = laneIds.length > 0 && laneIds.every((id) => selection.ids.has(id));
             return (
-              <div key={lane} className="lumogis-email__lane" data-testid={`lane-${lane}`}>
-                <h3>
+              <section key={lane} className="flex flex-col gap-2" data-testid={`lane-${lane}`}>
+                <h2 className="m-0 flex items-center gap-2 text-base font-semibold">
                   {laneIds.length > 0 ? (
-                    <input
-                      type="checkbox"
-                      className="lumogis-email__lane-select-all"
+                    <Checkbox
                       data-testid={`select-all-${lane}`}
                       aria-label={`Select all in ${label}`}
                       checked={allSelected}
-                      onChange={(e) => setSelection((s) => setMany(s, laneIds, e.target.checked))}
+                      onCheckedChange={(checked) =>
+                        setSelection((s) => setMany(s, laneIds, checked === true))
+                      }
                     />
                   ) : null}
                   {label}
-                </h3>
+                </h2>
                 {byLane[lane].length > 0 ? (
-                  <ul className="lumogis-email__list">
+                  <ul className="m-0 flex list-none flex-col gap-2 p-0">
                     {byLane[lane].map((s) => (
                       <EmailSignalCard
                         key={s.signal_id}
@@ -1180,16 +1222,25 @@ export function EmailInboxView(): JSX.Element {
                     ))}
                   </ul>
                 ) : (
-                  <p className="lumogis-email__lane-empty">{empty}</p>
+                  <p className="m-0 text-sm text-muted-foreground">{empty}</p>
                 )}
-              </div>
+              </section>
             );
           })}
 
       {!searchActive && snoozed.length > 0 ? (
-        <details className="lumogis-email__snoozed" data-testid="snoozed-disclosure">
-          <summary>Snoozed ({snoozed.length})</summary>
-          <ul className="lumogis-email__list">
+        <Collapsible data-testid="snoozed-disclosure">
+          <CollapsibleTrigger
+            render={<Button type="button" variant="ghost" size="sm" className="group/trigger -ml-2" />}
+          >
+            <ChevronDown
+              aria-hidden="true"
+              className="transition-transform group-aria-expanded/trigger:rotate-180"
+            />
+            Snoozed ({snoozed.length})
+          </CollapsibleTrigger>
+          <CollapsibleContent keepMounted className="pt-2">
+          <ul className="m-0 flex list-none flex-col gap-2 p-0">
             {snoozed.map((s) => (
               <EmailSignalCard
                 key={s.signal_id}
@@ -1211,7 +1262,8 @@ export function EmailInboxView(): JSX.Element {
               />
             ))}
           </ul>
-        </details>
+          </CollapsibleContent>
+        </Collapsible>
       ) : null}
 
       <ShortcutsHelp open={helpOpen} onClose={() => setHelpOpen(false)} />
@@ -1219,18 +1271,21 @@ export function EmailInboxView(): JSX.Element {
           it is open — so the dialog owns its own Escape handler. */}
 
       {triagedQ.hasNextPage ? (
-        <button
+        <Button
           type="button"
-          className="lumogis-email__show-more"
+          variant="outline"
+          className="self-start"
           disabled={triagedQ.isFetchingNextPage}
           onClick={() => void triagedQ.fetchNextPage()}
         >
           {triagedQ.isFetchingNextPage ? "Loading…" : "Show older done & snoozed"}
-        </button>
+        </Button>
       ) : null}
 
-      <p className="lumogis-email__setup">
-        <Link to="/me/email-signals">Manage mailboxes →</Link>
+      <p className="m-0 text-sm">
+        <Link to="/settings/email" className="text-accent-text underline underline-offset-2">
+          Manage mailboxes →
+        </Link>
       </p>
 
       {/* LUM-830 — the blank composer. Keyed on the open flag for the same
@@ -1265,24 +1320,32 @@ export function EmailInboxView(): JSX.Element {
       {replyAll !== null ? (
         <>
           {replyAll.notOwned ? (
-            <p className="lumogis-email__reply-all-notice" role="alert">
-              This email is in another household member's mailbox, so Lumogis can't reply from it.
-              You can still forward it from one of your own.
-            </p>
+            <Alert variant="destructive">
+              <AlertDescription>
+                This email is in another household member's mailbox, so Lumogis can't reply from it.
+                You can still forward it from one of your own.
+              </AlertDescription>
+            </Alert>
           ) : replyAll.degraded ? (
-            <p className="lumogis-email__reply-all-notice" role="status">
-              Couldn't read the other recipients — replying to the sender only.
-            </p>
+            <Alert role="status">
+              <AlertDescription>
+                Couldn't read the other recipients — replying to the sender only.
+              </AlertDescription>
+            </Alert>
           ) : null}
           {replyAll.truncated > 0 ? (
-            <p className="lumogis-email__reply-all-notice" role="alert">
-              {replyAll.truncated} further recipients were left out.
-            </p>
+            <Alert variant="destructive">
+              <AlertDescription>
+                {replyAll.truncated} further recipients were left out.
+              </AlertDescription>
+            </Alert>
           ) : null}
           {replyAll.largeThread ? (
-            <p className="lumogis-email__reply-all-notice" role="alert">
-              This reply goes to {replyAll.cc.length} people. Check the list before sending.
-            </p>
+            <Alert variant="destructive">
+              <AlertDescription>
+                This reply goes to {replyAll.cc.length} people. Check the list before sending.
+              </AlertDescription>
+            </Alert>
           ) : null}
         </>
       ) : null}

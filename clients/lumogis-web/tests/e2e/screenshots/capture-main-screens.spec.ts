@@ -39,7 +39,7 @@ async function collapseSidebar(page: Page): Promise<void> {
   const collapse = page.getByRole("button", { name: "Collapse sidebar" });
   if (await collapse.isVisible().catch(() => false)) {
     await collapse.click();
-    await page.locator(".lumogis-sidebarnav--collapsed").waitFor({ state: "visible", timeout: 5_000 });
+    await page.locator('nav[aria-label="Primary navigation"][data-collapsed]').waitFor({ state: "visible", timeout: 5_000 });
     await page.locator(".lumogis-shell__body").evaluate((el) => {
       const cols = getComputedStyle(el).gridTemplateColumns;
       if (!cols.startsWith("64px")) {
@@ -53,7 +53,7 @@ async function expandSidebar(page: Page): Promise<void> {
   const expand = page.getByRole("button", { name: "Expand sidebar" });
   if (await expand.isVisible().catch(() => false)) {
     await expand.click();
-    await page.locator(".lumogis-sidebarnav--collapsed").waitFor({ state: "hidden", timeout: 5_000 });
+    await page.locator('nav[aria-label="Primary navigation"][data-collapsed]').waitFor({ state: "hidden", timeout: 5_000 });
   }
 }
 
@@ -162,49 +162,47 @@ test("capture main screens", async ({ browser }) => {
   await page.getByRole("heading", { name: /approvals/i }).waitFor({ timeout: 15_000 });
   await capture(page, "08-approvals.png");
 
-  await page.goto("/me/profile");
+  await page.goto("/settings/profile");
   await waitForShell(page);
-  await page.getByRole("navigation", { name: /^settings$/i }).waitFor({ timeout: 15_000 });
+  await page.getByRole("navigation", { name: "Settings" }).waitFor({ timeout: 15_000 });
   await capture(page, "09-settings-profile.png");
 
-  await page.goto("/me/shared-items");
+  await page.goto("/settings/shared");
   await waitForShell(page);
   await page.getByTestId("me-shared-items").waitFor({ timeout: 15_000 });
   await capture(page, "10-settings-shared-items.png");
 
-  await page.goto("/audit");
+  await page.goto("/settings/activity");
   await waitForShell(page);
-  await page.getByRole("heading", { name: /my activity/i }).waitFor({ timeout: 15_000 });
+  await page.getByRole("heading", { level: 1, name: "Activity" }).waitFor({ timeout: 15_000 });
   await page.getByTestId("audit-member-filters").waitFor({ timeout: 15_000 });
   await collapseSidebar(page);
   await capture(page, "11-audit-log.png");
   await expandSidebar(page);
 
-  await page.goto("/me/appearance");
+  await page.goto("/settings/appearance");
   await waitForShell(page);
-  await page.getByRole("heading", { name: /^appearance$/i }).waitFor({ timeout: 15_000 });
+  await page.getByRole("heading", { level: 1, name: "Look and feel" }).waitFor({ timeout: 15_000 });
   await capture(page, "15-settings-appearance.png");
 
-  await page.goto("/admin/audit");
+  await page.goto("/settings/activity?view=household");
   await waitForShell(page);
-  await page.getByRole("heading", { name: /^household audit$/i }).waitFor({ timeout: 15_000 });
+  await page.getByRole("heading", { level: 1, name: "Activity" }).waitFor({ timeout: 15_000 });
   await capture(page, "16-admin-household-audit.png");
 
-  await page.goto("/admin/users");
+  await page.goto("/settings/members");
   await waitForShell(page);
-  await page.getByRole("heading", { name: "Users" }).waitFor({ timeout: 15_000 });
+  await page.getByRole("heading", { level: 1, name: "Members and invites" }).waitFor({ timeout: 15_000 });
   await capture(page, "12-admin-users.png");
 
-  await page.goto("/admin/shared-items");
+  await page.goto("/settings/shared?view=household");
   await waitForShell(page);
   await page.getByTestId("admin-shared-items").waitFor({ timeout: 15_000 });
   await capture(page, "13-admin-shared-items.png");
 
-  await page.goto("/admin/system-status");
+  await page.goto("/settings/health");
   await waitForShell(page);
-  await page
-    .getByRole("heading", { name: /^system status$/i, level: 2 })
-    .waitFor({ timeout: 15_000 });
+  await page.getByRole("heading", { level: 1, name: "Health and backups" }).waitFor({ timeout: 15_000 });
   await page.getByText(/^loading/i).waitFor({ state: "hidden", timeout: 60_000 }).catch(() => {});
   await capture(page, "14-admin-system-status.png");
 

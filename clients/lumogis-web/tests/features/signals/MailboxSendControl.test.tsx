@@ -8,7 +8,7 @@
 // shapes — which is the whole risk surface here. The route's own behaviour is
 // covered server-side by LUM-771/772.
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -345,14 +345,24 @@ describe("turning sending on", () => {
 });
 
 describe("turning sending off", () => {
+  const BASE_CONFIRM =
+    "Lumogis won't be able to send as you from this mailbox. Receiving is unaffected.";
+  const CONDITIONAL_SENTENCE =
+    " If you gave this mailbox its own sending password, you'll need to enter it " +
+    "again to turn sending back on.";
+
+  async function openDialog(name = /Turn off sending for/i) {
+    await userEvent.click(screen.getByRole("button", { name }));
+    return screen.findByRole("alertdialog");
+  }
+
   it("confirms, states the loss, and does not overclaim the password cost", async () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     setEmailSmtp.mockResolvedValue({ ok: true, enabled: false, tested: false, error: null });
     renderControl({ state: "on" });
 
-    await userEvent.click(screen.getByRole("button", { name: /Turn off sending for Personal/i }));
-
-    const text = confirm.mock.calls[0][0] as string;
+    const dialog = await openDialog(/Turn off sending for Personal/i);
+    const text = dialog.textContent ?? "";
+    expect(text).toContain("Turn off sending for Personal?");
     expect(text).toContain("Receiving is unaffected");
     // CONDITIONAL, not a claim. The client cannot see `reuse_imap` and cannot see
     // the mailbox's auth type, so it cannot know whether a password is at stake.
@@ -360,43 +370,30 @@ describe("turning sending off", () => {
     // reuse-the-IMAP-password default has nothing to retype either.
     expect(text).toContain("If you gave this mailbox its own sending password");
     expect(text).not.toMatch(/You will need to (re-)?enter/i);
+    expect(setEmailSmtp).not.toHaveBeenCalled();
   });
-
-  const BASE_CONFIRM =
-    "Turn off sending for Work? Lumogis won't be able to send as you from this " +
-    "mailbox. Receiving is unaffected.";
-  const CONDITIONAL_SENTENCE =
-    " If you gave this mailbox its own sending password, you'll need to enter it " +
-    "again to turn sending back on.";
 
   it("drops the password sentence for an OAuth mailbox, which never uses one", async () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     renderControl({ state: "on", authMethod: "oauth", mailboxName: "Work" });
-
-    await userEvent.click(screen.getByRole("button", { name: /Turn off sending for Work/i }));
-
-    expect(confirm.mock.calls[0][0]).toBe(BASE_CONFIRM);
+    const dialog = await openDialog(/Turn off sending for Work/i);
+    expect(dialog.textContent).toContain(BASE_CONFIRM);
+    expect(dialog.textContent).not.toContain("own sending password");
   });
 
-  it("keeps today's conditional sentence, byte-identical, for app-password and unknown", async () => {
+  it("keeps today's conditional sentence for app-password and unknown", async () => {
     for (const authMethod of ["app_password", null] as const) {
-      const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
       const { unmount } = renderAndUnmount({ state: "on", authMethod, mailboxName: "Work" });
-
-      await userEvent.click(screen.getByRole("button", { name: /Turn off sending for Work/i }));
-
-      expect(confirm.mock.calls[0][0]).toBe(BASE_CONFIRM + CONDITIONAL_SENTENCE);
+      const dialog = await openDialog(/Turn off sending for Work/i);
+      expect(dialog.textContent).toContain(BASE_CONFIRM + CONDITIONAL_SENTENCE);
       unmount();
-      confirm.mockRestore();
     }
   });
 
   it("sends nothing when the confirm is cancelled", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(false);
     renderControl({ state: "on" });
-
-    await userEvent.click(screen.getByRole("button", { name: /Turn off sending/i }));
-
+    const dialog = await openDialog();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(setEmailSmtp).not.toHaveBeenCalled();
   });
 
@@ -405,11 +402,11 @@ describe("turning sending off", () => {
     // a failed turn-off routed through the opt-in prefix would have told a user
     // whose sending is still on that they "can try again later" to turn it on.
     // There is also nothing to revert — this control does not update optimistically.
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     setEmailSmtp.mockRejectedValue(new ApiError(503, "x", "mailbox_unreachable"));
     renderControl({ state: "on" });
 
-    await userEvent.click(screen.getByRole("button", { name: /Turn off sending/i }));
+    const dialog = await openDialog();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Turn off sending" }));
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("Sending is still on");

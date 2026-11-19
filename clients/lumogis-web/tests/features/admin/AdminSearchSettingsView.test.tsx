@@ -87,7 +87,7 @@ describe("AdminSearchSettingsView", () => {
     expect((save as HTMLButtonElement).disabled).toBe(true);
 
     const user = userEvent.setup();
-    await user.click(screen.getByLabelText(/BGE reranker/i));
+    await user.click(screen.getByRole("switch", { name: /better search ranking/i }));
 
     expect(screen.getByRole("note").textContent).toMatch(/memory pressure/i);
     expect((save as HTMLButtonElement).disabled).toBe(false);
@@ -135,15 +135,13 @@ describe("AdminSearchSettingsView", () => {
     expect(screen.queryByRole("button", { name: /Save & restart stack/i })).toBeNull();
   });
 
-  // The accessible-name assertion would also pass with `sr-only`; it guards
-  // against "fixing" the duplicate text by deleting the legend, which would
-  // drop the group's name. The class assertion pins the binding. Whether the
-  // CSS actually hides the legend needs a browser: see admin_search_settings.spec.ts.
-  it("names the reranking radio group with a visually-hidden legend (LUM-852)", async () => {
+  it("shows a plain on/off switch and an error state with retry", async () => {
+    let fail = true;
     const fetchImpl = vi.fn(async (input, init) => {
       const u = String(input);
       if (u.includes("/api/v1/auth/me")) return jsonResponse(200, adminUser);
       if (u.endsWith("/settings") && (!init?.method || init.method === "GET")) {
+        if (fail) return jsonResponse(500, { detail: "boom" });
         return jsonResponse(200, settingsBody());
       }
       return jsonResponse(404, {});
@@ -152,8 +150,12 @@ describe("AdminSearchSettingsView", () => {
 
     renderView(fetchImpl);
 
-    const group = await screen.findByRole("group", { name: "Reranking mode" });
-    expect(group.querySelector("legend")).toHaveClass("lumogis-visually-hidden");
+    const retry = await screen.findByRole("button", { name: /try again|retry/i });
+    fail = false;
+    await userEvent.setup().click(retry);
+    const sw = await screen.findByRole("switch", { name: /better search ranking/i });
+    expect(sw.getAttribute("aria-checked")).toBe("false");
+    expect(screen.getByText(/Off \(default/i)).toBeTruthy();
   });
 
   it("hides Save & restart when stack-control is unreachable and shows manual guidance after save", async () => {
@@ -185,7 +187,7 @@ describe("AdminSearchSettingsView", () => {
     renderView(fetchImpl);
 
     const user = userEvent.setup();
-    await user.click(await screen.findByLabelText(/BGE reranker/i));
+    await user.click(await screen.findByRole("switch", { name: /better search ranking/i }));
     expect(screen.queryByRole("button", { name: /Save & restart stack/i })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Save retrieval settings" }));
     expect(await screen.findByText(/Restart the Lumogis orchestrator process manually/i)).toBeTruthy();
@@ -222,7 +224,7 @@ describe("AdminSearchSettingsView", () => {
     renderView(fetchImpl);
 
     const user = userEvent.setup();
-    await user.click(await screen.findByLabelText(/BGE reranker/i));
+    await user.click(await screen.findByRole("switch", { name: /better search ranking/i }));
     await user.click(screen.getByRole("button", { name: "Save retrieval settings" }));
     await screen.findByText(/Change pending — restart orchestrator/i);
     expect(

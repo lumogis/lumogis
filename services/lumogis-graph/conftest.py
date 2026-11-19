@@ -143,12 +143,19 @@ class MockMetadataStore:
     Honours the small subset of the real interface that KG routes touch:
     `ping`, `execute`, `fetch_one`, `fetch_all`, `close`. Tests can poke
     canned rows in via `_seed_fetch_one` / `_seed_fetch_all`.
+
+    `fetch_one` is a FIFO, except `SELECT token_version FROM users` (the auth
+    `tv` check, LUM-915), which is answered from `token_versions` (user id ->
+    version; absent -> no row) so it never consumes rows seeded for other
+    reads. Every call is logged in `fetched`.
     """
 
     def __init__(self):
         self._fetch_one_rows: list = []
         self._fetch_all_rows: list[list] = []
         self.executed: list[tuple[str, tuple | None]] = []
+        self.token_versions: dict[str, int] = {}
+        self.fetched: list[tuple[str, tuple | None]] = []
 
     def ping(self) -> bool:
         return True
@@ -157,6 +164,11 @@ class MockMetadataStore:
         self.executed.append((query, params))
 
     def fetch_one(self, query: str, params: tuple | None = None):
+        self.fetched.append((query, params))
+        if "token_version" in query and "FROM users" in query:
+            if params and params[0] in self.token_versions:
+                return {"token_version": self.token_versions[params[0]]}
+            return None
         return self._fetch_one_rows.pop(0) if self._fetch_one_rows else None
 
     def fetch_all(self, query: str, params: tuple | None = None) -> list:

@@ -51,6 +51,7 @@
 - [`guides/connector-credentials.md`](guides/connector-credentials.md)
 - [`guides/per-user-export-format.md`](guides/per-user-export-format.md)
 - [`guides/structured-logging.md`](guides/structured-logging.md)
+- [`guides/what-lumogis-knows.md`](guides/what-lumogis-knows.md) — member guide to the **What Lumogis knows** page (LUM-161)
 - [`release/public-agpl-release-workflow.md`](release/public-agpl-release-workflow.md) — building a publishable source tree
 - [`public-export/README.md`](public-export/README.md) — sanitized **`AGENTS.md`** / orientation templates for **`/update-public-export`**; operator self-evaluation guide **`EVALUATION.md`** (**LUM-363**)
 - [`release/dev-to-main-clean-promotion-workflow.md`](release/dev-to-main-clean-promotion-workflow.md) — promoting integration work onto the release line; **`scripts/release-preflight.sh`** pre-promotion gate (**LUM-788**); **`gate:pre-main`** / **`pre_main_gate.mjs`** (**ADR 204**, **LUM-802**); **`make main-dev-drift-check`** ratchet (**LUM-789**)

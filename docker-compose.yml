@@ -46,15 +46,27 @@ services:
       FILESYSTEM_ROOT: /data
       FILESYSTEM_ROOT_HOST: ${FILESYSTEM_ROOT:-./lumogis-data}
       STACK_CONTROL_URL: http://stack-control:9000
-      # Same-origin Lumogis Web (Caddy) + refresh-cookie CSRF: pin the browser
-      # origin. Default matches http://localhost (port 80) — set in .env if you
-      # use 127.0.0.1, HTTPS, or a LAN hostname. See .env.example.
-      LUMOGIS_PUBLIC_ORIGIN: ${LUMOGIS_PUBLIC_ORIGIN:-http://localhost}
+      # Same-origin Lumogis Web (Caddy) + refresh-cookie CSRF. Empty (the default)
+      # means Lumogis derives the origin from the request: scheme plus the Host
+      # the browser used, so a phone at http://<lan-ip> works without a setting.
+      # Set it in .env to pin one exact origin (a public name or a tunnel), and
+      # for emailed links (password reset), which are never built from Host.
+      # See .env.example.
+      LUMOGIS_PUBLIC_ORIGIN: ${LUMOGIS_PUBLIC_ORIGIN:-}
       # Core trusts only the Caddy container, by service name (resolved by
       # Docker DNS), for X-Forwarded-For. Caddy decides the client IP; see
       # LUMOGIS_CADDY_TRUSTED_PROXIES below. The app trusts no forwarded
       # headers unless this env is set (LUM-887 / ID-007).
       LUMOGIS_TRUSTED_PROXIES: ${LUMOGIS_TRUSTED_PROXIES:-caddy}
+      # LUM-331 secure address at home (Admin → Secure address; off until an admin
+      # turns it on). Core writes the household's Caddy site into the caddy-home
+      # volume; the name service URL is explicit so Core, the Caddy site and the
+      # egress ceiling see one value. The port is the host's HTTPS port, which
+      # becomes part of the address when it is not 443.
+      CADDY_HOME_DIR: /caddy-home
+      LUMOGIS_HOME_DNS_URL: ${LUMOGIS_HOME_DNS_URL:-https://dns.homes.lumogis.app}
+      LUMOGIS_HOME_DNS_ACME_STAGING: ${LUMOGIS_HOME_DNS_ACME_STAGING:-false}
+      LUMOGIS_SECURE_ADDRESS_PORT: ${CADDY_HTTPS_HOST_PORT:-443}
     volumes:
       - ${FILESYSTEM_ROOT:-./lumogis-data}:/data:ro
       # Project root — admin.py writes /project/.env (RERANKER_BACKEND, FILESYSTEM_ROOT),
@@ -78,6 +90,9 @@ services:
       # there) and FILESYSTEM_ROOT=/data makes it the folder-watcher's root, so a
       # staged file placed there would also be ingested as a new document.
       - email_staging:/var/lib/lumogis/email-staging
+      # LUM-331: the household's secure-address Caddy site (written here, read by
+      # caddy at /etc/caddy/home.d). The entrypoint makes it the runtime user's.
+      - caddy-home:/caddy-home
     depends_on:
       qdrant:
         condition: service_healthy
@@ -282,6 +297,15 @@ services:
       - ./docker/caddy/preflight.sh:/etc/caddy/preflight.sh:ro
       - caddy_data:/data
       - caddy_config:/config
+      # LUM-331: the household's secure-address site, written by Core. Read-only
+      # here; nocopy so the image's empty /etc/caddy/home.d never seeds the volume
+      # (Core's side creates and owns it).
+      - type: volume
+        source: caddy-home
+        target: /etc/caddy/home.d
+        read_only: true
+        volume:
+          nocopy: true
     depends_on:
       orchestrator:
         condition: service_healthy
@@ -369,4 +393,5 @@ volumes:
   postgres_data:
   hf_cache:      # HuggingFace model cache — persists across container rebuilds (BGE reranker)
   email_staging: # LUM-695 outbound attachment staging (writable; outside /data)
+  caddy-home:    # LUM-331 the household's secure-address Caddy site (Core rw, caddy ro)
   # ntfy_data:   # uncomment if ntfy service above is enabled

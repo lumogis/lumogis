@@ -54,6 +54,9 @@ wf "unparseable yaml"          reject $'jobs:\n  b:\n   runs-on: [\n'
 wf "github-hosted scalar"      accept $'jobs:\n  b:\n    runs-on: ubuntu-latest\n'
 wf "static matrix include"     accept $'jobs:\n  b:\n    strategy:\n      matrix:\n        include:\n          - platform: macos-latest\n          - platform: ubuntu-22.04\n    runs-on: ${{ matrix.platform }}\n'
 wf "labels mapping, hosted"    accept $'jobs:\n  b:\n    runs-on:\n      labels: [ubuntu-latest]\n'
+wf "hosted arm64 matrix"       accept $'jobs:\n  b:\n    strategy:\n      matrix:\n        runner: [ubuntu-24.04, ubuntu-24.04-arm]\n    runs-on: ${{ matrix.runner }}\n'
+wf "arm64 lookalike"           reject $'jobs:\n  b:\n    runs-on: ubuntu-24.04-arm-large\n'
+wf "static runner, dynamic suite" accept $'jobs:\n  b:\n    strategy:\n      matrix:\n        runner: [ubuntu-24.04, ubuntu-24.04-arm]\n        suite: ${{ fromJSON(needs.f.outputs.s) }}\n    runs-on: ${{ matrix.runner }}\n'
 wf "no runs-on at all"         accept $'jobs:\n  b:\n    uses: ./.github/workflows/other.yml\n'
 
 echo "== personal-token content gate =="

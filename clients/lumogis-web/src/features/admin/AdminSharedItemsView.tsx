@@ -5,9 +5,11 @@
 // the household and retract one on a member's behalf (retract-only, audited).
 // Distinct from the owner-only unshare each member has on their own items —
 // this is admin governance, server-gated by require_admin.
+// Rebuilt on the shared components in LUM-993 plan B Pass 6.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { toast } from "sonner";
 
 import {
   adminUnshare,
@@ -16,6 +18,23 @@ import {
 } from "../../api/adminSharedItems";
 import { ApiError } from "../../api/client";
 import { useAuth, useUser } from "../../auth/AuthProvider";
+import { EmptyState } from "../../components/page/EmptyState";
+import { ErrorState } from "../../components/page/ErrorState";
+import { LoadingPlaceholder, SkeletonText } from "../../components/page/LoadingState";
+import { PageSection } from "../../components/page/PageSection";
+import { RowActions } from "../../components/page/RowActions";
+import { Alert, AlertDescription } from "../../components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "../../components/ui/alert-dialog";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
 
 const RESOURCE_LABELS: Record<AdminSharedItem["resource_type"], string> = {
   notes: "note",
@@ -62,7 +81,7 @@ export function AdminSharedItemsView(): JSX.Element | null {
   const user = useUser();
   const qc = useQueryClient();
   const [err, setErr] = useState<string | null>(null);
-  const [confirming, setConfirming] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState<AdminSharedItem | null>(null);
 
   const isAdmin = user?.role === "admin";
 
@@ -76,7 +95,7 @@ export function AdminSharedItemsView(): JSX.Element | null {
     mutationFn: (item: AdminSharedItem) =>
       adminUnshare(client, item.resource_type, item.resource_id),
     onSuccess: () => {
-      setConfirming(null);
+      toast("Stopped sharing.");
       void qc.invalidateQueries({ queryKey: ["admin", "shared-items"] });
     },
     onError: (e) => setErr(errMsg(e)),
@@ -90,93 +109,108 @@ export function AdminSharedItemsView(): JSX.Element | null {
   const items = listQ.data?.items ?? [];
 
   return (
-    <section className="lumogis-admin-dense-section" data-testid="admin-shared-items">
-      <h2>Household shared items</h2>
-      <p style={{ opacity: 0.8 }}>
+    <section data-testid="admin-shared-items">
+      <p className="mb-4 max-w-2xl text-sm text-muted-foreground">
         Everything members have shared with the household. As an admin you can
-        retract a share on a member&apos;s behalf — this removes the household
-        copy only; the owner keeps their private original and can re-share it.
+        stop a share on a member&apos;s behalf. This removes the household
+        copy only; the owner keeps their private original and can share it again.
       </p>
 
       {err && (
-        <p role="alert" style={{ color: "#c62828" }}>
-          {err}
-        </p>
+        <Alert variant="destructive" className="mb-4 max-w-2xl">
+          <AlertDescription>{err}</AlertDescription>
+        </Alert>
       )}
 
-      {listQ.isPending && <p role="status">Loading…</p>}
-      {listQ.isError && <p role="alert">Failed to load shared items.</p>}
+      {listQ.isPending && (
+        <LoadingPlaceholder label="Loading shared items…" className="max-w-2xl">
+          <SkeletonText lines={4} />
+        </LoadingPlaceholder>
+      )}
+      {listQ.isError && (
+        <ErrorState message="Lumogis couldn't load the shared items." onRetry={() => void listQ.refetch()} />
+      )}
       {listQ.isSuccess && items.length === 0 && (
-        <p role="status">Nothing is shared with the household yet.</p>
+        <EmptyState
+          title="Nothing shared yet"
+          helperText="Nothing is shared with the household yet. When a member shares something it will appear here."
+        />
       )}
 
       {listQ.isSuccess && items.length > 0 && (
-        <div className="lumogis-table-scroll">
-        <table className="lumogis-dense-table lumogis-responsive-table">
-          <thead>
-            <tr>
-              <th>Type</th>
-              <th>Shared by</th>
-              <th>Item</th>
-              <th aria-label="Actions" />
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((item) => {
-              const key = rowKey(item);
-              const type = RESOURCE_LABELS[item.resource_type];
-              return (
-                <tr key={key}>
-                  <td data-label="Type">{type}</td>
-                  <td data-label="Shared by">{ownerLabel(item)}</td>
-                  <td data-label="Item">
-                    <span className="lumogis-long-text">{item.label ?? item.resource_id}</span>
-                  </td>
-                  <td data-label="">
-                    {confirming === key ? (
-                      <span data-testid={`confirm-${key}`}>
-                        <span style={{ marginRight: "0.5rem" }}>
-                          Unshare {ownerLabel(item)}&apos;s {type} from the household?
-                        </span>
-                        <button
-                          type="button"
-                          disabled={unshareM.isPending}
-                          data-testid={`confirm-force-unshare-${key}`}
-                          onClick={() => {
-                            setErr(null);
-                            unshareM.mutate(item);
-                          }}
-                        >
-                          Confirm
-                        </button>{" "}
-                        <button
-                          type="button"
-                          disabled={unshareM.isPending}
-                          onClick={() => setConfirming(null)}
-                        >
-                          Cancel
-                        </button>
-                      </span>
-                    ) : (
-                      <button
-                        type="button"
-                        data-testid={`force-unshare-${key}`}
-                        onClick={() => {
-                          setErr(null);
-                          setConfirming(key);
-                        }}
-                      >
-                        Force unshare
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-        </div>
+        <PageSection title="Shared with the household">
+          <Table>
+            <TableHeader className="max-sm:hidden">
+              <TableRow>
+                <TableHead>Item</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead>Shared by</TableHead>
+                <TableHead className="w-12">
+                  <span className="sr-only">Actions</span>
+                </TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {items.map((item) => {
+                const key = rowKey(item);
+                const type = RESOURCE_LABELS[item.resource_type];
+                const name = item.label ?? item.resource_id;
+                return (
+                  <TableRow key={key} data-testid={`shared-row-${key}`} className="max-sm:flex max-sm:flex-wrap max-sm:items-center">
+                    <TableCell className="whitespace-normal break-words max-sm:w-full max-sm:font-medium sm:max-w-64">
+                      {name}
+                    </TableCell>
+                    <TableCell className="capitalize text-muted-foreground">{type}</TableCell>
+                    <TableCell className="text-muted-foreground max-sm:flex-1">{ownerLabel(item)}</TableCell>
+                    <TableCell className="text-right">
+                      <RowActions
+                        label={`More actions for ${name}`}
+                        items={[
+                          {
+                            label: "Stop sharing",
+                            destructive: true,
+                            onSelect: () => {
+                              setErr(null);
+                              setConfirming(item);
+                            },
+                          },
+                        ]}
+                      />
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </PageSection>
       )}
+
+      <AlertDialog open={confirming !== null} onOpenChange={(open) => (open ? undefined : setConfirming(null))}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {confirming
+                ? `Stop sharing ${ownerLabel(confirming)}'s ${RESOURCE_LABELS[confirming.resource_type]}?`
+                : "Stop sharing?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              The household copy goes away. The owner keeps their private original and can share it again.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructiveSolid"
+              onClick={() => {
+                if (confirming) unshareM.mutate(confirming);
+                setConfirming(null);
+              }}
+            >
+              Stop sharing
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   );
 }

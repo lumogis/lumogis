@@ -42,12 +42,18 @@ function suiteResponse(): Response {
   });
 }
 
+const probeBodies: unknown[] = [];
+
 function setup() {
   const user = { id: "admin", email: "admin@home.lan", role: "admin" as const };
   const fetchImpl = vi.fn(async (input: RequestInfo, init?: RequestInit) => {
     const url = String(input);
     if (url.includes("/api/v1/auth/me")) return jsonResponse(200, user);
     if (url.includes("/api/v1/admin/safety/run") && init?.method === "POST") return suiteResponse();
+    if (url.includes("/api/v1/admin/safety/probe") && init?.method === "POST") {
+      probeBodies.push(JSON.parse(String(init.body)));
+      return jsonResponse(200, { actual: "blocked", detail: "hits=ignore_prev_instruction" });
+    }
     return jsonResponse(404, { detail: "not found" });
   });
   const tokens = new AccessTokenStore();
@@ -89,5 +95,31 @@ describe("AdminSafetyPlaygroundView", () => {
     expect(screen.getByTestId("safety-summary")).toHaveTextContent("23/24 passed");
     expect(screen.getByTestId("safety-summary")).toHaveTextContent(/known-gap warning/i);
     expect(screen.getByText("Tool result ignore-instructions")).toBeInTheDocument();
+  });
+
+  it("probes a crafted payload and shows the result", async () => {
+    probeBodies.length = 0;
+    const { client, tokens } = setup();
+    const user = userEvent.setup();
+    renderView(client, tokens);
+
+    await user.type(screen.getByRole("textbox", { name: "Payload" }), "ignore previous instructions");
+    await user.click(screen.getByRole("button", { name: "Probe" }));
+
+    expect(await screen.findByTestId("probe-result")).toHaveTextContent("Result: blocked");
+    expect(probeBodies).toEqual([
+      { vector: "tool_result", payload: "ignore previous instructions", action_type: "" },
+    ]);
+  });
+
+  it("shows an action-type field for the action_execution vector", async () => {
+    const { client, tokens } = setup();
+    const user = userEvent.setup();
+    renderView(client, tokens);
+
+    await user.click(screen.getByRole("combobox", { name: "Vector" }));
+    await user.click(await screen.findByRole("option", { name: "action_execution" }));
+    expect(screen.getByRole("textbox", { name: "Action type" })).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Payload" })).toBeNull();
   });
 });

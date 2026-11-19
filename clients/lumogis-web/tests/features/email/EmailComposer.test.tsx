@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Lumogis
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -78,15 +78,11 @@ describe("EmailComposer", () => {
   // `action_proposals.payload` server-side, but no surface shows it (LUM-793's other
   // half), so from the user's side it is gone.
 
-  // jsdom implements <dialog> only partially: a real "{Escape}" keypress does NOT
-  // produce the `cancel` event that React's onCancel binds to, so a keyboard-driven
-  // test passes vacuously — nothing fires and nothing is asserted against. Dispatch
-  // the event the browser would actually emit. This tests the HANDLER and the guard,
-  // which is where the defect was; the key-to-event mapping is the platform's.
-  function pressEscape() {
-    const dialog = document.querySelector("dialog.lumogis-composer");
-    if (!dialog) throw new Error("composer dialog not in the document");
-    fireEvent(dialog, new Event("cancel", { bubbles: false, cancelable: true }));
+  // The composer is a Base UI Dialog: a real Escape keypress closes it, so the
+  // tests press the key (no synthetic "cancel" event as with the old native <dialog>).
+  async function pressEscape(user: ReturnType<typeof userEvent.setup>) {
+    await screen.findByRole("dialog");
+    await user.keyboard("{Escape}");
   }
 
   async function failASend(user: ReturnType<typeof userEvent.setup>, api: ComposerApi) {
@@ -113,13 +109,14 @@ describe("EmailComposer", () => {
     renderReply(api, { onClose });
     await failASend(user, api);
 
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
-    pressEscape();
+    await pressEscape(user);
 
-    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    const confirm = await screen.findByRole("alertdialog");
+    expect(confirm).toHaveTextContent(/discard this message/i);
+    await user.click(screen.getByRole("button", { name: "Keep editing" }));
+
     expect(onClose).not.toHaveBeenCalled();
     expect(api.cancelProposal).not.toHaveBeenCalled();
-    confirmSpy.mockRestore();
   });
 
   it("closes on Escape after a failed send when the discard is confirmed", async () => {
@@ -129,28 +126,26 @@ describe("EmailComposer", () => {
     renderReply(api, { onClose });
     await failASend(user, api);
 
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
-    pressEscape();
+    await pressEscape(user);
+    await screen.findByRole("alertdialog");
+    await user.click(screen.getByRole("button", { name: "Discard" }));
 
-    expect(confirmSpy).toHaveBeenCalledTimes(1);
     expect(onClose).toHaveBeenCalled();
-    confirmSpy.mockRestore();
   });
 
   it("does NOT prompt on Escape when nothing has failed", async () => {
+    const user = userEvent.setup();
     const onClose = vi.fn();
     renderReply(makeApi(), { onClose });
     await screen.findByLabelText("Message");
 
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
-    pressEscape();
+    await pressEscape(user);
 
     // The guard must be scoped to the failure state. Prompting on every close would
     // be the obvious over-correction, and is the way this fix would most plausibly
     // go wrong.
-    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alertdialog")).toBeNull();
     expect(onClose).toHaveBeenCalled();
-    confirmSpy.mockRestore();
   });
 
   it("surfaces first_contact from the create response on the confirm card", async () => {

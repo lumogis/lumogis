@@ -3,15 +3,26 @@
 
 const STORAGE_KEY = "lumogis-sidebar-collapsed";
 
+// Storage can be missing, or throw on access (Safari private mode, blocked site
+// data). A preference must never break the page, so every access is guarded and
+// falls back to "expanded" (LUM-993).
 export function getSidebarCollapsed(): boolean {
-  if (typeof localStorage === "undefined") return false;
-  return localStorage.getItem(STORAGE_KEY) === "1";
+  try {
+    if (typeof localStorage === "undefined") return false;
+    return localStorage.getItem(STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
 }
 
 export function setSidebarCollapsed(collapsed: boolean): void {
-  if (typeof localStorage !== "undefined") {
-    if (collapsed) localStorage.setItem(STORAGE_KEY, "1");
-    else localStorage.removeItem(STORAGE_KEY);
+  try {
+    if (typeof localStorage !== "undefined") {
+      if (collapsed) localStorage.setItem(STORAGE_KEY, "1");
+      else localStorage.removeItem(STORAGE_KEY);
+    }
+  } catch {
+    /* the attribute below still applies for this page */
   }
   applySidebarCollapsed(collapsed);
 }

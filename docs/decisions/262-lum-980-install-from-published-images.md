@@ -1,9 +1,9 @@
-# ADR 262 — Install from published images, like Immich (LUM-980)
+# ADR 262 — Install from published images (LUM-980)
 
 **Status:** Finalised (Passes 1–3 shipped; the first release that uses it is LUM-980 Pass 4)
 **Created:** 2026-11-15
 **Last updated:** 2026-11-15
-**Decided by:** Thomas ("Updating and installing should be as simple as with immich … Yes exactly like immich", 2026-11-15); plan reviewed by self-review, Sonnet R1 and Fable R2 with two arbitration rounds
+**Decided by:** Thomas (install and update from two downloaded files, 2026-11-15); plan reviewed by self-review, Sonnet R1 and Fable R2 with two arbitration rounds
 **Finalised by:** /verify-plan 2026-11-15 (Claude Code)
 **Plan:** `.cursor/plans/LUM-980-install-from-published-images.plan.md`
 **Exploration:** none
@@ -14,7 +14,7 @@
 
 A household installed Lumogis by cloning the repository and running `docker compose up -d`, which built five images on their machine. `docker-compose.ghcr.yml` could pull two of them (orchestrator and web), but the stack still needed the checkout: Postgres read `postgres/init.sql` from it, Caddy read its `Caddyfile` and preflight, and stack-control, backup, Caddy and a curl-wrapped Qdrant were built locally. Updating meant `git pull` and a rebuild.
 
-Immich, the reference Thomas chose, installs from two files downloaded from a GitHub Release and updates with `docker compose pull && docker compose up -d`.
+The model Thomas chose: install from two files downloaded from a GitHub Release, and update with `docker compose pull && docker compose up -d`.
 
 ## Decision
 

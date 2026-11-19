@@ -165,13 +165,15 @@ test.describe("failed-send recovery (LUM-793)", () => {
     const section = await openApprovals(page);
 
     await section.getByRole("button", { name: "Dismiss" }).click();
+    // Dismissing throws the recoverable text away, so it is confirmed first.
+    await page.getByRole("alertdialog").getByRole("button", { name: "Dismiss" }).click();
     await expect(section.getByText("Saturday dinner")).toHaveCount(0);
     expect(rec.dismissed()).toEqual([501]);
   });
 });
 
 test.describe("failed-send recovery on mobile (LUM-793)", () => {
-  test.use({ viewport: { width: 390, height: 844 } });
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
   test.skip(!hasSmokeCreds, smokeCredsSkipMessage);
 
   test.beforeEach(async ({ page }) => {

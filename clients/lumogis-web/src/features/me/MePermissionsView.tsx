@@ -22,8 +22,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "../../api/client";
 import { fetchMyPermissions, putMyPermission, type PermRow } from "../../api/permissions";
 import { useAuth } from "../../auth/AuthProvider";
-import { ErrorState } from "../_shared/ErrorState";
-import { LoadingPlaceholder, SkeletonText } from "../_shared/Skeleton";
+import { ErrorState } from "../../components/page/ErrorState";
+import { LoadingPlaceholder, SkeletonText } from "../../components/page/LoadingState";
+import { PageSection } from "../../components/page/PageSection";
+import { Alert, AlertDescription } from "../../components/ui/alert";
+import { Label } from "../../components/ui/label";
+import { RadioGroup, RadioGroupItem } from "../../components/ui/radio-group";
 import { connectorsToRender, groupFor } from "./permissionGroups";
 
 const MODES = ["ASK", "DO"] as const;
@@ -39,12 +43,9 @@ export function MePermissionsView(): JSX.Element {
 
   if (q.isPending) {
     return (
-      <section>
-        <h2>What Lumogis may do</h2>
-        <LoadingPlaceholder label="Loading your settings…">
-          <SkeletonText lines={4} />
-        </LoadingPlaceholder>
-      </section>
+      <LoadingPlaceholder label="Loading your settings…" className="max-w-2xl">
+        <SkeletonText lines={4} />
+      </LoadingPlaceholder>
     );
   }
 
@@ -61,15 +62,12 @@ export function MePermissionsView(): JSX.Element {
           : err.detail
         : "Something went wrong loading your settings.";
     return (
-      <section>
-        <h2>What Lumogis may do</h2>
-        <ErrorState
-          title="We couldn't load what Lumogis may do"
-          message={detail}
-          onRetry={() => void q.refetch()}
-          doctorHint={!(err instanceof ApiError && err.status === 401)}
-        />
-      </section>
+      <ErrorState
+        title="We couldn't load what Lumogis may do"
+        message={detail}
+        onRetry={() => void q.refetch()}
+        doctorHint={!(err instanceof ApiError && err.status === 401)}
+      />
     );
   }
 
@@ -80,8 +78,7 @@ export function MePermissionsView(): JSX.Element {
 
   return (
     <section>
-      <h2>What Lumogis may do</h2>
-      <p style={{ maxWidth: "42rem", opacity: 0.9 }}>
+      <p className="mb-4 max-w-2xl text-sm text-muted-foreground">
         These decide when Lumogis acts for you without checking first. Everything it
         does either way is recorded in <strong>My activity</strong>.
       </p>
@@ -90,10 +87,12 @@ export function MePermissionsView(): JSX.Element {
         // B3. A successful response that admits it is missing rows. The rows
         // present are still accurate, so they render — this says only that
         // there may be more, which is the honest reading of the advisory.
-        <p role="status" style={{ color: "var(--warn, #b45309)", maxWidth: "42rem" }}>
-          Some settings couldn&apos;t be loaded just now, so this list may be incomplete.
-          What you can see below is accurate.
-        </p>
+        <Alert role="status" className="mb-4 max-w-2xl">
+          <AlertDescription>
+            Some settings couldn&apos;t be loaded just now, so this list may be incomplete.
+            What you can see below is accurate.
+          </AlertDescription>
+        </Alert>
       )}
 
       {/* No empty state, deliberately. `connectorsToRender` always returns at
@@ -168,66 +167,61 @@ function PermissionGroup({
   };
 
   return (
-    <fieldset
-      data-testid={`perm-group-${connector}`}
-      style={{
-        border: "1px solid rgba(128,128,128,0.25)",
-        borderRadius: 8,
-        padding: "1rem",
-        margin: "1rem 0",
-        maxWidth: "42rem",
-      }}
-    >
-      <legend style={{ fontWeight: 700, padding: "0 0.35rem" }}>{group.title}</legend>
-      <p style={{ margin: "0 0 0.35rem" }}>{group.detail}</p>
-      <p style={{ margin: "0 0 0.75rem", opacity: 0.85 }}>{group.consequence}</p>
+    <div data-testid={`perm-group-${connector}`}>
+      <PageSection title={group.title} description={group.detail}>
+        <p className="m-0 mb-3 text-sm">{group.consequence}</p>
 
-      {row === undefined ? (
-        // B1. A known question whose row the server could not resolve. It
-        // renders its question and says so — it does NOT render a control,
-        // because a control implies a state and we have not been told one.
-        // Critically it must never read "Ask me first": `is_default: true` is a
-        // statement the server makes, and an absent row is the absence of any
-        // statement.
-        <p role="status" style={{ margin: 0, color: "var(--warn, #b45309)" }}>
-          We couldn&apos;t load this setting right now.
-        </p>
-      ) : (
-        <div style={{ display: "flex", gap: "1.5rem", flexWrap: "wrap" }}>
-          {MODES.map((mode) => (
-            <label key={mode} style={{ display: "flex", gap: "0.4rem" }}>
-              <input
-                type="radio"
-                name={`perm-${connector}`}
-                value={mode}
-                checked={row.mode === mode}
-                // B5. There is deliberately no optimistic update — the control
-                // reflects server state only — so without this the radio would
-                // not move until the PUT AND its refetch both landed. A person
-                // clicks, sees nothing change, and clicks again: two writes of
-                // a permission change for one intent.
-                disabled={putM.isPending}
-                onChange={() => save(mode)}
-              />
-              {mode === "ASK" ? group.askLabel : group.doLabel}
-              {mode === "ASK" && row.is_default && (
-                <span style={{ opacity: 0.6 }}>(default)</span>
-              )}
-            </label>
-          ))}
-        </div>
-      )}
+        {row === undefined ? (
+          // B1. A known question whose row the server could not resolve. It
+          // renders its question and says so — it does NOT render a control,
+          // because a control implies a state and we have not been told one.
+          // Critically it must never read "Ask me first": `is_default: true` is a
+          // statement the server makes, and an absent row is the absence of any
+          // statement.
+          <Alert role="status">
+            <AlertDescription>We couldn&apos;t load this setting right now.</AlertDescription>
+          </Alert>
+        ) : (
+          <RadioGroup
+            aria-label={group.title}
+            value={row.mode}
+            // B5. There is deliberately no optimistic update — the control
+            // reflects server state only — so without the disabled state the radio
+            // would not move until the PUT AND its refetch both landed. A person
+            // clicks, sees nothing change, and clicks again: two writes of
+            // a permission change for one intent.
+            onValueChange={(v) => save(v as Mode)}
+            className="gap-3"
+          >
+            {MODES.map((mode) => (
+              <div key={mode} className="flex items-center gap-2">
+                <RadioGroupItem
+                  id={`perm-${connector}-${mode}`}
+                  value={mode}
+                  disabled={putM.isPending}
+                />
+                <Label htmlFor={`perm-${connector}-${mode}`} className="font-normal">
+                  {mode === "ASK" ? group.askLabel : group.doLabel}
+                  {mode === "ASK" && row.is_default && (
+                    <span className="ml-1 text-muted-foreground">(default)</span>
+                  )}
+                </Label>
+              </div>
+            ))}
+          </RadioGroup>
+        )}
 
-      <p style={{ margin: "0.75rem 0 0", fontStyle: "italic", opacity: 0.8 }}>
-        {group.scopeNote}
-      </p>
+        <p className="m-0 mt-3 text-xs text-muted-foreground">{group.scopeNote}</p>
 
-      {failed && (
-        <p role="alert" style={{ margin: "0.5rem 0 0", color: "var(--error, #b91c1c)" }}>
-          That didn&apos;t save
-          {failed instanceof ApiError ? `: ${failed.detail}` : "."} The setting is unchanged.
-        </p>
-      )}
-    </fieldset>
+        {failed && (
+          <Alert variant="destructive" className="mt-3">
+            <AlertDescription>
+              That didn&apos;t save
+              {failed instanceof ApiError ? `: ${failed.detail}` : "."} The setting is unchanged.
+            </AlertDescription>
+          </Alert>
+        )}
+      </PageSection>
+    </div>
   );
 }

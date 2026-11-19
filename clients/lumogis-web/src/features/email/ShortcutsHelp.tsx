@@ -4,8 +4,17 @@
 // LUM-696: the `?` overlay. Renders from the SAME `SHORTCUTS` table the hook
 // binds from, so a new shortcut cannot ship undocumented — the test asserts the
 // two agree by construction rather than by a hand-maintained list.
+//
+// LUM-993: now the shared Dialog. It owns Escape, the focus trap and putting
+// focus back where it was (so `?` then Esc does not dump the keyboard cursor).
 
-import { useEffect, useRef } from "react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 import { SHORTCUTS } from "./useTriageKeyboard";
 
@@ -14,53 +23,25 @@ export interface ShortcutsHelpProps {
   onClose: () => void;
 }
 
-export function ShortcutsHelp({ open, onClose }: ShortcutsHelpProps): JSX.Element | null {
-  const closeRef = useRef<HTMLButtonElement | null>(null);
-  const restoreRef = useRef<Element | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    // Remember where focus was so closing puts it back — otherwise `?` then Esc
-    // dumps the user at the top of the document and the keyboard cursor is lost,
-    // which is a strange thing for a keyboard-shortcuts overlay to do.
-    restoreRef.current = document.activeElement;
-    closeRef.current?.focus();
-    return () => {
-      const prev = restoreRef.current;
-      if (prev instanceof HTMLElement) prev.focus();
-    };
-  }, [open]);
-
-  if (!open) return null;
-
+export function ShortcutsHelp({ open, onClose }: ShortcutsHelpProps): JSX.Element {
   return (
-    <div
-      className="lumogis-email__shortcuts"
-      data-testid="shortcuts-help"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Keyboard shortcuts"
-      onKeyDown={(e) => {
-        if (e.key === "Escape") {
-          e.stopPropagation();
-          onClose();
-        }
-      }}
-    >
-      <h3>Keyboard shortcuts</h3>
-      <dl>
-        {SHORTCUTS.map((s) => (
-          <div key={s.keys}>
-            <dt>
-              <kbd>{s.keys}</kbd>
-            </dt>
-            <dd>{s.label}</dd>
-          </div>
-        ))}
-      </dl>
-      <button type="button" ref={closeRef} onClick={onClose}>
-        Close
-      </button>
-    </div>
+    <Dialog open={open} onOpenChange={(next) => (next ? undefined : onClose())}>
+      <DialogContent data-testid="shortcuts-help" aria-label="Keyboard shortcuts">
+        <DialogHeader>
+          <DialogTitle>Keyboard shortcuts</DialogTitle>
+          <DialogDescription>Work through your email without the mouse.</DialogDescription>
+        </DialogHeader>
+        <dl className="m-0 grid grid-cols-[auto_1fr] items-center gap-x-4 gap-y-2">
+          {SHORTCUTS.map((s) => (
+            <div key={s.keys} className="contents">
+              <dt>
+                <kbd className="rounded border bg-muted px-1.5 py-0.5 font-mono text-xs">{s.keys}</kbd>
+              </dt>
+              <dd className="m-0 text-muted-foreground">{s.label}</dd>
+            </div>
+          ))}
+        </dl>
+      </DialogContent>
+    </Dialog>
   );
 }

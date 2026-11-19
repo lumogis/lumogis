@@ -8,6 +8,11 @@ import { useEffect, useState, type FormEvent, type JSX } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { redeemPasswordReset } from "../../api/passwordReset";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { AUTH_LINK_CLASS, AuthCard } from "./AuthCard";
 
 const MIN_PASSWORD_LENGTH = 12;
 
@@ -71,63 +76,69 @@ export function ResetPasswordPage(): JSX.Element {
 
   if (!token) {
     return (
-      <main className="lumogis-auth-recovery" data-testid="reset-password-no-token">
-        <h1 style={{ margin: 0 }}>Reset link is invalid or expired</h1>
-        <p className="lumogis-auth-recovery__hint">
-          Request a new link from <a href="/forgot-password">Forgot password</a>.
-        </p>
-      </main>
+      <AuthCard
+        title="Reset link is invalid or expired"
+        mainProps={{ "data-testid": "reset-password-no-token" }}
+        description={
+          <>
+            Request a new link from{" "}
+            <a href="/forgot-password" className={AUTH_LINK_CLASS}>
+              Forgot password
+            </a>
+            .
+          </>
+        }
+      />
     );
   }
 
   return (
-    <form
-      className="lumogis-auth-recovery"
-      onSubmit={onSubmit}
-      aria-labelledby="lumogis-reset-title"
-      data-testid="reset-password-form"
-    >
-      <h1 id="lumogis-reset-title" style={{ margin: 0 }}>
-        Choose a new password
-      </h1>
-      <label htmlFor="lumogis-reset-password">
-        New password
-        <input
-          id="lumogis-reset-password"
-          type="password"
-          autoComplete="new-password"
-          required
-          minLength={MIN_PASSWORD_LENGTH}
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          disabled={busy}
-        />
-      </label>
-      <label htmlFor="lumogis-reset-confirm">
-        Confirm new password
-        <input
-          id="lumogis-reset-confirm"
-          type="password"
-          autoComplete="new-password"
-          required
-          minLength={MIN_PASSWORD_LENGTH}
-          value={confirm}
-          onChange={(e) => setConfirm(e.target.value)}
-          disabled={busy}
-        />
-      </label>
-      <p className="lumogis-auth-recovery__hint">
-        At least {MIN_PASSWORD_LENGTH} characters. Setting a new password signs out
-        every device currently using this account.
-      </p>
-      {error !== null && (
-        <p role="alert" className="lumogis-auth-recovery__error">
-          {error}
+    <AuthCard title="Choose a new password" titleId="lumogis-reset-title">
+      <form
+        className="flex flex-col gap-4"
+        onSubmit={onSubmit}
+        aria-labelledby="lumogis-reset-title"
+        data-testid="reset-password-form"
+      >
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="lumogis-reset-password">New password</Label>
+          <Input
+            id="lumogis-reset-password"
+            type="password"
+            autoComplete="new-password"
+            required
+            minLength={MIN_PASSWORD_LENGTH}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            disabled={busy}
+          />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="lumogis-reset-confirm">Confirm new password</Label>
+          <Input
+            id="lumogis-reset-confirm"
+            type="password"
+            autoComplete="new-password"
+            required
+            minLength={MIN_PASSWORD_LENGTH}
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
+            disabled={busy}
+          />
+        </div>
+        <p className="m-0 text-sm text-muted-foreground">
+          At least {MIN_PASSWORD_LENGTH} characters. Setting a new password signs out
+          every device currently using this account.
         </p>
-      )}
-      <button type="submit" disabled={busy}>
-        {busy ? "Saving…" : "Set new password"}
-      </button>
-    </form>
+        {error !== null && (
+          <Alert variant="destructive">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+        <Button type="submit" disabled={busy}>
+          {busy ? "Saving…" : "Set new password"}
+        </Button>
+      </form>
+    </AuthCard>
   );
 }

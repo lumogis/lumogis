@@ -3,6 +3,11 @@
 // Search the mail Lumogis holds (LUM-819).
 import { useCallback, useMemo, useState } from "react";
 
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+
 import type { ApiClient } from "../../api/client";
 import {
   MIN_SEARCH_CHARS,
@@ -104,33 +109,39 @@ export function EmailSearchBar({
   );
 
   return (
-    <section aria-label="Mail search" className="lumogis-email-search">
+    <section aria-label="Mail search" className="mb-4 flex flex-col gap-3">
       <form
         role="search"
+        className="flex flex-wrap items-center gap-2"
         onSubmit={(e) => {
           e.preventDefault();
           void run(fields);
         }}
       >
-        <input
+        <Input
           type="search"
+          className="min-w-48 flex-1"
           value={q}
           aria-label="Search mail"
           placeholder="Search sender, subject or message text"
           onChange={(e) => setQ(e.target.value)}
         />
-        <button type="submit" disabled={busy || q.trim().length < MIN_SEARCH_CHARS}>
+        <Button type="submit" disabled={busy || q.trim().length < MIN_SEARCH_CHARS}>
           {busy ? "Searching…" : "Search"}
-        </button>
+        </Button>
         {result !== null && (
-          <button type="button" onClick={clear}>
+          <Button type="button" variant="outline" onClick={clear}>
             Clear
-          </button>
+          </Button>
         )}
       </form>
 
-      {tooShort && <p role="status">Type at least {MIN_SEARCH_CHARS} characters.</p>}
-      {error && <p role="alert">{error}</p>}
+      {tooShort && <p role="status" className="m-0 text-sm text-muted-foreground">Type at least {MIN_SEARCH_CHARS} characters.</p>}
+      {error && (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
 
       {result !== null && (
         <>
@@ -141,21 +152,28 @@ export function EmailSearchBar({
             message — so showing "Message 0" beside "Subject 3" is what makes
             the difference legible without any help text.
           */}
-          <nav aria-label="Narrow by field" className="lumogis-email-search__fields">
+          <ToggleGroup
+            variant="outline"
+            size="sm"
+            spacing={1}
+            aria-label="Narrow by field"
+            className="flex-wrap"
+            value={[fields]}
+            onValueChange={(next: unknown[]) => {
+              // Pressing the selected chip again would clear the group; keep it.
+              const picked = next[0];
+              if (typeof picked === "string") pickField(picked as SearchFields);
+            }}
+          >
             {FIELD_CHIPS.map(({ key, label }) => (
-              <button
-                key={key}
-                type="button"
-                aria-pressed={fields === key}
-                onClick={() => pickField(key)}
-              >
+              <ToggleGroupItem key={key} value={key}>
                 {label} {renderCount(countFor(result.counts, key), result.counts.capped)}
-              </button>
+              </ToggleGroupItem>
             ))}
-          </nav>
+          </ToggleGroup>
 
           {hits.length === 0 ? (
-            <p role="status">
+            <p role="status" className="m-0 text-sm text-muted-foreground">
               No matches.
               {result.counts.body === 0 && fields === "body" && (
                 <> Message text is only searchable for mailboxes set to full ingest.</>
@@ -165,12 +183,12 @@ export function EmailSearchBar({
               )}
             </p>
           ) : (
-            <ul className="lumogis-email-search__results">
+            <ul className="m-0 flex list-none flex-col gap-3 p-0">
               {hits.map((hit) => (
                 <li key={hit.signal_id}>
                   {renderHit(hit)}
                   {hit.matched_in.includes("body") && hit.snippet && (
-                    <p className="lumogis-email-search__snippet">
+                    <p className="m-0 mt-1 text-sm text-muted-foreground">
                       <q>{hit.snippet}</q>
                       {hit.body_truncated && <> (this message was indexed in part)</>}
                     </p>
@@ -182,14 +200,14 @@ export function EmailSearchBar({
                   */}
                   {hit.matched_in.includes("summary") &&
                     !hit.matched_in.includes("subject") && (
-                      <p className="lumogis-email-search__why">Matched Lumogis's summary</p>
+                      <p className="m-0 mt-1 text-xs text-muted-foreground">Matched Lumogis's summary</p>
                     )}
                 </li>
               ))}
             </ul>
           )}
 
-          {result.truncated && <p role="status">More matches than shown — narrow your search.</p>}
+          {result.truncated && <p role="status" className="m-0 text-sm text-muted-foreground">More matches than shown — narrow your search.</p>}
         </>
       )}
     </section>

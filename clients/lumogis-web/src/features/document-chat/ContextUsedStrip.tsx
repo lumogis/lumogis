@@ -18,7 +18,7 @@ function formatChunkIndices(citations: DocumentCitationDTO[]): string {
 export function ContextUsedStrip({ citations }: ContextUsedStripProps): JSX.Element | null {
   if (citations.length === 0) return null;
   return (
-    <p className="lumogis-document-chat__context-used" data-testid="context-used-strip">
+    <p className="m-0 text-xs text-muted-foreground" data-testid="context-used-strip">
       Context used: chunks {formatChunkIndices(citations)}
     </p>
   );

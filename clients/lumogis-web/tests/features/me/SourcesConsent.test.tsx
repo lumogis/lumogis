@@ -85,9 +85,17 @@ function renderPanel(s: ReturnType<typeof setup>) {
   );
 }
 
+/** The kind picker is a Base UI Select: open it, then pick an option. */
+async function chooseKind(user: ReturnType<typeof userEvent.setup>, kind: "detect" | "paperless") {
+  await user.click(await screen.findByRole("combobox", { name: "What are you adding?" }));
+  await user.click(
+    await screen.findByRole("option", { name: kind === "paperless" ? "Paperless" : "Detect automatically" }),
+  );
+}
+
 /** Choose Paperless, type an address, and get to the point where Add exists. */
 async function reachAdd(user: ReturnType<typeof userEvent.setup>) {
-  await user.selectOptions(await screen.findByLabelText("What are you adding?"), "paperless");
+  await chooseKind(user, "paperless");
   await user.type(screen.getByLabelText("Paperless address"), "https://paperless.example.com");
   await user.click(screen.getByRole("button", { name: "Check" }));
   return screen.findByRole("button", { name: "Add" });
@@ -238,7 +246,7 @@ describe("AddSourcePanel — the credential step", () => {
     vi.restoreAllMocks();
   });
 
-  it("links to /me/connectors, in a new tab", async () => {
+  it("links to /settings/connections, in a new tab", async () => {
     // NOT /admin/connector-credentials: that page's Household and System tabs
     // write tiers `load_connection` never reads. And NOT bare /connectors:
     // `MeConnectorsView` is a nested route under /me, so /connectors matches
@@ -246,9 +254,9 @@ describe("AddSourcePanel — the credential step", () => {
     const s = setup();
     const user = userEvent.setup();
     renderPanel(s);
-    await user.selectOptions(await screen.findByLabelText("What are you adding?"), "paperless");
+    await chooseKind(user, "paperless");
     const link = await screen.findByRole("link", { name: "Add them" });
-    expect(link).toHaveAttribute("href", "/me/connectors");
+    expect(link).toHaveAttribute("href", "/settings/connections");
     expect(link).toHaveAttribute("target", "_blank");
   });
 
@@ -275,7 +283,7 @@ describe("AddSourcePanel — the credential step", () => {
     });
     const user = userEvent.setup();
     renderPanel(s);
-    await user.selectOptions(await screen.findByLabelText("What are you adding?"), "paperless");
+    await chooseKind(user, "paperless");
     expect(await screen.findByText(/Paperless credentials saved/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Change them" })).toBeInTheDocument();
   });
@@ -297,7 +305,7 @@ describe("AddSourcePanel — the credential step", () => {
         <AddSourcePanel onAdded={() => {}} />
       </AuthProvider>,
     );
-    await user.selectOptions(await screen.findByLabelText("What are you adding?"), "paperless");
+    await chooseKind(user, "paperless");
     await waitFor(() =>
       expect(screen.queryByText(/No paperless credentials yet/)).not.toBeInTheDocument(),
     );
@@ -322,8 +330,9 @@ describe("AddSourcePanel — the type selector and the preview", () => {
     // and store a nonsense `page` source.
     const s = setup();
     renderPanel(s);
-    const select = await screen.findByLabelText("What are you adding?");
-    const options = Array.from(select.querySelectorAll("option")).map((o) => o.textContent);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("combobox", { name: "What are you adding?" }));
+    const options = (await screen.findAllByRole("option")).map((o) => o.textContent);
     expect(options).toEqual(["Detect automatically", "Paperless"]);
     expect(options.join(" ").toLowerCase()).not.toContain("imap");
   });
@@ -349,7 +358,7 @@ describe("AddSourcePanel — the type selector and the preview", () => {
     const s = setup();
     const user = userEvent.setup();
     renderPanel(s);
-    await user.selectOptions(await screen.findByLabelText("What are you adding?"), "paperless");
+    await chooseKind(user, "paperless");
     await user.type(screen.getByLabelText("Paperless address"), "https://paperless.example.com");
     // A live outbound fetch that can probe several paths off the site root is
     // not something to fire per keystroke.
@@ -381,7 +390,7 @@ describe("AddSourcePanel — reachability (LUM-841)", () => {
     });
     const user = userEvent.setup();
     renderPanel(s);
-    await user.selectOptions(await screen.findByLabelText("What are you adding?"), "detect");
+    await chooseKind(user, "detect");
     await user.type(screen.getByLabelText("Address"), "https://typo.invalid");
     await user.click(screen.getByRole("button", { name: "Check" }));
 
@@ -400,7 +409,7 @@ describe("AddSourcePanel — reachability (LUM-841)", () => {
     });
     const user = userEvent.setup();
     renderPanel(s);
-    await user.selectOptions(await screen.findByLabelText("What are you adding?"), "detect");
+    await chooseKind(user, "detect");
     await user.type(screen.getByLabelText("Address"), "https://down.example.com");
     await user.click(screen.getByRole("button", { name: "Check" }));
     expect(await screen.findByRole("button", { name: "Add" })).not.toBeDisabled();
@@ -418,7 +427,7 @@ describe("AddSourcePanel — reachability (LUM-841)", () => {
     });
     const user = userEvent.setup();
     renderPanel(s);
-    await user.selectOptions(await screen.findByLabelText("What are you adding?"), "detect");
+    await chooseKind(user, "detect");
     await user.type(screen.getByLabelText("Address"), "https://example.com/sparse");
     await user.click(screen.getByRole("button", { name: "Check" }));
     expect(await screen.findByText(/watch the page itself/i)).toBeInTheDocument();
@@ -435,7 +444,7 @@ describe("AddSourcePanel — reachability (LUM-841)", () => {
     });
     const user = userEvent.setup();
     renderPanel(s);
-    await user.selectOptions(await screen.findByLabelText("What are you adding?"), "detect");
+    await chooseKind(user, "detect");
     await user.type(screen.getByLabelText("Address"), "https://example.com");
     await user.click(screen.getByRole("button", { name: "Check" }));
     expect(await screen.findByText(/watch the page itself/i)).toBeInTheDocument();
@@ -455,10 +464,7 @@ describe("AddSourcePanel — the per-user refusals (LUM-839)", () => {
     });
     renderPanel(s);
     const user = userEvent.setup();
-    await user.selectOptions(
-      await screen.findByLabelText("What are you adding?"),
-      "paperless",
-    );
+    await chooseKind(user, "paperless");
     await user.type(
       screen.getByLabelText("Paperless address"),
       "https://paperless.example.com",

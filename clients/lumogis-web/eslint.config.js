@@ -32,6 +32,13 @@ export default defineConfig(
     },
   },
   {
+    // shadcn/ui components (LUM-993) are vendored: they export their style variants
+    // (buttonVariants, badgeVariants) beside the component, which only costs a full
+    // reload instead of a hot update in dev.
+    files: ["src/components/ui/**/*.tsx"],
+    rules: { "react-refresh/only-export-components": "off" },
+  },
+  {
     files: ["src/pwa/sw.ts"],
     rules: {
       // Service worker entry runs in ServiceWorkerGlobalScope; client tsconfig libs omit full SW typings.

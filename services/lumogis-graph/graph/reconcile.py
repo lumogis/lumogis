@@ -173,6 +173,176 @@ def reconcile_documents(limit: int | None = None) -> dict:
     return counter
 
 
+# Edge types the typed-edge prune must never touch: aggregate/derived edges
+# written by other writers, and the code-structure edges. Grow this with
+# ``graph/schema.py`` (LUM-965).
+_PRUNE_PROTECTED_EDGE_TYPES = frozenset(
+    {
+        "MENTIONS",
+        "RELATES_TO",
+        "DISCUSSED_IN",
+        "DERIVED_FROM",
+        "LINKS_TO",
+        "TAGGED_WITH",
+        "SUPERSEDES",
+        "CALLS",
+        "DEPENDS_ON",
+        "IMPLEMENTS",
+    }
+)
+
+
+def _default_graph_bank() -> str:
+    """The bank ``config.get_graph_store()`` resolves with no argument.
+
+    The graph service's ``config`` has the resolver; Core's (in-process builds)
+    does not, so the same rule is read from the same environment variable.
+    """
+    resolver = getattr(config, "_resolve_graph_bank", None)
+    if resolver is not None:
+        return resolver(None)
+    raw = os.environ.get("LUMOGIS_GRAPH_DEFAULT_BANK", "personal").strip() or "personal"
+    return raw if raw in {"coding", "personal", "default"} else "personal"
+
+
+def _entity_is_merge_involved(ms, entity_id: str, user_id: str) -> bool:
+    """True when ``entity_id`` is named in one of the member's ``entity_merges`` rows.
+
+    Every case that needs the prune involves such an entry: an undo (both sides),
+    a mention move offered after an undo, and a lost ``ENTITY_MERGED`` webhook (the
+    survivor). Renames, kind changes and new entries never do, so they pay one
+    indexed read and no Cypher. A failing read (for example an old schema without
+    the table) skips the prune.
+    """
+    try:
+        row = ms.fetch_one(
+            "SELECT 1 AS x FROM entity_merges "
+            # SCOPE-EXEMPT: entity_merges is per-member (no scope column); user_id-bound.
+            "WHERE user_id = %s AND (winner_id = %s::uuid OR loser_id = %s::uuid) LIMIT 1",
+            (user_id, str(entity_id), str(entity_id)),
+        )
+    except Exception:
+        _log.debug("Graph reconcile: merge-involvement read failed entity_id=%s", entity_id)
+        return False
+    return row is not None
+
+
+def _prune_merged_entity(
+    gs, ms, *, entity_id: str, entity_type: str, user_id: str, keep_evidence: list[str]
+) -> None:
+    """Delete graph edges of a re-projected entry that Postgres no longer backs (LUM-965).
+
+    Replay (``project_entity``) only ever adds. After an undo the survivor still
+    carries MENTIONS, DISCUSSED_IN, typed and co-occurrence edges that now belong
+    to the restored entry, so for a merge-involved personal entry these four are
+    a function of Postgres:
+
+    * (a) ``MENTIONS`` whose ``evidence_id`` is not in ``keep_evidence`` (the
+      replay list itself, including the synthetic ``ENTITY`` stub, so the prune
+      and the replay can never disagree);
+    * (b) ``DISCUSSED_IN`` to sessions whose non-empty ``entity_ids`` no longer
+      name the entry. A session with empty ``entity_ids`` is never pruned:
+      ``project_session`` resolves its edges by name, so Postgres has no id-level
+      truth for it. Known residual: a legacy session's name-resolved edge that
+      pointed at the survivor for the loser's name stays after undo;
+    * (c) typed entity→entity edges (the ``entity_edges`` relation types, minus
+      the protected set) with no backing active row in this graph's bank;
+    * (d) zero-share ``RELATES_TO`` co-occurrence edges. Non-zero counts that the
+      merge inflated stay until ``recount_cooccurrence`` (the LUM-952 monotone
+      rule); typed ``RELATES_TO`` edges carry no count and are never touched.
+
+    MENTIONS / DISCUSSED_IN writers (checked at plan time): the only MENTIONS
+    writer onto an entity node is ``graph/writer.py::project_entity``; the only
+    DISCUSSED_IN writer is ``project_session``. A new writer of an edge onto an
+    Entity node without a Postgres row would be pruned: list it here.
+
+    Every statement names the entity label and fixed edge types in its text;
+    ids and keep-lists travel as parameters. FalkorDB has no indexes here, so an
+    unlabelled match would scan every node. Raises on any failure; the caller
+    unstamps the row so the next pass retries.
+    """
+    from graph.writer import _cooccurrence_siblings
+
+    label = NodeLabel.for_entity_type(entity_type or "")
+    if label not in NodeLabel.ENTITY_LABELS:
+        return
+    p = {"eid": str(entity_id), "uid": user_id}
+
+    # (a) MENTIONS
+    gs.query(
+        f"MATCH (e:{label} {{lumogis_id: $eid, user_id: $uid}})<-[r:MENTIONS]-(s) "
+        "WHERE NOT r.evidence_id IN $keep DELETE r",
+        {**p, "keep": [str(k) for k in keep_evidence]},
+    )
+
+    # (b) DISCUSSED_IN: read the graph's sessions, decide in Postgres, delete.
+    rows = gs.query(
+        f"MATCH (e:{label} {{lumogis_id: $eid, user_id: $uid}})-[:DISCUSSED_IN]->(s:Session) "
+        "RETURN s.lumogis_id AS sid",
+        p,
+    )
+    graph_sessions = [str(r.get("sid") or r.get("_col0")) for r in rows if r]
+    if graph_sessions:
+        stale = ms.fetch_all(
+            "SELECT session_id::text AS sid FROM sessions "
+            # SCOPE-EXEMPT: the owning member's own session rows (user_id-bound).
+            "WHERE user_id = %s AND session_id::text = ANY(%s) "
+            "  AND coalesce(cardinality(entity_ids), 0) > 0 AND NOT (%s = ANY(entity_ids))",
+            (user_id, graph_sessions, str(entity_id)),
+        )
+        prune = [str(r["sid"]) for r in stale]
+        if prune:
+            gs.query(
+                f"MATCH (e:{label} {{lumogis_id: $eid, user_id: $uid}})"
+                "-[r:DISCUSSED_IN]->(s:Session) "
+                "WHERE s.lumogis_id IN $prune DELETE r",
+                {**p, "prune": prune},
+            )
+
+    # (c) typed entity edges. ``reconcile_entities`` uses the default store, so the
+    # bank is the one that store resolves (edges of other banks live on other graphs).
+    bank = _default_graph_bank()
+    type_rows = ms.fetch_all(
+        "SELECT DISTINCT relation_type FROM entity_edges "
+        # SCOPE-EXEMPT: entity_edges is per-member (no scope column); user_id-bound.
+        "WHERE user_id = %s AND bank = %s AND relation_type <> 'RELATES_TO'",
+        (user_id, bank),
+    )
+    typed = sorted(
+        {r["relation_type"] for r in type_rows} - _PRUNE_PROTECTED_EDGE_TYPES,
+    )
+    if typed:
+        active_rows = ms.fetch_all(
+            "SELECT src_entity_id, dst_entity_id, relation_type FROM entity_edges "
+            # SCOPE-EXEMPT: entity_edges is per-member (no scope column); user_id-bound.
+            "WHERE user_id = %s AND bank = %s AND valid_until IS NULL "
+            "  AND (src_entity_id = %s OR dst_entity_id = %s)",
+            (user_id, bank, str(entity_id), str(entity_id)),
+        )
+        active = [
+            f"{r['src_entity_id']}|{r['dst_entity_id']}|{r['relation_type']}" for r in active_rows
+        ]
+        gs.query(
+            f"MATCH (e:{label} {{lumogis_id: $eid, user_id: $uid}})-[r]-(o) "
+            "WHERE type(r) IN $typed "
+            "  AND NOT (startNode(r).lumogis_id + '|' + endNode(r).lumogis_id + '|' + type(r)) "
+            "      IN $active "
+            "DELETE r",
+            {**p, "typed": typed, "active": active},
+        )
+
+    # (d) zero-share co-occurrence edges (skipped when the sibling list is capped).
+    siblings, capped = _cooccurrence_siblings(ms, str(entity_id), user_id, None)
+    if not capped:
+        gs.query(
+            f"MATCH (e:{label} {{lumogis_id: $eid, user_id: $uid}})-[r:RELATES_TO]-(o) "
+            "WHERE r.co_occurrence_count IS NOT NULL "
+            "  AND (o.scope IS NULL OR o.scope = 'personal') "
+            "  AND NOT o.lumogis_id IN $siblings DELETE r",
+            {**p, "siblings": [str(r["sibling_id"]) for r in siblings]},
+        )
+
+
 def reconcile_entities(limit: int | None = None) -> dict:
     """Reconcile stale entities rows into FalkorDB entity nodes + edges.
 
@@ -240,6 +410,9 @@ def reconcile_entities(limit: int | None = None) -> dict:
                     # not once per evidence row (that was quadratic in the
                     # entity's evidence count).
                     update_cooccurrence=False,
+                    # LUM-967: relabel the node once per entity per pass, not
+                    # once per evidence row.
+                    converge_label=(idx == 0),
                 )
             except Exception:
                 _log.exception(
@@ -267,6 +440,37 @@ def reconcile_entities(limit: int | None = None) -> dict:
                         )
                 break  # stop replaying relations for this entity; leave unstamped
 
+        prune_failed = False
+        if entity_ok and _entity_is_merge_involved(ms, entity_id, user_id):
+            # LUM-965: replay only adds. Take away what Postgres no longer backs.
+            try:
+                _prune_merged_entity(
+                    gs,
+                    ms,
+                    entity_id=entity_id,
+                    entity_type=entity_type,
+                    user_id=user_id,
+                    keep_evidence=[rel["evidence_id"] for rel in relations],
+                )
+            except Exception:
+                _log.warning(
+                    "Graph reconcile: prune failed entity_id=%s — will retry",
+                    entity_id,
+                    exc_info=True,
+                )
+                counter["prune_failed"] = counter.get("prune_failed", 0) + 1
+                prune_failed = True
+                try:
+                    # Same recovery as LUM-54: clear the stamp so the next pass
+                    # replays and prunes again.
+                    ms.execute(
+                        "UPDATE entities SET graph_projected_at = NULL "
+                        "WHERE entity_id = %s AND user_id = %s",
+                        (entity_id, user_id),
+                    )
+                except Exception:
+                    _log.warning("Graph reconcile: prune unstamp failed entity_id=%s", entity_id)
+
         if entity_ok and has_evidence:
             # One aggregate over every entity sharing any evidence with this one.
             # Failures are logged inside and never unstamp the row: the nodes and
@@ -277,7 +481,8 @@ def reconcile_entities(limit: int | None = None) -> dict:
             _update_cooccurrence_edges(gs, entity_id, user_id, None)
         if entity_ok:
             counter["projected_ok"] += 1
-            counter["stamped"] += 1
+            if not prune_failed:  # a failed prune left the row unstamped
+                counter["stamped"] += 1
         else:
             counter["projected_failed"] += 1
 
@@ -517,11 +722,8 @@ def reconcile_audio(limit: int | None = None) -> dict:
 # evidence nodes (Document, Session, Note, AudioMemo), code-structure nodes
 # (Component, Library) and Memory nodes also carry ``lumogis_id`` + ``user_id``
 # and no ``scope``, and none of them has an ``entities`` row.
-_GC_ENTITY_LABEL = "Entity"
-_GC_LABELS: tuple[str, ...] = (
-    _GC_ENTITY_LABEL,
-    *dict.fromkeys(NodeLabel.ENTITY_TYPE_MAP.values()),
-)
+_GC_ENTITY_LABEL = NodeLabel.SHARED_ENTITY
+_GC_LABELS: tuple[str, ...] = (_GC_ENTITY_LABEL, *NodeLabel.ENTITY_LABELS)
 _GC_DELETE_BATCH = 200
 
 

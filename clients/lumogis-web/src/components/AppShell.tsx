@@ -1,65 +1,60 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Lumogis
 //
-// AppShell — container-query driven responsive layout.
+// AppShell (LUM-993 Pass 2a): no header bar. Wide screens get the sidebar
+// (AppSidebar), phones the tab bar (MobileNav); the switch is a container query
+// at 720 px on `.lumogis-shell` (tokens.css). The legacy `lumogis-shell__*`
+// classes sit on wrappers and only decide which of the two shows: a Tailwind
+// display class on the nav itself would beat their `display: none`.
 
 import type { ReactNode } from "react";
 
-import { BottomNav, NAV_ITEMS, type NavItem } from "./BottomNav";
-import { OfflineBanner } from "./OfflineBanner";
-import { SingleUserBanner } from "./SingleUserBanner";
-import { ProfileMenuButton } from "./ProfileMenu";
-import { SidebarNav } from "./SidebarNav";
-import { useAuth } from "../auth/AuthProvider";
-import { useOnlineStatus } from "../pwa/useOnlineStatus";
+import { AppSidebar } from "./shell/AppSidebar";
+import { MobileNav } from "./shell/MobileNav";
+import { ShellBanners } from "./shell/ShellBanners";
+import type { NavKey, ShellNavLists } from "./shell/navItems";
+import { TooltipProvider } from "./ui/tooltip";
+
+export type ShellNav = ShellNavLists;
 
 export interface AppShellProps {
   children: ReactNode;
-  navItems?: ReadonlyArray<NavItem>;
-  activeKey?: string;
-  onNavigate?: (key: string) => void;
+  nav: ShellNav;
+  activeKey: NavKey;
+  onNavigate: (href: string) => void;
 }
 
-export function AppShell({
-  children,
-  navItems = NAV_ITEMS,
-  activeKey,
-  onNavigate,
-}: AppShellProps): JSX.Element {
-  const online = useOnlineStatus();
-  const { singleUser } = useAuth();
-
+export function AppShell({ children, nav, activeKey, onNavigate }: AppShellProps): JSX.Element {
   return (
-    <div className="lumogis-shell" data-testid="lumogis-shell">
-      <div className="lumogis-shell__top">
-        <header className="lumogis-shell__header">
-          <span className="lumogis-shell__header-title">Lumogis</span>
-          <span className="lumogis-shell__header-tools">
-            <ProfileMenuButton />
-          </span>
-        </header>
-        <SingleUserBanner visible={singleUser} />
-        <OfflineBanner visible={!online} />
+    <TooltipProvider>
+      <div className="lumogis-shell" data-testid="lumogis-shell">
+        <div className="lumogis-shell__body">
+          <div className="lumogis-shell__sidebar">
+            <AppSidebar
+              className="h-full"
+              primary={nav.primary}
+              secondary={nav.secondary}
+              activeKey={activeKey}
+              onNavigate={onNavigate}
+              pendingApprovals={nav.pendingApprovals}
+            />
+          </div>
+          <main className="lumogis-shell__main" id="lumogis-main">
+            <ShellBanners />
+            {children}
+          </main>
+        </div>
+        <div className="lumogis-shell__bottom">
+          <MobileNav
+            className="w-full"
+            tabs={nav.tabs}
+            more={nav.more}
+            activeKey={activeKey}
+            onNavigate={onNavigate}
+            pendingApprovals={nav.pendingApprovals}
+          />
+        </div>
       </div>
-
-      <div className="lumogis-shell__body">
-        <SidebarNav
-          className="lumogis-shell__sidebar"
-          items={navItems}
-          activeKey={activeKey}
-          onNavigate={onNavigate}
-        />
-        <main className="lumogis-shell__main" id="lumogis-main">
-          {children}
-        </main>
-      </div>
-
-      <BottomNav
-        className="lumogis-shell__bottom"
-        items={navItems}
-        activeKey={activeKey}
-        onNavigate={onNavigate}
-      />
-    </div>
+    </TooltipProvider>
   );
 }

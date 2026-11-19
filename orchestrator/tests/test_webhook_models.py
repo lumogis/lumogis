@@ -227,6 +227,7 @@ def test_payload_dispatch_classes_validate_their_payloads():
             "entities": [],
         },
         WebhookEvent.ENTITY_MERGED: {"winner_id": "w", "loser_id": "l", "user_id": "u1"},
+        WebhookEvent.ENTITY_DELETED: {"entity_id": "e", "user_id": "u1", "projection_ids": ["p"]},
         WebhookEvent.NOTE_CAPTURED: {"note_id": "n", "user_id": "u1"},
         WebhookEvent.AUDIO_TRANSCRIBED: {"audio_id": "a", "file_path": "/x.wav", "user_id": "u1"},
         WebhookEvent.DOCUMENT_SHARED: {
@@ -247,6 +248,17 @@ def test_payload_dispatch_classes_validate_their_payloads():
         assert good is not None
         with pytest.raises(ValidationError):
             model_cls.model_validate({"unrelated": "garbage"})
+
+
+def test_entity_deleted_payload_round_trips_and_defaults_projection_ids():
+    """E1 (LUM-966): ids only, and the household copies default to none."""
+    from models.webhook import EntityDeletedPayload
+
+    p = EntityDeletedPayload.model_validate({"entity_id": "e", "user_id": "u1"})
+    assert p.projection_ids == []
+    assert set(EntityDeletedPayload.model_fields) == {"entity_id", "user_id", "projection_ids"}
+    again = EntityDeletedPayload.model_validate(p.model_dump())
+    assert again == p
 
 
 def test_supported_schema_versions_includes_one():

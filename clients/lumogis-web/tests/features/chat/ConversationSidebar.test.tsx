@@ -30,11 +30,31 @@ describe("ConversationSidebar", () => {
     } as unknown as ApiClient;
 
     render(<ConversationSidebar client={client} onContinue={vi.fn()} />);
-    expect(await screen.findByText(/Ended chats appear here/)).toBeTruthy();
+    expect(await screen.findByText(/Closed chats show up here/)).toBeTruthy();
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("offers Share and Delete only on chats you own (the server refuses others' deletes)", async () => {
+    const mine = {
+      conversation_id: "22222222-2222-4222-8222-222222222222",
+      title: "My roof chat",
+      summary: "Mine.",
+      ended_at: new Date().toISOString(),
+      scope: "personal",
+      message_count: null,
+    };
+    const shared = { ...mine, conversation_id: "33333333-3333-4333-8333-333333333333", title: "Anna's roof chat", is_owner: false };
+    const client = {
+      getJson: vi.fn().mockResolvedValue({ conversations: [mine, shared] }),
+    } as unknown as ApiClient;
+    render(<ConversationSidebar client={client} onContinue={vi.fn()} />);
+    expect(await screen.findByRole("button", { name: "Delete My roof chat" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Share My roof chat" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete Anna's roof chat" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Share Anna's roof chat" })).toBeNull();
   });
 
   it("shows the retry toast when DELETE returns partial:true (ADR-074 best-effort purge)", async () => {
@@ -100,7 +120,7 @@ describe("ConversationSidebar pending summaries (LUM-417)", () => {
     expect(screen.getByText("Roof repair")).toBeTruthy();
     expect(screen.getByText("Summarising…")).toBeTruthy();
     // The generic empty copy is suppressed while a pending row is showing.
-    expect(screen.queryByText(/Ended chats appear here/)).toBeNull();
+    expect(screen.queryByText(/Closed chats show up here/)).toBeNull();
   });
 
   it("hides the placeholder and notifies the parent once the row arrives", async () => {

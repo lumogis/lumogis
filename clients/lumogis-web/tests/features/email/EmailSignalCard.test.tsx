@@ -178,10 +178,10 @@ describe("EmailSignalCard — mailbox indicator (LUM-821)", () => {
     // pass. That is the shape of a test that guards nothing, so this one reads
     // what a screen reader would actually announce.
     const { container } = renderWithMailbox("Work");
-    const chip = container.querySelector(".lumogis-email-card__mailbox");
+    const chip = container.querySelector("[data-testid=email-card-mailbox]");
 
     expect(chip?.textContent).toBe("Mailbox: Work");
-    expect(chip?.querySelector(".lumogis-visually-hidden")?.textContent).toBe("Mailbox: ");
+    expect(chip?.querySelector(".sr-only")?.textContent).toBe("Mailbox: ");
   });
 
   it("keeps the prefix out of the visible layout", () => {
@@ -189,7 +189,7 @@ describe("EmailSignalCard — mailbox indicator (LUM-821)", () => {
     // reader only, and is hidden by a class that keeps it in the a11y tree
     // (`display:none` would remove it from both).
     const { container } = renderWithMailbox("Work");
-    const hidden = container.querySelector(".lumogis-email-card__mailbox .lumogis-visually-hidden");
+    const hidden = container.querySelector("[data-testid=email-card-mailbox] .sr-only");
 
     expect(hidden).not.toBeNull();
     expect(screen.getByText("Work")).toBeInTheDocument();
@@ -200,7 +200,7 @@ describe("EmailSignalCard — mailbox indicator (LUM-821)", () => {
     // does not own. Neither should leave an empty element behind.
     const { container } = renderWithMailbox("");
 
-    expect(container.querySelector(".lumogis-email-card__mailbox")).toBeNull();
+    expect(container.querySelector("[data-testid=email-card-mailbox]")).toBeNull();
   });
 
   it("renders nothing when the host passes no label at all", () => {
@@ -209,5 +209,26 @@ describe("EmailSignalCard — mailbox indicator (LUM-821)", () => {
     renderCard(row({ source_label: "Work" }));
 
     expect(screen.queryByText("Work")).toBeNull();
+  });
+});
+
+// --------------------------------------------------------------------------- //
+// LUM-993 — Snooze is a menu of presets
+// --------------------------------------------------------------------------- //
+describe("EmailSignalCard — Snooze menu (LUM-993)", () => {
+  it("lists the presets in a menu and snoozes with the chosen one", async () => {
+    const { default: userEvent } = await import("@testing-library/user-event");
+    const onSetTriage = vi.fn();
+    renderCard(row(), { onSetTriage });
+    await userEvent.click(screen.getByRole("button", { name: "Snooze" }));
+    const menu = await screen.findByRole("menu");
+    expect(menu).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Tomorrow" }));
+    expect(onSetTriage).toHaveBeenCalledWith("s1", "snoozed", expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/));
+  });
+
+  it("offers no menu for a picked preset until it is opened", () => {
+    renderCard(row());
+    expect(screen.queryByRole("menu")).toBeNull();
   });
 });

@@ -3,7 +3,11 @@
 //
 // Server-backed conversation history sidebar (LUM-162).
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Share2, Trash2 } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 
 import type { ApiClient } from "../../api/client";
 import {
@@ -163,38 +167,38 @@ export function ConversationSidebar({
     [client, onContinue],
   );
 
+  const headingId = useId();
+  // LUM-993: same data and actions, new look — one line per chat with its
+  // summary under it. Share and Delete sit over the row's right end and show on
+  // hover or keyboard focus (always on touch, and while Share is open): they
+  // take no width, so titles use it all, and they stay in the accessibility tree.
+  const action =
+    "inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-background hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:size-[44px]";
   return (
-    <div className="lumogis-chat__history" data-testid="conversation-sidebar">
-      <h3 className="lumogis-chat__history-heading">History</h3>
-      {loading && <p className="lumogis-chat__history-status">Loading…</p>}
+    <section className="flex flex-col gap-1" data-testid="conversation-sidebar" aria-labelledby={headingId}>
+      <h2 id={headingId} className="m-0 px-2 text-xs font-medium text-muted-foreground">
+        History
+      </h2>
+      {loading && <p className="m-0 px-2 text-xs text-muted-foreground">Loading…</p>}
       {error !== null && (
-        <p role="alert" className="lumogis-chat__history-error">
+        <p role="alert" className="m-0 px-2 text-xs text-destructive">
           {error}
         </p>
       )}
       {!loading && items.length === 0 && unresolvedPending.length === 0 && (
-        <p className="lumogis-chat__history-empty">
-          Ended chats appear here after summarization completes.
-        </p>
+        <p className="m-0 px-2 text-xs text-muted-foreground">Closed chats show up here once they are summarised.</p>
       )}
       {unresolvedPending.length > 0 && (
-        <ul
-          className="lumogis-chat__history-pending"
-          role="list"
-          aria-label="Conversations being summarised"
-        >
+        <ul className="m-0 flex list-none flex-col gap-0.5 p-0" role="list" aria-label="Conversations being summarised">
           {unresolvedPending.map((p) => (
             <li
               key={p.conversationId}
-              className="lumogis-chat__history-item lumogis-chat__history-item--pending"
+              className="flex flex-col rounded-md px-2 py-1.5"
               data-conversation-id={p.conversationId}
               data-testid="pending-summary"
             >
-              <span className="lumogis-chat__history-title">{p.title}</span>
-              <span
-                role="status"
-                className="lumogis-chat__history-summary lumogis-chat__history-pending-label"
-              >
+              <span className="truncate text-sm">{p.title}</span>
+              <span role="status" className="text-xs text-muted-foreground">
                 Summarising…
               </span>
             </li>
@@ -202,76 +206,89 @@ export function ConversationSidebar({
         </ul>
       )}
       {partialToast !== null && (
-        <p role="status" className="lumogis-chat__history-partial">
-          <button type="button" onClick={() => setPartialToast(null)}>
+        <p role="status" className="m-0 px-2 text-xs text-destructive">
+          <Button
+            type="button"
+            variant="link"
+            size="xs"
+            className="h-auto p-0 text-xs text-destructive underline"
+            onClick={() => setPartialToast(null)}
+          >
             {partialToast}
-          </button>
+          </Button>
         </p>
       )}
-      <ul className="lumogis-chat__history-list" role="list">
+      <ul className="m-0 flex list-none flex-col gap-2 p-0" role="list">
         {CONVERSATION_GROUP_ORDER.map((group) => {
           const rows = grouped[group];
           if (rows.length === 0) return null;
           return (
-            <li key={group} className="lumogis-chat__history-group">
-              <span className="lumogis-chat__history-group-label">
+            <li key={group} className="flex flex-col gap-0.5">
+              <span className="px-2 pt-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
                 {CONVERSATION_GROUP_LABELS[group]}
               </span>
-              <ul role="list">
+              <ul className="m-0 flex list-none flex-col gap-0.5 p-0" role="list">
                 {rows.map((c) => (
-                  <li
-                    key={c.conversation_id}
-                    className="lumogis-chat__history-item"
-                    data-conversation-id={c.conversation_id}
-                  >
-                    <button
-                      type="button"
-                      className="lumogis-chat__history-select"
-                      onClick={() => void onSelectContinue(c.conversation_id)}
-                    >
-                      <span className="lumogis-chat__history-title">
-                        {c.title}
-                        {c.share_status === "shared" ? (
-                          <span
-                            className="lumogis-chat__history-shared-badge"
-                            data-testid={`conversation-list-shared-badge-${c.conversation_id}`}
-                          >
-                            {" "}
-                            · Shared
-                          </span>
-                        ) : null}
-                      </span>
-                      <span className="lumogis-chat__history-summary">{c.summary}</span>
-                    </button>
-                    {c.is_owner !== false ? (
-                      <button
+                  <li key={c.conversation_id} className="group flex flex-col" data-conversation-id={c.conversation_id}>
+                    <div className="relative flex items-center gap-0.5 rounded-md hover:bg-muted pointer-coarse:pr-1">
+                      <Button
                         type="button"
-                        className="lumogis-chat__history-share"
-                        aria-label={`Share ${c.title}`}
-                        data-testid={`share-conversation-${c.conversation_id}`}
-                        onClick={() =>
-                          setShareOpenId((cur) =>
-                            cur === c.conversation_id ? null : c.conversation_id,
-                          )
-                        }
+                        variant="ghost"
+                        className="h-auto justify-start whitespace-normal font-normal hover:bg-transparent flex min-h-9 min-w-0 flex-1 flex-col items-start rounded-md px-2 py-1.5 text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:min-h-[44px]"
+                        onClick={() => void onSelectContinue(c.conversation_id)}
                       >
-                        Share
-                      </button>
-                    ) : null}
-                    <button
-                      type="button"
-                      className="lumogis-chat__history-delete"
-                      aria-label={`Delete ${c.title}`}
-                      onClick={() => void onDelete(c.conversation_id)}
-                    >
-                      ×
-                    </button>
+                        <span className="w-full truncate text-sm">
+                          {c.title}
+                          {c.share_status === "shared" ? (
+                            <span
+                              className="text-xs text-muted-foreground"
+                              data-testid={`conversation-list-shared-badge-${c.conversation_id}`}
+                            >
+                              {" "}
+                              · Shared
+                            </span>
+                          ) : null}
+                        </span>
+                        <span className="w-full truncate text-xs text-muted-foreground">{c.summary}</span>
+                      </Button>
+                      <div
+                        className={cn(
+                          "absolute top-1/2 right-1 flex -translate-y-1/2 gap-0.5 rounded-md bg-muted opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:static pointer-coarse:translate-y-0 pointer-coarse:bg-transparent pointer-coarse:opacity-100",
+                          shareOpenId === c.conversation_id && "opacity-100",
+                        )}
+                      >
+                        {c.is_owner !== false ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            className={action}
+                            aria-label={`Share ${c.title}`}
+                            aria-expanded={shareOpenId === c.conversation_id}
+                            data-testid={`share-conversation-${c.conversation_id}`}
+                            onClick={() => setShareOpenId((cur) => (cur === c.conversation_id ? null : c.conversation_id))}
+                          >
+                            <Share2 className="size-3.5" aria-hidden="true" />
+                          </Button>
+                        ) : null}
+                        {/* Only the owner can delete: the server answers 404 to anyone else
+                            (conversations.delete_conversation is scoped to the caller). */}
+                        {c.is_owner !== false ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            className={cn(action, "hover:text-destructive")}
+                            aria-label={`Delete ${c.title}`}
+                            onClick={() => void onDelete(c.conversation_id)}
+                          >
+                            <Trash2 className="size-3.5" aria-hidden="true" />
+                          </Button>
+                        ) : null}
+                      </div>
+                    </div>
                     {shareOpenId === c.conversation_id ? (
-                      <ShareConversation
-                        client={client}
-                        conversationId={c.conversation_id}
-                        onChanged={() => void load()}
-                      />
+                      <div className="px-2 pt-1 pb-2">
+                        <ShareConversation client={client} conversationId={c.conversation_id} onChanged={() => void load()} />
+                      </div>
                     ) : null}
                   </li>
                 ))}
@@ -280,6 +297,6 @@ export function ConversationSidebar({
           );
         })}
       </ul>
-    </div>
+    </section>
   );
 }

@@ -38,6 +38,7 @@ from datetime import datetime
 from datetime import timezone
 
 from auth import UserContext
+from visibility import not_hidden_sql
 from visibility import visible_cypher_fragment
 from visibility import visible_filter
 from visibility import visible_qdrant_filter
@@ -649,16 +650,20 @@ def _detect_entities_in_query(query: str, user_id: str) -> list[dict]:
     """
     ms = config.get_metadata_store()
     where_clause, where_params = visible_filter(UserContext(user_id=user_id))
+    # LUM-966: an entry the member hid is never a context seed. (It can still be
+    # *named as a neighbour* in another seed's "relates to" line: ego expansion
+    # reads names from FalkorDB. Neighbour filtering is LUM-966 Later.)
+    hidden_clause, hidden_params = not_hidden_sql(user_id)
     try:
         candidates = ms.fetch_all(
             "SELECT entity_id, name, entity_type, aliases, mention_count, updated_at, "
             "memory_type, last_verified_at "
             "FROM entities "
-            f"WHERE {where_clause} AND mention_count >= %s "
+            f"WHERE {where_clause} AND {hidden_clause} AND mention_count >= %s "
             "AND (is_staged IS NOT TRUE) "
             "ORDER BY mention_count DESC "
             "LIMIT 100",
-            (*where_params, config.get_graph_min_mention_count()),
+            (*where_params, *hidden_params, config.get_graph_min_mention_count()),
         )
     except Exception:
         _log.exception("context_building: entity candidate fetch failed")
@@ -828,13 +833,14 @@ def _final_entity_score(row: dict, user_id: str, *, explicit: bool, sem_score: f
 def _fetch_entity_row_for_context(entity_id: str, user_id: str) -> dict | None:
     ms = config.get_metadata_store()
     where_clause, where_params = visible_filter(UserContext(user_id=user_id))
+    hidden_clause, hidden_params = not_hidden_sql(user_id)  # LUM-966: Hide
     try:
         return ms.fetch_one(
             "SELECT entity_id, name, entity_type, aliases, mention_count, updated_at, "
             "memory_type, last_verified_at "
-            f"FROM entities WHERE {where_clause} AND entity_id = %s "
+            f"FROM entities WHERE {where_clause} AND {hidden_clause} AND entity_id = %s "
             "AND (is_staged IS NOT TRUE)",
-            (*where_params, entity_id),
+            (*where_params, *hidden_params, entity_id),
         )
     except Exception:
         _log.warning(

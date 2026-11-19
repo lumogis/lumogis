@@ -350,8 +350,6 @@ _ENV_AUTH_ON = "AUTH_ENABLED=true\nLUMOGIS_PUBLIC_ORIGIN=http://localhost\n"
     "secrets",
     [
         "AUTH_SECRET=shared-value-1234\nJWT_REFRESH_SECRET=shared-value-1234\n",
-        "AUTH_SECRET=real-access-secret\nJWT_REFRESH_SECRET=change-me-in-production\n",
-        "AUTH_SECRET=real-access-secret\n",  # refresh unset altogether
         # LUMOGIS_JWT_REFRESH_SECRET wins (first non-empty) even when it is a placeholder.
         "AUTH_SECRET=real-access-secret\nLUMOGIS_JWT_REFRESH_SECRET=__GENERATE_ME__\n"
         "JWT_REFRESH_SECRET=a-real-refresh-secret\n",
@@ -384,6 +382,68 @@ def test_doctor_accepts_distinct_refresh_secret(tmp_path, env_extra):
     proc = _run(root, "--json")
     row = _config_rows(proc).get(_REFRESH_ROW)
     assert row is None or row["status"] != "error", proc.stdout
+
+
+@pytest.mark.parametrize(
+    "secrets",
+    [
+        "AUTH_SECRET=real-access-secret\nJWT_REFRESH_SECRET=change-me-in-production\n",
+        "AUTH_SECRET=real-access-secret\n",  # refresh unset altogether
+    ],
+)
+def test_doctor_refresh_secret_generated_on_first_start_is_ok_when_auth_on(tmp_path, secrets):
+    """LUM-981: the entrypoint writes a missing or placeholder refresh secret itself."""
+    root = _fixture_repo(tmp_path, ps_body=_healthy_ps_ndjson(), env_extra=_ENV_AUTH_ON + secrets)
+    proc = _run(root, "--json")
+    row = _config_rows(proc).get(_REFRESH_ROW)
+    assert row is not None, proc.stdout
+    assert row["status"] == "ok"
+    assert "generated on first start" in row["message"]
+
+
+def test_doctor_d1_auth_on_with_no_public_origin_is_ok(tmp_path):
+    """D1 (LUM-981): no LUMOGIS_PUBLIC_ORIGIN is fine; the origin is derived."""
+    root = _fixture_repo(
+        tmp_path,
+        ps_body=_healthy_ps_ndjson(),
+        env_extra="AUTH_ENABLED=true\nAUTH_SECRET=real-access-secret\n"
+        "JWT_REFRESH_SECRET=a-distinct-refresh\n",
+    )
+    proc = _run(root, "--json")
+    rows = _config_rows(proc)
+    assert rows["LUMOGIS_PUBLIC_ORIGIN"]["status"] == "ok"
+    assert "derived from the address in the browser" in rows["LUMOGIS_PUBLIC_ORIGIN"]["message"]
+
+
+@pytest.mark.parametrize("auth_secret_line", ["", "AUTH_SECRET=change-me-in-production\n"])
+def test_doctor_d2_missing_or_placeholder_auth_secret_is_ok_when_auth_on(
+    tmp_path, auth_secret_line
+):
+    """D2 (LUM-981): AUTH_SECRET is generated on first start; no guess about writability."""
+    root = _fixture_repo(
+        tmp_path,
+        ps_body=_healthy_ps_ndjson(),
+        env_extra="AUTH_ENABLED=true\n"
+        + auth_secret_line
+        + "JWT_REFRESH_SECRET=a-distinct-refresh\n",
+    )
+    proc = _run(root, "--json")
+    row = _config_rows(proc)["AUTH_SECRET"]
+    assert row["status"] == "ok"
+    assert "generated on first start" in row["message"]
+    assert "orchestrator says so at start-up" in row["message"]
+
+
+def test_doctor_d3_dotenv_ok_row_does_not_need_public_origin(tmp_path):
+    """D3 (LUM-981): auth on and no origin still gets the ``dotenv`` ok row."""
+    root = _fixture_repo(
+        tmp_path,
+        ps_body=_healthy_ps_ndjson(),
+        env_extra="AUTH_ENABLED=true\nAUTH_SECRET=real-access-secret\n"
+        "JWT_REFRESH_SECRET=a-distinct-refresh\n",
+    )
+    proc = _run(root, "--json")
+    assert _config_rows(proc)["dotenv"]["status"] == "ok"
 
 
 def test_doctor_exit_code_all_ok(tmp_path):

@@ -263,6 +263,9 @@ def test_explain_evaluates_every_entry(monkeypatch):
         {"session_summary": ["ghost"]},
         {"session_summary": ["ghost", "llama"]},
         {"temporal_judge": ["ghost", "llama"]},
+        {"temporal_judge": ["claude"]},
+        {"temporal_judge": ["claude", "llama"]},
+        {"temporal_judge": ["llama"]},
         {"email_classify": ["claude", "llama"]},
         {"email_classify": ["claude"]},
     ],
@@ -402,14 +405,257 @@ def test_destructive_task_malformed_first_item_is_not_promoted(monkeypatch):
     assert task_models.resolve_task_model("temporal_judge", user_id="u1") == "llama"
 
 
-def test_destructive_task_returns_first_entry_unchecked(monkeypatch):
+def _tp():
+    import plugins.graph  # noqa: F401  (puts services/lumogis-graph on sys.path)
+    from plugins.graph import temporal_pipeline as tp
+
+    return tp
+
+
+def _messages(caplog, level=logging.WARNING):
+    return [r.getMessage() for r in caplog.records if r.levelno >= level]
+
+
+def test_destructive_task_returns_on_box_first_entry_unchecked(monkeypatch, caplog):
+    """An on-box first entry is used with no key, privacy or switched-off read (ADR 241 §8)."""
     install(
-        monkeypatch, models={"claude": dict(CLOUD)}, tasks={"temporal_judge": ["claude", "llama"]}
+        monkeypatch,
+        models={"judge-local": dict(BIG)},
+        tasks={"temporal_judge": ["judge-local", "llama"]},
     )
     monkeypatch.setattr(config, "model_disabled_reason", _boom)
-    assert task_models.resolve_task_model("temporal_judge", user_id="u1") == "claude"
+    monkeypatch.setattr(privacy_mode, "effective_privacy_mode", _boom)
+    assert task_models.resolve_task_model("temporal_judge", user_id="u1") == "judge-local"
+    # An unknown entry is not on-box proven: the code default is used (LUM-983).
     install(monkeypatch, tasks={"temporal_judge": ["qwen-judge"]})
-    assert task_models.resolve_task_model("temporal_judge", user_id="u1") == "qwen-judge"
+    with caplog.at_level(logging.WARNING, logger="services.task_models"):
+        assert task_models.resolve_task_model("temporal_judge", user_id="u1") == "llama"
+    assert any("reason=unknown" in m for m in _messages(caplog))
+
+
+def test_temporal_judge_on_box_keyless_entry_is_still_the_judge(monkeypatch):
+    """The other half of ADR 241 §8: keyless, blocked or switched off is kept, not swapped.
+
+    It fails at the call site into judge_failed.
+    """
+    install(
+        monkeypatch, models={"judge-local": dict(BIG)}, tasks={"temporal_judge": ["judge-local"]}
+    )
+    monkeypatch.setattr(config, "model_disabled_reason", lambda *a, **k: "no_credentials")
+    assert task_models.resolve_task_model("temporal_judge", user_id="u1") == "judge-local"
+    exp = task_models.explain_task("temporal_judge", user_id="u1")
+    assert exp.resolved_model == "judge-local"
+    assert exp.resolved_from == "list"
+    assert [(e.model, e.skip_reason) for e in exp.entries] == [("judge-local", "no_credentials")]
+
+
+@pytest.mark.parametrize("mode", ["allow_cloud", "local_only"])
+@pytest.mark.parametrize("uid", [None, "u1"])
+def test_temporal_judge_off_box_entry_resolves_to_code_default(monkeypatch, mode, uid):
+    # LUM-983: the judge reads episode text (notes, voice memos, session summaries).
+    install(monkeypatch, models={"claude": dict(CLOUD)}, tasks={"temporal_judge": ["claude"]})
+    grant_key(monkeypatch, present=True)
+    set_policy(monkeypatch, mode)
+    assert task_models.resolve_task_model("temporal_judge", user_id=uid) == "llama"
+    exp = task_models.explain_task("temporal_judge", user_id=uid)
+    assert exp.resolved_model == "llama"
+    assert exp.resolved_from == "default"
+    assert [(e.model, e.skip_reason) for e in exp.entries] == [("claude", "not_on_box")]
+
+
+def test_temporal_judge_never_takes_a_later_entry(monkeypatch):
+    install(
+        monkeypatch,
+        models={"claude": dict(CLOUD), "big": dict(BIG)},
+        tasks={"temporal_judge": ["claude", "big"]},
+    )
+    grant_key(monkeypatch, present=True)
+    set_policy(monkeypatch, "allow_cloud")
+    assert task_models.resolve_task_model("temporal_judge", user_id="u1") == "llama"
+    assert task_models.explain_task("temporal_judge", user_id="u1").resolved_model == "llama"
+
+
+@pytest.mark.parametrize("host_kind", ["unresolved", "public"])
+def test_temporal_judge_first_entry_on_unresolved_or_public_host_resolves_to_default(
+    monkeypatch, host_kind
+):
+    url = (
+        "http://nodns.example:11434/ollama/v1"
+        if host_kind == "unresolved"
+        else "http://ollama.example.com:11434/v1"
+    )
+
+    def fake_ips(host):
+        if host_kind == "unresolved":
+            raise OSError("no dns")
+        return ["93.184.216.34"]
+
+    install(
+        monkeypatch,
+        models={"far": {"adapter": "openai", "model": "x", "base_url": url}},
+        tasks={"temporal_judge": ["far"]},
+    )
+    monkeypatch.setattr(outbound_http_url, "_resolved_ips", fake_ips)
+    assert task_models.resolve_task_model("temporal_judge", user_id="u1") == "llama"
+    exp = task_models.explain_task("temporal_judge", user_id="u1")
+    assert exp.resolved_model == "llama"
+    assert exp.resolved_from == "default"
+    assert [(e.model, e.skip_reason) for e in exp.entries] == [("far", "not_on_box")]
+
+
+@pytest.mark.parametrize("where", ["lookup", "on_box", "on_box_preset"])
+def test_temporal_judge_lookup_error_resolves_to_default_without_leaking(
+    monkeypatch, caplog, where
+):
+    install(
+        monkeypatch, models={"judge-local": dict(BIG)}, tasks={"temporal_judge": ["judge-local"]}
+    )
+
+    def raiser_runtime(*a, **k):
+        raise RuntimeError("secret-api-value-123")
+
+    def raiser_value(*a, **k):
+        raise ValueError("secret-api-value-123")
+
+    if where == "lookup":
+        monkeypatch.setattr(task_models._ModelLookup, "get", raiser_runtime)
+    else:
+        monkeypatch.setattr(task_models, "is_on_box_local", raiser_value)
+    with caplog.at_level(logging.WARNING, logger="services.task_models"):
+        if where == "on_box_preset":
+            # The preset-map branch the admin route uses (admin_diagnostics.py).
+            exp = task_models.explain_task(
+                "temporal_judge",
+                user_id=None,
+                _models={"llama": dict(LLAMA), "judge-local": dict(BIG)},
+            )
+        else:
+            assert task_models.resolve_task_model("temporal_judge", user_id="u1") == "llama"
+            exp = task_models.explain_task("temporal_judge", user_id="u1")
+    assert exp.resolved_model == "llama"
+    assert exp.resolved_from == "default"
+    if where != "on_box_preset":
+        assert [(e.model, e.skip_reason) for e in exp.entries] == [("judge-local", "error")]
+    text = "\n".join(_messages(caplog))
+    assert "secret-api-value-123" not in text
+    if where != "on_box_preset":  # explain_task never logs the warn-once line
+        assert "reason=error" in text
+    assert "reason=unknown" not in text
+    assert ("RuntimeError" if where == "lookup" else "ValueError") in text
+
+
+_DYN_REMOTE = {
+    "adapter": "openai",
+    "model": "qwen2.5:7b",
+    "base_url": "http://ollama.example.com:11434/v1",
+}
+_DYN_LOCAL = dict(_DYN_REMOTE, base_url="http://ollama:11434/v1")
+
+
+@pytest.mark.parametrize(
+    "dynamic,public,want",
+    [
+        ({}, False, "llama"),  # (a) unknown while Ollama is down
+        ({"qwen2.5": _DYN_REMOTE}, True, "llama"),  # (b) alias on a public host
+        ({"qwen2.5": _DYN_LOCAL}, False, "qwen2.5"),  # (c) positive control
+    ],
+    ids=["unknown", "remote", "on_box"],
+)
+def test_temporal_judge_dynamic_alias_must_be_on_box(monkeypatch, caplog, dynamic, public, want):
+    install(monkeypatch, tasks={"temporal_judge": ["qwen2.5"]}, dynamic=dynamic)
+    if public:
+        monkeypatch.setattr(outbound_http_url, "_resolved_ips", lambda h: ["93.184.216.34"])
+    with caplog.at_level(logging.WARNING, logger="services.task_models"):
+        assert task_models.resolve_task_model("temporal_judge", user_id="u1") == want
+    msgs = _messages(caplog)
+    if not dynamic:
+        assert any(
+            "reason=unknown (Ollama listed no models: unreachable or empty)" in m for m in msgs
+        )
+    elif public:
+        assert any("reason=not_on_box" in m for m in msgs)
+    else:
+        assert not any("destructive task" in m for m in msgs)
+
+
+def test_temporal_judge_default_warning_logged_once_and_not_by_explain(monkeypatch, caplog):
+    install(monkeypatch, models={"claude": dict(CLOUD)}, tasks={"temporal_judge": ["claude"]})
+    grant_key(monkeypatch, present=True)
+    set_policy(monkeypatch, "allow_cloud")
+
+    def hits():
+        return [
+            m
+            for m in _messages(caplog)
+            if "destructive task=temporal_judge" in m
+            and "reason=not_on_box" in m
+            and "using code default llama" in m
+        ]
+
+    with caplog.at_level(logging.WARNING, logger="services.task_models"):
+        task_models.explain_task("temporal_judge", user_id="u1")
+        assert hits() == []  # diagnostics must not spend the one warning
+        task_models.resolve_task_model("temporal_judge", user_id="u1")
+        assert len(hits()) == 1
+        task_models.resolve_task_model("temporal_judge", user_id="u1")
+    assert len(hits()) == 1
+
+
+def test_temporal_judge_warning_after_boot_call_is_per_reason(monkeypatch, caplog):
+    """Production sequence: the plugin's boot call, then episodes (LUM-983)."""
+    tp = _tp()
+    alias = dict(_DYN_REMOTE, base_url="http://gpu.lan:11434/ollama/v1")
+    install(monkeypatch, tasks={"temporal_judge": ["qwen2.5"]}, dynamic={"qwen2.5": alias})
+    set_policy(monkeypatch, "allow_cloud")
+
+    def no_dns(host):
+        raise OSError("no dns")
+
+    monkeypatch.setattr(outbound_http_url, "_resolved_ips", no_dns)
+    with caplog.at_level(logging.DEBUG, logger="services.task_models"):
+        assert tp._judge_model(None) == "llama"
+        assert tp._judge_model("u1") == "llama"
+        assert tp._judge_model("u1") == "llama"
+        warns = [r for r in caplog.records if r.levelno == logging.WARNING]
+        debugs = [
+            r.getMessage()
+            for r in caplog.records
+            if r.levelno == logging.DEBUG and "substituted code default llama" in r.getMessage()
+        ]
+        assert len(warns) == 1 and "reason=not_on_box" in warns[0].getMessage()
+        assert len(debugs) == 2
+        # Ollama goes away without clearing the warn-once set: a new reason warns again.
+        monkeypatch.setattr(config, "_dynamic_ollama_models", lambda: {})
+        assert tp._judge_model("u1") == "llama"
+    warns = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warns) == 2 and "reason=unknown" in warns[1]
+
+
+def test_temporal_judge_follows_a_flapping_first_entry(monkeypatch):
+    """A first entry that is only sometimes usable is decided per resolution.
+
+    This is the accepted behaviour (plan LUM-983, "What this builds"): the operator's
+    model when it is proven on-box, else the code default. Today the same flap ends
+    judge_failed, which is never retried.
+    """
+    install(monkeypatch, tasks={"temporal_judge": ["qwen2.5"]})
+    calls = {"n": 0}
+
+    def flapping():
+        calls["n"] += 1
+        return {} if calls["n"] == 2 else {"qwen2.5": dict(_DYN_LOCAL)}
+
+    monkeypatch.setattr(config, "_dynamic_ollama_models", flapping)
+    got = [task_models.resolve_task_model("temporal_judge", user_id="u1") for _ in range(3)]
+    assert got == ["qwen2.5", "llama", "qwen2.5"]
+
+
+def test_destructive_task_that_is_not_local_only_returns_first_entry_with_no_lookup(monkeypatch):
+    install(monkeypatch, models={"claude": dict(CLOUD)}, tasks={"temporal_judge": ["claude"]})
+    spec = replace(TASKS["temporal_judge"], local_only=False)
+    monkeypatch.setattr(task_models, "TASKS", {**TASKS, "temporal_judge": spec})
+    monkeypatch.setattr(task_models._ModelLookup, "get", _boom)
+    assert task_models.resolve_task_model("temporal_judge", user_id=None) == "claude"
 
 
 def test_on_box_resolution(monkeypatch, caplog):

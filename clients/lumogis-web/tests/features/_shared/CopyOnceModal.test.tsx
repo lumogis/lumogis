@@ -3,7 +3,7 @@
 // Phase 2D — CopyOnceModal focus + Escape (credential / admin copy flows).
 
 import { useState } from "react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
@@ -37,11 +37,22 @@ describe("CopyOnceModal", () => {
       expect(document.activeElement).toBe(copyBtn);
     });
 
+    expect(screen.getByText("tok-test")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /^close$/i }));
     await waitFor(() => {
       expect(screen.queryByRole("dialog")).toBeNull();
     });
     expect(document.activeElement).toBe(opener);
+  });
+
+  it("copies the secret to the clipboard", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
+    render(<Harness />);
+    await user.click(screen.getByRole("button", { name: /open modal/i }));
+    await user.click(await screen.findByRole("button", { name: /copy to clipboard/i }));
+    expect(writeText).toHaveBeenCalledWith("tok-test");
+    expect(await screen.findByRole("button", { name: "Copied" })).toBeInTheDocument();
   });
 
   it("closes on Escape and restores focus", async () => {

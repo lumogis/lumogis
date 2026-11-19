@@ -3,6 +3,7 @@
 import {readFileSync} from "node:fs";
 import {fileURLToPath} from "node:url";
 
+import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import {defineConfig, loadEnv} from "vite";
 import {VitePWA} from "vite-plugin-pwa";
@@ -19,8 +20,12 @@ export default defineConfig(({mode}) => {
   const orchestrator = env.LUMOGIS_DEV_ORCHESTRATOR_URL || "http://127.0.0.1:8000";
 
   return {
+    resolve: {
+      alias: {"@": fileURLToPath(new URL("./src", import.meta.url))},
+    },
     plugins: [
       react(),
+      tailwindcss(),
       VitePWA({
         strategies: "injectManifest",
         srcDir: "src/pwa",
@@ -66,7 +71,15 @@ export default defineConfig(({mode}) => {
         "/feedback": {target: orchestrator, changeOrigin: false},
         "/capabilities": {target: orchestrator, changeOrigin: false},
         "/dashboard": {target: orchestrator, changeOrigin: false},
-        "/settings": {target: orchestrator, changeOrigin: false},
+        // LUM-993: /settings is also the SPA's Settings; browser navigations stay here.
+        "/settings": {
+          target: orchestrator,
+          changeOrigin: false,
+          bypass: (req) => {
+            const accept = req.headers.accept ?? "";
+            return accept.includes("text/html") ? "/index.html" : undefined;
+          },
+        },
         "/graph": {target: orchestrator, changeOrigin: false},
         "/kg": {target: orchestrator, changeOrigin: false},
         "/review-queue": {target: orchestrator, changeOrigin: false},
@@ -75,7 +88,15 @@ export default defineConfig(({mode}) => {
         "/permissions": {target: orchestrator, changeOrigin: false},
         "/browse": {target: orchestrator, changeOrigin: false},
         "/export": {target: orchestrator, changeOrigin: false},
-        "/entities": {target: orchestrator, changeOrigin: false},
+        // LUM-161: /entities is also an SPA page; browser navigations stay here.
+        "/entities": {
+          target: orchestrator,
+          changeOrigin: false,
+          bypass: (req) => {
+            const accept = req.headers.accept ?? "";
+            return accept.includes("text/html") ? "/index.html" : undefined;
+          },
+        },
       },
     },
     build: {

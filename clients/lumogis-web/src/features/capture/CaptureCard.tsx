@@ -5,15 +5,18 @@
 // reuse it for indexed captures.
 
 import type { CaptureListItem } from "../../api/captures";
+import { Badge } from "../../components/ui/badge";
+import { Button } from "../../components/ui/button";
+import { formatDateTime } from "../../util/formatTimestamp";
 
-function statusColour(status: string): string {
+function statusLabel(status: string): string {
   switch (status) {
     case "failed":
-      return "#c62828";
+      return "Failed";
     case "indexed":
-      return "#2e7d32";
+      return "In memory";
     default:
-      return "#ed6c02"; // pending
+      return "Waiting";
   }
 }
 
@@ -34,39 +37,27 @@ export function CaptureCard({
   onOpen: (id: string) => void;
 }): JSX.Element {
   return (
-    <button
+    <Button
       type="button"
+      variant="outline"
       onClick={() => onOpen(item.id)}
-      style={{
-        display: "block",
-        width: "100%",
-        textAlign: "left",
-        border: "1px solid #e0e0e0",
-        borderRadius: 8,
-        padding: "0.75rem 1rem",
-        marginBottom: "0.5rem",
-        background: "transparent",
-        cursor: "pointer",
-        minHeight: "44px", // mobile tap target
-      }}
+      className="mb-2 block h-auto min-h-11 w-full whitespace-normal px-4 py-3 text-left"
     >
-      <div style={{ display: "flex", justifyContent: "space-between", gap: "0.5rem" }}>
-        <span style={{ fontSize: "0.95rem" }}>{preview(item)}</span>
-        <span
-          style={{ color: statusColour(item.status), fontWeight: 600, fontSize: "0.8rem" }}
-        >
-          {item.status}
-        </span>
-      </div>
-      <div style={{ fontSize: "0.8rem", opacity: 0.7, marginTop: "0.25rem" }}>
-        Updated {new Date(item.updated_at).toLocaleString()}
+      <span className="flex items-start justify-between gap-2">
+        <span className="min-w-0 text-sm break-words">{preview(item)}</span>
+        <Badge variant={item.status === "failed" ? "destructive" : item.status === "indexed" ? "default" : "secondary"}>
+          {statusLabel(item.status)}
+        </Badge>
+      </span>
+      <span className="mt-1 block text-xs font-normal text-muted-foreground">
+        Updated {formatDateTime(item.updated_at)}
         {item.attachment_count ? ` · ${item.attachment_count} attachment(s)` : ""}
-      </div>
+      </span>
       {item.status === "failed" && item.last_error ? (
-        <div style={{ fontSize: "0.8rem", color: "#c62828", marginTop: "0.25rem" }}>
+        <span className="mt-1 block text-xs font-normal text-destructive">
           Add-to-memory failed: {item.last_error}
-        </div>
+        </span>
       ) : null}
-    </button>
+    </Button>
   );
 }

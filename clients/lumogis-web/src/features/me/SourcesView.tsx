@@ -16,7 +16,7 @@
 // LUM-844: pause/resume is a row action, not an edit field, and a paused row
 // hides Sync now because `POST /sources/{id}/sync` refuses it (409 source_paused).
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import { ApiError } from "../../api/client";
@@ -28,7 +28,26 @@ import {
   updateSource,
   type SourceRow,
 } from "../../api/sources";
-import { EmptyState } from "../_shared/EmptyState";
+import { EmptyState } from "../../components/page/EmptyState";
+import { ErrorState } from "../../components/page/ErrorState";
+import { LoadingPlaceholder, SkeletonText } from "../../components/page/LoadingState";
+import { PageSection } from "../../components/page/PageSection";
+import { RowActions } from "../../components/page/RowActions";
+import { Alert, AlertDescription } from "../../components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "../../components/ui/alert-dialog";
+import { Badge } from "../../components/ui/badge";
+import { Button } from "../../components/ui/button";
+import { formatDateTime } from "../../util/formatTimestamp";
+import { useSettingsHeading } from "../settings/settingsHeading";
 import { AddSourcePanel } from "./AddSourcePanel";
 import { EditSourceRow } from "./EditSourceRow";
 
@@ -42,14 +61,52 @@ const MANAGED_TYPES = new Set(["paperless", "rss", "page"]);
 // same response. One key, so a delete here cannot leave that list stale.
 const SOURCES_KEY = ["email", "sources"] as const;
 
-function formatWhen(iso: string | null): string {
-  if (!iso) return "never";
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "unknown" : d.toLocaleString();
+// Plain words for the kind of source (LUM-993). `source_type` stays the API's
+// word; this is only what a household member reads.
+function kindLabel(sourceType: string): string {
+  switch (sourceType) {
+    case "paperless":
+      return "Document archive";
+    case "rss":
+      return "Feed";
+    case "page":
+      return "Web page";
+    default:
+      return "Source";
+  }
+}
+
+function everyLabel(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "Checked on a schedule";
+  if (seconds % 86400 === 0) {
+    const d = seconds / 86400;
+    return d === 1 ? "Checked every day" : `Checked every ${d} days`;
+  }
+  if (seconds % 3600 === 0) {
+    const h = seconds / 3600;
+    return h === 1 ? "Checked every hour" : `Checked every ${h} hours`;
+  }
+  const m = Math.max(1, Math.round(seconds / 60));
+  return m === 1 ? "Checked every minute" : `Checked every ${m} minutes`;
+}
+
+// A sentence for each code the pollers record. Unknown codes fall back to a
+// generic line: the server can ship a new code before this client knows it, and
+// a raw code is not something a household member can act on.
+function problemSentence(code: string): string {
+  switch (code) {
+    case "credential":
+      return "Lumogis can't sign in. Check the address and key you saved for it.";
+    case "network":
+    case "egress_blocked":
+      return "Lumogis couldn't reach it. This often clears up on its own.";
+    default:
+      return "The last check didn't work.";
+  }
 }
 
 /**
- * What the row's health line says.
+ * What the row's health says.
  *
  * `last_polled_at` on its own is NOT health: every poll path advances it,
  * including the ones that failed. A paperless source with no credential is
@@ -60,7 +117,7 @@ function formatWhen(iso: string | null): string {
  * then only IMAP did, and this branch could never have fired for any type this
  * view shows.
  */
-function healthOf(row: SourceRow): { label: string; failing: boolean } {
+function healthOf(row: SourceRow): { label: string; failing: boolean; paused: boolean } {
   // Paused wins over an error code. `_record_poll_health` only CLEARS an error
   // on a successful poll, and a paused source never polls again — so checking
   // the error first would leave a paused row shouting `role="alert"` forever,
@@ -68,19 +125,24 @@ function healthOf(row: SourceRow): { label: string; failing: boolean } {
   if (!row.active) {
     return {
       label: row.last_poll_error_code
-        ? `Paused — last error: ${row.last_poll_error_code}`
-        : "Paused",
+        ? `Paused. The last check had a problem: ${problemSentence(row.last_poll_error_code)}`
+        : "Paused. Nothing new is checked until you resume it.",
       failing: false,
+      paused: true,
     };
   }
   if (row.last_poll_error_code) {
-    // Raw code by design (a compact status label). The user-facing sentence per
-    // code, split by auth method where known, is
-    // `pollHealthMessage(code, row.auth_method)`; use it here if the raw label
-    // proves confusing (LUM-777).
-    return { label: `Failing — ${row.last_poll_error_code}`, failing: true };
+    return {
+      label: problemSentence(row.last_poll_error_code),
+      failing: true,
+      paused: false,
+    };
   }
-  return { label: `Last polled ${formatWhen(row.last_polled_at)}`, failing: false };
+  return {
+    label: row.last_polled_at ? `Last checked ${formatDateTime(row.last_polled_at)}` : "Not checked yet",
+    failing: false,
+    paused: false,
+  };
 }
 
 export function SourcesView(): JSX.Element {
@@ -107,13 +169,8 @@ export function SourcesView(): JSX.Element {
   // keyboard or screen-reader user would get no landing point at the most
   // consequential click in that flow.
   //
-  // Gated on the navigation state so an ordinary visit to /me/sources does not
+  // Gated on the navigation state so an ordinary visit to /settings/sources does not
   // steal focus — this only fires for the arrival the handoff creates.
-  //
-  // A CALLBACK ref, not `useRef` + `useEffect`, and that is load-bearing: an
-  // effect running on mount would find `current === null` whenever the arrival
-  // lands while `GET /sources` is still in flight — which is the common case,
-  // since the navigation and the fetch start together.
   const navigate = useNavigate();
   const { pathname, state } = useLocation();
   const fromOnboarding = (state as { fromOnboarding?: boolean } | null)?.fromOnboarding === true;
@@ -129,42 +186,43 @@ export function SourcesView(): JSX.Element {
   useEffect(() => {
     if (fromOnboarding) navigate(pathname, { replace: true, state: null });
   }, [fromOnboarding, navigate, pathname]);
-  const headingRef = useCallback(
-    (node: HTMLHeadingElement | null) => {
-      // Latch success, not attempt — otherwise a failed first try blocks later
-      // retries, and a branch swap disconnects the captured node.
-      if (node === null || !fromOnboarding || focusLandedRef.current) return;
-
-      // VERIFY, don't assume. When we arrive from the onboarding handoff the
-      // modal that sent us is usually STILL MOUNTED: `navigate` runs on a
-      // microtask after the completion resolves, while the gate only unmounts
-      // the modal a macrotask later (query-core's notifyManager defers observer
-      // notification). Until it does, `ModalFrame` holds `inert` on `#root` —
-      // and an inert subtree cannot take focus, so this first call is a
-      // spec-compliant no-op in a real browser. Focus would then sit on the
-      // handoff button until that unmounts, and land on <body>.
-      //
-      // The lift and this retry are BOTH `setTimeout(0)` work — order is not
-      // guaranteed — so one macrotask is not always enough. A short chain is.
-      //
-      // jsdom does NOT enforce inert (measured: focus succeeds inside an inert
-      // subtree), so no unit test in this repo can catch that without mocking.
-      // The Playwright case in `onboarding_dismiss_persists.spec.ts` is the one
-      // that can.
-      const tryFocus = (attemptsLeft: number) => {
-        if (focusLandedRef.current || !node.isConnected) return;
-        node.focus();
-        if (document.activeElement === node) {
-          focusLandedRef.current = true;
-          return;
-        }
-        if (attemptsLeft <= 0) return;
-        window.setTimeout(() => tryFocus(attemptsLeft - 1), 0);
-      };
-      tryFocus(3);
-    },
-    [fromOnboarding],
-  );
+  // The heading is the Settings frame's (`SettingsPage` renders the one `<h1>`
+  // for every page and shares its ref); rendered alone, there is no frame
+  // heading and this does nothing.
+  const frameHeading = useSettingsHeading();
+  useEffect(() => {
+    // Latch success, not attempt — otherwise a failed first try blocks later
+    // retries.
+    if (!fromOnboarding || focusLandedRef.current) return;
+    // VERIFY, don't assume. When we arrive from the onboarding handoff the
+    // modal that sent us is usually STILL MOUNTED: `navigate` runs on a
+    // microtask after the completion resolves, while the gate only unmounts
+    // the modal a macrotask later (query-core's notifyManager defers observer
+    // notification). Until it does, `ModalFrame` holds `inert` on `#root` —
+    // and an inert subtree cannot take focus, so this first call is a
+    // spec-compliant no-op in a real browser. Focus would then sit on the
+    // handoff button until that unmounts, and land on <body>.
+    //
+    // The lift and this retry are BOTH `setTimeout(0)` work — order is not
+    // guaranteed — so one macrotask is not always enough. A short chain is.
+    //
+    // jsdom does NOT enforce inert (measured: focus succeeds inside an inert
+    // subtree), so no unit test in this repo can catch that without mocking.
+    // The Playwright case in `onboarding_dismiss_persists.spec.ts` is the one
+    // that can.
+    const tryFocus = (attemptsLeft: number) => {
+      const node = frameHeading?.current;
+      if (focusLandedRef.current || !node || !node.isConnected) return;
+      node.focus();
+      if (document.activeElement === node) {
+        focusLandedRef.current = true;
+        return;
+      }
+      if (attemptsLeft <= 0) return;
+      window.setTimeout(() => tryFocus(attemptsLeft - 1), 0);
+    };
+    tryFocus(3);
+  }, [fromOnboarding, frameHeading]);
 
   const q = useQuery({
     queryKey: SOURCES_KEY,
@@ -259,59 +317,81 @@ export function SourcesView(): JSX.Element {
   // One status line for both branches (zero state and list). Try again appears
   // only beside the "did not take" message it belongs to (LUM-844).
   const statusLine = msg ? (
-    <p role="status" aria-label="Source list status">
+    <p
+      role="status"
+      aria-label="Source list status"
+      className="m-0 mb-4 flex max-w-2xl flex-wrap items-center gap-2 text-sm"
+    >
       {msg}
       {retryVars ? (
-        <>
-          {" "}
-          <button
-            type="button"
-            onClick={() => pauseM.mutate(retryVars)}
-            disabled={pauseM.isPending}
-          >
-            Try again
-          </button>
-        </>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={() => pauseM.mutate(retryVars)}
+          disabled={pauseM.isPending}
+        >
+          Try again
+        </Button>
       ) : null}
     </p>
   ) : null;
 
+  const addPanel = (
+    <AddSourcePanel
+      onAdded={() => {
+        say("Source added.");
+        void qc.invalidateQueries({ queryKey: SOURCES_KEY });
+      }}
+    />
+  );
+
+  const removing = rows.find((r) => r.id === confirming) ?? null;
+
   let body: JSX.Element;
   if (q.isPending) {
-    body = <p>Loading…</p>;
+    body = (
+      <LoadingPlaceholder label="Loading your sources…" className="max-w-2xl">
+        <SkeletonText lines={4} />
+      </LoadingPlaceholder>
+    );
   } else if (q.isError) {
     const err = q.error;
-    const detail =
-      err instanceof ApiError && err.status === 401
-        ? "Not signed in or session expired."
-        : "Sources unavailable.";
-    body = <p role="alert">{detail}</p>;
+    body = (
+      <ErrorState
+        message={
+          err instanceof ApiError && err.status === 401
+            ? "You're not signed in, or your session has ended."
+            : "Lumogis couldn't load your sources."
+        }
+        onRetry={() => void q.refetch()}
+      />
+    );
   } else if (rows.length === 0) {
-        // LUM-282. The offer goes ABOVE the add form, because its job is to
-        // introduce it — below, it answers a question the reader has already
-        // given up on. It ABSORBS the standing intro paragraph rather than
-        // stacking on it.
-        //
-        // No `actions`. `AddSourcePanel`'s credentials link is deliberately
-        // `target="_blank"` (:311) because in-app navigation unmounts the panel
-        // and takes the preview and any consent acknowledgements with it. An
-        // `EmptyState` href action renders a same-tab <Link>. Two controls that
-        // look identical while one preserves the user's work and the other
-        // destroys it is worse than duplication — and every action needed is in
-        // the panel directly below.
-        //
-        // The title names the missing CATEGORIES, never the state of the
-        // account: `rows` is filtered by MANAGED_TYPES, so this branch is also
-        // reached by someone with three mailboxes, for whom "you haven't
-        // connected anything yet" would be false.
+    // LUM-282. The offer goes ABOVE the add form, because its job is to
+    // introduce it — below, it answers a question the reader has already
+    // given up on. It ABSORBS the standing intro paragraph rather than
+    // stacking on it.
+    //
+    // No `actions`. `AddSourcePanel`'s credentials link is deliberately
+    // `target="_blank"` because in-app navigation unmounts the panel
+    // and takes the preview and any consent acknowledgements with it. An
+    // `EmptyState` href action renders a same-tab <Link>. Two controls that
+    // look identical while one preserves the user's work and the other
+    // destroys it is worse than duplication — and every action needed is in
+    // the panel directly below.
+    //
+    // The title names the missing CATEGORIES, never the state of the
+    // account: `rows` is filtered by MANAGED_TYPES, so this branch is also
+    // reached by someone with three mailboxes, for whom "you haven't
+    // connected anything yet" would be false.
     body = (
       <>
         <EmptyState
-          className="lumogis-sources__empty"
           title="No document archives, feeds or watched pages yet"
           helperText="Lumogis can read a Paperless-ngx archive, an RSS feed, or a page you want watched."
         >
-          <p>
+          <p className="m-0 text-sm text-muted-foreground">
             Paperless takes two steps: save its address and API token first, then add it
             as a source below. Mailboxes are set up on the email settings page.
           </p>
@@ -319,42 +399,19 @@ export function SourcesView(): JSX.Element {
 
         {statusLine}
 
-        <AddSourcePanel
-          onAdded={() => {
-            say("Source added.");
-            void qc.invalidateQueries({ queryKey: SOURCES_KEY });
-          }}
-        />
+        {addPanel}
       </>
     );
   } else {
     body = (
       <>
-        <p>
-          Document archives, feeds and watched pages. Mailboxes are managed on the
-          email settings page.
-        </p>
-
         {statusLine}
 
-        <AddSourcePanel
-          onAdded={() => {
-            say("Source added.");
-            void qc.invalidateQueries({ queryKey: SOURCES_KEY });
-          }}
-        />
-
-        <table>
-          <thead>
-            <tr>
-              <th scope="col">Name</th>
-              <th scope="col">Type</th>
-              <th scope="col">Category</th>
-              <th scope="col">Status</th>
-              <th scope="col">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
+        <PageSection
+          title="Your sources"
+          description="Document archives, feeds and watched pages. Mailboxes are managed on the email settings page."
+        >
+          <ul role="list" className="m-0 flex list-none flex-col divide-y divide-border p-0">
             {rows.map((row) => {
               const health = healthOf(row);
               if (editing === row.id) {
@@ -369,78 +426,87 @@ export function SourcesView(): JSX.Element {
                 );
               }
               return (
-                <tr key={row.id}>
-                  <td>{row.name}</td>
-                  <td>{row.source_type}</td>
-                  <td>{row.category}</td>
-                  <td>
-                    <span role={health.failing ? "alert" : undefined}>{health.label}</span>
-                  </td>
-                  <td>
+                <li key={row.id} data-source-id={row.id} className="flex flex-col gap-2 py-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="min-w-0 flex-1 text-sm font-medium break-words">{row.name}</span>
+                    <Badge variant="secondary">{kindLabel(row.source_type)}</Badge>
+                    {health.paused ? <Badge variant="outline">Paused</Badge> : null}
                     {row.active ? (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => syncM.mutate(row.id)}
-                          // Scoped to this row: a slow sync on one source must not
-                          // grey out every other row's controls.
-                          disabled={syncM.isPending && syncM.variables === row.id}
-                        >
-                          Sync now
-                        </button>{" "}
-                      </>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => syncM.mutate(row.id)}
+                        // Scoped to this row: a slow sync on one source must not
+                        // grey out every other row's controls.
+                        disabled={syncM.isPending && syncM.variables === row.id}
+                      >
+                        Sync now
+                      </Button>
                     ) : null}
-                    <button
-                      type="button"
-                      onClick={() => pauseM.mutate({ id: row.id, active: !row.active })}
-                      disabled={pauseM.isPending && pauseM.variables?.id === row.id}
-                    >
-                      {row.active ? `Pause ${row.name}` : `Resume ${row.name}`}
-                    </button>{" "}
-                    <button type="button" onClick={() => setEditing(row.id)}>
-                      Edit {row.name}
-                    </button>{" "}
-                    {confirming === row.id ? (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => delM.mutate(row.id)}
-                          disabled={delM.isPending && delM.variables === row.id}
-                        >
-                          Confirm remove {row.name}
-                        </button>{" "}
-                        <button type="button" onClick={() => setConfirming(null)}>
-                          Cancel
-                        </button>
-                      </>
-                    ) : (
-                      <button type="button" onClick={() => setConfirming(row.id)}>
-                        Remove {row.name}
-                      </button>
-                    )}
-                  </td>
-                </tr>
+                    <RowActions
+                      label={`Actions for ${row.name}`}
+                      items={[
+                        {
+                          label: row.active ? "Pause" : "Resume",
+                          onSelect: () => pauseM.mutate({ id: row.id, active: !row.active }),
+                          disabled: pauseM.isPending && pauseM.variables?.id === row.id,
+                        },
+                        { label: "Edit", onSelect: () => setEditing(row.id) },
+                        { label: "Remove", destructive: true, onSelect: () => setConfirming(row.id) },
+                      ]}
+                    />
+                  </div>
+                  <p className="m-0 text-xs text-muted-foreground">
+                    {everyLabel(row.poll_interval)} · Category: {row.category}
+                  </p>
+                  {health.failing ? (
+                    <Alert variant="destructive">
+                      <AlertDescription>{health.label}</AlertDescription>
+                    </Alert>
+                  ) : (
+                    <p className="m-0 text-xs text-muted-foreground">{health.label}</p>
+                  )}
+                </li>
               );
             })}
-          </tbody>
-        </table>
+          </ul>
+        </PageSection>
+
+        {addPanel}
       </>
     );
   }
 
-  // One `<h1>` across pending / error / loaded. LUM-282's handoff focus retry
-  // (`setTimeout(0)`) targets the heading node captured on first mount; three
-  // branch-local headings meant a fast `GET /sources` could swap the element
-  // before the retry ran, leaving the latch set and focus on <body>.
   return (
-    <section
-      aria-busy={q.isPending ? true : undefined}
-      className={q.isSuccess ? "lumogis-admin-dense-section" : undefined}
-    >
-      <h1 ref={headingRef} tabIndex={-1}>
-        Sources
-      </h1>
+    <section aria-busy={q.isPending ? true : undefined}>
       {body}
+
+      <AlertDialog open={removing !== null} onOpenChange={(open) => (open ? undefined : setConfirming(null))}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{`Remove ${removing?.name ?? "this source"}?`}</AlertDialogTitle>
+            <AlertDialogDescription>
+              Lumogis stops checking it and forgets this source. You can add it again later.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructiveSolid"
+              disabled={delM.isPending}
+              onClick={() => {
+                if (removing) delM.mutate(removing.id);
+                // Close first: a failed remove must leave the page (and its
+                // status line) reachable, not hidden behind the dialog.
+                setConfirming(null);
+              }}
+            >
+              {`Remove ${removing?.name ?? ""}`.trim()}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   );
 }

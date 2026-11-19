@@ -12,8 +12,11 @@
 // Presentational plus its own upload lifecycle: the parent owns the staged-id
 // list (it goes in the payload) and is told about every add and remove.
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 
+import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { ApiError } from "../../api/client";
 import {
   discardStagedAttachment,
@@ -59,7 +62,9 @@ export function AttachmentPicker({
   maxFiles = DEFAULT_MAX_FILES,
   disabled,
 }: AttachmentPickerProps): JSX.Element {
-  const inputRef = useRef<HTMLInputElement | null>(null);
+  // Remounting the file input (new key) is how its chosen files are cleared; the
+  // shared Input does not forward a ref.
+  const [inputKey, setInputKey] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -90,7 +95,7 @@ export function AttachmentPicker({
         }
       } finally {
         setBusy(false);
-        if (inputRef.current) inputRef.current.value = "";
+        setInputKey((k) => k + 1);
       }
     },
     [client, maxFiles, onStaged, staged.length],
@@ -112,53 +117,51 @@ export function AttachmentPicker({
   );
 
   return (
-    <div className="lumogis-attachment-picker" aria-label="Attachments">
-      <input
-        ref={inputRef}
+    <div className="flex flex-col gap-2" aria-label="Attachments">
+      <Input
+        key={inputKey}
         type="file"
         multiple
-        className="lumogis-attachment-picker__input"
         data-testid="attachment-input"
         disabled={disabled || busy || atLimit}
         onChange={(e) => void handleFiles(e.target.files)}
       />
 
       {staged.length > 0 ? (
-        <ul className="lumogis-attachment-picker__list">
+        <ul className="flex list-none flex-col gap-1 p-0">
           {staged.map((a) => (
-            <li key={a.id} className="lumogis-attachment-picker__item">
-              <span className="lumogis-attachment-picker__name">{a.filename}</span>
-              <span className="lumogis-attachment-picker__size">{formatBytes(a.size_bytes)}</span>
-              <button
+            <li key={a.id} className="flex items-center gap-2 text-sm">
+              <span className="min-w-0 flex-1 truncate">{a.filename}</span>
+              <span className="text-xs text-muted-foreground">{formatBytes(a.size_bytes)}</span>
+              <Button
                 type="button"
-                className="lumogis-attachment-picker__remove"
+                variant="outline"
+                size="sm"
                 aria-label={`Remove ${a.filename}`}
                 disabled={disabled || busy}
                 onClick={() => void handleRemove(a.id)}
               >
                 Remove
-              </button>
+              </Button>
             </li>
           ))}
         </ul>
       ) : null}
 
       {staged.length > 0 ? (
-        <p className="lumogis-attachment-picker__summary" data-testid="attachment-summary">
+        <p className="text-sm text-muted-foreground" data-testid="attachment-summary">
           {staged.length} {staged.length === 1 ? "file" : "files"}, {formatBytes(totalBytes)}
         </p>
       ) : null}
 
       {busy ? (
-        <p className="lumogis-attachment-picker__status" role="status">
+        <p className="text-sm text-muted-foreground" role="status">
           Attaching…
         </p>
       ) : null}
 
       {error ? (
-        <p className="lumogis-attachment-picker__status lumogis-attachment-picker__status--error" role="alert">
-          {error}
-        </p>
+        <Alert variant="destructive">{error}</Alert>
       ) : null}
     </div>
   );

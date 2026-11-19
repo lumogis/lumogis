@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Lumogis
 
+import { Toggle } from "../../components/ui/toggle";
+
 export function AuditLiveToggle({
   enabled,
   onChange,
@@ -9,14 +11,14 @@ export function AuditLiveToggle({
   onChange: (next: boolean) => void;
 }): JSX.Element {
   return (
-    <button
-      type="button"
-      className="lumogis-audit-live-toggle"
-      aria-pressed={enabled}
-      title={enabled ? "Live tail on" : "Live tail off"}
-      onClick={() => onChange(!enabled)}
+    <Toggle
+      variant="outline"
+      size="sm"
+      pressed={enabled}
+      onPressedChange={onChange}
+      title={enabled ? "Live updates on" : "Live updates off"}
     >
       Live
-    </button>
+    </Toggle>
   );
 }

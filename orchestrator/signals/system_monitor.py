@@ -36,6 +36,10 @@ _job_id = "system_monitor_poll"
 _DISK_THRESHOLD = float(os.environ.get("SYSTEM_MONITOR_DISK_THRESHOLD", "85"))
 _BACKUP_MAX_AGE_DAYS = int(os.environ.get("SYSTEM_MONITOR_BACKUP_DAYS", "7"))
 _INBOX_MAX_DEPTH = int(os.environ.get("SYSTEM_MONITOR_INBOX_DEPTH", "50"))
+# The same alert is raised again only after this many hours. Without it every
+# 30-minute check stored (and could notify) a fresh copy while the condition held:
+# 504 identical "Review queue" signals in 11 days on lumogis-dev (LUM-993).
+_REPEAT_HOURS = float(os.environ.get("SYSTEM_MONITOR_REPEAT_HOURS", "24"))
 _WORKSPACE = Path(os.environ.get("WORKSPACE_PATH", "/workspace"))
 
 
@@ -75,12 +79,36 @@ def _run_checks() -> None:
     alerts += _check_review_queue()
 
     for alert in alerts:
+        if _raised_recently(alert["title"]):
+            _log.debug("system_monitor: %s already raised recently; skipped", alert["title"])
+            continue
         _log.warning("system_monitor alert: %s", alert["title"])
         sig = _make_signal(alert["title"], alert["body"], alert["importance"])
         try:
             process_signal(sig, user_id="default")
         except Exception as exc:
             _log.error("system_monitor: process_signal error: %s", exc)
+
+
+def _raised_recently(title: str) -> bool:
+    """True when a system signal with this exact title was stored within the window.
+
+    The title carries the measured value (a disk percentage, a queue count), so a
+    change in the condition raises a new alert at once. Fails open: if the lookup
+    errors, the alert is raised rather than silently lost.
+    """
+    if _REPEAT_HOURS <= 0:
+        return False
+    try:
+        row = config.get_metadata_store().fetch_one(
+            "SELECT 1 AS hit FROM signals WHERE source_id = '__system__' AND title = %s"
+            " AND created_at > NOW() - make_interval(secs => %s) LIMIT 1",
+            (title, _REPEAT_HOURS * 3600),
+        )
+    except Exception as exc:
+        _log.debug("system_monitor: repeat check error: %s", exc)
+        return False
+    return row is not None
 
 
 def _check_disk() -> list[dict]:

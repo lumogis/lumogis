@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+import { AUTH_ERROR_LITERALS } from "../../src/api/auth";
 import { ApiClient } from "../../src/api/client";
 import { AccessTokenStore } from "../../src/api/tokens";
 import {
@@ -18,7 +19,7 @@ import {
   useAuth,
   useUser,
 } from "../../src/auth/AuthProvider";
-import { TURN_ON_SIGN_IN_DOC_URL } from "../../src/components/SingleUserBanner";
+import { SIGN_IN_DOC_URL } from "../../src/auth/docLinks";
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -45,9 +46,24 @@ function MeProbe(): JSX.Element {
   );
 }
 
+/**
+ * LUM-981: a failed boot refresh now asks `GET /api/v1/setup/status` through the bare global
+ * `fetch` (like the login POST), so every test that boots without a session needs it answered.
+ * `inner` handles every other global-fetch call.
+ */
+function withSetupStatus(
+  inner: (input: RequestInfo, init?: RequestInit) => Response | Promise<Response>,
+): typeof fetch {
+  return (async (input: RequestInfo, init?: RequestInit) => {
+    if (String(input).includes("/api/v1/setup/status")) return jsonResponse(200, { needs_setup: false });
+    return inner(input, init);
+  }) as unknown as typeof fetch;
+}
+
 let originalFetch: typeof fetch;
 beforeEach(() => {
   originalFetch = globalThis.fetch;
+  globalThis.fetch = withSetupStatus(() => jsonResponse(404, { detail: "unexpected" }));
 });
 afterEach(() => {
   globalThis.fetch = originalFetch;
@@ -120,7 +136,7 @@ describe("AuthProvider — login flow", () => {
       expect(init?.method).toBe("POST");
       return loginResponse();
     });
-    globalThis.fetch = loginGlobal as unknown as typeof fetch;
+    globalThis.fetch = withSetupStatus(loginGlobal);
 
     render(
       <AuthProvider client={client} tokens={tokens}>
@@ -154,7 +170,7 @@ describe("AuthProvider — login flow", () => {
     });
 
     const loginGlobal = vi.fn(async () => jsonResponse(401, { detail: "invalid credentials" }));
-    globalThis.fetch = loginGlobal as unknown as typeof fetch;
+    globalThis.fetch = withSetupStatus(loginGlobal);
 
     render(
       <AuthProvider client={client} tokens={tokens}>
@@ -271,15 +287,15 @@ describe("AuthProvider — onAuthExpired wiring", () => {
   });
 });
 
-describe("LoginForm — sign-in turned off (LUM-853)", () => {
-  it("C5 auth-off login 503 says so and links to how to turn sign-in on", async () => {
+describe("LoginForm — sign-in turned off", () => {
+  it("C5 auth-off login 503 says so and links to About sign-in", async () => {
     const tokens = new AccessTokenStore();
-    // Core could not be asked at boot (for example it was still starting): refresh 401, me 401.
+    // Boot found no session and no setup to do (refresh 401, setup status false).
     const fetchImpl = vi.fn(async () => jsonResponse(401, { detail: "x" }));
     const client = new ApiClient({ tokens, fetchImpl: fetchImpl as unknown as typeof fetch });
     let loginAnswer = () =>
-      jsonResponse(503, { detail: "login is disabled in single-user dev mode" });
-    globalThis.fetch = vi.fn(async () => loginAnswer()) as unknown as typeof fetch;
+      jsonResponse(503, { detail: AUTH_ERROR_LITERALS.LOGIN_DISABLED_DEV_MODE });
+    globalThis.fetch = withSetupStatus(() => loginAnswer());
 
     render(
       <AuthProvider client={client} tokens={tokens}>
@@ -296,17 +312,16 @@ describe("LoginForm — sign-in turned off (LUM-853)", () => {
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toBe(SIGN_IN_OFF_LOGIN_COPY);
-    expect(screen.getByRole("link", { name: "How to turn on sign-in" }).getAttribute("href")).toBe(
-      TURN_ON_SIGN_IN_DOC_URL,
-    );
+    expect(alert.textContent).toContain("AUTH_ENABLED=true");
+    expect(screen.getByRole("link", { name: "About sign-in" }).getAttribute("href")).toBe(SIGN_IN_DOC_URL);
 
     loginAnswer = () => jsonResponse(401, { detail: "invalid credentials" });
     await user.click(screen.getByRole("button", { name: /sign in/i }));
     await waitFor(() => expect(screen.getByRole("alert").textContent).toBe("Email or password is incorrect."));
-    expect(screen.queryByRole("link", { name: "How to turn on sign-in" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "About sign-in" })).toBeNull();
   });
 
   it("C5b humaniseLoginError maps the auth-off 503 to the new copy", () => {
-    expect(humaniseLoginError(503, "login is disabled in single-user dev mode")).toBe(SIGN_IN_OFF_LOGIN_COPY);
+    expect(humaniseLoginError(503, AUTH_ERROR_LITERALS.LOGIN_DISABLED_DEV_MODE)).toBe(SIGN_IN_OFF_LOGIN_COPY);
   });
 });

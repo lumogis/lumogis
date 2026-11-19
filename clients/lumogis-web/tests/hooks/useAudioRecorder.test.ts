@@ -23,6 +23,41 @@ describe("useAudioRecorder", () => {
     h.uninstall();
   });
 
+  it("exposes the stream while recording and clears it on stop, cancel and failure", async () => {
+    const h = installMockMediaRecorder();
+    const { result } = renderHook(() => useAudioRecorder());
+    expect(result.current.stream).toBeNull();
+    await act(async () => {
+      await result.current.start();
+    });
+    expect(result.current.stream).not.toBeNull();
+    await act(async () => {
+      await result.current.stop();
+    });
+    expect(result.current.stream).toBeNull();
+    await act(async () => {
+      await result.current.start();
+    });
+    expect(result.current.stream).not.toBeNull();
+    act(() => result.current.cancel());
+    expect(result.current.stream).toBeNull();
+    await act(async () => {
+      await result.current.start();
+    });
+    act(() => h.last?.triggerError());
+    expect(result.current.status).toBe("error");
+    expect(result.current.stream).toBeNull();
+    h.uninstall();
+  });
+
+  it("reports insecureContext from window.isSecureContext", () => {
+    const { result, rerender } = renderHook(() => useAudioRecorder());
+    expect(result.current.insecureContext).toBe(false); // jsdom: undefined or true
+    vi.stubGlobal("isSecureContext", false);
+    rerender();
+    expect(result.current.insecureContext).toBe(true);
+  });
+
   it("stop returns the assembled Blob and stops tracks", async () => {
     const h = installMockMediaRecorder();
     const { result } = renderHook(() => useAudioRecorder());

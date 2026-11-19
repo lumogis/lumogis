@@ -160,3 +160,61 @@ def test_service_facade_no_adapters_import() -> None:
 
 def test_port_module_loads() -> None:
     assert importlib.util.find_spec("ports.speech_to_text") is not None
+
+
+# ── LUM-995: typed failure codes ──────────────────────────────────────────────
+
+
+class _Engine:
+    """SpeechToText stand-in that fails the way the sidecar adapter does."""
+
+    def __init__(self, ping=True, error: Exception | None = None) -> None:
+        self._ping = ping
+        self._error = error
+
+    def ping(self) -> bool:
+        return self._ping
+
+    def transcribe(self, *_a, **_k):
+        if self._error:
+            raise self._error
+        raise AssertionError("not reached")
+
+
+def _call(monkeypatch: pytest.MonkeyPatch, engine) -> "svc.SttProcessingError":  # noqa: F821
+    _reload_config_env(monkeypatch, STT_BACKEND="fake_stt", STT_MAX_AUDIO_BYTES="1024")
+    monkeypatch.setitem(config._instances, "speech_to_text:fake_stt", engine)
+    import services.speech_to_text as svc
+
+    with mock.patch.object(svc, "_probe_duration_sec", return_value=None):
+        with pytest.raises(svc.SttProcessingError) as ei:
+            svc.transcribe_blob(b"x", mime_type="audio/webm", language=None, user_id="u")
+    return ei.value
+
+
+def test_ping_false_maps_to_stt_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert _call(monkeypatch, _Engine(ping=False)).code == "stt_unreachable"
+
+
+def test_model_missing_maps_and_kicks_install(monkeypatch: pytest.MonkeyPatch) -> None:
+    from ports.speech_to_text import SttModelMissing
+
+    from services import stt_model_readiness
+
+    noted = []
+    monkeypatch.setattr(stt_model_readiness, "note_model_missing", lambda: noted.append(1))
+    err = _call(monkeypatch, _Engine(error=SttModelMissing("gone")))
+    assert err.code == "stt_model_missing"
+    assert noted == [1]
+
+
+def test_unreachable_during_transcribe_maps(monkeypatch: pytest.MonkeyPatch) -> None:
+    from ports.speech_to_text import SttUnreachable
+
+    assert _call(monkeypatch, _Engine(error=SttUnreachable("down"))).code == "stt_unreachable"
+
+
+def test_unexpected_transcribe_error_stays_processing_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert _call(monkeypatch, _Engine(error=ValueError("HTTP 500"))).code == "stt_processing_error"

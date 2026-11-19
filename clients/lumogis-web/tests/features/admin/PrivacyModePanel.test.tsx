@@ -68,10 +68,10 @@ describe("PrivacyModePanel", () => {
     globalThis.fetch = fetchImpl;
 
     renderPanel(fetchImpl);
-    expect(screen.getByLabelText(/Local only/i)).toBeTruthy();
+    expect(screen.getByRole("radio", { name: /Local only/i })).toBeTruthy();
 
     const user = userEvent.setup();
-    await user.click(screen.getByLabelText(/Allow cloud/i));
+    await user.click(screen.getByRole("radio", { name: /Online allowed/i }));
     await user.click(screen.getByRole("button", { name: "Save privacy settings" }));
 
     await waitFor(() => expect(bodies.length).toBe(1));
@@ -118,18 +118,13 @@ describe("PrivacyModePanel", () => {
     await waitFor(() => expect(meCalls).toBe(1));
 
     const user = userEvent.setup();
-    await user.click(screen.getByLabelText(/Allow cloud/i));
+    await user.click(screen.getByRole("radio", { name: /Online allowed/i }));
     await user.click(screen.getByRole("button", { name: "Save privacy settings" }));
 
     await waitFor(() => expect(meCalls).toBe(2));
   });
 
-  // The accessible-name assertion would also pass with `sr-only`; it guards
-  // against "fixing" the duplicate text by deleting the legend, which would
-  // drop the group's name. The class assertion pins the binding. Whether the
-  // CSS actually hides the legend needs a browser: admin_search_settings.spec.ts proves it
-  // for the identical `lumogis-visually-hidden` legend there; this panel has no e2e spec.
-  it("names the privacy-mode radio group with a visually-hidden legend (LUM-852)", async () => {
+  it("names the privacy-mode radio group (LUM-852)", async () => {
     const fetchImpl = vi.fn(async (input) => {
       const u = String(input);
       if (u.includes("/api/v1/auth/me")) return jsonResponse(200, adminUser);
@@ -139,8 +134,29 @@ describe("PrivacyModePanel", () => {
 
     renderPanel(fetchImpl);
 
-    const group = await screen.findByRole("group", { name: "Household privacy mode" });
-    expect(group.querySelector("legend")).toHaveClass("lumogis-visually-hidden");
+    expect(await screen.findByRole("radiogroup", { name: "Household privacy mode" })).toBeInTheDocument();
+  });
+
+  it("shows a failed save as an inline error and no toast-only message", async () => {
+    const fetchImpl = vi.fn(async (input, init) => {
+      const u = String(input);
+      if (u.includes("/api/v1/auth/me")) return jsonResponse(200, adminUser);
+      if (u.includes("/settings") && init?.method === "PUT") return jsonResponse(500, { detail: "nope" });
+      return jsonResponse(404, {});
+    }) as unknown as typeof fetch;
+    globalThis.fetch = fetchImpl;
+
+    renderPanel(fetchImpl);
+    await userEvent.click(screen.getByRole("button", { name: "Save privacy settings" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/nope/);
+  });
+
+  it("explains the in-effect policy in words, not codes", async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(404, {})) as unknown as typeof fetch;
+    globalThis.fetch = fetchImpl;
+    renderPanel(fetchImpl);
+    expect(screen.getByText("Local AI only")).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/local_only|allow_cloud/);
   });
 });
 
@@ -156,7 +172,7 @@ describe("AdminPrivacyModeView", () => {
     vi.restoreAllMocks();
   });
 
-  it("titles the page once, not again inside the panel", async () => {
+  it("adds no page title of its own (the Settings page header owns it)", async () => {
     const fetchImpl = vi.fn(async (input) => {
       const u = String(input);
       if (u.includes("/api/v1/auth/me")) return jsonResponse(200, adminUser);
@@ -179,8 +195,9 @@ describe("AdminPrivacyModeView", () => {
       </AuthProvider>,
     );
 
-    expect(await screen.findByRole("heading", { level: 1, name: "Privacy mode" })).toBeTruthy();
-    expect(screen.getAllByRole("heading", { name: "Privacy mode" })).toHaveLength(1);
+    expect(await screen.findByRole("radio", { name: /Local only/i })).toBeTruthy();
+    expect(screen.queryAllByRole("heading", { level: 1 })).toHaveLength(0);
+    expect(screen.queryAllByRole("heading", { name: "Privacy mode" })).toHaveLength(0);
   });
 });
 
@@ -224,6 +241,6 @@ describe("MePrivacyModeView", () => {
       </AuthProvider>,
     );
 
-    expect(await screen.findByText(/Further restrict to local-only/i)).toBeTruthy();
+    expect(await screen.findByRole("switch", { name: /Keep my AI on this machine/i })).toBeTruthy();
   });
 });

@@ -20,6 +20,19 @@
 
 import { useCallback, useState } from "react";
 
+import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import type { ApiClient } from "../../api/client";
 import { setEmailSmtp } from "../../api/emailSources";
 import type { MailboxAuthMethod } from "../../api/emailSources";
@@ -89,6 +102,7 @@ export function MailboxSendControl({
   const [showHost, setShowHost] = useState(smtpHostRequired);
   const [smtpHost, setSmtpHost] = useState("");
   const [smtpPort, setSmtpPort] = useState("");
+  const [confirmOff, setConfirmOff] = useState(false);
 
   const isOn = state === "on" || state === "unverified";
 
@@ -171,27 +185,26 @@ export function MailboxSendControl({
     say,
   ]);
 
+  // Confirm unconditionally. For app-password and unknown mailboxes the client
+  // cannot see `reuse_imap` (the credential projection is metadata-only), so it
+  // cannot know whether turning off destroys a password the user typed. The
+  // last sentence is therefore CONDITIONAL — true for every such mailbox and
+  // overclaiming for none.
+  //
+  // LUM-777: an OAuth mailbox is the exception the client can now see. It
+  // NEVER uses a stored sending password (`load_smtp_connection` authenticates
+  // it with its token and ignores any stored `app_password`), so there is
+  // nothing to retype and it re-enables in one click. Say nothing about one.
+  const confirmBase =
+    `Lumogis won't be able to send as you from this mailbox. Receiving is unaffected.`;
+  const confirmText =
+    authMethod === "oauth"
+      ? confirmBase
+      : `${confirmBase} If you gave this mailbox its own sending password, you'll ` +
+        `need to enter it again to turn sending back on.`;
+
   const disable = useCallback(() => {
-    // Confirm unconditionally. For app-password and unknown mailboxes the client
-    // cannot see `reuse_imap` (the credential projection is metadata-only), so it
-    // cannot know whether turning off destroys a password the user typed. The
-    // last sentence is therefore CONDITIONAL — true for every such mailbox and
-    // overclaiming for none.
-    //
-    // LUM-777: an OAuth mailbox is the exception the client can now see. It
-    // NEVER uses a stored sending password (`load_smtp_connection` authenticates
-    // it with its token and ignores any stored `app_password`), so there is
-    // nothing to retype and it re-enables in one click. Say nothing about one.
-    const base =
-      `Turn off sending for ${mailboxName}? Lumogis won't be able to send as you ` +
-      `from this mailbox. Receiving is unaffected.`;
-    const ok = window.confirm(
-      authMethod === "oauth"
-        ? base
-        : `${base} If you gave this mailbox its own sending password, you'll ` +
-            `need to enter it again to turn sending back on.`,
-    );
-    if (!ok) return;
+    setConfirmOff(false);
     setBusy(true);
     setNotice(null);
     setEmailSmtp(client, sourceId, { enabled: false })
@@ -205,17 +218,20 @@ export function MailboxSendControl({
       // nothing to revert either: this control does not update optimistically.
       .catch((err: unknown) => say(describeSendOptInFailure(err, SEND_DISABLE_PREFIX), true))
       .finally(() => setBusy(false));
-  }, [client, sourceId, mailboxName, authMethod, onChange, say]);
+  }, [client, sourceId, onChange, say]);
 
   return (
-    <div className="lumogis-mailbox-send" data-testid={`send-${sourceId}`}>
+    <div className="grid gap-2" data-testid={`send-${sourceId}`}>
       {/* The state line lives INSIDE the live region with the notice, so a
           successful enable is announced rather than silently redrawn — the line
           changing from "off" to "on" is otherwise a visual-only change. */}
-      <div role={noticeIsFailure ? "alert" : "status"}>
-        <span className="lumogis-mailbox-send__state">{STATE_LABEL[state]}</span>
+      <div role={noticeIsFailure ? "alert" : "status"} className="text-sm">
+        <span>{STATE_LABEL[state]}</span>
         {notice ? (
-          <p className="lumogis-mailbox-send__notice" data-testid={`send-notice-${sourceId}`}>
+          <p
+            className={`m-0 mt-1 ${noticeIsFailure ? "text-destructive" : "text-muted-foreground"}`}
+            data-testid={`send-notice-${sourceId}`}
+          >
             {notice}
           </p>
         ) : null}
@@ -229,69 +245,90 @@ export function MailboxSendControl({
           browser already knew. The disable path is a plain button below: it has
           no inputs, and requiring a host to turn sending OFF would be absurd. */}
       {isOn ? (
-        <button
-          type="button"
-          aria-label={`Turn off sending for ${mailboxName}`}
-          onClick={disable}
-          disabled={busy}
-        >
-          Turn off sending
-        </button>
+        <div>
+          <Button
+            type="button"
+            variant="outline"
+            aria-label={`Turn off sending for ${mailboxName}`}
+            onClick={() => setConfirmOff(true)}
+            disabled={busy}
+          >
+            Turn off sending
+          </Button>
+          <AlertDialog open={confirmOff} onOpenChange={setConfirmOff}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Turn off sending for {mailboxName}?</AlertDialogTitle>
+                <AlertDialogDescription>{confirmText}</AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction variant="destructiveSolid" onClick={disable}>
+                  Turn off sending
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </div>
       ) : (
         <form
+          className="grid max-w-sm gap-3"
           onSubmit={(e) => {
             e.preventDefault();
             enable();
           }}
         >
           {showHost ? (
-            <div className="lumogis-mailbox-send__fields">
-              <label style={{ display: "block" }}>
-                Sending server
-                <input
-                  type="text"
-                  aria-label={`Sending server for ${mailboxName}`}
-                  value={smtpHost}
-                  onChange={(e) => setSmtpHost(e.target.value)}
-                  placeholder="smtp.example.com"
-                  required
-                />
-              </label>
-              <label style={{ display: "block" }}>
-                Port
-                <input
-                  type="number"
-                  aria-label={`Sending port for ${mailboxName}`}
-                  value={smtpPort}
-                  onChange={(e) => setSmtpPort(e.target.value)}
-                  placeholder="587"
-                  required
-                />
-              </label>
+            <div className="grid gap-3 sm:grid-cols-[1fr_7rem]">
+              <Label className="grid gap-1.5">
+                  Sending server
+                  <Input
+                    type="text"
+                    aria-label={`Sending server for ${mailboxName}`}
+                    value={smtpHost}
+                    onChange={(e) => setSmtpHost(e.target.value)}
+                    placeholder="smtp.example.com"
+                    required
+                  />
+                </Label>
+              <Label className="grid gap-1.5">
+                  Port
+                  <Input
+                    type="number"
+                    aria-label={`Sending port for ${mailboxName}`}
+                    value={smtpPort}
+                    onChange={(e) => setSmtpPort(e.target.value)}
+                    placeholder="587"
+                    required
+                  />
+                </Label>
             </div>
           ) : null}
 
           {showPassword ? (
-            <label style={{ display: "block" }}>
-              Separate sending password
-              <input
-                type="password"
-                aria-label={`Sending password for ${mailboxName}`}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                autoComplete="off"
-                required
-              />
-            </label>
+            <Label className="grid gap-1.5">
+                Separate sending password
+                <Input
+                  type="password"
+                  aria-label={`Sending password for ${mailboxName}`}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  autoComplete="off"
+                  required
+                />
+              </Label>
           ) : null}
 
-          <button
-            type="submit"
-            aria-label={`Turn on sending for ${mailboxName}`}
-            disabled={busy || state === "unknown"}
-          >
-            Turn on sending
-          </button>
+          <div>
+            <Button
+              type="submit"
+              variant="outline"
+              aria-label={`Turn on sending for ${mailboxName}`}
+              disabled={busy || state === "unknown"}
+            >
+              Turn on sending
+            </Button>
+          </div>
         </form>
       )}
     </div>

@@ -16,6 +16,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import type { ApiClient } from "../../api/client";
 import {
   clearSenderRule,
@@ -148,8 +150,8 @@ export function SubscriptionsView({ client, sourceId }: SubscriptionsViewProps):
 
   if (loaded && rows.length === 0) {
     return (
-      <section className="lumogis-subscriptions" aria-label="Subscriptions">
-        <p className="lumogis-subscriptions__empty">
+      <section aria-label="Subscriptions">
+        <p className="m-0 text-sm text-muted-foreground">
           No subscriptions found yet. Senders appear here as their mail arrives.
         </p>
       </section>
@@ -157,24 +159,24 @@ export function SubscriptionsView({ client, sourceId }: SubscriptionsViewProps):
   }
 
   return (
-    <section className="lumogis-subscriptions" aria-label="Subscriptions">
-      <div className="lumogis-subscriptions__toolbar">
-        <button
+    <section aria-label="Subscriptions" className="grid gap-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <Button
           type="button"
-          className="lumogis-subscriptions__batch"
+          variant="outline"
           disabled={selected.size === 0}
           onClick={submitBatch}
         >
           Unsubscribe from {selected.size} selected
-        </button>
+        </Button>
         {selected.size >= MAX_BATCH ? (
-          <span className="lumogis-subscriptions__cap" role="note">
+          <span className="text-sm text-muted-foreground" role="note">
             {MAX_BATCH} at a time — run another batch after this one.
           </span>
         ) : null}
         {batchRunning ? (
           <span
-            className="lumogis-subscriptions__running"
+            className="text-sm text-muted-foreground"
             role="status"
             data-testid="unsubscribe-batch-running"
           >
@@ -184,42 +186,39 @@ export function SubscriptionsView({ client, sourceId }: SubscriptionsViewProps):
       </div>
 
       {status ? (
-        <p className="lumogis-subscriptions__status" role="status">
+        <p className="m-0 text-sm text-muted-foreground" role="status">
           {status}
         </p>
       ) : null}
 
-      <ul className="lumogis-subscriptions__list" role="list">
+      <ul className="m-0 grid list-none gap-1 p-0" role="list">
         {rows.map((row) => (
           <li
             key={row.from_addr}
-            className="lumogis-subscriptions__row"
+            className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b py-2 text-sm last:border-b-0"
             data-testid="subscription-row"
           >
-            <label className="lumogis-subscriptions__select">
-              <input
-                type="checkbox"
+            <label className="flex min-w-0 flex-1 items-center gap-2 basis-48">
+              <Checkbox
                 checked={selected.has(row.from_addr)}
                 disabled={!selectable.includes(row)}
-                onChange={() => toggle(row.from_addr)}
+                onCheckedChange={() => toggle(row.from_addr)}
                 aria-label={`Select ${row.from_addr}`}
               />
-              <span className="lumogis-subscriptions__sender">
+              <span className="min-w-0 truncate font-medium">
                 {row.from_display || row.from_addr}
               </span>
             </label>
 
-            <span className="lumogis-subscriptions__count">{row.message_count} messages</span>
+            <span className="text-muted-foreground">{row.message_count} messages</span>
 
-            {row.unsubscribed_at ? (
-              <span className="lumogis-subscriptions__done">Unsubscribed ✓</span>
-            ) : null}
+            {row.unsubscribed_at ? <span>Unsubscribed ✓</span> : null}
 
             {/* Rendered ONLY when the URI passes the render-side scheme gate.
                 A row stored before a parser fix must not become a live link. */}
             {row.has_https && isSafeUnsubscribeUrl(row.https_uri) ? (
               <a
-                className="lumogis-subscriptions__link"
+                className="text-accent-text underline-offset-4 hover:underline"
                 href={row.https_uri}
                 target="_blank"
                 rel="noopener noreferrer"
@@ -229,21 +228,17 @@ export function SubscriptionsView({ client, sourceId }: SubscriptionsViewProps):
               </a>
             ) : null}
 
-            <button
-              type="button"
-              className="lumogis-subscriptions__hide"
-              onClick={() => toggleHide(row)}
-            >
+            <Button type="button" variant="ghost" size="sm" onClick={() => toggleHide(row)}>
               {/* "Stop hiding", never "restore": clearing a rule is go-forward
                   only — nothing already hidden can be resurfaced. */}
               {row.suppressed_as ? "Stop hiding" : "Hide future mail"}
-            </button>
+            </Button>
           </li>
         ))}
       </ul>
 
       {truncated ? (
-        <p className="lumogis-subscriptions__truncated" role="note">
+        <p className="m-0 text-sm text-muted-foreground" role="note">
           Showing the busiest senders only.
         </p>
       ) : null}

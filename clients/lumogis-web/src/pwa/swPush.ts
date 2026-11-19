@@ -20,6 +20,8 @@ export const NOTIFICATION_ALLOWED_PATHS = [
   "/chat",
   "/approvals",
   "/me/notifications",
+  // LUM-993: the new address; /me/notifications still redirects to it.
+  "/settings/notifications",
   // LUM-648: needs-you / morning-brief pushes deep-link to the email surface.
   "/email",
 ] as const;

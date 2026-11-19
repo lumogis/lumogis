@@ -30,10 +30,12 @@ from auth import UserContext
 from events import Event
 from models.entities import ExtractedEntity
 from services.llm_json import strip_code_fence
+from visibility import not_hidden_sql
 from visibility import visible_filter
 
 import config
 from services import entity_constraints
+from services import entity_name_rules
 from services import entity_quality
 from services import task_models
 
@@ -207,11 +209,26 @@ def store_entities(
     (the MCP ``add_entity`` / ``add_relation`` tools) which must never be
     silently discarded. Default False keeps every existing caller's behaviour.
 
+    Name rules (LUM-967): on the extraction path (``skip_quality_gate=False``)
+    the member's kind corrections are applied first, before the quality gate
+    (``services.entity_name_rules``), so a re-read cannot bring a corrected kind
+    back. Explicit kinds (``skip_quality_gate=True``, the MCP tools) win and are
+    not rewritten.
+
+    Name rules (LUM-966): the same call drops every entity whose name the member
+    deleted at that kind (a "block"), before the quality gate, so a blocked name
+    never reaches ``review_queue``. If the rules cannot be read,
+    :class:`services.entity_name_rules.NameRulesUnavailable` propagates and nothing
+    is written (fail closed): callers retry or re-queue.
+
     Returns the list of resolved entity_id UUIDs (one per entity, in order).
     Failed entities are skipped and excluded from the returned list.
     """
     if not entities:
         return []
+
+    if not skip_quality_gate:
+        entities = entity_name_rules.apply_name_rules(entities, user_id)
 
     if skip_quality_gate:
         for entity in entities:
@@ -241,11 +258,12 @@ def store_entities(
             )
             entity_ids.append(entity_id)
         except Exception as exc:
+            # No name in the log (LUM-966): an entity that failed may be a name the
+            # member just deleted, and a log line must not carry it.
             _log.error(
-                "Failed to store entity %r (%s): %s",
-                entity.name,
+                "Failed to store entity (%s): %s",
                 entity.entity_type,
-                exc,
+                type(exc).__name__,
             )
 
     if entity_ids:
@@ -258,6 +276,40 @@ def store_entities(
             )
 
     return entity_ids
+
+
+def personal_entity_point(
+    *,
+    entity_id: str,
+    point_name: str,
+    name: str,
+    entity_type: str,
+    aliases: list[str],
+    context_tags: list[str],
+    user_id: str,
+) -> tuple[str, str, dict]:
+    """Build the personal ``entities`` Qdrant point: ``(point_id, embed_text, payload)``.
+
+    The single builder of personal ``entities`` points (extraction, rename,
+    merge Phase B). ``point_name`` only seeds the point id (one point per
+    surface form); ``name`` is what the payload and the embed text carry, so an
+    alias-matched mention embeds and returns the entry's canonical name
+    (LUM-161).
+    """
+    point_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"entity::{user_id}::{point_name.lower()}"))
+    embed_text = f"{name} ({entity_type})"
+    if context_tags:
+        embed_text += f": {', '.join(context_tags)}"
+    payload = {
+        "entity_id": entity_id,
+        "name": name,
+        "entity_type": entity_type,
+        "aliases": aliases,
+        "context_tags": context_tags,
+        "user_id": user_id,
+        "scope": "personal",
+    }
+    return point_id, embed_text, payload
 
 
 def _insert_new_entity(entity: ExtractedEntity, user_id: str, ms) -> str:
@@ -315,7 +367,7 @@ def _upsert_entity(
     # `published_from != NULL` and are derived data — never write targets.
     # The query is narrowed with `AND scope = 'personal'` per plan §2.11.
     existing = ms.fetch_one(
-        "SELECT entity_id, name, aliases, context_tags, mention_count, is_staged "
+        "SELECT entity_id, name, entity_type, aliases, context_tags, mention_count, is_staged "
         "FROM entities "
         # SCOPE-EXEMPT: write-side merge target lookup (see comment above).
         "WHERE user_id = %s AND scope = 'personal' AND published_from IS NULL "
@@ -328,12 +380,35 @@ def _upsert_entity(
 
     decision = resolve_entity(entity, existing)
 
+    # What the Qdrant point and ENTITY_CREATED carry. New / ambiguous entries:
+    # the incoming mention. Merge: the entry's canonical name and stored type,
+    # so a mention under another surface form never renames the graph node or
+    # the search point back to that form (LUM-161, Decisions 10-11).
+    out_name = entity.name
+    out_type = entity.entity_type
+    out_aliases = entity.aliases
+    out_tags = entity.context_tags
+
     if decision == "merge" and existing:
         entity_id = existing["entity_id"]
-        merged_aliases = list({*existing["aliases"], *entity.aliases} - {entity.name.lower()})
+        # NOTE (LUM-161): the alias array below is computed from an unlocked
+        # read, so a rename committed in between can lose its kept old name (and
+        # the event can carry the pre-rename name); and `_insert_new_entity`
+        # takes no lock, so an extraction creating "Foo" while the member renames
+        # another entry to "Foo" can leave two entries named "Foo" (the member
+        # merges them with LUM-965). Considered, not filed (LUM-161).
+        # Keep every alias, including the one this mention matched by: dropping it
+        # would make the next mention of that surface form create a second entry
+        # (LUM-161 review: the old `- {entity.name.lower()}` deleted a lowercase
+        # alias as soon as it matched). The canonical name is filtered below.
+        merged_aliases = list({*existing["aliases"], *entity.aliases})
         # Re-add any alias that is NOT the canonical name (case-insensitive check)
         merged_aliases = [a for a in merged_aliases if a.lower() != existing["name"].lower()]
         merged_tags = list({*existing["context_tags"], *entity.context_tags})
+        out_name = existing["name"]
+        out_type = existing.get("entity_type") or entity.entity_type
+        out_aliases = merged_aliases
+        out_tags = merged_tags
 
         promote_on_count = int(os.environ.get("ENTITY_PROMOTE_ON_MENTION_COUNT", "3"))
         upper_threshold = float(os.environ.get("ENTITY_QUALITY_UPPER", "0.60"))
@@ -418,32 +493,27 @@ def _upsert_entity(
         (entity_id, relation_type, evidence_type, evidence_id, user_id),
     )
 
-    embed_text = f"{entity.name} ({entity.entity_type})"
-    if entity.context_tags:
-        embed_text += f": {', '.join(entity.context_tags)}"
-    vector = embedder.embed(embed_text)
-
-    point_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"entity::{user_id}::{entity.name.lower()}"))
-    vs.upsert(
-        collection="entities",
-        id=point_id,
-        vector=vector,
-        payload={
-            "entity_id": entity_id,
-            "name": entity.name,
-            "entity_type": entity.entity_type,
-            "aliases": entity.aliases,
-            "context_tags": entity.context_tags,
-            "user_id": user_id,
-            "scope": "personal",
-        },
+    # One point per surface form: an alias-matched mention adds a second point
+    # for the same entity_id. Lookups resolve through payload entity_id; rename
+    # (services/entity_edit.py) and merge collapse them. Considered, not filed
+    # (LUM-161).
+    point_id, embed_text, payload = personal_entity_point(
+        entity_id=entity_id,
+        point_name=entity.name,
+        name=out_name,
+        entity_type=out_type,
+        aliases=out_aliases,
+        context_tags=out_tags,
+        user_id=user_id,
     )
+    vector = embedder.embed(embed_text)
+    vs.upsert(collection="entities", id=point_id, vector=vector, payload=payload)
 
     hooks.fire_background(
         Event.ENTITY_CREATED,
         entity_id=entity_id,
-        name=entity.name,
-        entity_type=entity.entity_type,
+        name=out_name,
+        entity_type=out_type,
         evidence_id=evidence_id,
         evidence_type=evidence_type,
         user_id=user_id,
@@ -485,13 +555,14 @@ def lookup_by_name(
     ms = config.get_metadata_store()
     user = UserContext(user_id=user_id)
     where_clause, where_params = visible_filter(user, scope_filter)
+    hidden_clause, hidden_params = not_hidden_sql(user_id)  # LUM-966: Hide
     try:
         row = ms.fetch_one(
             "SELECT name, entity_type, mention_count, aliases, context_tags, scope "
             "FROM entities "
-            f"WHERE {where_clause} AND lower(name) = lower(%s) "
+            f"WHERE {where_clause} AND {hidden_clause} AND lower(name) = lower(%s) "
             "LIMIT 1",
-            (*where_params, name.strip()),
+            (*where_params, *hidden_params, name.strip()),
         )
     except Exception as exc:
         _log.warning("lookup_by_name: DB query failed — %s", exc)
@@ -532,14 +603,15 @@ def search_by_name(
     user = UserContext(user_id=user_id)
     pattern = f"%{query.strip()}%"
     where_clause, where_params = visible_filter(user, scope_filter)
+    hidden_clause, hidden_params = not_hidden_sql(user_id)  # LUM-966: Hide
     try:
         rows = ms.fetch_all(
             "SELECT name, entity_type, mention_count, aliases, context_tags, scope "
             "FROM entities "
-            f"WHERE {where_clause} AND name ILIKE %s "
+            f"WHERE {where_clause} AND {hidden_clause} AND name ILIKE %s "
             "ORDER BY mention_count DESC "
             "LIMIT %s",
-            (*where_params, pattern, limit),
+            (*where_params, *hidden_params, pattern, limit),
         )
     except Exception as exc:
         _log.warning("search_by_name: DB query failed — %s", exc)

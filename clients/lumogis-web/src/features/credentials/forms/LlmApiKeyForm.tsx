@@ -2,6 +2,11 @@
 // Copyright (C) 2026 Lumogis
 import { useState, useRef, type FormEvent } from "react";
 
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+
+import { Field } from "./FormParts";
+
 export function LlmApiKeyForm({
   value,
   onChange,
@@ -25,26 +30,30 @@ export function LlmApiKeyForm({
   };
 
   return (
-    <form className="lumogis-credential-form" onSubmit={submit}>
-      <label>
-        API key
-        <input
-          type={show ? "text" : "password"}
-          value={apiKey}
-          onChange={(e) => setApiKey(e.target.value)}
-          onFocus={onFocusShow}
-          onBlur={() => {
-            setShow(false);
-            if (t.current) clearTimeout(t.current);
-          }}
-          minLength={16}
-          maxLength={1024}
-          autoComplete="new-password"
-          spellCheck={false}
-          required
-        />
-      </label>
-      <button type="submit">Save</button>
+    <form onSubmit={submit} className="grid gap-3">
+      <Field label="API key">
+        {({ id }) => (
+          <Input
+            id={id}
+            type={show ? "text" : "password"}
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            onFocus={onFocusShow}
+            onBlur={() => {
+              setShow(false);
+              if (t.current) clearTimeout(t.current);
+            }}
+            minLength={16}
+            maxLength={1024}
+            autoComplete="new-password"
+            spellCheck={false}
+            required
+          />
+        )}
+      </Field>
+      <Button type="submit" className="justify-self-start">
+        Save
+      </Button>
     </form>
   );
 }

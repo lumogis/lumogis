@@ -129,11 +129,12 @@ fi
 #     copy (a created, never-started container): the same bytes as a shipped
 #     list mean there is no edit to rescue. Without this, every update after
 #     LUM-887 warned an admin who had edited <workspace>/config to overwrite it
-#     with the shipped default (LUM-900). Try the container's own image first;
-#     on the containerd image store that ID no longer resolves once the update
-#     has pulled or built a new image under the same tag, so then try the image
-#     the tag names now. If neither copy can be read, carry on: step 7 never
-#     overwrites.
+#     with the shipped default (LUM-900). Try the container's own image first.
+#     During `make update` it still resolves: the update tagged it
+#     lumogis-rollback/… before building (LUM-984). After a bare `make build`
+#     or `make dev`, on the containerd image store that ID no longer resolves
+#     once a new image took the tag, so then try the image the tag names now.
+#     If neither copy can be read, carry on: step 7 never overwrites.
 if [[ -z "$explicit" ]]; then
   same=false
   for ref in \

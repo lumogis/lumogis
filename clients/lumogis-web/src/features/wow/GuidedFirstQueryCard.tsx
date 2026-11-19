@@ -3,7 +3,9 @@
 
 import type { JSX } from "react";
 
-import styles from "./wow.module.css";
+import { Button } from "../../components/ui/button";
+
+import { CHIP } from "./chip";
 
 const GUIDED_PROMPTS = [
   "What deadlines or commitments appear across my documents?",
@@ -14,55 +16,37 @@ const GUIDED_PROMPTS = [
 
 export interface GuidedFirstQueryCardProps {
   onPickPrompt: (prompt: string) => void;
-  onTypeOwn: () => void;
+  /** Kept for callers; the chips need no separate "type my own" action (LUM-993). */
+  onTypeOwn?: () => void;
   onDismiss: () => void;
   isDismissing?: boolean;
 }
 
 export function GuidedFirstQueryCard({
   onPickPrompt,
-  onTypeOwn,
   onDismiss,
   isDismissing = false,
 }: GuidedFirstQueryCardProps): JSX.Element {
+  // LUM-993: suggestion chips under the composer; picking one fills it in.
   return (
-    <section
-      className={styles.card}
-      data-testid="wow-guided-card"
-      aria-labelledby="wow-guided-title"
-    >
-      <h2 id="wow-guided-title" className={styles.cardTitle}>
-        Try your first question
-      </h2>
-      <p className={styles.cardIntro}>
-        Lumogis can look across everything you have ingested. Pick a suggestion or type your own.
-      </p>
-      <ul className={styles.promptList} role="list">
+    <section data-testid="wow-guided-card" aria-labelledby="wow-guided-title" className="flex flex-col gap-2">
+      <div className="flex items-center justify-between gap-2">
+        <h2 id="wow-guided-title" className="m-0 text-xs font-medium text-muted-foreground">
+          Try asking
+        </h2>
+        <Button variant="ghost" size="xs" onClick={() => void onDismiss()} disabled={isDismissing}>
+          Dismiss
+        </Button>
+      </div>
+      <ul className="m-0 flex list-none flex-wrap gap-2 p-0" role="list">
         {GUIDED_PROMPTS.map((prompt) => (
-          <li key={prompt}>
-            <button
-              type="button"
-              className={styles.promptButton}
-              onClick={() => onPickPrompt(prompt)}
-            >
+          <li key={prompt} className="min-w-0">
+            <Button type="button" variant="outline" className={CHIP} onClick={() => onPickPrompt(prompt)}>
               {prompt}
-            </button>
+            </Button>
           </li>
         ))}
       </ul>
-      <div className={styles.actions}>
-        <button type="button" onClick={onTypeOwn}>
-          Type my own question
-        </button>
-        <button
-          type="button"
-          className={styles.dismissButton}
-          onClick={() => void onDismiss()}
-          disabled={isDismissing}
-        >
-          Dismiss
-        </button>
-      </div>
     </section>
   );
 }

@@ -3,8 +3,14 @@
 //
 // Admin diagnostics: GET /api/v1/admin/diagnostics + credential-key fingerprint.
 // Read-only — no restarts, invokes, or secret display.
+//
+// Rebuilt on the shared components in LUM-993 plan B Pass 6. A developer page: every
+// detail stays visible (all sections open), now in Tables, Badges and one Collapsible
+// per section.
 
 import { useQuery } from "@tanstack/react-query";
+import { ChevronDown } from "lucide-react";
+import type { ReactNode } from "react";
 
 import { ApiError } from "../../api/client";
 import {
@@ -13,6 +19,14 @@ import {
   type AdminDiagnosticsTaskSkipReason,
 } from "../../api/adminDiagnostics";
 import { useAuth } from "../../auth/AuthProvider";
+import { ErrorState } from "../../components/page/ErrorState";
+import { LoadingPlaceholder, SkeletonText } from "../../components/page/LoadingState";
+import { Badge } from "../../components/ui/badge";
+import { Button } from "../../components/ui/button";
+import { Card, CardContent, CardHeader } from "../../components/ui/card";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../../components/ui/collapsible";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
+import { formatDateTime } from "../../util/formatTimestamp";
 
 type RowsByKey = {
   user: Record<string, number>;
@@ -72,12 +86,49 @@ export function AdminDiagnosticsView(): JSX.Element {
       ),
   });
 
+/** One diagnostics section: open by default, can be folded away. keepMounted keeps it in the page while closed. */
+function DiagSection({ title, children }: { title: string; children: ReactNode }): JSX.Element {
+  return (
+    <Collapsible defaultOpen>
+      <Card className="mb-4 max-w-4xl">
+        <CardHeader>
+          <h2 className="m-0 text-base font-semibold">
+            <CollapsibleTrigger
+              render={<Button type="button" variant="ghost" size="sm" className="group/trigger -ml-2 text-base" />}
+            >
+              <ChevronDown
+                aria-hidden="true"
+                className="transition-transform group-aria-expanded/trigger:rotate-180"
+              />
+              {title}
+            </CollapsibleTrigger>
+          </h2>
+        </CardHeader>
+        <CollapsibleContent keepMounted>
+          <CardContent className="flex flex-col gap-2 text-sm">{children}</CardContent>
+        </CollapsibleContent>
+      </Card>
+    </Collapsible>
+  );
+}
+
+function Facts({ children }: { children: ReactNode }): JSX.Element {
+  return <ul className="m-0 flex list-disc flex-col gap-1 pl-5">{children}</ul>;
+}
+
+function Note({ children, ...rest }: { children: ReactNode; role?: string }): JSX.Element {
+  return (
+    <p className="m-0 max-w-2xl text-xs text-muted-foreground" {...rest}>
+      {children}
+    </p>
+  );
+}
+
   if (summary.isPending) {
     return (
-      <section aria-busy="true">
-        <h2>Diagnostics</h2>
-        <p>Loading…</p>
-      </section>
+      <LoadingPlaceholder label="Loading diagnostics…" className="max-w-4xl">
+        <SkeletonText lines={8} />
+      </LoadingPlaceholder>
     );
   }
 
@@ -91,12 +142,7 @@ export function AdminDiagnosticsView(): JSX.Element {
             ? "Admin role required for instance diagnostics."
             : err.detail
         : "Diagnostics unavailable.";
-    return (
-      <section>
-        <h2>Diagnostics</h2>
-        <p role="alert">{detail}</p>
-      </section>
-    );
+    return <ErrorState message={detail} onRetry={() => void summary.refetch()} />;
   }
 
   const d = summary.data;
@@ -119,245 +165,220 @@ export function AdminDiagnosticsView(): JSX.Element {
   }
 
   return (
-    <section className="lumogis-admin-dense-section">
-      <h2>Diagnostics</h2>
-      <p style={{ maxWidth: "42rem", opacity: 0.9 }}>
-        Read-only instance overview for admins. Does not run tools, change configuration, or reveal
-        credentials.
-      </p>
-
-      <div style={{ margin: "1rem 0" }}>
-        <div
-          style={{ fontSize: "0.85rem", opacity: 0.85 }}
-          aria-label={`Overall status: ${d.status}`}
-        >
-          Overall: <strong>{d.status}</strong>
+    <div>
+      <div className="mb-4 flex flex-col gap-1 text-sm text-muted-foreground">
+        <div aria-label={`Overall status: ${d.status}`}>
+          Overall: <Badge variant={d.status === "ok" ? "secondary" : "destructive"}>{d.status}</Badge>
         </div>
-        <div style={{ fontSize: "0.85rem", opacity: 0.85 }}>Generated: {d.generated_at}</div>
+        <div>Generated: {formatDateTime(d.generated_at)}</div>
       </div>
 
-      <h3 style={{ fontSize: "1rem", marginTop: "1.25rem" }}>Core</h3>
-      <ul style={{ margin: "0.35rem 0", paddingLeft: "1.2rem" }}>
-        <li>Auth enabled: {d.core.auth_enabled ? "yes" : "no"}</li>
-        <li>Tool catalog flag: {d.core.tool_catalog_enabled ? "on" : "off"}</li>
-        <li>Core version: {d.core.core_version}</li>
-        <li>MCP enabled: {d.core.mcp_enabled ? "yes" : "no"}</li>
-        <li>MCP auth required: {d.core.mcp_auth_required ? "yes" : "no"}</li>
-      </ul>
+      <DiagSection title="Core">
+        <Facts>
+          <li>Auth enabled: {d.core.auth_enabled ? "yes" : "no"}</li>
+          <li>Tool catalog flag: {d.core.tool_catalog_enabled ? "on" : "off"}</li>
+          <li>Core version: {d.core.core_version}</li>
+          <li>MCP enabled: {d.core.mcp_enabled ? "yes" : "no"}</li>
+          <li>MCP auth required: {d.core.mcp_auth_required ? "yes" : "no"}</li>
+        </Facts>
+      </DiagSection>
 
-      <h3 style={{ fontSize: "1rem", marginTop: "1.25rem" }}>Stores</h3>
-      <div className="lumogis-table-scroll">
-        <table className="lumogis-dense-table">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Status</th>
-              <th>Note</th>
-            </tr>
-          </thead>
-          <tbody>
+      <DiagSection title="Stores">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Name</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Note</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {d.stores.map((s) => (
-              <tr key={s.name}>
-                <td style={{ fontFamily: "monospace", fontSize: "0.85rem" }} className="lumogis-long-text">
-                  {s.name}
-                </td>
-                <td>{s.status}</td>
-                <td style={{ fontSize: "0.85rem" }} className="lumogis-long-text">
-                  {s.message ?? "—"}
-                </td>
-              </tr>
+              <TableRow key={s.name}>
+                <TableCell className="font-mono text-xs break-all whitespace-normal">{s.name}</TableCell>
+                <TableCell>{s.status}</TableCell>
+                <TableCell className="text-xs whitespace-normal">{s.message ?? "—"}</TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
-      </div>
+          </TableBody>
+        </Table>
+      </DiagSection>
 
-      <h3 style={{ fontSize: "1rem", marginTop: "1.25rem" }}>Capabilities</h3>
-      <p style={{ fontSize: "0.9rem" }}>
-        Registered: {d.capabilities.total} — healthy: {d.capabilities.healthy}, unhealthy:{" "}
-        {d.capabilities.unhealthy}
-      </p>
-      {d.capabilities.services.length > 0 ? (
-        <div className="lumogis-table-scroll">
-          <table className="lumogis-dense-table">
-            <thead>
-              <tr>
-                <th>Id</th>
-                <th>Status</th>
-                <th>Version</th>
-                <th>Tools</th>
-              </tr>
-            </thead>
-            <tbody>
-              {d.capabilities.services.map((s) => (
-                <tr key={s.id}>
-                  <td style={{ fontFamily: "monospace", fontSize: "0.8rem" }} className="lumogis-long-text">
-                    {s.id}
-                  </td>
-                  <td>{s.status}</td>
-                  <td>{s.version}</td>
-                  <td>{s.tools}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : null}
-
-      <h3 style={{ fontSize: "1rem", marginTop: "1.25rem" }}>Tool catalog</h3>
-      <p style={{ fontSize: "0.9rem" }} aria-label={`Tool catalog total: ${d.tools.total}`}>
-        Total: {d.tools.total} — available: {d.tools.available}, unavailable: {d.tools.unavailable}
-      </p>
-      <ul style={{ margin: "0.35rem 0", paddingLeft: "1.2rem", fontSize: "0.9rem" }}>
-        {Object.entries(d.tools.by_source)
-          .sort(([a], [b]) => a.localeCompare(b))
-          .map(([k, n]) => (
-            <li key={k}>
-              {k}: {n}
-            </li>
-          ))}
-      </ul>
-
-      <h3 style={{ fontSize: "1rem", marginTop: "1.25rem" }}>Tool & permission sanity</h3>
-      {d.foundation_signals ? (
-        <>
-          <p style={{ fontSize: "0.85rem", opacity: 0.85, maxWidth: "42rem" }}>
-            Read-only catalog, Ask/Do probe, and capability registry mirrors (ADR&nbsp;034). No behaviour changes.
-          </p>
-          <ul style={{ margin: "0.35rem 0", paddingLeft: "1.2rem", fontSize: "0.9rem" }}>
-            <li>
-              Catalog rows (sample admin user): {d.foundation_signals.tool_catalog.total_entries}; unavailable capability
-              rows: {d.foundation_signals.tool_catalog.unavailable_capability_catalog_entries}; catalog-only transport
-              rows: {d.foundation_signals.tool_catalog.catalog_only_transport_entries}
-            </li>
-            <li>
-              Permissions module:{" "}
-              {d.foundation_signals.permissions.ask_do_module_import_ok ? "import ok" : "import failed"};
-              connector-mode probe:{" "}
-              {d.foundation_signals.permissions.connector_mode_metadata_lookup_ok
-                ? "ok"
-                : "failed (check Postgres)"}
-            </li>
-            <li>
-              Connector-linked catalog rows still showing unknown permission_mode:{" "}
-              {d.foundation_signals.permissions.catalog_rows_with_connector_but_unknown_permission_mode}
-            </li>
-            <li>
-              Capability registry (same as summary above):{" "}
-              {d.foundation_signals.capability_registry.registered_services_total} registered, unhealthy{" "}
-              {d.foundation_signals.capability_registry.registered_services_unhealthy}
-            </li>
-          </ul>
-        </>
-      ) : (
-        <p style={{ fontSize: "0.85rem", opacity: 0.85, maxWidth: "42rem" }} role="status">
-          Tool and permission sanity slice not present — Core may be older than this Web build. Other diagnostics still
-          apply.
+      <DiagSection title="Capabilities">
+        <p className="m-0">
+          Registered: {d.capabilities.total} — healthy: {d.capabilities.healthy}, unhealthy:{" "}
+          {d.capabilities.unhealthy}
         </p>
-      )}
+        {d.capabilities.services.length > 0 ? (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Id</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Version</TableHead>
+                <TableHead>Tools</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {d.capabilities.services.map((s) => (
+                <TableRow key={s.id}>
+                  <TableCell className="font-mono text-xs break-all whitespace-normal">{s.id}</TableCell>
+                  <TableCell>{s.status}</TableCell>
+                  <TableCell>{s.version}</TableCell>
+                  <TableCell>{s.tools}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        ) : null}
+      </DiagSection>
+
+      <DiagSection title="Tool catalog">
+        <p className="m-0" aria-label={`Tool catalog total: ${d.tools.total}`}>
+          Total: {d.tools.total} — available: {d.tools.available}, unavailable: {d.tools.unavailable}
+        </p>
+        <Facts>
+          {Object.entries(d.tools.by_source)
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([k, n]) => (
+              <li key={k}>
+                {k}: {n}
+              </li>
+            ))}
+        </Facts>
+      </DiagSection>
+
+      <DiagSection title="Tool & permission sanity">
+        {d.foundation_signals ? (
+          <>
+            <Note>
+              Read-only catalog, Ask/Do probe, and capability registry mirrors (ADR&nbsp;034). No behaviour changes.
+            </Note>
+            <Facts>
+              <li>
+                Catalog rows (sample admin user): {d.foundation_signals.tool_catalog.total_entries}; unavailable
+                capability rows: {d.foundation_signals.tool_catalog.unavailable_capability_catalog_entries};
+                catalog-only transport rows: {d.foundation_signals.tool_catalog.catalog_only_transport_entries}
+              </li>
+              <li>
+                Permissions module:{" "}
+                {d.foundation_signals.permissions.ask_do_module_import_ok ? "import ok" : "import failed"};
+                connector-mode probe:{" "}
+                {d.foundation_signals.permissions.connector_mode_metadata_lookup_ok
+                  ? "ok"
+                  : "failed (check Postgres)"}
+              </li>
+              <li>
+                Connector-linked catalog rows still showing unknown permission_mode:{" "}
+                {d.foundation_signals.permissions.catalog_rows_with_connector_but_unknown_permission_mode}
+              </li>
+              <li>
+                Capability registry (same as summary above):{" "}
+                {d.foundation_signals.capability_registry.registered_services_total} registered, unhealthy{" "}
+                {d.foundation_signals.capability_registry.registered_services_unhealthy}
+              </li>
+            </Facts>
+          </>
+        ) : (
+          <Note role="status">
+            Tool and permission sanity slice not present — Core may be older than this Web build. Other diagnostics
+            still apply.
+          </Note>
+        )}
+      </DiagSection>
 
       {d.tasks && d.tasks.length > 0 ? (
-        <>
-          <h3 style={{ fontSize: "1rem", marginTop: "1.25rem" }}>Background model tasks</h3>
-          <div className="lumogis-table-scroll">
-            <table className="lumogis-dense-table">
-              <thead>
-                <tr>
-                  <th>Task</th>
-                  <th>Rules</th>
-                  <th>Configured</th>
-                  <th>Uses now (for you)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {d.tasks.map((t) => (
-                  <tr key={t.task}>
-                    <td className="lumogis-long-text">
-                      <code>{t.task}</code>
-                      <div style={{ fontSize: "0.8rem", opacity: 0.85 }}>{t.description}</div>
-                    </td>
-                    <td>
+        <DiagSection title="Background model tasks">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Task</TableHead>
+                <TableHead>Rules</TableHead>
+                <TableHead>Configured</TableHead>
+                <TableHead>Uses now (for you)</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {d.tasks.map((t) => (
+                <TableRow key={t.task} className="align-top">
+                  <TableCell className="whitespace-normal">
+                    <code className="font-mono text-xs">{t.task}</code>
+                    <div className="text-xs text-muted-foreground">{t.description}</div>
+                  </TableCell>
+                  <TableCell className="whitespace-normal">
+                    <span className="flex flex-wrap gap-1">
                       {taskRules(t).map((r) => (
-                        <span key={r} className="lumogis-badge" style={{ marginRight: "0.25rem" }}>
+                        <Badge key={r} variant="outline">
                           {r}
-                        </span>
+                        </Badge>
                       ))}
-                    </td>
-                    <td className="lumogis-long-text" style={{ fontSize: "0.85rem" }}>
-                      {t.configured.length === 0
-                        ? "—"
-                        : t.configured.map((e, i) => {
-                            const why = skipLabel(e.skip_reason);
-                            return (
-                              <div key={`${e.model}-${i}`}>
-                                <code>{e.model}</code>
-                                {why ? ` (${why})` : ""}
-                              </div>
-                            );
-                          })}
-                    </td>
-                    <td className="lumogis-long-text" style={{ fontSize: "0.85rem" }}>
-                      {usesNow(t)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <p style={{ fontSize: "0.8rem", opacity: 0.85, maxWidth: "42rem" }}>
-            Resolved for your account from configuration. Members without the same keys may use a
-            later entry. A task marked First entry only ignores any later entries (Core warns at
-            start-up). This is not a health check: a listed model that is down still shows here.
-          </p>
-        </>
+                    </span>
+                  </TableCell>
+                  <TableCell className="text-xs whitespace-normal">
+                    {t.configured.length === 0
+                      ? "—"
+                      : t.configured.map((e, i) => {
+                          const why = skipLabel(e.skip_reason);
+                          return (
+                            <div key={`${e.model}-${i}`}>
+                              <code className="font-mono">{e.model}</code>
+                              {why ? ` (${why})` : ""}
+                            </div>
+                          );
+                        })}
+                  </TableCell>
+                  <TableCell className="text-xs whitespace-normal">{usesNow(t)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+          <Note>
+            Resolved for your account from configuration. Members without the same keys may use a later entry. A task
+            marked First entry only ignores any later entries (Core warns at start-up). This is not a health check: a
+            listed model that is down still shows here.
+          </Note>
+        </DiagSection>
       ) : null}
 
       {d.warnings.length > 0 ? (
-        <>
-          <h3 style={{ fontSize: "1rem", marginTop: "1.25rem" }}>Warnings</h3>
-          <ul style={{ margin: "0.35rem 0", paddingLeft: "1.2rem", fontSize: "0.9rem" }}>
+        <DiagSection title="Warnings">
+          <Facts>
             {d.warnings.map((w) => (
               <li key={w.code}>
-                <code>{w.code}</code> — {w.message}
+                <code className="font-mono">{w.code}</code> — {w.message}
               </li>
             ))}
-          </ul>
-        </>
+          </Facts>
+        </DiagSection>
       ) : null}
 
-      <h3 style={{ fontSize: "1rem", marginTop: "1.75rem" }}>Credential encryption</h3>
-      {fingerprint.isPending ? <p>Loading key rotation summary…</p> : null}
-      {fingerprint.isError ? <p>Credential key fingerprint unavailable.</p> : null}
-      {fingerprint.data ? (
-        <>
-          <p>Current key version: {fingerprint.data.current_key_version}</p>
-          <div className="lumogis-table-scroll">
-            <table className="lumogis-dense-table">
-              <thead>
-                <tr>
-                  <th>Tier</th>
-                  <th>Key version</th>
-                  <th>Count</th>
-                </tr>
-              </thead>
-              <tbody>
+      <DiagSection title="Credential encryption">
+        {fingerprint.isPending ? <p className="m-0">Loading key rotation summary…</p> : null}
+        {fingerprint.isError ? <p className="m-0">Credential key fingerprint unavailable.</p> : null}
+        {fingerprint.data ? (
+          <>
+            <p className="m-0">Current key version: {fingerprint.data.current_key_version}</p>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Tier</TableHead>
+                  <TableHead>Key version</TableHead>
+                  <TableHead>Count</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {tableRows.map((r, i) => (
-                  <tr key={`${r.tier}-${r.keyVersion}-${i}`}>
-                    <td>{r.tier}</td>
-                    <td>{r.keyVersion}</td>
-                    <td>{r.count}</td>
-                  </tr>
+                  <TableRow key={`${r.tier}-${r.keyVersion}-${i}`}>
+                    <TableCell>{r.tier}</TableCell>
+                    <TableCell>{r.keyVersion}</TableCell>
+                    <TableCell>{r.count}</TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        </>
-      ) : null}
-
-      <p style={{ marginTop: "1.5rem", fontSize: "0.9rem" }}>
-        Need queue depth + per-user batch jobs? Tracked as follow-up{" "}
-        <code>lumogis_web_admin_diagnostics_batch_jobs</code> (depends on <code>per_user_batch_jobs</code>
-        ).
-      </p>
-    </section>
+              </TableBody>
+            </Table>
+          </>
+        ) : null}
+      </DiagSection>
+    </div>
   );
 }

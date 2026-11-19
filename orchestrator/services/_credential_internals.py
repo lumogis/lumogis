@@ -146,7 +146,8 @@ def _load_keys() -> list[bytes]:
     sentinels (``change-me-in-production`` / ``__GENERATE_ME__``) are
     stripped/rejected.
 
-    Raises :class:`RuntimeError` whenever no usable key is found —
+    Raises :class:`CredentialUnavailable` (a :class:`RuntimeError`) whenever no
+    usable key is found —
     **regardless of** ``auth_enabled()``. The boot-time refusal in
     ``main._enforce_auth_consistency`` is a separate, additional check
     that runs only under ``AUTH_ENABLED=true``.
@@ -164,16 +165,18 @@ def _load_keys() -> list[bytes]:
         keys.append(cand.encode("ascii"))
 
     if not keys:
-        raise RuntimeError(
+        raise CredentialUnavailable(
             "LUMOGIS_CREDENTIAL_KEY[S] is unset, blank, or a placeholder. "
-            "Generate a Fernet key with: "
+            "The entrypoint generates LUMOGIS_CREDENTIAL_KEY on first start and "
+            "saves it in .env; it is never replaced once set, because losing it "
+            "makes every encrypted credential row in user_connector_credentials, "
+            "household_connector_credentials, and "
+            "instance_system_connector_credentials unreadable. If .env could not "
+            "be written, generate a Fernet key with: "
             'python3 -c "from cryptography.fernet import Fernet; '
             'print(Fernet.generate_key().decode())" '
             "and set LUMOGIS_CREDENTIAL_KEY (or LUMOGIS_CREDENTIAL_KEYS, CSV "
-            "newest-first, for rotation). The key is intentionally NOT "
-            "auto-rotated — losing it makes every encrypted credential row "
-            "in user_connector_credentials, household_connector_credentials, "
-            "and instance_system_connector_credentials unrecoverable."
+            "newest-first, for rotation)."
         )
     return keys
 
@@ -183,7 +186,7 @@ def _build_multifernet(keys: list[bytes]) -> MultiFernet:
     try:
         return MultiFernet([Fernet(k) for k in keys])
     except (ValueError, TypeError) as exc:
-        raise RuntimeError(
+        raise CredentialUnavailable(
             f"LUMOGIS_CREDENTIAL_KEY[S] contains a key that Fernet rejected "
             f"({exc.__class__.__name__}): regenerate with "
             'python3 -c "from cryptography.fernet import Fernet; '

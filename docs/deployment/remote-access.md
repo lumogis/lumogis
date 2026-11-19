@@ -8,7 +8,37 @@ Lumogis runs on a home server or workstation. By default it is reachable only on
 
 ## Why HTTPS is required
 
-Lumogis Web is a progressive web app (PWA). The service worker (`clients/lumogis-web/src/pwa/sw.ts`) and Web Push notifications require a [secure context](https://developer.mozilla.org/en-US/docs/Web/Security/Secure_Contexts)—HTTPS in practice. Plain HTTP access prevents PWA installation and disables push notifications. Both **Tailscale Serve** and **Cloudflare Tunnel** terminate HTTPS for you automatically, so household devices get a working install and push path without exposing raw port forwarding on your router.
+Lumogis Web is a progressive web app (PWA). The service worker (`clients/lumogis-web/src/pwa/sw.ts`) and Web Push notifications require a [secure context](https://developer.mozilla.org/en-US/docs/Web/Security/Secure_Contexts)—HTTPS in practice. Plain HTTP access prevents PWA installation and disables push notifications. At home, the free **secure address** below provides HTTPS. Away from home, **Tailscale Serve** and **Cloudflare Tunnel** terminate HTTPS for you automatically, so household devices get a working install and push path without exposing raw port forwarding on your router.
+
+## Secure address at home
+
+**Admin → Secure address** gives this Lumogis a free `https://` name for use **on your home network**, for example `https://kq7f3r2a….homes.lumogis.app`. Phones and laptops on your home Wi-Fi open it with a real certificate, so installing the app, voice input and notifications work without installing anything on them. It does not work away from home: for that, use Option A or B below.
+
+**Turn it on:**
+
+1. Open **Admin → Secure address**.
+2. Lumogis looks for this computer's home network address when the page opens and suggests it (the address your phone uses to open Lumogis, for example `192.168.1.20`). Check it, tick the confirmation and press **Turn on secure address**. On Docker Desktop, Lumogis cannot see the address, and the page shows how to find it (`ipconfig getifaddr en0` in a Mac's Terminal, `ipconfig` on Windows); or open Lumogis at `http://<that address>` instead of `localhost` and it fills the address in.
+3. Wait a minute or two while Lumogis gets a name and a certificate. The page shows the address when it is ready, with **Copy address** and **Check on this device**.
+4. Open the address on each device and sign in there once. It is a new address, so the browser keeps a separate sign-in, offline copy and notification setting for it. The old address keeps working.
+
+**What becomes public.** Lumogis's name service learns this computer's **home network address** (a private address such as `192.168.1.20`) and stores it under a random name. That name and the private address are visible in **public DNS**, and the name appears in **public certificate logs**, as every certificate does. Nobody outside your home network can open the address: a private address only leads somewhere on your own network. The name service does not see your data, your traffic or your sign-ins; the certificate's private key stays on this computer.
+
+**Outbound connections.** With the secure address on, Lumogis contacts its name service (`dns.homes.lumogis.app`) to register, update the address and renew the certificate, and Caddy contacts Let's Encrypt. While it is off, nothing is contacted, apart from one call right after you turn it off to remove the name.
+
+**If a device cannot open it.** Many routers block public names that point into the home network ("DNS rebind protection"). The page then says your router hides the address and shows steps for common routers (FRITZ!Box, OpenWrt, Pi-hole, OPNsense/pfSense, UniFi). Allow `homes.lumogis.app` in the router; do not turn the protection off. **Check on this device** only runs when the page was opened by a home network address; from anywhere else, check on a phone or laptop on your home Wi-Fi.
+
+**Right after you turn it on,** a device that looked the name up too early can take up to 30 minutes to find it. The page says "the name is new" during that time instead of pointing at your router.
+
+**After a router restart** your computer may get a new home network address. Lumogis notices within about ten minutes and updates the secure address; until then the address may not open. To avoid this, give the computer a fixed address in your router (a DHCP reservation).
+
+**Things to know:**
+
+- One secure address belongs to **one computer**. Moving Lumogis with a backup keeps the name; running the same backup on two computers at once does not work, and the page warns about it.
+- If the workspace is wiped, Lumogis gets a new name. The page says so; the old address stops working.
+- If Caddy publishes HTTPS on another host port (`CADDY_HTTPS_HOST_PORT`), the address includes that port.
+- **Sign-in off:** anyone on your home network who opens the address uses Lumogis as its admin, as with the plain address. Turn sign-in on first.
+- **Testing with staging.** Setting `LUMOGIS_HOME_DNS_ACME_STAGING=true` in `.env` switches to Let's Encrypt's test certificates. Every `.app` name is HSTS-preloaded, so a browser refuses a staging certificate with no way past it: check with `curl -k` or `openssl s_client`, and use the real certificates (`false`) for phone tests. To switch, edit `.env` and run `docker compose up -d` (`docker compose restart` keeps the old value). Lumogis re-applies the site on its own within a few minutes, with no Turn off and on, and the page shows "issuing" until the new certificate is served.
+- **Turn off** on the same page removes the name from the name service and the site from Caddy. Devices go back to the plain address.
 
 ## Option A: Tailscale Serve (recommended)
 
@@ -29,7 +59,7 @@ Lumogis Web is a progressive web app (PWA). The service worker (`clients/lumogis
 
 3. Each household member installs Tailscale on their device and joins the same tailnet. They open Lumogis at **`https://<hostname>.<tailnet>.ts.net`** (for example `https://homelab.tailabc123.ts.net`).
 
-The exact hostname appears in the [Tailscale admin console](https://login.tailscale.com/admin/machines) or via `tailscale status` on the host. When you enable auth (`AUTH_ENABLED=true`), set **`LUMOGIS_PUBLIC_ORIGIN`** in `.env` to that HTTPS URL so cookies and CSRF checks match the browser origin.
+The exact hostname appears in the [Tailscale admin console](https://login.tailscale.com/admin/machines) or via `tailscale status` on the host. Sign-in is on by default. **`LUMOGIS_PUBLIC_ORIGIN`** is optional: set it in `.env` to that HTTPS URL so cookies and CSRF checks match the browser origin exactly, and so email password reset and other emailed links work (Lumogis never builds an email link from the request's `Host`). To create the first admin account through this address, set it first, or create the admin at the computer's network address.
 
 **Reference:** [Tailscale Serve](https://tailscale.com/kb/1242/tailscale-serve)
 
@@ -65,7 +95,7 @@ Core itself trusts only the Caddy container (`LUMOGIS_TRUSTED_PROXIES=caddy`, th
 
 ## Option C: LAN only (mDNS)
 
-On many home networks, **Avahi** or **mDNS** advertises a friendly hostname such as **`lumogis.local`**, so you can open the UI without remembering an IP address while on Wi‑Fi. That convenience is LAN-only: it does not reach phones on cellular or laptops on other networks, and it does not provide HTTPS. Use this path for at-home browsing only; pair it with Option A or B when household members need off-LAN or mobile access.
+On many home networks, **Avahi** or **mDNS** advertises a friendly hostname such as **`lumogis.local`**, so you can open the UI without remembering an IP address while on Wi‑Fi. That convenience is LAN-only: it does not reach phones on cellular or laptops on other networks, and it does not provide HTTPS (use the secure address at home for that). Use this path for at-home browsing only; pair it with Option A or B when household members need off-LAN or mobile access.
 
 ## Security guidance
 

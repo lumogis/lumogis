@@ -171,6 +171,8 @@ def ensure_stop_entities_file() -> bool:
     tmp: str | None = None
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
+        # Not services/_atomic_file.atomic_write_text (LUM-331): this copy must
+        # never clobber an existing file, so it links instead of replacing.
         fd, tmp = tempfile.mkstemp(dir=str(dest.parent), prefix=".stop_entities_", suffix=".tmp")
         os.close(fd)
         shutil.copyfile(seed, tmp)
@@ -2152,9 +2154,14 @@ def get_stt_sidecar_ping_timeout_sec() -> int:
     return _stt_optional_nonnegative_int_env("STT_SIDECAR_PING_TIMEOUT_SEC", "3")
 
 
+STT_DEFAULT_MODEL = "Systran/faster-whisper-base.en"
+
+
 def get_stt_model() -> str:
-    raw = os.environ.get("STT_MODEL", "base").strip()
-    return raw if raw else "base"
+    """Speech model id. Default is a Speaches model id (a short name such as ``base``
+    is not one: Speaches 0.8 rejects it, LUM-995)."""
+    raw = os.environ.get("STT_MODEL", STT_DEFAULT_MODEL).strip()
+    return raw if raw else STT_DEFAULT_MODEL
 
 
 def get_stt_language() -> str | None:
@@ -2326,6 +2333,11 @@ def _stt_positive_int(var: str, default: str) -> int:
     return n
 
 
+def get_stt_model_install_timeout_sec() -> int:
+    """Read timeout of the blocking model-install call to the sidecar (LUM-995)."""
+    return _stt_positive_int("STT_MODEL_INSTALL_TIMEOUT_SEC", "900")
+
+
 def get_stt_max_audio_bytes() -> int:
     return _stt_positive_int("STT_MAX_AUDIO_BYTES", "26214400")
 
@@ -2384,6 +2396,7 @@ def get_speech_to_text():
             http_timeout_sec=get_stt_timeout_sec(),
             ping_timeout_sec=get_stt_sidecar_ping_timeout_sec(),
             api_key=get_stt_sidecar_api_key(),
+            install_timeout_sec=get_stt_model_install_timeout_sec(),
         )
         _log.info("SpeechToText adapter resolved: WhisperSidecarSpeechToTextAdapter")
         return _instances[key]  # type: ignore[no-any-return]

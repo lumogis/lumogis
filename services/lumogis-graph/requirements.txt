@@ -46,6 +46,11 @@ duckdb>=1.0,<2
 # internals against a major bump (LUM-290).
 mcp>=1.27.2,<2
 
+# Verifies Core access JWTs (AUTH_ENABLED=true). Declared directly: mcp also pulls
+# it in, but auth must not depend on the SDK's dependency list. Same floor as
+# orchestrator/requirements-core.txt (LUM-915).
+pyjwt>=2.8.0
+
 # NOTE: NOT included in this image (any of these MUST stay Core-only):
 #   - qdrant-client, sentence-transformers       (vector + embeddings — Core)
 #   - anthropic, openai                          (LLM providers — Core)
@@ -55,9 +60,6 @@ mcp>=1.27.2,<2
 #   - feedparser, trafilatura                    (web ingest — Core)
 #   - watchdog, psutil                           (file/system watch — Core)
 #   - caldav                                     (calendar — Core)
-#   - pyjwt                                      (only needed if AUTH_ENABLED=true
-#                                                 on the KG container; lazy-imported
-#                                                 in services/lumogis-graph/auth.py)
 # Code-structure ingest (LUM-301). Per-language grammar wheels bundle the
 # compiled grammar (no network at runtime, unlike tree-sitter-language-pack
 # which fetches grammars on demand). ABI-paired with the tree-sitter core.

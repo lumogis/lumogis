@@ -242,6 +242,7 @@ app.include_router(graph_pkg.router)
 # Same single-shot rebuild-on-lifespan pattern Core uses (see
 # `orchestrator/main.py:299..328`). We hold onto the Mount route object
 # at module-load so the lifespan can mutate `route.app` on each startup.
+# Auth for this mount lives in `auth.auth_middleware` (LUM-915).
 # ---------------------------------------------------------------------------
 
 _mcp_mount_route = None

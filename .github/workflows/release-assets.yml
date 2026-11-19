@@ -3,21 +3,26 @@
 #
 # LUM-980 — attach the two install files to a GitHub Release and publish it.
 #
-# A household installs Lumogis like Immich: download docker-compose.yml and
+# A household installs Lumogis from two files: download docker-compose.yml and
 # example.env from the latest Release, then `docker compose up -d`. This workflow
 # is the only thing that publishes a Release, and it does so only after the files
-# and the five images they name have been checked as an anonymous user would see
+# and the six images they name have been checked as an anonymous user would see
 # them:
 #
 #   1. the draft Release v<version> exists (tag pushed, Publish image finished);
 #   2. each ghcr.io/lumogis/<image>:<version> resolves anonymously, for amd64 and
 #      arm64 (it polls while Publish image is still running);
 #   3. the generated compose pulls exactly those digests anonymously;
-#   4. the files are attested, uploaded in one call, `release` and `X.Y` move to
-#      the verified digests (stable versions only), and the Release is published.
+#   4. the files are attested and handed to the release smoke (LUM-997,
+#      release-smoke.yml), which installs them on clean amd64 and arm64 runners;
+#   5. only when the smoke is green (or with a recorded skip_smoke_reason) are the
+#      files uploaded in one call, `release` and `X.Y` moved to the verified digests
+#      (stable versions only, then checked anonymously) and the Release published.
 #
-# Until the last step the Release is a draft, so releases/latest/download/ keeps
-# serving the previous pair. A re-dispatch is idempotent and completes a run that
+# stage -> smoke -> publish: `publish` needs both, with default success semantics, so
+# a red, cancelled or skipped smoke can never reach it. A red smoke changes nothing
+# on the Release. Until the last step the Release is a draft, so
+# releases/latest/download/ keeps serving the previous pair. A re-dispatch is idempotent and completes a run that
 # stopped part-way (for example while `release` was being moved).
 #
 # Dispatch only. Kept in lumogis-app for the export; every job is guarded on
@@ -42,6 +47,11 @@ on:
         required: false
         type: string
         default: "90"
+      skip_smoke_reason:
+        description: Emergency only, publish without the release smoke. Must name an issue (LUM-###); recorded in the Release notes with who dispatched
+        required: false
+        type: string
+        default: ""
 
 permissions: {}
 
@@ -50,22 +60,30 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release-assets:
+  stage:
     # From main only, like the publish jobs: a dispatch runs the workflow file of
     # the chosen ref, so another branch could carry a different one.
     if: github.repository == 'lumogis/lumogis' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 150
+    # contents: write only so "Require a draft Release" can see a draft; this job
+    # never writes to the Release (the upload moved to `publish`, after the smoke).
     permissions:
       contents: write
-      packages: write
+      packages: read
       attestations: write
       id-token: write
+    outputs:
+      prerelease: ${{ steps.input.outputs.prerelease }}
+      minor: ${{ steps.input.outputs.minor }}
+      tag: ${{ steps.input.outputs.tag }}
+      newest: ${{ steps.newest.outputs.newest || 'false' }}
     env:
       VERSION: ${{ inputs.version }}
       REPLACE_PUBLISHED: ${{ inputs.replace_published }}
       WAIT_MINUTES: ${{ inputs.wait_minutes }}
-      IMAGES: lumogis-web lumogis-stack-control lumogis-backup lumogis-caddy lumogis-orchestrator
+      SKIP_SMOKE_REASON: ${{ inputs.skip_smoke_reason }}
+      IMAGES: lumogis-web lumogis-stack-control lumogis-backup lumogis-caddy lumogis-graph lumogis-orchestrator
     steps:
       - name: Validate inputs
         id: input
@@ -78,6 +96,12 @@ jobs:
           if [[ ! "$WAIT_MINUTES" =~ ^[0-9]+$ ]] || (( WAIT_MINUTES < 1 || WAIT_MINUTES > 120 )); then
             echo "::error::wait_minutes must be a whole number from 1 to 120"
             exit 1
+          fi
+          if [[ -n "$SKIP_SMOKE_REASON" ]]; then
+            if [[ "$SKIP_SMOKE_REASON" == *$'\n'* || ${#SKIP_SMOKE_REASON} -lt 10 || ! "$SKIP_SMOKE_REASON" =~ LUM-[0-9]+ ]]; then
+              echo "::error::skip_smoke_reason must be one line, at least 10 characters, and name an issue (LUM-###)"
+              exit 1
+            fi
           fi
           if [[ "$VERSION" == *-* ]]; then
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
@@ -107,6 +131,27 @@ jobs:
             exit 1
           fi
           echo "Core reports version $core"
+
+      - name: The name service accepts this release's registration value
+        run: |
+          set -uo pipefail
+          # A Release whose registration value the name service refuses would give
+          # every fresh install a refused secure address. Runs on the tag tree, the
+          # value that ships, before anything is attested or published.
+          rc=0
+          python3 scripts/release/check_home_dns_registration.py || rc=$?
+          if [[ "$rc" == "2" ]]; then
+            sleep 60
+            rc=0
+            python3 scripts/release/check_home_dns_registration.py || rc=$?
+          fi
+          if [[ "$rc" == "1" ]]; then
+            echo "::error::The name service refuses this release's registration value; publish nothing until it accepts it."
+            exit 1
+          elif [[ "$rc" != "0" ]]; then
+            echo "::error::Could not confirm the name service accepts this release's registration value; re-run this workflow."
+            exit 1
+          fi
 
       - name: Require a draft Release
         env:
@@ -138,7 +183,7 @@ jobs:
 
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
-      - name: Resolve the five images anonymously
+      - name: Resolve the six images anonymously
         run: |
           set -euo pipefail
           # An empty DOCKER_CONFIG means no credentials: we see what a household sees.
@@ -287,6 +332,7 @@ jobs:
           declare -A SERVICE=(
             [lumogis-orchestrator]=orchestrator [lumogis-web]=lumogis-web
             [lumogis-stack-control]=stack-control [lumogis-backup]=backup [lumogis-caddy]=caddy
+            [lumogis-graph]=lumogis-graph
           )
           while read -r repo _version digest; do
             image="${repo##*/}"
@@ -295,7 +341,7 @@ jobs:
           cat "$override"
           docker compose -f docker-compose.yml -f "$override" config -q
           docker compose -f docker-compose.yml -f "$override" pull \
-            orchestrator lumogis-web stack-control backup caddy
+            orchestrator lumogis-web stack-control backup caddy lumogis-graph
           rm -f .env
 
       - name: Write checksums
@@ -312,24 +358,105 @@ jobs:
             dist/release/docker-compose.yml
             dist/release/example.env
 
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-files-${{ inputs.version }}
+          path: |
+            dist/release/docker-compose.yml
+            dist/release/example.env
+            dist/release/SHA256SUMS
+            dist/release/image-digests.txt
+          retention-days: 7
+          overwrite: true
+
+  smoke:
+    needs: stage
+    if: github.repository == 'lumogis/lumogis' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release-smoke.yml
+    with:
+      version: ${{ inputs.version }}
+      files_artifact: release-files-${{ inputs.version }}
+      expect: stt,signin,graph-switch
+      skip_reason: ${{ inputs.skip_smoke_reason }}
+    secrets:
+      HOME_DNS_CI_REGISTRATION_VALUE: ${{ secrets.HOME_DNS_CI_REGISTRATION_VALUE }}
+      SMOKE_CLOUD_LLM_KEY: ${{ secrets.SMOKE_CLOUD_LLM_KEY }}
+
+  publish:
+    # No always(), no needs.*.result: a failed, cancelled or skipped smoke can never
+    # get here. The emergency skip is a *successful* smoke whose verdict is "skipped".
+    needs: [stage, smoke]
+    if: github.repository == 'lumogis/lumogis' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      packages: write
+    env:
+      VERSION: ${{ inputs.version }}
+      IMAGES: lumogis-web lumogis-stack-control lumogis-backup lumogis-caddy lumogis-graph lumogis-orchestrator
+      TAG: ${{ needs.stage.outputs.tag }}
+      PRERELEASE: ${{ needs.stage.outputs.prerelease }}
+      MINOR: ${{ needs.stage.outputs.minor }}
+      NEWEST: ${{ needs.stage.outputs.newest }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-files-${{ inputs.version }}
+          path: dist/release
+
+      - name: The files are the ones that were smoked
+        working-directory: dist/release
+        run: sha256sum -c SHA256SUMS
+
       - name: Upload the files to the Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.input.outputs.tag }}
         run: |
           set -euo pipefail
           # One call, so the Release never holds a mixed pair. --clobber is safe:
-          # the Release is a draft here, or replace_published was asked for.
+          # the Release is a draft here, or replace_published was asked for. Only
+          # now, after the smoke: a red smoke leaves the Release as it was.
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
             dist/release/docker-compose.yml \
             dist/release/example.env \
             dist/release/SHA256SUMS \
             dist/release/image-digests.txt
 
-      - name: Move the release and X.Y tags
-        if: steps.input.outputs.prerelease == 'false' && steps.newest.outputs.newest == 'true'
+      - name: Record the release checks in the Release notes
         env:
-          MINOR: ${{ steps.input.outputs.minor }}
+          VERDICT: ${{ needs.smoke.outputs.verdict }}
+          SKIP_REASON: ${{ inputs.skip_smoke_reason }}
+          ACTOR: ${{ github.actor }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          case "$VERDICT" in
+            passed)
+              line="Release checks: passed the release smoke on amd64 and arm64 - ${RUN_URL}" ;;
+            skipped)
+              echo "::warning::Published WITHOUT the release smoke: ${SKIP_REASON} (dispatched by ${ACTOR})"
+              {
+                echo "### Published WITHOUT the release smoke"
+                echo "${SKIP_REASON} (dispatched by ${ACTOR})"
+              } >> "$GITHUB_STEP_SUMMARY"
+              line="Release checks: published WITHOUT the release smoke: ${SKIP_REASON} (dispatched by ${ACTOR}) - ${RUN_URL}" ;;
+            *)
+              echo "::error::release smoke verdict is '${VERDICT}', not passed or skipped"
+              exit 1 ;;
+          esac
+          # Idempotent: replace an earlier "Release checks:" line instead of adding a second.
+          body="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body -q .body)"
+          { printf '%s\n' "$body" | grep -v '^Release checks:' || true; } > notes.md
+          printf '\n%s\n' "$line" >> notes.md
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file notes.md
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Move the release and X.Y tags
+        if: env.PRERELEASE == 'false' && env.NEWEST == 'true'
+        env:
           GHCR_USER: ${{ github.actor }}
           GHCR_TOKEN: ${{ github.token }}
         run: |
@@ -338,19 +465,35 @@ jobs:
           # The orchestrator moves last: it runs the database migrations, so the
           # other images are already at the new release when it starts.
           for image in $IMAGES; do
-            read -r repo _v digest < <(grep "^ghcr.io/lumogis/${image} " image-digests.txt)
+            read -r repo _v digest < <(grep "^ghcr.io/lumogis/${image} " dist/release/image-digests.txt)
             docker buildx imagetools create \
               -t "${repo}:release" -t "${repo}:${MINOR}" "${repo}@${digest}"
             echo "moved ${repo}:release and :${MINOR} -> ${digest}"
           done
           docker logout ghcr.io
 
+      - name: Check the moved tags anonymously
+        if: env.PRERELEASE == 'false' && env.NEWEST == 'true'
+        run: |
+          set -euo pipefail
+          # The household path (LUMOGIS_VERSION=release), which the smoke cannot reach
+          # because `release` moves only here.
+          export DOCKER_CONFIG="$RUNNER_TEMP/anon-check"
+          mkdir -p "$DOCKER_CONFIG"
+          echo '{}' > "$DOCKER_CONFIG/config.json"
+          for image in $IMAGES; do
+            read -r repo _v digest < <(grep "^ghcr.io/lumogis/${image} " dist/release/image-digests.txt)
+            for tag in release "$MINOR"; do
+              got="$(docker buildx imagetools inspect "${repo}:${tag}" --format '{{json .Manifest}}' | jq -r '.digest // empty')"
+              if [[ "$got" != "$digest" ]]; then
+                echo "::error::${repo}:${tag} is ${got:-unreadable}, expected ${digest}"
+                exit 1
+              fi
+            done
+            echo "verified ${repo}:release and :${MINOR}"
+          done
+
       - name: Publish the Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.input.outputs.tag }}
-          PRERELEASE: ${{ steps.input.outputs.prerelease }}
-          NEWEST: ${{ steps.newest.outputs.newest }}
         run: |
           set -euo pipefail
           if [[ "$PRERELEASE" == "true" ]]; then

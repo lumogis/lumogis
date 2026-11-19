@@ -51,6 +51,7 @@ class WebhookEvent(str, Enum):
     ENTITY_CREATED = "on_entity_created"
     SESSION_ENDED = "on_session_ended"
     ENTITY_MERGED = "on_entity_merged"
+    ENTITY_DELETED = "on_entity_deleted"
     NOTE_CAPTURED = "on_note_captured"
     AUDIO_TRANSCRIBED = "on_audio_transcribed"
     DOCUMENT_SHARED = "on_document_shared"
@@ -86,6 +87,18 @@ class EntityMergedPayload(BaseModel):
     winner_id: str
     loser_id: str
     user_id: str
+
+
+class EntityDeletedPayload(BaseModel):
+    """A member deleted an entry (LUM-966): remove its graph node and its household copy.
+
+    Ids only — never names. ``projection_ids`` are the shared/system copies of
+    the entry that the delete removed from Postgres.
+    """
+
+    entity_id: str
+    user_id: str
+    projection_ids: list[str] = []
 
 
 class NoteCapturedPayload(BaseModel):
@@ -187,6 +200,7 @@ _PAYLOAD_BY_EVENT: dict[WebhookEvent, type[BaseModel]] = {
     WebhookEvent.ENTITY_CREATED: EntityCreatedPayload,
     WebhookEvent.SESSION_ENDED: SessionEndedPayload,
     WebhookEvent.ENTITY_MERGED: EntityMergedPayload,
+    WebhookEvent.ENTITY_DELETED: EntityDeletedPayload,
     WebhookEvent.NOTE_CAPTURED: NoteCapturedPayload,
     WebhookEvent.AUDIO_TRANSCRIBED: AudioTranscribedPayload,
     WebhookEvent.DOCUMENT_SHARED: DocumentSharedPayload,

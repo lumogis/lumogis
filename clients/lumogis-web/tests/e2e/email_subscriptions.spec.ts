@@ -238,7 +238,7 @@ function installMocks(
 }
 
 async function openSubscriptionsPanel(page: Page) {
-  await page.goto("/me/email-signals");
+  await page.goto("/settings/email");
   await expect(page.getByTestId("email-signals-view")).toBeVisible({ timeout: 15_000 });
   await page.getByText("Clean up this mailbox").click();
   await expect(page.getByLabel("Subscriptions")).toBeVisible();
@@ -296,8 +296,8 @@ test.describe("email subscriptions (LUM-738)", () => {
       ],
     });
     await openSubscriptionsPanel(page);
-    await page.getByLabel("Select a@x.com").check();
-    await page.getByLabel("Select b@x.com").check();
+    await page.getByRole("checkbox", { name: "Select a@x.com" }).check();
+    await page.getByRole("checkbox", { name: "Select b@x.com" }).check();
     await page.getByRole("button", { name: /Unsubscribe from 2 selected/ }).click();
 
     await expect(page.getByText(/for approval/)).toBeVisible();

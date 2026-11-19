@@ -4,15 +4,10 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { fetchAdminSettings } from "../../api/privacyMode";
-import { ApiError } from "../../api/client";
 import { useAuth } from "../../auth/AuthProvider";
+import { ErrorState } from "../../components/page/ErrorState";
+import { LoadingPlaceholder, SkeletonText } from "../../components/page/LoadingState";
 import { PrivacyModePanel } from "./PrivacyModePanel";
-
-function errMsg(e: unknown): string {
-  if (e instanceof ApiError) return e.detail;
-  if (e instanceof Error) return e.message;
-  return "Request failed";
-}
 
 export function AdminPrivacyModeView(): JSX.Element {
   const { client } = useAuth();
@@ -21,13 +16,22 @@ export function AdminPrivacyModeView(): JSX.Element {
     queryFn: () => fetchAdminSettings(client),
   });
 
-  if (q.isLoading) return <p>Loading privacy settings…</p>;
-  if (q.isError) return <p role="alert">{errMsg(q.error)}</p>;
+  if (q.isLoading) {
+    return (
+      <LoadingPlaceholder label="Loading privacy settings…" className="max-w-2xl">
+        <SkeletonText lines={4} />
+      </LoadingPlaceholder>
+    );
+  }
+  if (q.isError) {
+    return (
+      <ErrorState message="Lumogis couldn't load the privacy settings." onRetry={() => void q.refetch()} />
+    );
+  }
 
   const data = q.data!;
   return (
     <section>
-      <h1>Privacy mode</h1>
       <PrivacyModePanel
         initial={{
           privacy_mode: data.privacy_mode ?? "local_only",

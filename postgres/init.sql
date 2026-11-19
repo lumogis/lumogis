@@ -129,6 +129,67 @@ CREATE TABLE IF NOT EXISTS review_queue (
 );
 CREATE INDEX IF NOT EXISTS review_queue_user_scope_idx ON review_queue (user_id, scope);
 
+-- LUM-967 (migration 082): per-member name rules.
+--
+-- A member's correction of what kind an entry is, keyed by the entry's
+-- canonical name (normalised: whitespace collapsed, lower-cased) and the kind
+-- extraction read it as. store_entities rewrites the kind before storing
+-- (extraction path only). Keyed by name, not entity id, so a rule survives the
+-- entry being renamed, merged or deleted. source_entity_id is informational
+-- only (no FK: the rule deliberately outlives the entry, and a FK would order
+-- the per-user import). LUM-966 widens entity_name_rules_action to 'block'.
+-- Invariant kept by services/entity_name_rules.record_retype: for one
+-- (user_id, name_norm) no rule's to_type is another rule's from_type, so one
+-- lookup always gives the final kind (no chains, no cycles).
+
+CREATE TABLE IF NOT EXISTS entity_name_rules (
+    user_id          TEXT        NOT NULL DEFAULT 'default',
+    name_norm        TEXT        NOT NULL,
+    from_type        TEXT        NOT NULL,
+    action           TEXT        NOT NULL,
+    to_type          TEXT,
+    source_entity_id UUID,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    restore_to_type   TEXT,
+    display_name      TEXT,
+    document_evidence TEXT[] NOT NULL DEFAULT '{}',
+    PRIMARY KEY (user_id, name_norm, from_type),
+    CONSTRAINT entity_name_rules_name_nonempty CHECK (name_norm <> ''),
+    CONSTRAINT entity_name_rules_action CHECK (action IN ('retype', 'block')),
+    CONSTRAINT entity_name_rules_retype_target CHECK ((action = 'retype') = (to_type IS NOT NULL)),
+    CONSTRAINT entity_name_rules_no_self CHECK (to_type IS NULL OR to_type <> from_type),
+    CONSTRAINT entity_name_rules_restore
+        CHECK ((action = 'block' OR restore_to_type IS NULL)
+               AND (restore_to_type IS NULL OR restore_to_type <> from_type)),
+    CONSTRAINT entity_name_rules_evidence_cap CHECK (cardinality(document_evidence) <= 500)
+);
+
+-- LUM-966 (migration 084): delete an entry, names Lumogis won't learn, Hide.
+-- action 'block' = extraction drops the name at that kind; a converted block keeps
+-- the retype it replaced in restore_to_type; document_evidence = file paths for
+-- the re-read offer. entity_hidden = a member's Hide of another member's shared
+-- entry (keyed by the owner's source row). entity_deletions = ids-only retry
+-- tombstones for the Qdrant and graph arms of a delete.
+CREATE TABLE IF NOT EXISTS entity_hidden (
+    user_id    TEXT        NOT NULL DEFAULT 'default',
+    entity_key UUID        NOT NULL REFERENCES entities(entity_id) ON DELETE CASCADE,
+    hidden_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (user_id, entity_key)
+);
+CREATE TABLE IF NOT EXISTS entity_deletions (
+    entity_id         UUID        PRIMARY KEY,
+    user_id           TEXT        NOT NULL DEFAULT 'default',
+    projection_ids    UUID[]      NOT NULL DEFAULT '{}',
+    deleted_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    points_cleared_at TIMESTAMPTZ,
+    graph_cleared_at  TIMESTAMPTZ,
+    attempts          SMALLINT    NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS entity_deletions_pending_idx
+    ON entity_deletions (deleted_at)
+    WHERE points_cleared_at IS NULL OR graph_cleared_at IS NULL;
+
 -- Ask/Do permission model: per-connector, per-action-type enforcement.
 -- Every MCP connector starts in ASK mode. DO mode is explicitly enabled
 -- per connector. routine_do tracks approval counts for Ask/Do++ elevation.
@@ -455,6 +516,49 @@ CREATE TABLE IF NOT EXISTS known_distinct_entity_pairs (
     PRIMARY KEY (user_id, entity_id_a, entity_id_b),
     CHECK (entity_id_a < entity_id_b)
 );
+
+-- LUM-965: undo records for entity merges (identical to migration 083).
+CREATE TABLE IF NOT EXISTS entity_merges (
+    merge_id             UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id              TEXT        NOT NULL DEFAULT 'default',
+    -- Cascade: deleting the survivor (LUM-966 delete, user delete) removes the
+    -- record and the loser snapshot inside it. A later merge of the survivor
+    -- re-points this column first (records_remapped), so the record survives.
+    winner_id            UUID        NOT NULL REFERENCES entities(entity_id) ON DELETE CASCADE,
+    loser_id             UUID        NOT NULL,
+    origin               TEXT        NOT NULL,
+    acted_by             TEXT,
+    keep_name            TEXT        NOT NULL DEFAULT 'winner',
+    loser_row            JSONB       NOT NULL,
+    record_version       SMALLINT    NOT NULL DEFAULT 1,
+    winner_before        JSONB       NOT NULL,
+    name_set             TEXT,
+    aliases_added        TEXT[]      NOT NULL DEFAULT '{}',
+    tags_added           TEXT[]      NOT NULL DEFAULT '{}',
+    relations_moved      INTEGER[]   NOT NULL DEFAULT '{}',
+    relations_dropped    JSONB       NOT NULL DEFAULT '[]',
+    sessions             JSONB       NOT NULL DEFAULT '[]',
+    edges_moved_src      TEXT[]      NOT NULL DEFAULT '{}',
+    edges_moved_dst      TEXT[]      NOT NULL DEFAULT '{}',
+    edges_archived       TEXT[]      NOT NULL DEFAULT '{}',
+    edges_dropped        JSONB       NOT NULL DEFAULT '[]',
+    projections_moved    UUID[]      NOT NULL DEFAULT '{}',
+    projections_dropped  JSONB       NOT NULL DEFAULT '[]',
+    distinct_pairs_added JSONB       NOT NULL DEFAULT '[]',
+    distinct_pairs_lost  JSONB       NOT NULL DEFAULT '[]',
+    name_rules           JSONB,
+    records_remapped     UUID[]      NOT NULL DEFAULT '{}',
+    merged_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    undone_at            TIMESTAMPTZ,
+    undone_by            TEXT,
+    CONSTRAINT entity_merges_origin CHECK (origin IN ('member','auto_dedup','review_queue','admin')),
+    CONSTRAINT entity_merges_keep_name CHECK (keep_name IN ('winner','loser')),
+    CONSTRAINT entity_merges_distinct CHECK (winner_id <> loser_id)
+);
+CREATE INDEX IF NOT EXISTS entity_merges_user_winner_idx
+    ON entity_merges (user_id, winner_id, merged_at DESC);
+CREATE INDEX IF NOT EXISTS entity_merges_user_loser_idx
+    ON entity_merges (user_id, loser_id);
 
 -- Pass 4a: audit trail for all operator review queue decisions
 CREATE TABLE IF NOT EXISTS review_decisions (

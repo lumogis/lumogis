@@ -13,7 +13,7 @@
 // its effect now re-runs when the From mailbox changes, so the naive version
 // appends the second mailbox's signature under the first.
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -42,14 +42,21 @@ function renderCompose(api: ComposerApi, mailboxes = [WORK, HOME]) {
 // The From choice
 // ---------------------------------------------------------------------------
 
+// The From picker is a ui Select (a combobox): open it, then pick the option.
+async function chooseFrom(name: string) {
+  await userEvent.click(screen.getByRole("combobox", { name: "From" }));
+  await userEvent.click(await screen.findByRole("option", { name }));
+}
+
 describe("compose-new — choosing the mailbox (LUM-830)", () => {
-  it("offers a choice when the user can send from more than one mailbox", () => {
+  it("offers a choice when the user can send from more than one mailbox", async () => {
     renderCompose(makeApi());
 
-    const select = screen.getByLabelText("From") as HTMLSelectElement;
+    const select = screen.getByRole("combobox", { name: "From" });
 
-    expect(select.value).toBe(WORK.id);
-    expect(screen.getByRole("option", { name: "Personal" })).toBeInTheDocument();
+    expect(select).toHaveTextContent(WORK.name);
+    await userEvent.click(select);
+    expect(await screen.findByRole("option", { name: "Personal" })).toBeInTheDocument();
   });
 
   it("states the mailbox rather than offering a choice when there is only one", () => {
@@ -68,7 +75,7 @@ describe("compose-new — choosing the mailbox (LUM-830)", () => {
     const api = makeApi();
     renderCompose(api);
 
-    await userEvent.selectOptions(screen.getByLabelText("From"), HOME.id);
+    await chooseFrom(HOME.name);
     await userEvent.type(screen.getByLabelText("To"), "bob@x.com");
     await userEvent.type(screen.getByLabelText("Subject"), "Hello");
     await userEvent.type(screen.getByLabelText("Message"), "Hi Bob");
@@ -83,12 +90,15 @@ describe("compose-new — choosing the mailbox (LUM-830)", () => {
   it("names the chosen mailbox on the confirm card instead of 'your address'", async () => {
     renderCompose(makeApi());
 
-    await userEvent.selectOptions(screen.getByLabelText("From"), HOME.id);
+    await chooseFrom(HOME.name);
     await userEvent.type(screen.getByLabelText("To"), "bob@x.com");
     await userEvent.type(screen.getByLabelText("Subject"), "Hello");
+    await userEvent.type(screen.getByLabelText("Message"), "Hi Bob");
     await userEvent.click(screen.getByRole("button", { name: /review/i }));
 
-    expect(await screen.findByText("Personal")).toBeInTheDocument();
+    // Scoped to the confirm card: the From picker also shows "Personal" while it is mounted.
+    const card = await screen.findByRole("group", { name: "Confirm send" });
+    expect(within(card).getByText("Personal")).toBeInTheDocument();
   });
 });
 
@@ -112,7 +122,7 @@ describe("compose-new — signature follows the mailbox (LUM-830)", () => {
     const body = (await screen.findByLabelText("Message")) as HTMLTextAreaElement;
     await waitFor(() => expect(body.value).toContain("Alice — Work"));
 
-    await userEvent.selectOptions(screen.getByLabelText("From"), HOME.id);
+    await chooseFrom(HOME.name);
 
     await waitFor(() => expect(body.value).not.toContain("Alice — Work"));
     expect(body.value).toContain("Alice");
@@ -125,7 +135,7 @@ describe("compose-new — signature follows the mailbox (LUM-830)", () => {
     await waitFor(() => expect(body.value).toContain("Alice — Work"));
     await userEvent.type(body, "Morning Bob,");
 
-    await userEvent.selectOptions(screen.getByLabelText("From"), HOME.id);
+    await chooseFrom(HOME.name);
 
     await waitFor(() => expect(body.value).not.toContain("Alice — Work"));
     expect(body.value).toContain("Morning Bob,");
@@ -146,7 +156,7 @@ describe("compose-new — signature follows the mailbox (LUM-830)", () => {
     const body = (await screen.findByLabelText("Message")) as HTMLTextAreaElement;
     await waitFor(() => expect(body.value).toContain("Alice — Acme Ltd"));
 
-    await userEvent.selectOptions(screen.getByLabelText("From"), HOME.id);
+    await chooseFrom(HOME.name);
 
     await waitFor(() => expect(body.value).not.toContain("Acme Ltd"));
   });
@@ -165,7 +175,7 @@ describe("compose-new — signature follows the mailbox (LUM-830)", () => {
     const body = (await screen.findByLabelText("Message")) as HTMLTextAreaElement;
     await waitFor(() => expect(body.value).toContain("Work sig"));
 
-    await userEvent.selectOptions(screen.getByLabelText("From"), HOME.id);
+    await chooseFrom(HOME.name);
 
     await waitFor(() => expect(body.value).toContain("Quotes from $5 — 100$$ deals"));
   });
@@ -180,7 +190,7 @@ describe("compose-new — signature follows the mailbox (LUM-830)", () => {
     await userEvent.clear(body);
     await userEvent.type(body, "Alice, on my mobile");
 
-    await userEvent.selectOptions(screen.getByLabelText("From"), HOME.id);
+    await chooseFrom(HOME.name);
 
     await waitFor(() => expect(body.value).toContain("Alice, on my mobile"));
   });

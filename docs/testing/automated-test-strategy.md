@@ -79,9 +79,9 @@ The `openapi-breaking-check` step (ADR-061 deferred this "runnable proof" of the
 
 Integration tests run via `scripts/integration-public-rc.sh full-cycle` against the triple-merged Compose stack (`docker-compose.yml` + `docker-compose.test.yml` + `docker-compose.public-rc-stack.yml`) using the `integration and public_rc` pytest marker predicate.
 
-## Manual release verification (LUM-385)
+## Release verification (LUM-385, LUM-997)
 
-Automated RC gates do not replace **operator manual checks** on a real host (fresh GHCR boot, compose health, LLM routing, persistence). After `make verify-public-rc-full` on a release candidate SHA, maintainers record sign-off using [docs/RELEASE-MANUAL-CHECKLIST.md](../RELEASE-MANUAL-CHECKLIST.md) (`MS-001` … `MS-010`). Coverage matrices cite those IDs on 🚫 rows. Rule: no automation **and** no checklist row ⇒ treat as untested for release.
+Automated RC gates do not replace checks on a real install. Since LUM-997 the per-release checks (fresh install from the two Release files, ingest, local-only chat, restart, stop/start, dictation, knowledge graph on and off, update and going back, the secure address) run in the **release smoke** (`.github/workflows/release-smoke.yml`) on clean amd64 and arm64 GitHub-hosted runners, and `release-assets.yml` publishes a Release only after it is green. [docs/RELEASE-MANUAL-CHECKLIST.md](../RELEASE-MANUAL-CHECKLIST.md) keeps the `MS-###` ids, maps each to its smoke check, and lists the few rows that cannot run in CI (macOS, phones, a microphone, the browser half of the dashboard), each with the reason. Coverage matrices cite those IDs on 🚫 rows. Rule: no automation **and** no checklist row ⇒ treat as untested for release.
 
 ## Test inventory (canonical)
 

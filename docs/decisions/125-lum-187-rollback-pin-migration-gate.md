@@ -20,6 +20,8 @@
 
 **Issue:** [LUM-187](https://linear.app/lumogis/issue/LUM-187)
 
+**Amended by:** [ADR-268](268-lum-984-rollback-image-tags.md) (LUM-984) — the rollback ref is now a local `lumogis-rollback/<project>/<service>:<time>` tag pinned with `pull_policy: never`, and `rollback.sh` generates the override from the state file (decisions 2 and 3 below describe the original behaviour).
+
 **Related:** [ADR-098](098-lum-185-backup-restore.md) (rollback backup guard unchanged); [ADR-147](147-lum-524-admin-update-banner.md) (LUM-524 admin Software updates card — shipped 2026-06-30)
 
 ## Context
@@ -79,3 +81,4 @@ Full **`make test`** not re-run for this retro slice.
 ## Status history
 
 - 2026-06-24: Finalised by `/record-retro` — amendment on `dev` @ `35eb534cb` (includes merge `c465a1668`).
+- 2026-11-16: Amended by [ADR-268](268-lum-984-rollback-image-tags.md) (`/verify-plan` LUM-984) — local rollback tags replace digest refs; override generated at rollback time.

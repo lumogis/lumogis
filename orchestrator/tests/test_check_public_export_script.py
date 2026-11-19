@@ -595,6 +595,7 @@ GHCR_PUBLISH_WORKFLOWS: tuple[str, ...] = (
     ".github/workflows/attestation-guard.yml",
     ".github/workflows/attestation-verify.yml",
     ".github/workflows/release-assets.yml",  # LUM-980: attaches the install files
+    ".github/workflows/release-smoke.yml",  # LUM-997: release smoke
 )
 _PUBLIC_REPO_GUARD = "github.repository == 'lumogis/lumogis'"
 

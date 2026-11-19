@@ -5,14 +5,8 @@
 from __future__ import annotations
 
 import logging
-import uuid
-from datetime import datetime
-from datetime import timedelta
-from datetime import timezone
 
 from auth import auth_enabled
-from auth import mint_refresh_token
-from auth import refresh_token_ttl_seconds
 from csrf import _proxied_client_ip
 from fastapi import APIRouter
 from fastapi import HTTPException
@@ -28,13 +22,10 @@ from models.user_invite import InviteRedeemRequest
 from models.user_invite import InviteRedeemResponse
 from rate_limit import FailureRateLimiter
 from rate_limit import RequestRateLimiter
-from routes.auth import _login_response
-from routes.auth import _set_refresh_cookie
+from routes.auth import _start_session
 from services.users import PasswordPolicyViolationError
 
-from services import auth_sessions as auth_sess
 from services import user_invites as invites_service
-from services import users as users_svc
 
 _log = logging.getLogger(__name__)
 
@@ -116,37 +107,7 @@ def redeem_invite(
     _redeem_limiter.record_success(ip, email_key)
 
     user = result.user
-    salt = auth_sess.ensure_instance_salt()
-    session_id = uuid.uuid4().hex
-    refresh_jwt = mint_refresh_token(user.id, session_id)
-    expires_at = datetime.now(timezone.utc) + timedelta(seconds=refresh_token_ttl_seconds())
-    ua = request.headers.get("User-Agent") or ""
-    ip_h, ua_h = auth_sess.fingerprint_hashes(
-        normalized_ip=_client_ip(request),
-        user_agent=ua,
-        salt=salt,
-    )
-    label = auth_sess.compute_device_label(ua, utc_now=datetime.now(timezone.utc))
-    auth_sess.insert_login_session(
-        session_id=session_id,
-        user_id=user.id,
-        refresh_jwt=refresh_jwt,
-        expires_at=expires_at,
-        device_label=label,
-        ip_hash=ip_h,
-        ua_hash=ua_h,
-    )
-    users_svc.record_login(user.id)
-    _set_refresh_cookie(response, refresh_jwt)
-
-    login = _login_response(
-        user.id,
-        user.role,
-        user.email,
-        session_id=session_id,
-        token_version=user.token_version,
-        allows_shared=user.allows_shared,
-    )
+    login = _start_session(user, request, response)
     return InviteRedeemResponse(
         access_token=login.access_token,
         token_type=login.token_type,

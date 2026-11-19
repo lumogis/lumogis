@@ -9,6 +9,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { useAuth } from "../../auth/AuthProvider";
 import { ApiError } from "../../api/client";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { starvationWarning, type StarvationWarning } from "./externalConsumerWarning";
 import {
   approveCleanup,
@@ -137,142 +142,179 @@ export function EmailCleanupPass({ sourceId, labelVisible }: EmailCleanupPassPro
   };
 
   return (
-    <section aria-labelledby="cleanup-heading" data-testid="email-cleanup-pass">
-      <h3 id="cleanup-heading">Clean up my inbox</h3>
-      <p>
-        Work through a messy inbox one date range at a time. Lumogis labels the mail it finds;
-        you approve which categories to file into folders. Everything is reversible.
-      </p>
+    <section aria-labelledby="cleanup-heading" data-testid="email-cleanup-pass" className="grid gap-4">
+      <div>
+        <h3 id="cleanup-heading" className="m-0 text-sm font-semibold">
+          Clean up my inbox
+        </h3>
+        <p className="m-0 mt-1 text-sm text-muted-foreground">
+          Work through a messy inbox one date range at a time. Lumogis labels the mail it finds;
+          you approve which categories to file into folders. Everything is reversible.
+        </p>
+      </div>
 
-      <div className="lumogis-cleanup__range">
-        <label>
-          From{" "}
-          <input
-            type="date"
-            aria-label="Start date"
-            value={start}
-            onChange={(e) => setStart(e.target.value)}
-          />
-        </label>
-        <label>
-          To{" "}
-          <input
-            type="date"
-            aria-label="End date"
-            value={end}
-            onChange={(e) => setEnd(e.target.value)}
-          />
-        </label>
-        <button
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="grid gap-1.5">
+          <Label>
+            From
+            <Input
+              type="date"
+              aria-label="Start date"
+              value={start}
+              onChange={(e) => setStart(e.target.value)}
+            />
+          </Label>
+        </div>
+        <div className="grid gap-1.5">
+          <Label>
+            To
+            <Input
+              type="date"
+              aria-label="End date"
+              value={end}
+              onChange={(e) => setEnd(e.target.value)}
+            />
+          </Label>
+        </div>
+        <Button
           type="button"
+          variant="outline"
           onClick={() => startM.mutate()}
           disabled={startM.isPending || jobActive}
         >
           Start cleanup
-        </button>
+        </Button>
       </div>
 
       {jobId && job && (
-        <div data-testid="cleanup-progress">
-          <progress value={progressPct} max={100} />
+        <div data-testid="cleanup-progress" className="grid gap-1 text-sm">
+          <progress value={progressPct} max={100} className="h-2 w-full max-w-sm" />
           <span>
             {job.kind === "spam" ? "Emptying spam" : "Processing"} — {job.state} ({progressPct}%)
+            {job.counts && (
+              <span data-testid="cleanup-counts">
+                {" "}
+                · {job.counts.classified} classified, {job.counts.executed} filed
+              </span>
+            )}
           </span>
-          {job.counts && (
-            <span data-testid="cleanup-counts">
-              {" "}
-              · {job.counts.classified} classified, {job.counts.executed} filed
-            </span>
-          )}
         </div>
       )}
 
       {job?.kind === "window" && job.state === "ready" && proposals.length > 0 && (
-        <fieldset data-testid="cleanup-proposals">
-          <legend>What Lumogis found — pick categories to file into folders</legend>
+        <fieldset data-testid="cleanup-proposals" className="m-0 grid gap-2 rounded-lg border p-3">
+          <legend className="px-1 text-sm font-medium">
+            What Lumogis found — pick categories to file into folders
+          </legend>
           {!labelVisible && (
-            <p role="note" data-testid="cleanup-label-caveat">
+            <p role="note" data-testid="cleanup-label-caveat" className="m-0 text-sm text-muted-foreground">
               Your provider may not show Lumogis labels in its own app — filing into folders
               makes the organization visible.
             </p>
           )}
           {proposals.map((p) => (
-            <label key={p.category}>
-              <input
-                type="checkbox"
+            <Label key={p.category} className="items-start">
+              <Checkbox
                 checked={moveCats.includes(p.category)}
                 disabled={!p.can_move}
-                onChange={() => toggleMove(p.category)}
-              />{" "}
+                onCheckedChange={() => toggleMove(p.category)}
+              />
               {p.label ?? p.category} ({p.count})
-            </label>
+            </Label>
           ))}
-          <button
-            type="button"
-            onClick={() => approveM.mutate(false)}
-            disabled={approveM.isPending}
-          >
-            File selected into folders
-          </button>
-          {starvation && (
-            <div
-              role="alertdialog"
-              aria-labelledby="cleanup-starve-heading"
-              data-testid="cleanup-starvation-warning"
+          <div>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => approveM.mutate(false)}
+              disabled={approveM.isPending}
             >
-              <h4 id="cleanup-starve-heading">This will hide mail from paperless</h4>
-              <p>{starvation.message}</p>
-              <p>{starvation.recovery}</p>
-              <button
-                type="button"
-                data-testid="cleanup-starvation-continue"
-                onClick={() => approveM.mutate(true)}
-                disabled={approveM.isPending}
-              >
-                I understand — file them anyway
-              </button>
-              <button type="button" onClick={() => setStarvation(null)}>
-                Cancel
-              </button>
-            </div>
+              File selected into folders
+            </Button>
+          </div>
+          {starvation && (
+            <Alert data-testid="cleanup-starvation-warning" aria-labelledby="cleanup-starve-heading">
+              <AlertTitle id="cleanup-starve-heading">This will hide mail from paperless</AlertTitle>
+              <AlertDescription className="grid gap-2">
+                <p className="m-0">{starvation.message}</p>
+                <p className="m-0">{starvation.recovery}</p>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    data-testid="cleanup-starvation-continue"
+                    onClick={() => approveM.mutate(true)}
+                    disabled={approveM.isPending}
+                  >
+                    I understand — file them anyway
+                  </Button>
+                  <Button type="button" variant="ghost" onClick={() => setStarvation(null)}>
+                    Cancel
+                  </Button>
+                </div>
+              </AlertDescription>
+            </Alert>
           )}
         </fieldset>
       )}
 
       {jobId && job && job.state !== "undoing" && (
-        <button type="button" onClick={() => undoM.mutate()} disabled={undoM.isPending}>
-          Undo this cleanup
-        </button>
+        <div>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => undoM.mutate()}
+            disabled={undoM.isPending}
+          >
+            Undo this cleanup
+          </Button>
+        </div>
       )}
 
-      <div data-testid="cleanup-spam">
+      <div data-testid="cleanup-spam" className="grid gap-2 text-sm">
         {!spamQ.data && (
-          <button type="button" onClick={() => void spamQ.refetch()} disabled={spamQ.isFetching}>
-            Check spam folder
-          </button>
+          <div>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => void spamQ.refetch()}
+              disabled={spamQ.isFetching}
+            >
+              Check spam folder
+            </Button>
+          </div>
         )}
         {spamQ.data && !spamQ.data.trash_available && (
-          <p role="note">Your provider doesn’t expose a Trash folder, so spam clearing isn’t available here.</p>
+          <p role="note" className="m-0 text-muted-foreground">
+            Your provider doesn’t expose a Trash folder, so spam clearing isn’t available here.
+          </p>
         )}
         {spamQ.data?.trash_available && (
           <>
-            <p>
+            <p className="m-0">
               Spam folder: {spamQ.data.spam_count} message
               {spamQ.data.spam_count === 1 ? "" : "s"}.
             </p>
-            <button
-              type="button"
-              onClick={() => spamM.mutate()}
-              disabled={spamM.isPending || jobActive}
-              title={jobActive ? "Finish the current cleanup first" : undefined}
-            >
-              Empty spam folder → Trash
-            </button>
+            <div>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => spamM.mutate()}
+                disabled={spamM.isPending || jobActive}
+                title={jobActive ? "Finish the current cleanup first" : undefined}
+              >
+                Empty spam folder → Trash
+              </Button>
+            </div>
           </>
         )}
       </div>
 
-      {msg && <p role="status">{msg}</p>}
+      {msg && (
+        <p role="status" className="m-0 text-sm text-muted-foreground">
+          {msg}
+        </p>
+      )}
     </section>
   );
 }

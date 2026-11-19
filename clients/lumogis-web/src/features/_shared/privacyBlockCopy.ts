@@ -16,8 +16,8 @@ export interface PrivacyHintCopy {
   linkLabel: string | null;
 }
 
-export const ADMIN_PRIVACY_PATH = "/admin/privacy-mode";
-export const ME_PRIVACY_PATH = "/me/privacy-mode";
+export const ADMIN_PRIVACY_PATH = "/settings/privacy?view=household";
+export const ME_PRIVACY_PATH = "/settings/privacy";
 
 /** True when the caller's model list contains a model blocked by privacy mode. */
 export function catalogHasPrivacyBlock(models: readonly ModelDescriptor[]): boolean {

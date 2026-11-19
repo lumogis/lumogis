@@ -162,7 +162,7 @@ test.describe("LUM-414 chat conversation history (desktop)", () => {
     await expect(row).toBeVisible();
 
     // Real DELETE /api/v1/conversations/{id} (route.continue passthrough).
-    await row.locator(".lumogis-chat__history-delete").click({ force: true });
+    await row.getByRole("button", { name: /^Delete / }).click({ force: true });
 
     await expect(historyRow(sidebar, created.conversation_id)).toHaveCount(0);
   });
@@ -199,7 +199,8 @@ test.describe("LUM-414 chat conversation history (desktop)", () => {
     // meant the click was dispatched at a point another element occupied —
     // onSelectContinue never ran, and the failure surfaced as an empty
     // transcript with no error alert.
-    const select = row.locator(".lumogis-chat__history-select");
+    // The row's first button opens it (Share and Delete follow), LUM-993.
+    const select = row.getByRole("button").first();
     await select.scrollIntoViewIfNeeded();
     await select.click();
 

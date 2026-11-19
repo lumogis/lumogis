@@ -4,6 +4,7 @@
 // Read-only GET /api/v1/admin/diagnostics. Admin-only; no secrets.
 
 import type { ApiClient } from "./client";
+import type { components } from "./generated/openapi";
 
 export type AdminDiagnosticsOverallStatus = "ok" | "degraded";
 
@@ -78,6 +79,10 @@ export interface AdminDiagnosticsSpeechToText {
   max_audio_bytes: number;
   max_duration_sec: number;
   endpoint: string;
+  /** The configured `STT_MODEL` (whisper_sidecar only). */
+  model?: string | null;
+  /** Whether the engine has the speech model; typed from the generated schema. */
+  model_state?: components["schemas"]["AdminDiagnosticsSpeechToText"]["model_state"];
 }
 
 export interface AdminDiagnosticsWarning {

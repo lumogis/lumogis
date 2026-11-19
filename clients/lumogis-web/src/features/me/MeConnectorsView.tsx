@@ -1,13 +1,35 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Lumogis
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { ChevronDown } from "lucide-react";
+import { useId, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { toast } from "sonner";
 import { useAuth } from "../../auth/AuthProvider";
 import { ApiError } from "../../api/client";
 import type { ModelsResponse } from "../../api/models";
 import { testConnector, type ConnectorTestResult } from "../../api/connectorCredentials";
-import { getCredentialFormComponent } from "../credentials/forms";
+import { ErrorState } from "../../components/page/ErrorState";
+import { LoadingPlaceholder, SkeletonText } from "../../components/page/LoadingState";
+import { RowActions } from "../../components/page/RowActions";
+import { Alert, AlertDescription } from "../../components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "../../components/ui/alert-dialog";
+import { Badge } from "../../components/ui/badge";
+import { Button } from "../../components/ui/button";
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../../components/ui/collapsible";
+import { Switch } from "../../components/ui/switch";
+import { formatDateTime } from "../../util/formatTimestamp";
+import { credentialFormRegistry, getCredentialFormComponent } from "../credentials/forms";
 import { PrivacyBlockedHint } from "../_shared/PrivacyBlockedHint";
 import { catalogHasPrivacyBlock } from "../_shared/privacyBlockCopy";
 
@@ -39,7 +61,7 @@ interface CCRow {
 export const ME_CONNECTORS_BASE = "/api/v1/me/connector-credentials";
 
 /** Where mailbox connectors are actually tested: pre-save, with folder detection. */
-const MAILBOX_SURFACE = "/me/email-signals";
+const MAILBOX_SURFACE = "/settings/email";
 
 /**
  * Connectors the backend answers with `tested_elsewhere` — they HAVE a
@@ -71,9 +93,65 @@ const TESTED_ELSEWHERE = new Set(["imap", "smtp"]);
  */
 const HIDDEN_FROM_CARDS = new Set(["imap", "smtp"]);
 
+/**
+ * Connectors that exist only to prove the plumbing works (the registry's
+ * "synthetic plumbing test"). A household member has no use for one, so it is
+ * kept out of the main list and shown under Advanced (LUM-993 plan B Pass 5).
+ */
+const ADVANCED_IDS = new Set(["testconnector"]);
+
+/** What a household member calls each service, and what it is for. */
+const FRIENDLY: Record<string, { name: string; purpose: string }> = {
+  paperless: {
+    name: "Paperless documents",
+    purpose: "Your Paperless archive. Lumogis reads it so you can search and ask about your documents.",
+  },
+  caldav: {
+    name: "Calendar",
+    purpose: "Your calendar (CalDAV). Lumogis reads your events from it.",
+  },
+  ntfy: {
+    name: "Phone alerts (ntfy)",
+    purpose: "Where Lumogis sends you alerts, through an ntfy server and topic.",
+  },
+  testconnector: {
+    name: "Test connector",
+    purpose: "A made-up service used only to check that saving details works.",
+  },
+};
+
+const LLM_NAMES: Record<string, string> = {
+  anthropic: "Anthropic (Claude)",
+  openai: "OpenAI (ChatGPT)",
+  xai: "xAI (Grok)",
+  perplexity: "Perplexity",
+  gemini: "Google Gemini",
+  mistral: "Mistral",
+};
+
+function titleCase(raw: string): string {
+  const words = raw.replace(/[_-]+/g, " ").trim();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : raw;
+}
+
+/** The plain name and purpose for a connector id; an unknown id is made readable, never shown raw. */
+function describeConnector(id: string, description: string): { name: string; purpose: string } {
+  const known = FRIENDLY[id];
+  if (known) return known;
+  if (id.startsWith("llm_")) {
+    const name = LLM_NAMES[id.slice(4)] ?? titleCase(id.slice(4));
+    return { name, purpose: `A key so Lumogis can use ${name} AI models.` };
+  }
+  return { name: titleCase(id), purpose: description || "A connected service." };
+}
+
+/** True when a typed form exists; otherwise the card falls back to the JSON box, kept under Advanced. */
+function hasTypedForm(connector: string): boolean {
+  return connector.startsWith("llm_") || connector in credentialFormRegistry;
+}
+
 export function MeConnectorsView({ llmOnly = false, basePath = ME_CONNECTORS_BASE }: { llmOnly?: boolean; basePath?: string }): JSX.Element {
   const { client } = useAuth();
-  const [msg, setMsg] = useState<string | null>(null);
 
   // Test-connection is a USER-ONLY route. `AdminConnectorCredentialsView`
   // renders this same component across three tiers with three different
@@ -171,16 +249,51 @@ export function MeConnectorsView({ llmOnly = false, basePath = ME_CONNECTORS_BAS
     return base.filter((i) => !HIDDEN_FROM_CARDS.has(i.id));
   }, [regQ.isSuccess, regQ.isError, fromRegistry, listItems, llmOnly]);
 
-  if (listQ.isPending) return <p>Loading…</p>;
-  if (regQ.isPending && !regQ.isError) return <p>Loading…</p>;
+  if (listQ.isPending || (regQ.isPending && !regQ.isError)) {
+    return (
+      <LoadingPlaceholder label="Loading your connected services…" className="max-w-2xl">
+        <SkeletonText lines={5} />
+      </LoadingPlaceholder>
+    );
+  }
+  if (listQ.isError) {
+    return (
+      <ErrorState
+        message="Lumogis couldn't load your connected services."
+        onRetry={() => {
+          void listQ.refetch();
+          void regQ.refetch();
+        }}
+      />
+    );
+  }
+
+  const mainItems = items.filter((i) => !ADVANCED_IDS.has(i.id));
+  const advancedItems = items.filter((i) => ADVANCED_IDS.has(i.id));
+  const renderCard = (item: RegItem) => (
+    <ConnectorCard
+      key={item.id}
+      connector={item.id}
+      description={item.description}
+      fields={item.fields}
+      row={rowByConnector.get(item.id)}
+      isEdit={existing.has(item.id)}
+      canTest={canTest}
+      canToggle={canToggle}
+      supportsFieldPresence={supportsFieldPresence}
+      basePath={basePath}
+    />
+  );
 
   return (
-    <section>
-      <h2>{llmOnly ? "LLM providers" : "Connectors"}</h2>
+    <div className="flex flex-col gap-4">
       {regQ.isError && (
-        <p role="status">Connector schema hints unavailable; using JSON fallback for listed connectors.</p>
+        <Alert role="status" className="max-w-2xl">
+          <AlertDescription>
+            Some setup hints could not be loaded, so each service below uses the advanced form.
+          </AlertDescription>
+        </Alert>
       )}
-      {msg && <p role="status">{msg}</p>}
       {/*
         The signpost replacing the imap/smtp cards (LUM-848). Gated to the
         caller's OWN surface, and not just because email is irrelevant on the
@@ -191,27 +304,35 @@ export function MeConnectorsView({ llmOnly = false, basePath = ME_CONNECTORS_BAS
         in miniature.
       */}
       {basePath === ME_CONNECTORS_BASE && !llmOnly && (
-        <p>
+        <p className="m-0 max-w-2xl text-sm">
           Email mailboxes and sending are set up on the{" "}
-          <Link to={MAILBOX_SURFACE}>Email signals</Link> page.
+          <Link to={MAILBOX_SURFACE} className="text-accent-text underline underline-offset-2">
+            Email accounts
+          </Link>{" "}
+          page.
         </p>
       )}
-      {items.map((item) => (
-        <ConnectorCard
-          key={item.id}
-          connector={item.id}
-          description={item.description}
-          fields={item.fields}
-          row={rowByConnector.get(item.id)}
-          isEdit={existing.has(item.id)}
-          canTest={canTest}
-          canToggle={canToggle}
-          supportsFieldPresence={supportsFieldPresence}
-          basePath={basePath}
-          onStatusMessage={setMsg}
-        />
-      ))}
-    </section>
+      {mainItems.length === 0 && advancedItems.length === 0 ? (
+        <p className="m-0 max-w-2xl text-sm text-muted-foreground">
+          There are no services to connect here yet.
+        </p>
+      ) : null}
+      {mainItems.map(renderCard)}
+      {advancedItems.length > 0 ? (
+        <Collapsible className="max-w-2xl">
+          <CollapsibleTrigger
+            render={<Button type="button" variant="ghost" size="sm" className="-ml-2 group/trigger" />}
+          >
+            <ChevronDown
+              aria-hidden="true"
+              className="transition-transform group-aria-expanded/trigger:-rotate-90"
+            />
+            Advanced: test connector
+          </CollapsibleTrigger>
+          <CollapsibleContent className="grid gap-4 pt-2">{advancedItems.map(renderCard)}</CollapsibleContent>
+        </Collapsible>
+      ) : null}
+    </div>
   );
 }
 
@@ -234,10 +355,17 @@ function chipState(row: CCRow | undefined, result: ConnectorTestResult | null): 
 }
 
 const CHIP_LABEL: Record<ChipState, string> = {
-  "not-configured": "Not configured",
-  configured: "Configured (untested)",
-  verified: "Verified",
-  failed: "Failed",
+  "not-configured": "Not connected",
+  configured: "Connected",
+  verified: "Connected and working",
+  failed: "Could not connect",
+};
+
+const CHIP_VARIANT: Record<ChipState, "outline" | "secondary" | "default" | "destructive"> = {
+  "not-configured": "outline",
+  configured: "secondary",
+  verified: "default",
+  failed: "destructive",
 };
 
 /**
@@ -268,7 +396,6 @@ function ConnectorCard({
   canToggle,
   supportsFieldPresence,
   basePath,
-  onStatusMessage,
 }: {
   connector: string;
   description: string;
@@ -279,10 +406,14 @@ function ConnectorCard({
   canToggle: boolean;
   supportsFieldPresence: boolean;
   basePath: string;
-  onStatusMessage: (msg: string | null) => void;
 }): JSX.Element {
   const { client } = useAuth();
   const qc = useQueryClient();
+  const detailsId = useId();
+  const { name, purpose } = describeConnector(connector, description);
+  const typed = hasTypedForm(connector);
+  const [formOpen, setFormOpen] = useState(false);
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
   const Form = getCredentialFormComponent(connector);
   const [result, setResult] = useState<ConnectorTestResult | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
@@ -305,11 +436,11 @@ function ConnectorCard({
     onMutate: () => {
       setSaveError(null);
       setKeySaveBlocked(false);
-      onStatusMessage(null);
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["cc", "list"] });
-      onStatusMessage("Saved.");
+      toast("Saved.");
+      setFormOpen(false);
       if (connector.startsWith("llm_")) {
         // The catalog is computed for the caller, whose credential snapshot
         // already unions the per-user, household and system tiers, so one
@@ -329,12 +460,11 @@ function ConnectorCard({
     mutationFn: async () => {
       await client.delete(`${basePath}/${encodeURIComponent(connector)}`);
     },
-    onMutate: () => onStatusMessage(null),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["cc", "list"] });
       // Not in onMutate: a failed delete leaves the key, so the hint stays.
       setKeySaveBlocked(false);
-      onStatusMessage("Deleted.");
+      toast("Disconnected.");
     },
     onError: (e) => {
       setSaveError(e instanceof ApiError ? e.detail : "Delete failed");
@@ -347,11 +477,10 @@ function ConnectorCard({
     },
     onMutate: () => {
       setSaveError(null);
-      onStatusMessage(null);
     },
     onSuccess: (_d, nextEnabled) => {
       void qc.invalidateQueries({ queryKey: ["cc", "list"] });
-      onStatusMessage(nextEnabled ? "Turned on." : "Turned off. The credential is kept.");
+      toast(nextEnabled ? "Turned on." : "Turned off. Your saved details are kept.");
     },
     onError: (e) => {
       setSaveError(e instanceof ApiError ? e.detail : "Could not change that");
@@ -376,98 +505,180 @@ function ConnectorCard({
     },
   });
 
-  return (
-    <article style={{ border: "1px solid #444", borderRadius: 6, padding: "0.75rem", marginBottom: "0.75rem" }}>
-      <h3 style={{ marginTop: 0 }}>
-        {connector}
-        <span style={{ fontSize: "0.75rem", marginLeft: "0.5rem", opacity: 0.7 }}>
-          {CHIP_LABEL[chipState(row, result)]}
-        </span>
-        {isEdit && !enabled && (
-          <span style={{ fontSize: "0.75rem", marginLeft: "0.5rem" }}>· Off</span>
-        )}
-      </h3>
-      <p style={{ fontSize: "0.85rem" }}>{description}</p>
-
-      <FieldPresence
-        fields={fields}
-        row={row}
+  const enabledId = `${detailsId}-on`;
+  const form = (
+    // Editable while disabled, on purpose: a user needs to be able to fix a
+    // credential BEFORE switching it back on, and saving does not re-enable
+    // (`put_payload` leaves `enabled` alone).
+    <fieldset disabled={putM.isPending} className="m-0 min-w-0 border-0 p-0">
+      <Form
+        value={{}}
         isEdit={isEdit}
-        supportsFieldPresence={supportsFieldPresence}
+        onChange={(payload) => putM.mutate(payload)}
+        hint="Payload is sent encrypted to the server; use typed fields where available."
       />
+    </fieldset>
+  );
 
-      {canToggle && isEdit && (
-        <p>
-          <label>
-            <input
-              type="checkbox"
+  return (
+    <Card data-testid={`connector-${connector}`} className="max-w-2xl">
+      <CardHeader>
+        <CardTitle className="flex flex-wrap items-center gap-2">
+          <h2 className="m-0 text-base font-semibold">{name}</h2>
+          <Badge variant={CHIP_VARIANT[chipState(row, result)]}>{CHIP_LABEL[chipState(row, result)]}</Badge>
+          {isEdit && !enabled && <Badge variant="outline">Off</Badge>}
+        </CardTitle>
+        <CardDescription>{purpose}</CardDescription>
+        {isEdit && (
+          <CardAction>
+            <RowActions
+              label={`More actions for ${name}`}
+              items={[
+                {
+                  label: "Disconnect",
+                  destructive: true,
+                  disabled: delM.isPending,
+                  onSelect: () => setConfirmDisconnect(true),
+                },
+              ]}
+            />
+          </CardAction>
+        )}
+      </CardHeader>
+      <CardContent className="grid gap-3">
+        <FieldPresence
+          fields={fields}
+          row={row}
+          isEdit={isEdit}
+          supportsFieldPresence={supportsFieldPresence}
+        />
+
+        {canToggle && isEdit && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+            <Switch
               checked={enabled}
               disabled={enableM.isPending || putM.isPending}
-              onChange={(e) => enableM.mutate(e.currentTarget.checked)}
-            />{" "}
-            On
-          </label>{" "}
-          <span style={{ fontSize: "0.8rem", opacity: 0.8 }}>
-            Turning this off keeps the credential — you will not have to enter it again.
-          </span>
-        </p>
-      )}
-
-      {/*
-        Editable while disabled, on purpose: a user needs to be able to fix a
-        credential BEFORE switching it back on, and saving does not re-enable
-        (`put_payload` leaves `enabled` alone).
-      */}
-      <fieldset disabled={putM.isPending} style={{ border: "none", margin: 0, padding: 0 }}>
-        <Form
-          value={{}}
-          isEdit={isEdit}
-          onChange={(payload) => putM.mutate(payload)}
-          hint="Payload is sent encrypted to the server; use typed fields where available."
-        />
-      </fieldset>
-      {keySaveBlocked ? (
-        <PrivacyBlockedHint surface="key-save" adminTier={basePath !== ME_CONNECTORS_BASE} />
-      ) : null}
-      {saveError && (
-        <p role="alert" style={{ fontSize: "0.85rem", color: "salmon" }}>
-          {saveError}
-        </p>
-      )}
-      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginTop: "0.5rem" }}>
-        {canTest &&
-          (TESTED_ELSEWHERE.has(connector) ? (
-            // A dead Test button is worse than no button. A round trip whose
-            // only possible answer is "test this somewhere else" is a button
-            // that wastes a click to deliver a link — so render the link.
-            <Link to={MAILBOX_SURFACE}>Test this on the Email signals page</Link>
-          ) : (
-            <button
-              type="button"
-              onClick={() => testM.mutate()}
-              // Disabled connectors answer `code: "disabled"` honestly rather
-              // than lying in either direction, but there is nothing to learn
-              // from asking — so the button says so before the round trip.
-              disabled={testM.isPending || (isEdit && !enabled)}
-            >
-              {testM.isPending ? "Testing…" : "Test connection"}
-            </button>
-          ))}
-        {isEdit && (
-          <button
-            type="button"
-            disabled={delM.isPending}
-            onClick={() => {
-              if (window.confirm(`Delete ${connector}?`)) delM.mutate();
-            }}
-          >
-            Delete
-          </button>
+              onCheckedChange={(on: boolean) => enableM.mutate(on)}
+              aria-labelledby={enabledId}
+            />
+            <span id={enabledId} className="font-medium">
+              On
+            </span>
+            <span className="text-xs text-muted-foreground">
+              Turning this off keeps what you saved — you will not have to enter it again.
+            </span>
+          </div>
         )}
-      </div>
-      {testError && <p role="alert" style={{ fontSize: "0.85rem" }}>{testError}</p>}
-      {result && <TestChip result={result} />}
-    </article>
+
+        {saveError && (
+          <Alert variant="destructive">
+            <AlertDescription>{saveError}</AlertDescription>
+          </Alert>
+        )}
+        {keySaveBlocked ? (
+          <PrivacyBlockedHint surface="key-save" adminTier={basePath !== ME_CONNECTORS_BASE} />
+        ) : null}
+
+        <div className="flex flex-wrap items-center gap-2">
+          {typed && (
+            <Button
+              type="button"
+              aria-expanded={formOpen}
+              onClick={() => setFormOpen((o) => !o)}
+            >
+              {isEdit ? "Edit" : "Connect"}
+            </Button>
+          )}
+          {canTest &&
+            (TESTED_ELSEWHERE.has(connector) ? (
+              // A dead Test button is worse than no button. A round trip whose
+              // only possible answer is "test this somewhere else" is a button
+              // that wastes a click to deliver a link — so render the link.
+              <Link to={MAILBOX_SURFACE} className="text-accent-text text-sm underline underline-offset-2">
+                Test this on the Email accounts page
+              </Link>
+            ) : (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => testM.mutate()}
+                // Disabled connectors answer `code: "disabled"` honestly rather
+                // than lying in either direction, but there is nothing to learn
+                // from asking — so the button says so before the round trip.
+                disabled={testM.isPending || (isEdit && !enabled)}
+              >
+                {testM.isPending ? "Testing…" : "Test connection"}
+              </Button>
+            ))}
+        </div>
+        {testError && (
+          <Alert variant="destructive">
+            <AlertDescription>{testError}</AlertDescription>
+          </Alert>
+        )}
+        {result && <TestChip result={result} />}
+
+        {typed && formOpen ? <div className="border-t pt-3">{form}</div> : null}
+
+        <Collapsible className="border-t pt-2">
+          <CollapsibleTrigger
+            render={<Button type="button" variant="ghost" size="sm" className="-ml-2 group/trigger" />}
+          >
+            <ChevronDown
+              aria-hidden="true"
+              className="transition-transform group-aria-expanded/trigger:rotate-180"
+            />
+            {typed ? "Details" : "Details and advanced setup"}
+          </CollapsibleTrigger>
+          <CollapsibleContent className="grid gap-3 pt-2">
+            <dl className="m-0 grid gap-1 text-sm">
+              <div className="flex flex-wrap gap-x-2">
+                <dt className="text-muted-foreground">Technical name</dt>
+                <dd className="m-0 font-mono break-all">{connector}</dd>
+              </div>
+              {row?.updated_at ? (
+                <div className="flex flex-wrap gap-x-2">
+                  <dt className="text-muted-foreground">Last saved</dt>
+                  <dd className="m-0">{formatDateTime(row.updated_at)}</dd>
+                </div>
+              ) : null}
+            </dl>
+            {!typed ? (
+              <div className="grid gap-2">
+                <p className="m-0 text-sm text-muted-foreground">
+                  This service has no guided form, so its details are entered as JSON.
+                </p>
+                {form}
+              </div>
+            ) : null}
+          </CollapsibleContent>
+        </Collapsible>
+      </CardContent>
+
+      <AlertDialog open={confirmDisconnect} onOpenChange={setConfirmDisconnect}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Disconnect {name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Lumogis forgets the details you saved for {name}. Anything that relies on it stops working
+              until you connect it again.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructiveSolid"
+              onClick={() => {
+                setConfirmDisconnect(false);
+                delM.mutate();
+              }}
+            >
+              Disconnect
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </Card>
   );
 }
 
@@ -513,7 +724,7 @@ function FieldPresence({
   // untrue sentence, so those surfaces render nothing here instead.
   if (!supportsFieldPresence) return null;
   if (fields === undefined || fields.length === 0) {
-    return <p style={{ fontSize: "0.85rem" }}>This connector&rsquo;s fields are not described.</p>;
+    return <p className="m-0 text-sm">This service&rsquo;s fields are not described.</p>;
   }
 
   // Explicit destructure — `?? []` is FORBIDDEN here. It is this codebase's
@@ -521,9 +732,7 @@ function FieldPresence({
   // into "nothing set" and render a working credential as unconfigured.
   const configured = row.configured_fields;
   if (configured === undefined || configured === null) {
-    return (
-      <p style={{ fontSize: "0.85rem" }}>Configured. Field details appear after the next save.</p>
-    );
+    return <p className="m-0 text-sm">Configured. Field details appear after the next save.</p>;
   }
 
   // The third arm of the migration-014 triad the server defends at length:
@@ -533,7 +742,7 @@ function FieldPresence({
   // ordinary unconfigured one.
   if (configured.length === 0) {
     return (
-      <p style={{ fontSize: "0.85rem" }} role="status">
+      <p className="m-0 text-sm" role="status">
         Field details for this credential look wrong. Saving it again will fix them.
       </p>
     );
@@ -542,7 +751,7 @@ function FieldPresence({
   const set = new Set(configured);
   const secrets = new Set(row.secret_fields ?? []);
   return (
-    <ul style={{ fontSize: "0.85rem", listStyle: "none", paddingLeft: 0 }}>
+    <ul role="list" className="m-0 flex list-none flex-col gap-1 p-0 text-sm">
       {fields.map((f) => {
         const isSet = set.has(f.name);
         if (secrets.has(f.name)) {
@@ -575,7 +784,7 @@ function FieldPresence({
 function TestChip({ result }: { result: ConnectorTestResult }): JSX.Element {
   const mark = result.ok === true ? "✓" : result.ok === false ? "✗" : "";
   return (
-    <p role="status" style={{ fontSize: "0.85rem", marginTop: "0.5rem" }}>
+    <p role="status" className="m-0 text-sm">
       {mark && <span aria-hidden="true">{mark} </span>}
       {result.detail}
     </p>

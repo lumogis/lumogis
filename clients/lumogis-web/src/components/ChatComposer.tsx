@@ -7,11 +7,14 @@ import {
   useLayoutEffect,
   useRef,
   type FormEvent,
+  type ReactNode,
   type Ref,
 } from "react";
+import { ArrowUp, Square } from "lucide-react";
 
-import { Button } from "./Button";
+import { Button } from "./ui/button";
 import { VoiceDictationButton } from "./VoiceDictationButton";
+import { cn } from "@/lib/utils";
 
 export interface ChatComposerProps {
   id?: string;
@@ -34,6 +37,8 @@ export interface ChatComposerProps {
    * the transcript at the caret. The host supplies the transcribe fn (bound to
    * its ApiClient) so this shared component stays context-free (LUM-653). */
   voiceTranscribe?: (blob: Blob) => Promise<string>;
+  /** Left side of the composer's bottom row, e.g. the model chip (LUM-993 Decision 9). */
+  modelSlot?: ReactNode;
 }
 
 export function ChatComposer({
@@ -45,15 +50,16 @@ export function ChatComposer({
   onStop,
   disabled = false,
   sendDisabled = false,
-  placeholder = "Ask Lumogis…",
+  placeholder = "Message Lumogis",
   label = "Message",
-  showLabel = true,
-  minRows = 3,
+  showLabel = false,
+  minRows = 1,
   maxRows = 8,
   textareaRef,
   describedBy,
   className,
   voiceTranscribe,
+  modelSlot,
 }: ChatComposerProps): JSX.Element {
   const localRef = useRef<HTMLTextAreaElement | null>(null);
   const ref = textareaRef ?? localRef;
@@ -128,16 +134,23 @@ export function ChatComposer({
     onSubmit();
   };
 
+  const canSend = !sendDisabled && !disabled && value.trim().length > 0;
+
+  // LUM-993: one rounded card. The textarea grows to `maxRows`; the bottom row
+  // holds the model chip on the left and Dictate plus Send (Stop while
+  // streaming) on the right. Enter sends, Shift+Enter makes a new line.
   return (
     <form
-      className={["lumogis-chat__compose", className].filter(Boolean).join(" ")}
+      data-slot="chat-composer"
+      className={cn(
+        "flex w-full flex-col gap-1 rounded-2xl border border-input bg-card p-2 shadow-sm transition-shadow focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/30",
+        className,
+      )}
       onSubmit={handleSubmit}
     >
-      {showLabel ? (
-        <label htmlFor={id} className="lumogis-chat__compose-label">
-          {label}
-        </label>
-      ) : null}
+      <label htmlFor={id} className={showLabel ? "px-2 pt-1 text-xs font-medium text-muted-foreground" : "sr-only"}>
+        {label}
+      </label>
       <textarea
         ref={ref}
         id={id}
@@ -147,8 +160,9 @@ export function ChatComposer({
         rows={minRows}
         disabled={disabled || streaming}
         aria-describedby={describedBy}
+        className="w-full resize-none border-0 bg-transparent px-2 py-1.5 text-base leading-6 text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-60 md:text-sm"
         onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
+          if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
             e.preventDefault();
             if (!streaming && !disabled && !sendDisabled && value.trim().length > 0) {
               e.currentTarget.form?.requestSubmit();
@@ -156,26 +170,18 @@ export function ChatComposer({
           }
         }}
       />
-      <div className="lumogis-chat__compose-actions">
+      <div className="flex min-w-0 items-center gap-2">
+        <div className="flex min-w-0 flex-1 items-center">{modelSlot}</div>
         {voiceTranscribe && !streaming ? (
-          <VoiceDictationButton
-            transcribe={voiceTranscribe}
-            onTranscript={insertTranscript}
-            disabled={disabled}
-          />
+          <VoiceDictationButton transcribe={voiceTranscribe} onTranscript={insertTranscript} disabled={disabled} />
         ) : null}
         {streaming ? (
-          <Button type="button" variant="danger-solid" size="md" onClick={onStop}>
-            Stop
+          <Button type="button" variant="outline" size="icon" className="rounded-full" onClick={onStop} aria-label="Stop">
+            <Square className="fill-current" aria-hidden="true" />
           </Button>
         ) : (
-          <Button
-            type="submit"
-            variant="primary"
-            size="md"
-            disabled={sendDisabled || disabled || value.trim().length === 0}
-          >
-            Send
+          <Button type="submit" size="icon" className="rounded-full" disabled={!canSend} aria-label="Send">
+            <ArrowUp aria-hidden="true" />
           </Button>
         )}
       </div>

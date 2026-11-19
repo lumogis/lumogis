@@ -1,0 +1,20 @@
+Notes from the household library, written for the Lumogis release smoke.
+
+This file exists so that a freshly installed Lumogis has one real document to
+index, search and (when the knowledge graph is on) extract entities from. It is
+plain prose on purpose: a text file needs no OCR and no PDF library.
+
+The unique phrase the smoke searches for is: lumogis release smoke marmalade lighthouse.
+
+In the harbour town of Port Elowen, the old lighthouse keeper Maren Voss kept a
+logbook of every ship that passed. Her neighbour Tobias Hale, who ran the bakery
+on Quay Street, supplied the keeper with orange marmalade each Sunday. The
+lighthouse stood on Gull Rock, a mile from the Elowen harbour wall.
+
+Every spring the town council, led by Councillor Priya Anand, met in the harbour
+office to decide whether the lighthouse lamp should be restored. The engineer
+Jonas Berg estimated the work at three months. The marmalade, everyone agreed,
+was the best in the county.
+
+When the lamp was finally lit again, Maren Voss wrote a single line in her
+logbook: the light is on, and the town is home.

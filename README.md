@@ -125,7 +125,7 @@ First-party SPA: **[`clients/lumogis-web/`](clients/lumogis-web/)**, served behi
 | **Core directly** | **http://localhost:8000** — Swagger at `/docs` |
 | **LibreChat** (`COMPOSE_PROFILES` contains `librechat`) | **http://localhost:3080**, on this machine only (published on `127.0.0.1`; it is not behind Caddy) — targets **`http://orchestrator:8000/v1`** (**[`config/librechat.coldstart.yaml`](config/librechat.coldstart.yaml)**)
 
-**Operators:** pin **`LUMOGIS_PUBLIC_ORIGIN`** (see **`.env.example`**) when `AUTH_ENABLED=true`; compose trusts only the Caddy container for `X-Forwarded-For` (`LUMOGIS_TRUSTED_PROXIES=caddy`); put an upstream proxy in front of Caddy (Tailscale Serve, a tunnel) in **`LUMOGIS_CADDY_TRUSTED_PROXIES`** (see **`.env.example`**). Playwright/Lighthouse/header checks live in **`clients/lumogis-web/README.md`** and **`Makefile`** targets `web-e2e*`, `web-caddy-headers*`.
+**Operators:** **`LUMOGIS_PUBLIC_ORIGIN`** is optional (see **`.env.example`**): when it is unset Lumogis accepts the address in the browser, so phones on your home network sign in over plain HTTP. Set it when you use a public name, a tunnel, or email password reset. Compose trusts only the Caddy container for `X-Forwarded-For` (`LUMOGIS_TRUSTED_PROXIES=caddy`); put an upstream proxy in front of Caddy (Tailscale Serve, a tunnel) in **`LUMOGIS_CADDY_TRUSTED_PROXIES`** (see **`.env.example`**). Playwright/Lighthouse/header checks live in **`clients/lumogis-web/README.md`** and **`Makefile`** targets `web-e2e*`, `web-caddy-headers*`.
 
 ---
 
@@ -133,7 +133,7 @@ First-party SPA: **[`clients/lumogis-web/`](clients/lumogis-web/)**, served behi
 
 **Prerequisites:** Docker with Compose v2 and at least 8 GB RAM.
 
-Like Immich: download two files from the latest release into an empty folder and start it. Nothing is built.
+Download two files from the latest release into an empty folder and start it. Nothing is built.
 
 ```bash
 mkdir lumogis && cd lumogis
@@ -142,11 +142,11 @@ curl -fsSL -o .env https://github.com/lumogis/lumogis/releases/latest/download/e
 docker compose up -d
 ```
 
-Then open **http://localhost/**. Update later with **`docker compose pull && docker compose up -d`** ([Upgrading](docs/deployment/upgrading.md): backups, pinning a version, going back).
+Then open **http://localhost/** straight away and **create the admin account** (an email and a password, twice). Sign-in is on in a new install, and until the admin exists anyone who can reach this computer can create it. Lumogis generates its secrets on the first start and saves them in `.env`: keep a copy of that file. Update later with **`docker compose pull && docker compose up -d`** ([Upgrading](docs/deployment/upgrading.md): backups, pinning a version, going back).
 
 The full first-run guide — Ollama model pulls, migration checks, smoke test, and common errors — is in **[`docs/deployment/quickstart.md`](docs/deployment/quickstart.md)**.
 
-**From source (contributors):** `git clone https://github.com/lumogis/lumogis.git && cd lumogis && cp .env.example .env && docker compose up -d` builds the Lumogis images from the checkout; update it with `git pull && make update`. To pull the published images in a checkout instead, set **`COMPOSE_FILE=docker-compose.yml:docker-compose.ghcr.yml`** in `.env` (see **`.env.example`**).
+**From source (contributors):** `git clone https://github.com/lumogis/lumogis.git && cd lumogis && cp .env.example .env && docker compose up -d` builds the Lumogis images from the checkout, then open http://localhost and create the admin account; update it with `git pull && make update`. To pull the published images in a checkout instead, set **`COMPOSE_FILE=docker-compose.yml:docker-compose.ghcr.yml`** in `.env` (see **`.env.example`**).
 
 ---
 
@@ -184,11 +184,11 @@ Lumogis is reachable on your local network by default (**http://localhost/** or 
 
 | Add-on | How | Notes |
 |---|---|---|
-| Knowledge graph (FalkorDB + `lumogis-graph` service) | **`docker-compose.falkordb.yml`** + **`docker-compose.premium.yml`** + `GRAPH_MODE=service` | **`GRAPH_MODE` defaults to `disabled`**. `service` is the only mode that works on the standard Core image; `inprocess` needs a Core build that includes `services/lumogis-graph/`. Setup: the overlay header and [`services/lumogis-graph/README.md`](services/lumogis-graph/README.md); see **ADR-002** (`docs/decisions/002-graph-store-falkordb.md`) and **`docs/extending/extending-the-stack.md`** |
+| Knowledge graph (FalkorDB + `lumogis-graph` service) | **`docker-compose.falkordb.yml`** + **`docker-compose.premium.yml`** + `GRAPH_MODE=service` | **`GRAPH_MODE` defaults to `disabled`**. `service` is the only mode that works on the standard Core image; `inprocess` needs a Core build that includes `services/lumogis-graph/`. Setup: the overlay header and [`services/lumogis-graph/README.md`](services/lumogis-graph/README.md); steps: [quickstart § Turn on the knowledge graph](docs/deployment/quickstart.md#turn-on-the-knowledge-graph), and the state in Admin → Knowledge graph; see **ADR-002** (`docs/decisions/002-graph-store-falkordb.md`) and **`docs/extending/extending-the-stack.md`** |
 | LiteLLM | **`docker-compose.litellm.yml`** | Unified proxy overlay |
 | Activepieces | **`docker-compose.activepieces.yml`** | Automation UI |
 | GPU | **`docker-compose.gpu.yml`** | NVIDIA Container Toolkit (**[`docs/guides/gpu-setup.md`](docs/guides/gpu-setup.md)**). **Optional** — Ollama runs on CPU without it. `make dev` includes this overlay only when Docker reports an `nvidia` runtime; force with **`LUMOGIS_GPU=1`** (hard-fails if absent) or **`LUMOGIS_GPU=0`** (never use it). |
-| Speech-to-text sidecar | **`docker-compose.stt.yml`** | Speaches-backed **`POST /api/v1/voice/transcribe`**—see overlay comments and **`docs/guides/troubleshooting.md`** |
+| Speech-to-text sidecar | **`docker-compose.stt.yml`** | Speaches-backed **`POST /api/v1/voice/transcribe`**—see overlay comments and **`docs/guides/troubleshooting.md`**. The Release files carry it under the `stt` profile, switched on in `example.env` ([quickstart](docs/deployment/quickstart.md#speech-to-text)) |
 | LibreChat | `COMPOSE_PROFILES=librechat` (off in **`.env.example`**; retired in favour of Lumogis Web) | **[`docker-compose.yml`](docker-compose.yml)** profile comments |
 
 Merge overlays with **`COMPOSE_FILE`** in `.env` (patterns in **`.env.example`**).

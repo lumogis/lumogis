@@ -1,60 +1,71 @@
-# Release manual verification checklist
+# Release verification checklist
 
-Operator-level checks that automated release gates (`make verify-public-rc`, `make verify-public-rc-full`) and coverage matrices cannot fully replace. Use this document together with [docs/testing/automated-test-strategy.md](testing/automated-test-strategy.md) and [docs/testing/README.md](testing/README.md).
+Every per-release check runs by itself in the **release smoke** (`.github/workflows/release-smoke.yml`, script `scripts/release/smoke/release_smoke.py`). The smoke installs the release from its two Release files on clean amd64 and arm64 machines and checks it through the household API and the compose CLI. `release-assets.yml` publishes a Release only after the smoke is green. This document lists what the smoke covers and the few checks that cannot run in CI. Use it together with [docs/testing/automated-test-strategy.md](testing/automated-test-strategy.md) and [docs/testing/README.md](testing/README.md).
 
 ## Purpose
 
-Lumogis ships layered **automated** verification (unit tests, RC Compose stacks, export hygiene, Playwright where configured). Some behaviours still require **human confirmation** on a real host — fresh GHCR pulls, platform-specific compose boot, LLM routing privacy, and subjective product readiness.
+Lumogis ships layered **automated** verification (unit tests, RC Compose stacks, export hygiene, Playwright where configured), and since LUM-997 the **release smoke** proves the published install works on both architectures. The rows left for a person are not per-release checks, or cannot run on a GitHub-hosted runner, and each one says why.
 
 **Rule:** If a product behaviour has neither automated test evidence in a coverage matrix row **nor** a row in this checklist, treat it as **untested** for release purposes.
 
 Store API keys and credentials in environment / `.env` only — never commit secrets to git.
 
-## When to run
+## Release record
 
-**Public / AGPL operators**
-
-- After automated gates on a **release candidate** tree when you maintain one (see [automated-test-strategy.md](testing/automated-test-strategy.md) — *Dev vs `main`*).
-- For **GHCR pull-based** installs: run this checklist on a **fresh host** (no prior Lumogis volumes) using published images per [docs/capabilities.md](capabilities.md) and `docker-compose.ghcr.yml`.
-
-**Maintainers (private checkout only)** — promote/publish workflow docs under `docs/release/` (not shipped in the public AGPL export) may require a completed sign-off from this file before fast-forwarding `main` or publishing to `lumogis/lumogis`.
-
-## Sign-off block
-
-Copy into your release notes or maintainer log when complete.
+Written by the publishing maintainer into the release log. There is no tester row: the smoke is the tester.
 
 | Field | Value |
 | --- | --- |
 | Release version / git SHA | |
-| Tester | |
+| `release-assets` run URL | |
+| Release smoke summary | passed / skipped (reason, issue, who dispatched) |
 | Date (UTC) | |
-| Platforms tested (OS + arch) | |
-| Automated gate | `make verify-public-rc-full` pass? (Y/N + log path) |
-| Checklist result | All applicable MS rows pass / N/A documented |
+
+A release is published only when the smoke is green, or with a `skip_smoke_reason` that names an issue (`LUM-###`); the reason and the person who dispatched are written into the Release notes.
+
+## Automated in the release smoke
+
+The MS ids below stay valid: the coverage matrices cite them. Each maps to the smoke check that runs it. A check is **required** unless marked optional; `na` means the release does not have the feature (`--expect` makes a missing expected feature a failure, never a surprise).
+
+| ID | What | Smoke check(s) | Suite |
+| --- | --- | --- | --- |
+| **MS-001** | The two release files install on a fresh host (LUM-980): within 15 min every service healthy; `up` printed no `Building`; the second `up` recreates only orchestrator, stack-control and backup; every Lumogis container runs the digest in `image-digests.txt` with `LUMOGIS_IMAGE_VERSION`; `pull && up -d` changes nothing | `FILES-001`, `MS-001`, `MS-001-DIGESTS`, `MS-001-STEADY` | install |
+| **MS-002** | `docker compose up -d` on Linux (amd64 and arm64). The macOS half is manual, below | `MS-001` | install |
+| **MS-003** | `GET /health` 200 and Lumogis Web through Caddy answer once healthy | `MS-003` | install |
+| — | First visitor creates the admin (LUM-981) | `SETUP-CLAIM` | install, graph |
+| **MS-004** | First-run document ingest on a clean volume, then search finds it | `MS-004` | install |
+| **MS-005** | Local LLM stays local: one chat completion with outbound connections rejected and counted (negative control included) | `MS-005` | install |
+| **MS-006** | Cloud LLM path works (optional: needs a spend-capped key) | `MS-006` | cloud-llm |
+| **MS-007** | Meeting brief — N/A while the feature is not in the release | — | — |
+| **MS-008** | Admin dashboard data: the **API half** — `/health` counts and the diagnostics routes (the browser half is not checked per release, below) | `MS-008` | install |
+| **MS-009** | Backup/restore preserves data and the graph: wipe Postgres, Qdrant and FalkorDB volumes, restore, counts come back; and going back to the previous version with the documented commands | `GRAPH-BACKUP`, `GRAPH-RESTORE`, `UPGRADE-BACK` | graph, upgrade |
+| **MS-010** | `down && up -d` keeps the data and the sign-in | `MS-010` | install |
+| **MS-011** | stack-control's Docker CLI and Compose plugin match the host; a restart from Settings recreates the stack | `MS-011` | install |
+| — | Dictation (LUM-995): the `stt` profile is on and Speaches runs; the speech model is ready; a sample sentence is transcribed (at least 7 of 9 words) | `VOICE-PROFILE`, `VOICE` | install |
+| — | Knowledge graph on and off (LUM-989): turning it on needs no confirmation on a 16 GB runner, entities appear, turning it off leaves everything healthy | `GRAPH-ON`, `GRAPH-ENTITIES`, `GRAPH-OFF` | graph |
+| — | Update from the previous stable release, including from sign-in off (0.13.x), turning sign-in on afterwards, and going back | `UPGRADE-PREV`, `UPGRADE-PULL`, `UPGRADE-SIGNIN`, `UPGRADE-BACK` | upgrade |
+| — | Secure address with a staging certificate (LUM-331), once the name service has its CI scope | `SECURE-ADDRESS` | secure-address |
+| — | Disk, memory and time of each runner, as evidence | `RUNNER-FOOTPRINT` | install, graph |
+
+## Still manual
+
+Each row says why it is not in CI.
+
+| ID | Check | Why not in CI |
+| --- | --- | --- |
+| **MS-002-MAC** | `docker compose up -d` on **macOS** (Docker Desktop) | GitHub-hosted macOS runners have no Docker. Covered by everyday use, not per release. |
+| **MS-008-UI** | The admin dashboard shows data **in a browser** | The smoke drives the API, not the browser. A Playwright smoke against the release install is a Later item of LUM-997. |
+| **MS-PHONE** | A phone or laptop on the home Wi-Fi reaches the secure address, installs the app and uses notifications | Needs real phones and routers. One-time, LUM-331 Pass 8. |
+| **MS-MIC** | Dictation with a real microphone in a phone browser | Needs a microphone and a phone. One-time, LUM-331 Pass 8 / LUM-1005. |
+| **MS-007** | Meeting brief produces valid Markdown | N/A while the feature is not in the release. |
 
 ## N/A rule
 
-Any skipped checklist row must be marked **N/A** with a **one-line reason** in the sign-off table above or in that row's **Notes** column below.
-
-## Checklist
-
-| Done | ID | Check | Preconditions | Pass | Fail | Notes (N/A reason) |
-| --- | --- | --- | --- | --- | --- | --- |
-| [ ] | **MS-001** | The **two release files** install on a **fresh** host (LUM-980) | Clean VM/host, amd64 **and** arm64 (Apple Silicon); only Docker; in an empty folder download `docker-compose.yml` and `example.env` (as `.env`) from the Release ([quickstart](deployment/quickstart.md)), then `docker compose up -d` | Within 15 min every service healthy, `GET /health` 200, Lumogis Web 200; `up` printed no `Building`; every Lumogis container's image has `LUMOGIS_IMAGE_VERSION=X.Y.Z` and its image ID matches `image-digests.txt`; then `docker compose pull && docker compose up -d` changes nothing | Pull denied (package not public), a build, a crash loop, `compose_file_stale` | |
-| [ ] | **MS-002** | `docker compose up -d` on **macOS or Linux** | Compose files per release docs; sufficient disk/RAM | All required services **running** | Exit non-zero, missing service | |
-| [ ] | **MS-003** | `GET /health` returns **200** within **30s** of boot | Core URL known (Caddy/orchestrator) | 200 + healthy body | Timeout, 5xx, wrong routing | |
-| [ ] | **MS-004** | **First-run document ingest** on **clean volume** | Sample doc in ingest path; graph mode per release config | Ingest success; no fatal orchestrator errors | Stuck job, 5xx, corrupt index | |
-| [ ] | **MS-005** | **Local LLM** stays local (no cloud egress) | `config/models.yaml` + env: local/Ollama only; run one chat completion | Orchestrator logs show local provider; no outbound calls to configured cloud endpoints during the prompt | Cloud API traffic when local-only expected | |
-| [ ] | **MS-006** | **Cloud LLM** path works when configured | Valid API key in env; cloud model enabled in `models.yaml` | Successful completion in UI or API | Auth errors, timeouts | N/A if release slice is local-only |
-| [ ] | **MS-007** | **Meeting brief** produces valid Markdown | Feature enabled; fixture data if needed | Non-empty Markdown output | Empty/error output | N/A if brief feature not in this release |
-| [ ] | **MS-008** | **Admin dashboard** non-empty after ingest | Web UI reachable; MS-004 complete | Dashboard shows data | Blank/broken UI | |
-| [ ] | **MS-009** | **Backup/restore round-trip** preserves graph (**LUM-185** / **LUM-484**) | `make compose-test-backup` on maintainer machine (postgres+qdrant+falkordb volume wipe) | Restore after wipe; spot-check seeded entity + Qdrant point + FalkorDB `GRAPH.QUERY`; daily verify checks FalkorDB RDB envelope + checksum (not module load; functional graph proof is the round-trip). Bump `FALKORDB_IMAGE` together with backup sidecar build. | Data loss, broken graph | N/A if backup path not yet shipped |
-| [ ] | **MS-010** | `docker compose down && up` **preserves** state | Prior successful ingest; named volumes | Data still present after cycle | Wiped volumes / empty graph | |
-| [ ] | **MS-011** | **stack-control** Docker CLI still matches current Docker (LUM-980) | The published `lumogis-stack-control` image (`docker-ce-cli` and `docker-compose-plugin` pinned in `stack-control/Dockerfile`) | `docker compose exec stack-control docker version` shows a client the host Engine accepts, and `docker compose exec stack-control docker compose version` is a current major; a restart from **Settings** recreates the stack | API version too old / too new, compose errors from the restart | Bump the two pins when Docker moves on |
+Any skipped manual row must be marked **N/A** with a **one-line reason** in the release log. A smoke check that reports `na` carries its reason in the summary.
 
 ## Relationship to coverage matrices
 
-Manual behaviours map to **MS-###** IDs cited in [TEST-COVERAGE-MATRIX-core.md](testing/TEST-COVERAGE-MATRIX-core.md) and sibling matrices ([testing README](testing/README.md)).
+Behaviours map to **MS-###** IDs and smoke check ids cited in [TEST-COVERAGE-MATRIX-core.md](testing/TEST-COVERAGE-MATRIX-core.md) and sibling matrices ([testing README](testing/README.md)).
 
 **Hub code-signing** rows (`4.2.4`, `4.2.5` in the Hub matrix) remain **`MS-TBD pending LUM-408`** until a signing procedure is documented.
 

@@ -11,6 +11,11 @@ import {
   type InviteOnboardingHintStored,
 } from "../../api/invites";
 import { useAuth } from "../../auth/AuthProvider";
+import { AuthCard } from "../auth/AuthCard";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 export function InviteRedemptionPage(): JSX.Element {
   const [searchParams] = useSearchParams();
@@ -83,7 +88,7 @@ export function InviteRedemptionPage(): JSX.Element {
 
   if (!peekDone) {
     return (
-      <main style={{ padding: "2rem", textAlign: "center" }} role="status">
+      <main className="flex min-h-svh items-center justify-center p-4" role="status">
         Checking invite…
       </main>
     );
@@ -91,25 +96,27 @@ export function InviteRedemptionPage(): JSX.Element {
 
   if (error !== null && allowsShared === null) {
     return (
-      <main style={{ padding: "2rem", maxWidth: "28rem", margin: "0 auto" }}>
-        <h1 style={{ marginTop: 0 }}>Join household</h1>
-        <p role="alert">{error}</p>
-      </main>
+      <AuthCard title="Join household">
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      </AuthCard>
     );
   }
 
   return (
-    <main className="lumogis-login" style={{ maxWidth: "28rem", margin: "2rem auto" }}>
-      <h1 style={{ marginTop: 0 }}>Join household</h1>
-      <p style={{ opacity: 0.9 }}>
-        {allowsShared
+    <AuthCard
+      title="Join household"
+      description={
+        allowsShared
           ? "Create your account to join this Lumogis household. You will see shared household knowledge alongside your personal space."
-          : "Create your account to join this Lumogis household. Your personal memories stay private to you."}
-      </p>
-      <form onSubmit={(e) => void onSubmit(e)}>
-        <label htmlFor="invite-email">
-          Email
-          <input
+          : "Create your account to join this Lumogis household. Your personal memories stay private to you."
+      }
+    >
+      <form className="flex flex-col gap-4" onSubmit={(e) => void onSubmit(e)}>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="invite-email">Email</Label>
+          <Input
             id="invite-email"
             type="email"
             autoComplete="username"
@@ -118,10 +125,10 @@ export function InviteRedemptionPage(): JSX.Element {
             onChange={(ev) => setEmail(ev.target.value)}
             disabled={busy}
           />
-        </label>
-        <label htmlFor="invite-password">
-          Password (min 12 characters)
-          <input
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="invite-password">Password (min 12 characters)</Label>
+          <Input
             id="invite-password"
             type="password"
             autoComplete="new-password"
@@ -131,16 +138,16 @@ export function InviteRedemptionPage(): JSX.Element {
             onChange={(ev) => setPassword(ev.target.value)}
             disabled={busy}
           />
-        </label>
+        </div>
         {error !== null && (
-          <p role="alert" className="lumogis-login__error">
-            {error}
-          </p>
+          <Alert variant="destructive">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
         )}
-        <button type="submit" disabled={busy}>
+        <Button type="submit" disabled={busy}>
           {busy ? "Creating account…" : "Create account"}
-        </button>
+        </Button>
       </form>
-    </main>
+    </AuthCard>
   );
 }

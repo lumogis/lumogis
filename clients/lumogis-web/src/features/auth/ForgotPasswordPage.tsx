@@ -18,6 +18,11 @@ import {
   getPasswordResetStatus,
   requestPasswordReset,
 } from "../../api/passwordReset";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { AUTH_LINK_CLASS, AuthCard } from "./AuthCard";
 import { solveAltchaChallenge } from "./altcha";
 
 type Status = "loading" | "enabled" | "disabled";
@@ -80,7 +85,7 @@ export function ForgotPasswordPage(): JSX.Element {
 
   if (status === "loading") {
     return (
-      <main className="lumogis-auth-recovery" role="status" aria-live="polite">
+      <main className="flex min-h-svh items-center justify-center p-4" role="status" aria-live="polite">
         Checking…
       </main>
     );
@@ -88,92 +93,100 @@ export function ForgotPasswordPage(): JSX.Element {
 
   if (submitted) {
     return (
-      <main className="lumogis-auth-recovery" data-testid="forgot-password-sent">
-        <h1 style={{ margin: 0 }}>Check your email</h1>
-        {/* Deliberately says nothing about whether an account exists — the
-            server answers identically either way, and undoing that here would
-            put the enumeration oracle back in the browser. */}
-        <p className="lumogis-auth-recovery__hint">
-          If that address has a Lumogis account, a reset link is on its way. The link
-          expires shortly, and requesting a new one replaces any earlier link.
+      <AuthCard
+        title="Check your email"
+        mainProps={{ "data-testid": "forgot-password-sent" }}
+        description={
+          /* Deliberately says nothing about whether an account exists — the
+             server answers identically either way, and undoing that here would
+             put the enumeration oracle back in the browser. */
+          "If that address has a Lumogis account, a reset link is on its way. The link expires shortly, and requesting a new one replaces any earlier link."
+        }
+      >
+        <p className="m-0 text-sm">
+          <a href="/" className={AUTH_LINK_CLASS}>
+            Back to sign in
+          </a>
         </p>
-        <p className="lumogis-auth-recovery__hint">
-          <a href="/">Back to sign in</a>
-        </p>
-      </main>
+      </AuthCard>
     );
   }
 
   if (status === "disabled") {
     return (
-      <main className="lumogis-auth-recovery" data-testid="forgot-password-disabled">
-        <h1 style={{ margin: 0 }}>Reset your password</h1>
-        <p className="lumogis-auth-recovery__hint">
-          This Lumogis is not set up to send password-reset emails, so recovery goes
-          through your household admin.
-        </p>
-        <p className="lumogis-auth-recovery__hint">
+      <AuthCard
+        title="Reset your password"
+        mainProps={{ "data-testid": "forgot-password-disabled" }}
+        description="This Lumogis is not set up to send password-reset emails, so recovery goes through your household admin."
+      >
+        <p className="m-0 text-sm">
           <strong>If you are a household member:</strong> ask an admin to reset your
           password from <em>Admin → Users</em>.
         </p>
-        <p className="lumogis-auth-recovery__hint">
+        <p className="m-0 text-sm">
           <strong>If you are the admin and locked out:</strong> you can reset any
           password from a shell on the Lumogis host:
         </p>
-        <p className="lumogis-auth-recovery__hint">
-          <code>cd orchestrator &amp;&amp; python -m scripts.reset_password</code>
+        <p className="m-0 text-sm">
+          <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
+            cd orchestrator &amp;&amp; python -m scripts.reset_password
+          </code>
         </p>
-        <p className="lumogis-auth-recovery__hint">
+        <p className="m-0 text-sm text-muted-foreground">
           An admin can enable email reset at <em>Admin → System mail</em>.
         </p>
-        <p className="lumogis-auth-recovery__hint">
-          <a href="/">Back to sign in</a>
+        <p className="m-0 text-sm">
+          <a href="/" className={AUTH_LINK_CLASS}>
+            Back to sign in
+          </a>
         </p>
-      </main>
+      </AuthCard>
     );
   }
 
   return (
-    <form
-      className="lumogis-auth-recovery"
-      onSubmit={onSubmit}
-      aria-labelledby="lumogis-forgot-title"
-      data-testid="forgot-password-form"
+    <AuthCard
+      title="Reset your password"
+      titleId="lumogis-forgot-title"
+      description="Enter your account email and we will send you a link to set a new password."
     >
-      <h1 id="lumogis-forgot-title" style={{ margin: 0 }}>
-        Reset your password
-      </h1>
-      <p className="lumogis-auth-recovery__hint">
-        Enter your account email and we will send you a link to set a new password.
-      </p>
-      <label htmlFor="lumogis-forgot-email">
-        Email
-        <input
-          id="lumogis-forgot-email"
-          type="email"
-          autoComplete="username"
-          required
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          disabled={busy}
-        />
-      </label>
-      {error !== null && (
-        <p role="alert" className="lumogis-auth-recovery__error">
-          {error}
+      <form
+        className="flex flex-col gap-4"
+        onSubmit={onSubmit}
+        aria-labelledby="lumogis-forgot-title"
+        data-testid="forgot-password-form"
+      >
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="lumogis-forgot-email">Email</Label>
+          <Input
+            id="lumogis-forgot-email"
+            type="email"
+            autoComplete="username"
+            required
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            disabled={busy}
+          />
+        </div>
+        {error !== null && (
+          <Alert variant="destructive">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+        <Button type="submit" disabled={busy}>
+          {busy ? "Working…" : "Send reset link"}
+        </Button>
+        <p className="m-0 text-sm text-muted-foreground">
+          {/* The proof of work runs in this tab and takes a moment on a phone;
+              saying so prevents the "is it stuck?" second click. */}
+          Submitting runs a short verification check in your browser.
         </p>
-      )}
-      <button type="submit" disabled={busy}>
-        {busy ? "Working…" : "Send reset link"}
-      </button>
-      <p className="lumogis-auth-recovery__hint">
-        {/* The proof of work runs in this tab and takes a moment on a phone;
-            saying so prevents the "is it stuck?" second click. */}
-        Submitting runs a short verification check in your browser.
-      </p>
-      <p className="lumogis-auth-recovery__hint">
-        <a href="/">Back to sign in</a>
-      </p>
-    </form>
+        <p className="m-0 text-sm">
+          <a href="/" className={AUTH_LINK_CLASS}>
+            Back to sign in
+          </a>
+        </p>
+      </form>
+    </AuthCard>
   );
 }

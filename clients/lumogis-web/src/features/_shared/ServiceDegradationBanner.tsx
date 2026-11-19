@@ -10,7 +10,10 @@
 // is role="alert". Renders nothing when all relevant services are healthy.
 
 import type { ServiceHealth } from "./useServiceHealth";
-import styles from "./ServiceDegradationBanner.module.css";
+import { TriangleAlert } from "lucide-react";
+
+import { Alert, AlertDescription } from "../../components/ui/alert";
+import { help } from "../../copy/help";
 
 export interface ServiceDegradationBannerProps {
   health: ServiceHealth;
@@ -23,41 +26,43 @@ export function ServiceDegradationBanner({ health }: ServiceDegradationBannerPro
     return null;
   }
 
+  // LUM-993: compact Alerts at the top of the chat; same three messages, no
+  // shell command (the persistent-error line points at the Health page).
   return (
-    <div className={styles.stack} data-testid="service-degradation">
+    <div className="mb-3 flex flex-col gap-2" data-testid="service-degradation">
       {isOllamaDown ? (
-        <div className={`${styles.banner} ${styles.error}`} role="alert">
-          <span className={styles.icon} aria-hidden="true">
-            ⚠️
-          </span>
-          <span>
-            <strong>Local AI unavailable.</strong> Lumogis can&rsquo;t reach Ollama, so messages
-            may fail until it&rsquo;s back. Run <code>lumogis doctor</code> to check your services.
-          </span>
-        </div>
+        <Alert variant="destructive">
+          <TriangleAlert aria-hidden="true" />
+          <AlertDescription>
+            <span>
+              <strong>Local AI unavailable.</strong> Lumogis can&rsquo;t reach Ollama, so messages may fail until
+              it&rsquo;s back. {help.errors.persistent}
+            </span>
+          </AlertDescription>
+        </Alert>
       ) : null}
 
       {isQdrantDown ? (
-        <div className={`${styles.banner} ${styles.warn}`} role="status">
-          <span className={styles.icon} aria-hidden="true">
-            ⚠️
-          </span>
-          <span>
-            <strong>Document search unavailable.</strong> Chat is using your knowledge graph only.
-          </span>
-        </div>
+        <Alert role="status" className="border-warning/40 bg-warning/10">
+          <TriangleAlert aria-hidden="true" className="text-warning" />
+          <AlertDescription className="text-foreground">
+            <span>
+              <strong>Document search unavailable.</strong> Chat is using your knowledge graph only.
+            </span>
+          </AlertDescription>
+        </Alert>
       ) : null}
 
       {isGraphDown ? (
-        <div className={`${styles.banner} ${styles.warn}`} role="status">
-          <span className={styles.icon} aria-hidden="true">
-            ⚠️
-          </span>
-          <span>
-            <strong>Knowledge graph temporarily unavailable.</strong> Basic chat still works;
-            entity links may not resolve.
-          </span>
-        </div>
+        <Alert role="status" className="border-warning/40 bg-warning/10">
+          <TriangleAlert aria-hidden="true" className="text-warning" />
+          <AlertDescription className="text-foreground">
+            <span>
+              <strong>Knowledge graph temporarily unavailable.</strong> Basic chat still works; entity links may
+              not resolve.
+            </span>
+          </AlertDescription>
+        </Alert>
       ) : null}
     </div>
   );

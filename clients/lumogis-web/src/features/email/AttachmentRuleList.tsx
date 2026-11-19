@@ -21,6 +21,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useState } from "react";
 
+import { Button } from "@/components/ui/button";
 import type { ApiClient } from "../../api/client";
 import {
   deleteAttachmentRule,
@@ -33,8 +34,9 @@ import {
 
 // LUM-836 — one key for every mounted copy of this component.
 //
-// `EmailSignalsView` renders one of these per mailbox card, inside a `<details>`
-// — and React mounts `<details>` children whether or not the disclosure is open.
+// `EmailSignalsView` renders one of these per mailbox card, inside a
+// `keepMounted` Collapsible — which mounts its children whether or not the
+// disclosure is open, as `<details>` did.
 // A per-source query key would therefore issue one paperless config fetch per
 // mailbox, which is precisely the pattern LUM-744 exists to remove, recreated on
 // a new surface. Sharing the key makes N mounts one request.
@@ -114,21 +116,25 @@ export function AttachmentRuleList({
   );
 
   if (!loaded) {
-    return <p data-testid="rules-loading">Loading…</p>;
+    return (
+      <p data-testid="rules-loading" className="m-0 text-sm text-muted-foreground">
+        Loading…
+      </p>
+    );
   }
 
   if (rules.length === 0) {
     return (
-      <section aria-label="Automatic filing rules">
+      <section aria-label="Automatic filing rules" className="grid gap-2">
         {/* Deleting the LAST rule must still confirm what it did — and what it
             did not do to the documents that rule already filed. An early return
             here would drop that reassurance precisely when it is needed. */}
         {status ? (
-          <p role="status" data-testid="rules-status">
+          <p role="status" data-testid="rules-status" className="m-0 text-sm text-muted-foreground">
             {status}
           </p>
         ) : null}
-        <p data-testid="rules-empty">
+        <p data-testid="rules-empty" className="m-0 text-sm text-muted-foreground">
           No automatic filing rules. You can add one while reviewing attachments.
         </p>
       </section>
@@ -136,9 +142,9 @@ export function AttachmentRuleList({
   }
 
   return (
-    <section aria-label="Automatic filing rules">
+    <section aria-label="Automatic filing rules" className="grid gap-2">
       {status ? (
-        <p role="status" data-testid="rules-status">
+        <p role="status" data-testid="rules-status" className="m-0 text-sm text-muted-foreground">
           {status}
         </p>
       ) : null}
@@ -150,24 +156,30 @@ export function AttachmentRuleList({
           absence of warning is not. Not a gate either: these rules already
           exist, so there is nothing to consent to. */}
       {overlapMessage ? (
-        <p data-testid="rules-paperless-overlap">{overlapMessage}</p>
+        <p data-testid="rules-paperless-overlap" className="m-0 text-sm">{overlapMessage}</p>
       ) : null}
-      <ul data-testid="rules-list">
+      <ul data-testid="rules-list" className="m-0 grid list-none gap-1 p-0">
         {rules.map((rule) => (
-          <li key={rule.id} data-testid={`rule-${rule.id}`}>
-            <span data-testid="rule-description">{describe(rule)}</span>
+          <li
+            key={rule.id}
+            data-testid={`rule-${rule.id}`}
+            className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b py-2 text-sm last:border-b-0"
+          >
+            <span data-testid="rule-description" className="min-w-0 flex-1 basis-48 break-words">{describe(rule)}</span>
             {rule.stale ? (
-              <span data-testid="rule-stale">{STALE_RULE_EXPLANATION}</span>
+              <span data-testid="rule-stale" className="w-full text-muted-foreground">{STALE_RULE_EXPLANATION}</span>
             ) : null}
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="sm"
               onClick={() => onDelete(rule)}
               disabled={pending.has(rule.id)}
               aria-label={`Stop ${describe(rule)}`}
               title={DELETE_RULE_EXPLANATION}
             >
               Stop
-            </button>
+            </Button>
           </li>
         ))}
       </ul>

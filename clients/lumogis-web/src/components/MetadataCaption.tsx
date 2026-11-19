@@ -30,15 +30,15 @@ export function MetadataCaption({
   }, [value]);
 
   return (
-    <div className={["lumogis-metadata-caption", className].filter(Boolean).join(" ")}>
-      <code className="lumogis-metadata-caption__text" title={value}>
+    <div className={["flex min-w-0 items-center gap-2 text-xs text-muted-foreground", className].filter(Boolean).join(" ")}>
+      <code className="min-w-0 truncate font-mono" title={value}>
         {middleEllipsis(value)}
       </code>
       <Button
         type="button"
         variant="secondary"
         size="sm"
-        className="lumogis-metadata-caption__copy-btn"
+        className="h-auto shrink-0 px-1.5 py-0.5 text-xs"
         onClick={() => void onCopy()}
         aria-label={`${label}: ${value}`}
       >

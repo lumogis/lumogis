@@ -128,6 +128,77 @@ describe("CaptureInboxView", () => {
     expect((commit as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it("Delete asks first: Cancel does nothing, confirming sends the DELETE", async () => {
+    let deletes = 0;
+    const fetchImpl = vi.fn(async (input, init) => {
+      const u = String(input);
+      if (u.includes("/api/v1/auth/me")) return jsonResponse(200, adminUser);
+      if (u.includes("/api/v1/captures/p1") && init?.method === "DELETE") {
+        deletes += 1;
+        return new Response(null, { status: 204 });
+      }
+      if (u.includes("/api/v1/captures") && (!init?.method || init.method === "GET")) {
+        return jsonResponse(200, { captures: [row("p1", "pending")], total: 1, limit: 20, offset: 0 });
+      }
+      return jsonResponse(404, {});
+    }) as unknown as typeof fetch;
+    globalThis.fetch = fetchImpl;
+
+    renderInbox(fetchImpl);
+    const user = userEvent.setup();
+    await user.click(await screen.findByText("note p1"));
+    const panel = screen.getByLabelText("Capture detail");
+    // Delete is the last button in the row, never the first.
+    const names = within(panel).getAllByRole("button").map((b) => b.textContent);
+    expect(names[names.length - 1]).toBe("Delete");
+
+    await user.click(within(panel).getByRole("button", { name: "Delete" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog.textContent).toMatch(/can't be undone/i);
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(deletes).toBe(0);
+
+    await user.click(within(panel).getByRole("button", { name: "Delete" }));
+    await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(deletes).toBe(1));
+    await waitFor(() => expect(screen.queryByText("note p1")).toBeNull());
+  });
+
+  it("shows an empty state when the inbox has nothing", async () => {
+    const fetchImpl = vi.fn(async (input, init) => {
+      const u = String(input);
+      if (u.includes("/api/v1/auth/me")) return jsonResponse(200, adminUser);
+      if (u.includes("/api/v1/captures") && (!init?.method || init.method === "GET")) {
+        return jsonResponse(200, { captures: [], total: 0, limit: 20, offset: 0 });
+      }
+      return jsonResponse(404, {});
+    }) as unknown as typeof fetch;
+    globalThis.fetch = fetchImpl;
+    renderInbox(fetchImpl);
+    expect(await screen.findByText("Your inbox is empty")).toBeTruthy();
+  });
+
+  it("shows an error state with Try again when the list fails to load", async () => {
+    let fail = true;
+    const fetchImpl = vi.fn(async (input, init) => {
+      const u = String(input);
+      if (u.includes("/api/v1/auth/me")) return jsonResponse(200, adminUser);
+      if (u.includes("/api/v1/captures") && (!init?.method || init.method === "GET")) {
+        if (fail) return jsonResponse(500, { detail: "boom" });
+        return jsonResponse(200, { captures: [row("p1", "pending")], total: 1, limit: 20, offset: 0 });
+      }
+      return jsonResponse(404, {});
+    }) as unknown as typeof fetch;
+    globalThis.fetch = fetchImpl;
+    renderInbox(fetchImpl);
+    const user = userEvent.setup();
+    const retry = await screen.findByRole("button", { name: "Try again" });
+    fail = false;
+    await user.click(retry);
+    expect(await screen.findByText("note p1")).toBeTruthy();
+  });
+
   it("failed row opens with a Retry button", async () => {
     const fetchImpl = vi.fn(async (input, init) => {
       const u = String(input);

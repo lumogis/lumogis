@@ -37,7 +37,27 @@ _IMAGES = {
     "backup": "lumogis-backup",
     "caddy": "lumogis-caddy",
 }
+# LUM-989: the Release file also carries these two, under the ``graph`` profile
+# (test_release_compose_graph.py). A checkout still builds them from the overlays.
+_GRAPH_SERVICES = {"falkordb", "lumogis-graph"}
+# LUM-995: and this one, under the ``stt`` profile (test_release_compose_stt.py).
+_STT_SERVICES = {"lumogis-stt"}
+# Release example.env values that differ from the first entry of the same key in
+# .env.example (which is empty or commented). Each key must still appear there.
+_RELEASE_ONLY_VALUES = {
+    "LUMOGIS_VERSION": "release",
+    "COMPOSE_PROFILES": "stt",
+    "STT_BACKEND": "whisper_sidecar",
+}
 _BAKED = {"./postgres/init.sql", "./docker/caddy/Caddyfile", "./docker/caddy/preflight.sh"}
+
+
+@pytest.fixture(autouse=True)
+def _overlays_beside_compose(tmp_path):
+    """The builder reads the graph overlays (LUM-989) and the speech-to-text overlay
+    (LUM-995) next to ``--compose``."""
+    for name in (*gen.GRAPH_OVERLAYS, gen.STT_OVERLAY):
+        shutil.copyfile(_ROOT / name, tmp_path / name)
 
 
 @pytest.fixture(scope="module")
@@ -82,6 +102,8 @@ def test_release_compose_drops_only_baked_mounts(generated):
         expected = [s for s in repo_sources if s not in _BAKED]
         if name == "stack-control":
             expected = expected + ["${PWD}"]
+        if name == "backup":
+            expected = expected + ["falkordb_data"]  # LUM-989: the graph's data volume
         assert _bind_sources(doc["services"][name]) == expected, name
 
 
@@ -89,10 +111,12 @@ def test_release_compose_services_match_repo(generated):
     _, doc, _ = generated
     repo = _repo_services()
     kept = {n for n, s in repo.items() if not s.get("profiles")}
-    assert set(doc["services"]) == kept
+    assert set(doc["services"]) == kept | _GRAPH_SERVICES | _STT_SERVICES
     for name, svc in doc["services"].items():
         deps = svc.get("depends_on") or {}
-        assert set(deps) <= kept, f"{name} depends on a dropped service"
+        assert set(deps) <= kept | _GRAPH_SERVICES | _STT_SERVICES, (
+            f"{name} depends on a dropped service"
+        )
 
 
 def test_release_compose_stack_control_gets_host_dir(generated):
@@ -101,6 +125,23 @@ def test_release_compose_stack_control_gets_host_dir(generated):
     assert sc["environment"]["HOST_PROJECT_DIR"] == "${PWD}"
     assert sc["environment"]["COMPOSE_PROJECT_NAME"] == "${COMPOSE_PROJECT_NAME:-lumogis}"
     assert "${PWD}:${PWD}:ro" in sc["volumes"]
+
+
+def test_release_compose_keeps_the_secure_address_volume(generated):
+    """LUM-331: a two-file install gets the caddy-home volume and Core's settings."""
+    _, doc, _ = generated
+    assert "caddy-home" in doc["volumes"]
+    orch = doc["services"]["orchestrator"]
+    assert "caddy-home:/caddy-home" in orch["volumes"]
+    for key in ("CADDY_HOME_DIR", "LUMOGIS_HOME_DNS_URL", "LUMOGIS_SECURE_ADDRESS_PORT"):
+        assert key in orch["environment"]
+    assert {
+        "type": "volume",
+        "source": "caddy-home",
+        "target": "/etc/caddy/home.d",
+        "read_only": True,
+        "volume": {"nocopy": True},
+    } in doc["services"]["caddy"]["volumes"]
 
 
 def test_release_compose_is_deterministic_and_fingerprinted(generated, tmp_path, capsys):
@@ -197,9 +238,9 @@ def test_example_env_contract():
     set_ = _env_pairs(reference_text, commented=False)
     commented = _env_pairs(reference_text, commented=True)
     for key, value in example.items():
-        if key == "LUMOGIS_VERSION":
-            assert key in commented, "LUMOGIS_VERSION needs its commented entry in .env.example"
-            assert value == "release"
+        if key in _RELEASE_ONLY_VALUES:
+            assert key in set_ or key in commented, f"{key} is not in .env.example"
+            assert value == _RELEASE_ONLY_VALUES[key]
             continue
         if key in set_:
             assert value == set_[key], f"{key}: {value!r} != .env.example {set_[key]!r}"

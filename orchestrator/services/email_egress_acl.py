@@ -45,6 +45,7 @@ from pathlib import Path
 
 from connectors.registry import IMAP
 from models.capability import normalise_external_endpoints
+from services._atomic_file import atomic_write_text
 
 from services import connector_credentials as ccs
 from services import email_credentials
@@ -144,7 +145,8 @@ def write_allow_file(
 
     **Atomic + genuinely fail-safe:** the new content is written to a temp file in
     the same directory, fsync'd, then ``os.replace``'d over the target (atomic on
-    POSIX). So a mid-write failure (disk full, OOM-kill) leaves the previous file
+    POSIX; see ``services._atomic_file.atomic_write_text``). So a mid-write failure
+    (disk full, OOM-kill) leaves the previous file
     fully intact — never a truncated/partial allow file — and a concurrent
     ``squid -k reconfigure`` never reads a half-written file. Skipped hosts are
     logged (Layer 2 is partial for them; Layer 1 still contains them).
@@ -168,18 +170,8 @@ def write_allow_file(
         *body,
         "",
     ]
-    tmp = allow_dir / f"{ALLOW_FILE_NAME}.tmp.{os.getpid()}"
-    try:
-        with open(tmp, "w", encoding="utf-8") as fh:
-            fh.write("\n".join(lines))
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp, out)  # atomic; leaves the old file intact on any earlier failure
-    finally:
-        try:
-            tmp.unlink()
-        except OSError:
-            pass
+    # mode=None keeps the umask default: the egress proxy (another container) reads it.
+    atomic_write_text(out, "\n".join(lines), mode=None)
     return out, kept, skipped
 
 

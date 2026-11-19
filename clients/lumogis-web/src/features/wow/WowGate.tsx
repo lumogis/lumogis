@@ -12,7 +12,8 @@ import { EntityDiscoveryCard } from "./EntityDiscoveryCard";
 import { GuidedFirstQueryCard } from "./GuidedFirstQueryCard";
 import { useWowReadinessSseInvalidation } from "./useWowReadinessSse";
 import { useWowState } from "./useWowState";
-import styles from "./wow.module.css";
+import { Alert, AlertDescription } from "../../components/ui/alert";
+import { Button } from "../../components/ui/button";
 
 export interface WowGateProps {
   onPrefillComposer: (text: string, options?: { wowDismissOnSend?: boolean }) => void;
@@ -51,23 +52,14 @@ export function WowGate({ onPrefillComposer }: WowGateProps): JSX.Element | null
 
   if (query.status === "error") {
     return (
-      <div
-        role="alert"
-        data-testid="wow-gate-error"
-        style={{
-          marginBottom: "0.75rem",
-          padding: "0.5rem 1rem",
-          background: "rgba(255, 80, 80, 0.12)",
-          border: "1px solid rgba(255, 120, 120, 0.35)",
-          borderRadius: "0.35rem",
-          fontSize: "0.9rem",
-        }}
-      >
-        <span>Could not load wow state: {describeApiError(query.error)}. </span>
-        <button type="button" onClick={() => void query.refetch()}>
-          Retry
-        </button>
-      </div>
+      <Alert variant="destructive" data-testid="wow-gate-error">
+        <AlertDescription>
+          Could not load suggestions: {describeApiError(query.error)}.{" "}
+          <Button variant="link" size="xs" className="h-auto p-0" onClick={() => void query.refetch()}>
+            Retry
+          </Button>
+        </AlertDescription>
+      </Alert>
     );
   }
 
@@ -86,9 +78,9 @@ export function WowGate({ onPrefillComposer }: WowGateProps): JSX.Element | null
   }
 
   return (
-    <div className={styles.wowStack} data-testid="wow-gate">
+    <div className="flex flex-col gap-4" data-testid="wow-gate">
       {dismissError !== null && (
-        <p role="alert" style={{ margin: 0, fontSize: "0.85rem" }}>
+        <p role="alert" className="m-0 text-xs text-destructive">
           {dismissError}
         </p>
       )}

@@ -3,6 +3,7 @@
 //
 // Display helpers for the admin users panel. Extracted from AdminUsersView so the
 // component module exports only its component (react-refresh/only-export-components).
+import { formatDateTime } from "../../util/formatTimestamp";
 
 /** Display label for a wire role value. The wire value stays `user`; the UI calls it
  * "Member". Any other (future) role is passed through verbatim rather than mislabelled. */
@@ -16,5 +17,5 @@ export function roleLabel(role: string): string {
 export function formatLastActive(value: string | null | undefined): string {
   if (!value) return "never";
   const d = new Date(value);
-  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString();
+  return Number.isNaN(d.getTime()) ? "—" : formatDateTime(value);
 }

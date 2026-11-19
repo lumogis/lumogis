@@ -1,7 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Lumogis
+//
+// Connected services, Household view: the admin edits the sign-in details for one
+// person, for the whole household, or for the whole system. Each tab renders the same
+// MeConnectorsView against a different base path. Rebuilt on the shared components in
+// LUM-993 plan B Pass 6.
 import { useState } from "react";
 import { useUser } from "../../auth/AuthProvider";
+import { Alert, AlertDescription } from "../../components/ui/alert";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { MeConnectorsView } from "../me/MeConnectorsView";
 import { UserPicker } from "../_shared/UserPicker";
 
@@ -20,45 +27,35 @@ export function AdminConnectorCredentialsView(): JSX.Element {
     userId.length > 0 ? `/api/v1/admin/users/${encodeURIComponent(userId)}/connector-credentials` : null;
 
   return (
-    <section>
-      <h2>Connector credentials</h2>
-      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem" }}>
-        {(["user", "household", "system"] as const).map((t) => (
-          <button
-            key={t}
-            type="button"
-            onClick={() => setTab(t)}
-            style={{ fontWeight: tab === t ? 700 : 400 }}
-          >
-            {t === "user" ? "Per-user" : t}
-          </button>
-        ))}
-      </div>
-      {tab === "user" && (
-        <>
-          <UserPicker value={userId} onChange={setUserId} isAdmin={isAdmin} />
-          {!userId && <p role="status">Select a user to load credentials.</p>}
-          {perUserPath && <MeConnectorsView basePath={perUserPath} />}
-        </>
-      )}
-      {tab === "household" && (
-        <>
-          <p role="status" style={{ marginBottom: "0.75rem" }}>
-            Household-tier credentials apply to the entire household. Edit only when there is no per-user or system value
-            (see server precedence rules).
-          </p>
-          <MeConnectorsView basePath={householdBase} />
-        </>
-      )}
-      {tab === "system" && (
-        <>
-          <p role="status" style={{ marginBottom: "0.75rem" }}>
-            System-tier credentials apply to all users at the orchestrator level. Edit only when there is no per-user or
-            household value.
-          </p>
-          <MeConnectorsView basePath={systemBase} />
-        </>
-      )}
-    </section>
+    <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)} className="gap-4">
+      <TabsList aria-label="Whose sign-in details">
+        <TabsTrigger value="user">One person</TabsTrigger>
+        <TabsTrigger value="household">Whole household</TabsTrigger>
+        <TabsTrigger value="system">Whole system</TabsTrigger>
+      </TabsList>
+      <TabsContent value="user" className="flex flex-col gap-4">
+        <UserPicker value={userId} onChange={setUserId} isAdmin={isAdmin} />
+        {!userId && <p className="m-0 text-sm text-muted-foreground">Choose a person to see their connected services.</p>}
+        {perUserPath && <MeConnectorsView basePath={perUserPath} />}
+      </TabsContent>
+      <TabsContent value="household" className="flex flex-col gap-4">
+        <Alert>
+          <AlertDescription>
+            Household details apply to everyone in the household. Change them only when there is no value for the
+            person or for the whole system.
+          </AlertDescription>
+        </Alert>
+        <MeConnectorsView basePath={householdBase} />
+      </TabsContent>
+      <TabsContent value="system" className="flex flex-col gap-4">
+        <Alert>
+          <AlertDescription>
+            System details apply to every person in Lumogis. Change them only when there is no value for the person or
+            for the household.
+          </AlertDescription>
+        </Alert>
+        <MeConnectorsView basePath={systemBase} />
+      </TabsContent>
+    </Tabs>
   );
 }

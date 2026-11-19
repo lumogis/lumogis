@@ -39,7 +39,6 @@ function Harness(props: {
         onChange={setValue}
         label="To"
         placeholder="To"
-        className="lumogis-composer__to"
       />
       <output data-testid="value">{value}</output>
     </>

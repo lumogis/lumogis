@@ -20,4 +20,4 @@ packaging.version.Version.
 # release whose tree reports another version (LUM-980). It stayed "0.3.0rc1"
 # through 0.12.0 and 0.13.0, so those installs always saw "update available".
 # Raising it never breaks a capability: manifests ask for min_core_version 0.3.0rc1.
-__version__ = "0.13.1"
+__version__ = "0.14.0"

@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Lumogis
+//
+// Members and invites. Rebuilt on the shared components in LUM-993 plan B Pass 6: the
+// five hand-made modals are ui Dialog (forms) and AlertDialog (confirmations), members
+// and invites are rows, and every API call, query key, invalidation and guard is as before.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { ChevronDown } from "lucide-react";
+import { useMemo, useState, type FormEvent } from "react";
+import { toast } from "sonner";
 import { useAuth } from "../../auth/AuthProvider";
 import { ApiError } from "../../api/client";
 import type { McpTokenAdminRow } from "../../api/mcpTokens";
@@ -16,15 +22,46 @@ import {
 } from "../../api/adminUserImports";
 import { MIN_PASSWORD_LENGTH, adminSetUserPassword } from "../../api/passwordManagement";
 import {
+  absoluteInviteUrl,
+  isLoopbackHost,
   listAdminInvites,
   mintAdminInvite,
   revokeAdminInvite,
   type InviteAdminRow,
 } from "../../api/invites";
-import { RowActionsMenu } from "../../components/RowActionsMenu";
-import { Button } from "../../components/Button";
-import { TURN_ON_SIGN_IN_DOC_URL } from "../../components/SingleUserBanner";
-import { EmptyState } from "../_shared/EmptyState";
+import { EmptyState } from "../../components/page/EmptyState";
+import { ErrorState } from "../../components/page/ErrorState";
+import { LoadingPlaceholder, SkeletonText } from "../../components/page/LoadingState";
+import { PageSection } from "../../components/page/PageSection";
+import { RowActions, type RowAction } from "../../components/page/RowActions";
+import { Alert, AlertDescription } from "../../components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "../../components/ui/alert-dialog";
+import { Badge } from "../../components/ui/badge";
+import { Button } from "../../components/ui/button";
+import { Checkbox } from "../../components/ui/checkbox";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../../components/ui/collapsible";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../../components/ui/dialog";
+import { Input } from "../../components/ui/input";
+import { Label } from "../../components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
+import { formatDateTime } from "../../util/formatTimestamp";
 import type { UserRow } from "../_shared/UserPicker";
 import { adminResetConsequence } from "../me/mcpTokenDisplay";
 import { formatLastActive, roleLabel } from "./adminUsersDisplay";
@@ -35,6 +72,16 @@ interface UserAdminView extends UserRow {
   last_seen_at: string | null; // LUM-334/520 — last authenticated request (throttled)
   display_name: string | null; // LUM-585 — admin-managed attribution label
 }
+
+type Role = "admin" | "user";
+
+// What the confirm dialog is asking about. One AlertDialog serves every destructive or
+// sweeping action on this page.
+type Confirm =
+  | { kind: "role"; user: UserAdminView; toAdmin: boolean }
+  | { kind: "disable"; user: UserAdminView }
+  | { kind: "delete"; user: UserAdminView }
+  | { kind: "revokeInvite"; invite: InviteAdminRow };
 
 function errMsg(e: unknown): string {
   if (e instanceof ApiError) return e.detail;
@@ -57,14 +104,65 @@ function pluralCount(n: number, noun: string): string {
   return `${n} ${noun}${n === 1 ? "" : "s"}`;
 }
 
-function AdminUsersMembersView(): JSX.Element {
+const ROLE_LABELS: Record<Role, string> = { user: "Member", admin: "Admin" };
+
+/** Member / Admin choice, shared by the create, invite and import dialogs. */
+function RoleSelect({
+  id,
+  label,
+  value,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  value: Role;
+  onChange: (r: Role) => void;
+}): JSX.Element {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Label htmlFor={id}>{label}</Label>
+      <Select value={value} onValueChange={(v) => onChange(v === "admin" ? "admin" : "user")}>
+        <SelectTrigger id={id} aria-label={label} className="w-48">
+          <SelectValue>{(v: string | null) => ROLE_LABELS[v === "admin" ? "admin" : "user"]}</SelectValue>
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="user">Member</SelectItem>
+          <SelectItem value="admin">Admin</SelectItem>
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
+/** Inline failure inside a dialog (the page-level alert would sit behind the overlay). */
+function FormError({ message }: { message: string | null }): JSX.Element | null {
+  if (!message) return null;
+  return (
+    <Alert variant="destructive">
+      <AlertDescription>{message}</AlertDescription>
+    </Alert>
+  );
+}
+
+/** Plain label for a backup file in the picker: whose it was, and anything wrong with it. */
+function archiveLabel(a: ArchiveInventoryEntry): string {
+  const who = a.exported_user_email ?? "Unknown member";
+  const state = a.manifest_status === "valid" ? "" : " (needs checking)";
+  return `${who} — ${a.archive_filename}${state}`;
+}
+
+export function AdminUsersView(): JSX.Element {
   const { client, user } = useAuth();
   const qc = useQueryClient();
-  const [msg, setMsg] = useState<string | null>(null);
+  // Failures to read on the page itself; plain success is a toast. Failures inside a
+  // dialog show in the dialog (`formErr`), where the person is looking.
+  const [pageErr, setPageErr] = useState<string | null>(null);
+  const [formErr, setFormErr] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState<Confirm | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [nEmail, setNEmail] = useState("");
   const [nPass, setNPass] = useState("");
-  const [nRole, setNRole] = useState<"admin" | "user">("user");
+  const [nRole, setNRole] = useState<Role>("user");
   const [resetFor, setResetFor] = useState<UserAdminView | null>(null);
   const [nameFor, setNameFor] = useState<UserAdminView | null>(null); // LUM-585
   const [nameInput, setNameInput] = useState("");
@@ -76,18 +174,17 @@ function AdminUsersMembersView(): JSX.Element {
   const [importArchiveIdx, setImportArchiveIdx] = useState<number | null>(null);
   const [impEmail, setImpEmail] = useState("");
   const [impPass, setImpPass] = useState("");
-  const [impRole, setImpRole] = useState<"admin" | "user">("user");
-  const [importDialogMsg, setImportDialogMsg] = useState<string | null>(null);
+  const [impRole, setImpRole] = useState<Role>("user");
+  const [importDialogMsg, setImportDialogMsg] = useState<{ kind: "info" | "error"; text: string } | null>(null);
   const [lastPlan, setLastPlan] = useState<ImportPlan | null>(null);
   const [lastReceipt, setLastReceipt] = useState<ImportReceipt | null>(null);
   const [exportingId, setExportingId] = useState<string | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
-  const [inviteRole, setInviteRole] = useState<"admin" | "user">("user");
+  const [inviteRole, setInviteRole] = useState<Role>("user");
   // LUM-577 — per-user shared-scope gate stamped on the invite. Admins always
   // see the shared household union regardless, so the choice only applies to members.
   const [inviteAllowsShared, setInviteAllowsShared] = useState(true);
   const [lastInviteUrl, setLastInviteUrl] = useState<string | null>(null);
-  const [lastInviteToken, setLastInviteToken] = useState<string | null>(null);
 
   const listQ = useQuery({
     queryKey: ["admin", "users"],
@@ -140,7 +237,7 @@ function AdminUsersMembersView(): JSX.Element {
 
   const createM = useMutation({
     mutationFn: () =>
-      client.postJson<{ email: string; password: string; role: "admin" | "user" }, UserAdminView>(
+      client.postJson<{ email: string; password: string; role: Role }, UserAdminView>(
         "/api/v1/admin/users",
         { email: nEmail.trim(), password: nPass, role: nRole },
       ),
@@ -149,11 +246,11 @@ function AdminUsersMembersView(): JSX.Element {
       setNEmail("");
       setNPass("");
       setNRole("user");
-      setMsg("User created.");
+      toast("User created.");
       void qc.invalidateQueries({ queryKey: ["admin", "users"] });
     },
     onError: (e) => {
-      setMsg(errMsg(e));
+      setFormErr(errMsg(e));
     },
   });
 
@@ -163,11 +260,11 @@ function AdminUsersMembersView(): JSX.Element {
       body,
     }: {
       id: string;
-      body: { role?: "admin" | "user"; disabled?: boolean; display_name?: string | null };
+      body: { role?: Role; disabled?: boolean; display_name?: string | null };
     }) =>
       client.patchJson<typeof body, UserAdminView>(`/api/v1/admin/users/${encodeURIComponent(id)}`, body),
     onSuccess: (_data, vars) => {
-      setMsg("Saved.");
+      toast("Saved.");
       void qc.invalidateQueries({ queryKey: ["admin", "users"] });
       if (vars.body.role !== undefined) {
         // A demotion revokes the user's MCP tokens and cancels the invites they sent (LUM-885).
@@ -176,7 +273,7 @@ function AdminUsersMembersView(): JSX.Element {
       }
     },
     onError: (e) => {
-      setMsg(errMsg(e));
+      setPageErr(errMsg(e));
     },
   });
 
@@ -196,25 +293,25 @@ function AdminUsersMembersView(): JSX.Element {
       setResetFor(null);
       setResetPass("");
       setResetConfirm("");
-      setMsg("Password updated for user.");
+      toast("Password updated for user.");
       void qc.invalidateQueries({ queryKey: ["admin", "users"] });
     },
     onError: (e) => {
-      setMsg(errMsg(e));
+      setFormErr(errMsg(e));
     },
   });
 
   const delM = useMutation({
     mutationFn: (id: string) => client.delete(`/api/v1/admin/users/${encodeURIComponent(id)}`),
     onSuccess: (_data, id) => {
-      setMsg("User deleted.");
+      toast("User deleted.");
       void qc.invalidateQueries({ queryKey: ["admin", "users"] });
       // Deleting revokes the user's MCP tokens and cancels the invites they sent (LUM-885).
       void qc.invalidateQueries({ queryKey: ["mcp", "admin", id] });
       void qc.invalidateQueries({ queryKey: ["admin", "invites"] });
     },
     onError: (e) => {
-      setMsg(errMsg(e));
+      setPageErr(errMsg(e));
     },
   });
 
@@ -227,24 +324,22 @@ function AdminUsersMembersView(): JSX.Element {
         allows_shared: inviteRole === "admin" ? true : inviteAllowsShared,
       }),
     onSuccess: (res) => {
-      setLastInviteUrl(res.invite_url);
-      setLastInviteToken(res.token);
-      setMsg("Invite link created — copy it now; it is shown only once.");
+      setLastInviteUrl(absoluteInviteUrl(res.invite_url));
       void qc.invalidateQueries({ queryKey: ["admin", "invites"] });
     },
     onError: (e) => {
-      setMsg(errMsg(e));
+      setFormErr(errMsg(e));
     },
   });
 
   const inviteRevokeM = useMutation({
     mutationFn: (id: string) => revokeAdminInvite(client, id),
     onSuccess: () => {
-      setMsg("Invite revoked.");
+      toast("Invite revoked.");
       void qc.invalidateQueries({ queryKey: ["admin", "invites"] });
     },
     onError: (e) => {
-      setMsg(errMsg(e));
+      setPageErr(errMsg(e));
     },
   });
 
@@ -260,9 +355,10 @@ function AdminUsersMembersView(): JSX.Element {
     if (!text) return;
     try {
       await navigator.clipboard.writeText(text);
-      setMsg("Invite link copied to clipboard.");
+      setFormErr(null);
+      toast("Invite link copied to clipboard.");
     } catch {
-      setMsg("Could not copy automatically — select and copy the link below.");
+      setFormErr("Could not copy automatically — select and copy the link below.");
     }
   }
 
@@ -271,7 +367,7 @@ function AdminUsersMembersView(): JSX.Element {
     setInviteRole("user");
     setInviteAllowsShared(true);
     setLastInviteUrl(null);
-    setLastInviteToken(null);
+    setFormErr(null);
   }
 
   const importM = useMutation({
@@ -297,30 +393,32 @@ function AdminUsersMembersView(): JSX.Element {
       if (result.kind === "plan") {
         setLastPlan(result.plan);
         setLastReceipt(null);
-        setImportDialogMsg(
-          result.plan.would_succeed
+        setImportDialogMsg({
+          kind: "info",
+          text: result.plan.would_succeed
             ? "Preview: import would succeed. Uncheck “Preview only” to create the account."
             : "Preview: import would be refused — see details below.",
-        );
+        });
         return;
       }
       setLastPlan(null);
       setLastReceipt(result.receipt);
       setImpPass("");
-      setImportDialogMsg(
-        `Import complete. New user id: ${result.receipt.new_user_id}. Initial password was set from this form only — it is not shown again.`,
-      );
+      setImportDialogMsg({
+        kind: "info",
+        text: "Import complete. The new account is ready. Its first password was set from this form only and is not shown again.",
+      });
       void qc.invalidateQueries({ queryKey: ["admin", "users"] });
       void qc.invalidateQueries({ queryKey: ["admin", "user-imports"] });
     },
     onError: (e) => {
-      setImportDialogMsg(errMsg(e));
+      setImportDialogMsg({ kind: "error", text: errMsg(e) });
     },
   });
 
   async function runExportBackup(u: UserAdminView): Promise<void> {
     setExportingId(u.id);
-    setMsg(null);
+    setPageErr(null);
     let objectUrl: string | null = null;
     try {
       const { blob, filename } = await downloadAdminUserExportZip(client, u.id);
@@ -329,9 +427,9 @@ function AdminUsersMembersView(): JSX.Element {
       a.href = objectUrl;
       a.download = filename;
       a.click();
-      setMsg(`Download started for ${u.email}.`);
+      toast(`Download started for ${u.email}.`);
     } catch (e) {
-      setMsg(errMsg(e));
+      setPageErr(errMsg(e));
     } finally {
       if (objectUrl) URL.revokeObjectURL(objectUrl);
       setExportingId(null);
@@ -350,97 +448,587 @@ function AdminUsersMembersView(): JSX.Element {
     setLastReceipt(null);
   }
 
-  if (listQ.isPending) return <p>Loading…</p>;
-  if (listQ.isError) return <p>Failed to load users.</p>;
+  function openCreateModal(): void {
+    setFormErr(null);
+    setCreateOpen(true);
+  }
+
+  function closeReset(): void {
+    setResetFor(null);
+    setResetPass("");
+    setResetConfirm("");
+    setFormErr(null);
+  }
+
+  if (listQ.isPending) {
+    return (
+      <LoadingPlaceholder label="Loading members…" className="max-w-2xl">
+        <SkeletonText lines={4} />
+      </LoadingPlaceholder>
+    );
+  }
+  if (listQ.isError) {
+    return <ErrorState message="Lumogis couldn't load your members." onRetry={() => void listQ.refetch()} />;
+  }
+
+  const members = listQ.data ?? [];
+
+  // The confirm dialog's words and action, by kind. The dialog is a confirmation, not the
+  // guard: the server still refuses the last admin and self changes.
+  const confirmCopy = (() => {
+    if (!confirm) return null;
+    if (confirm.kind === "role") {
+      const email = confirm.user.email;
+      return confirm.toAdmin
+        ? {
+            title: `Make ${email} an Admin?`,
+            body: "Admins can manage every household member, including other admins.",
+            action: "Make Admin",
+            destructive: false,
+            run: () => patchM.mutate({ id: confirm.user.id, body: { role: "admin" } }),
+          }
+        : {
+            title: `Change ${email} to Member?`,
+            body: "They will lose admin access to household management. They will be signed out on every device, their keys for connected AI apps revoked and any invites they sent cancelled.",
+            action: "Make Member",
+            destructive: true,
+            run: () => patchM.mutate({ id: confirm.user.id, body: { role: "user" } }),
+          };
+    }
+    if (confirm.kind === "disable") {
+      return {
+        title: `Turn off ${confirm.user.email}?`,
+        body: "They will not be able to use Lumogis until you turn their account back on.",
+        action: "Turn off",
+        destructive: true,
+        run: () => patchM.mutate({ id: confirm.user.id, body: { disabled: true } }),
+      };
+    }
+    if (confirm.kind === "delete") {
+      return {
+        title: `Delete ${confirm.user.email}?`,
+        body: "They will be signed out on every device, their keys for connected AI apps revoked and any invites they sent cancelled.",
+        action: "Delete",
+        destructive: true,
+        run: () => delM.mutate(confirm.user.id),
+      };
+    }
+    return {
+      title: "Revoke this invite?",
+      body: "The link stops working before it is used. You can make a new invite later.",
+      action: "Revoke",
+      destructive: true,
+      run: () => inviteRevokeM.mutate(confirm.invite.id),
+    };
+  })();
+
+  const memberActions = (u: UserAdminView): RowAction[] => {
+    const lastAdmin = isLastActiveAdmin(u);
+    const self = isSelf(u);
+    const willPromoteToAdmin = u.role !== "admin";
+    return [
+      {
+        label: "Set name",
+        onSelect: () => {
+          setPageErr(null);
+          setNameInput(u.display_name ?? "");
+          setNameFor(u);
+        },
+      },
+      {
+        // Single source of truth for the role toggle so the label and the PATCH body can
+        // never drift apart (`toAdmin` drives both).
+        label: `Make ${willPromoteToAdmin ? "Admin" : "Member"}`,
+        disabled: lastAdmin,
+        onSelect: () => {
+          setPageErr(null);
+          setConfirm({ kind: "role", user: u, toAdmin: willPromoteToAdmin });
+        },
+      },
+      {
+        label: "Reset password",
+        onSelect: () => {
+          setPageErr(null);
+          setFormErr(null);
+          setResetPass("");
+          setResetConfirm("");
+          setResetFor(u);
+        },
+      },
+      {
+        label: exportingId === u.id ? "Exporting…" : "Export backup",
+        disabled: exportingId === u.id,
+        onSelect: () => void runExportBackup(u),
+      },
+      {
+        label: u.disabled ? "Turn on" : "Turn off",
+        destructive: !u.disabled,
+        // Turning someone back on must stay possible: the old page disabled this
+        // control for every turned-off member, so nobody could be re-enabled
+        // from the UI (found in LUM-993 plan B Pass 6). Turning on needs no confirm.
+        disabled: lastAdmin || self,
+        onSelect: () => {
+          setPageErr(null);
+          if (u.disabled) patchM.mutate({ id: u.id, body: { disabled: false } });
+          else setConfirm({ kind: "disable", user: u });
+        },
+      },
+      {
+        label: "Delete",
+        destructive: true,
+        disabled: lastAdmin || self,
+        onSelect: () => {
+          setPageErr(null);
+          setConfirm({ kind: "delete", user: u });
+        },
+      },
+    ];
+  };
+
+  /** Why some actions are greyed out. Priority mirrors the backend check order (the
+   * last-admin guard is evaluated before the self guard in admin_users.py), so the note
+   * stays consistent with the error the API would return if the action went through. */
+  function guardNote(u: UserAdminView): string | null {
+    if (isLastActiveAdmin(u)) return "The only active admin, so this account can't be changed, turned off or deleted.";
+    if (isSelf(u)) return "This is you. You can't turn off or delete your own account — ask another admin.";
+    return null;
+  }
+
+  const invites = invitesQ.data ?? [];
+
+  const submitCreate = (e: FormEvent) => {
+    e.preventDefault();
+    setPageErr(null);
+    setFormErr(null);
+    createM.mutate();
+  };
 
   return (
-    <section className="lumogis-admin-dense-section">
-      <h2>Users</h2>
-      <p className="lumogis-admin-user-counts" style={{ margin: "0 0 0.5rem", opacity: 0.8 }}>
-        {memberSummary}
-      </p>
-      {msg && <p role="status">{msg}</p>}
-      <div className="lumogis-dense-actions">
-        <Button type="button" variant="primary" onClick={() => setCreateOpen(true)}>
-          Create user
-        </Button>
-        <Button type="button" variant="secondary" onClick={openInviteModal}>
-          Invite member
-        </Button>
-        <Button type="button" variant="secondary" onClick={openImportModal}>
-          Import from backup
-        </Button>
-      </div>
-      <p style={{ margin: "0.25rem 0 0", fontSize: "0.85rem", opacity: 0.8 }}>
-        <strong>Create user</strong> sets an initial password you share manually.{" "}
-        <strong>Invite member</strong> generates a single-use link (48 hours) for self-service
-        signup.
-      </p>
-      {importOpen && (
-        <div
-          className="lumogis-modal"
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.45)",
-            display: "grid",
-            placeItems: "center",
-            zIndex: 1000,
-          }}
-        >
-          <div
-            className="lumogis-credential-form"
-            style={{
-              background: "var(--lumogis-surface, #1a1a1a)",
-              padding: "1.25rem",
-              borderRadius: 8,
-              maxWidth: "min(40rem, 92vw)",
-              minWidth: 0,
-              maxHeight: "90vh",
-              overflow: "auto",
+    <div className="flex flex-col gap-2">
+      {pageErr ? (
+        <Alert variant="destructive" className="max-w-2xl">
+          <AlertDescription>{pageErr}</AlertDescription>
+        </Alert>
+      ) : null}
+
+      <PageSection
+        title="Members"
+        description="Everyone who can sign in to this Lumogis. Create an account and share the first password yourself, or send a single-use invite link (valid for 48 hours) so they can sign up on their own."
+      >
+        <div className="flex flex-col gap-4">
+          <p className="m-0 text-sm text-muted-foreground" data-testid="member-summary">
+            {memberSummary}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" onClick={openCreateModal}>
+              Create user
+            </Button>
+            <Button type="button" variant="outline" onClick={openInviteModal}>
+              Invite member
+            </Button>
+            <Button type="button" variant="outline" onClick={openImportModal}>
+              Import from backup
+            </Button>
+          </div>
+          <div data-testid="admin-users-table-scroll">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Member</TableHead>
+                  <TableHead>Role</TableHead>
+                  <TableHead className="w-12 text-right">
+                    <span className="sr-only">Actions</span>
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {members.map((u) => {
+                  const note = guardNote(u);
+                  return (
+                    <TableRow key={u.id}>
+                      <TableCell className="min-w-0 whitespace-normal">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-medium break-all">{u.email}</span>
+                          {u.disabled ? <Badge variant="outline">Turned off</Badge> : null}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {u.display_name ? (
+                            <span data-testid={`display-name-${u.id}`}>{u.display_name} · </span>
+                          ) : null}
+                          {u.last_seen_at
+                            ? `Last active ${formatLastActive(u.last_seen_at)}`
+                            : "No activity yet"}
+                        </div>
+                        {note ? <div className="text-xs text-muted-foreground">{note}</div> : null}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={u.role === "admin" ? "default" : "secondary"}>{roleLabel(u.role)}</Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <RowActions label={`More actions for ${u.email}`} items={memberActions(u)} />
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+      </PageSection>
+
+      <PageSection title="Invites" description="Links you have made for people to join. Each works once.">
+        {invitesQ.isPending ? (
+          <LoadingPlaceholder label="Loading invites…">
+            <SkeletonText lines={2} />
+          </LoadingPlaceholder>
+        ) : invitesQ.isError ? (
+          <ErrorState message="Lumogis couldn't load the invites." onRetry={() => void invitesQ.refetch()} />
+        ) : invites.length === 0 ? (
+          <EmptyState
+            title="No invites yet"
+            helperText="Invite someone to give them their own account."
+            actions={[{ label: "Invite someone", onClick: openInviteModal, primary: true }]}
+          />
+        ) : (
+          <>
+            <ul role="list" className="m-0 flex list-none flex-col divide-y divide-border p-0">
+              {invites.map((inv) => {
+                const status = inviteStatus(inv);
+                return (
+                  <li key={inv.id} className="flex min-h-12 flex-wrap items-center gap-2 py-1.5">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
+                        {roleLabel(inv.role)} invite
+                        <Badge variant={status === "Active" ? "default" : "secondary"}>{status}</Badge>
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {status === "Active" ? "Expires" : "Was due to expire"} {formatDateTime(inv.expires_at)}.{" "}
+                        Shared household memory: {inv.role === "admin" || inv.allows_shared ? "yes" : "no"}.
+                      </div>
+                    </div>
+                    {status === "Active" ? (
+                      <RowActions
+                        label={`Actions for ${roleLabel(inv.role)} invite expiring ${formatDateTime(inv.expires_at)}`}
+                        items={[
+                          {
+                            label: "Revoke",
+                            destructive: true,
+                            disabled: inviteRevokeM.isPending,
+                            onSelect: () => setConfirm({ kind: "revokeInvite", invite: inv }),
+                          },
+                        ]}
+                      />
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+            <Collapsible className="mt-2">
+              <CollapsibleTrigger
+                render={<Button type="button" variant="ghost" size="sm" className="-ml-2 group/trigger" />}
+              >
+                <ChevronDown
+                  aria-hidden="true"
+                  className="transition-transform group-aria-expanded/trigger:rotate-180"
+                />
+                Details
+              </CollapsibleTrigger>
+              <CollapsibleContent className="pt-2 text-sm">
+                <p className="m-0 mb-1 text-muted-foreground">
+                  The first characters of each invite link, to tell invites apart.
+                </p>
+                <ul role="list" className="m-0 list-none p-0">
+                  {invites.map((inv) => (
+                    <li key={inv.id}>
+                      {inviteStatus(inv)}: <code>{inv.token_prefix ?? "—"}</code>
+                    </li>
+                  ))}
+                </ul>
+              </CollapsibleContent>
+            </Collapsible>
+          </>
+        )}
+      </PageSection>
+
+      {/* Create user */}
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent>
+          <form className="grid gap-4" onSubmit={submitCreate}>
+            <DialogHeader>
+              <DialogTitle>New user</DialogTitle>
+              <DialogDescription>
+                You choose the first password and share it with them yourself.
+              </DialogDescription>
+            </DialogHeader>
+            <FormError message={formErr} />
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="new-user-email">Email</Label>
+              <Input
+                id="new-user-email"
+                type="email"
+                required
+                value={nEmail}
+                onChange={(e) => setNEmail(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="new-user-password">Password (at least 12 characters)</Label>
+              <Input
+                id="new-user-password"
+                type="password"
+                required
+                minLength={12}
+                value={nPass}
+                onChange={(e) => setNPass(e.target.value)}
+                autoComplete="new-password"
+              />
+            </div>
+            <RoleSelect id="new-user-role" label="Role" value={nRole} onChange={setNRole} />
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={createM.isPending}>
+                Create
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Reset password. A form, so a Dialog; the consequence is stated in it. */}
+      <Dialog open={resetFor !== null} onOpenChange={(open) => (open ? undefined : closeReset())}>
+        <DialogContent>
+          <form
+            className="grid gap-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              setPageErr(null);
+              setFormErr(null);
+              resetPwM.mutate();
             }}
           >
-            <h3 style={{ marginTop: 0 }}>Import from backup</h3>
-            <p style={{ margin: 0, fontSize: "0.9rem", opacity: 0.9 }}>
-              Restores a per-user ZIP that already exists on the server under the export directory (listed below).
-              This does not upload a file from your computer. The new account&apos;s initial password is only sent in
-              this request and is not stored in the archive.
-            </p>
-            {importDialogMsg && <p role="status">{importDialogMsg}</p>}
-            {archivesQ.isPending && <p>Loading archives…</p>}
-            {archivesQ.isError && <p>Could not load backup inventory.</p>}
+            <DialogHeader>
+              <DialogTitle>Reset password — {resetFor?.email}</DialogTitle>
+              <DialogDescription data-testid="admin-reset-consequence">
+                {resetFor ? adminResetConsequence(resetFor.email, resetActiveTokens) : null}
+              </DialogDescription>
+            </DialogHeader>
+            <FormError message={formErr} />
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="reset-password">New password (at least {MIN_PASSWORD_LENGTH} characters)</Label>
+              <Input
+                id="reset-password"
+                type="password"
+                required
+                minLength={MIN_PASSWORD_LENGTH}
+                value={resetPass}
+                onChange={(e) => setResetPass(e.target.value)}
+                autoComplete="new-password"
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="reset-password-confirm">Confirm password</Label>
+              <Input
+                id="reset-password-confirm"
+                type="password"
+                required
+                minLength={MIN_PASSWORD_LENGTH}
+                value={resetConfirm}
+                onChange={(e) => setResetConfirm(e.target.value)}
+                autoComplete="new-password"
+              />
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={closeReset}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={resetPwM.isPending}>
+                Save
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Display name (LUM-585) */}
+      <Dialog open={nameFor !== null} onOpenChange={(open) => (open ? undefined : setNameFor(null))}>
+        <DialogContent>
+          <form
+            className="grid gap-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!nameFor) return;
+              setPageErr(null);
+              // Empty clears the name (→ NULL → email local-part attribution).
+              patchM.mutate({ id: nameFor.id, body: { display_name: nameInput } });
+              setNameFor(null);
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle>Display name — {nameFor?.email}</DialogTitle>
+              <DialogDescription>
+                Shown as &ldquo;Shared by …&rdquo; on this member&apos;s shared items. Leave empty to use their email
+                name.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="display-name">Display name</Label>
+              <Input
+                id="display-name"
+                type="text"
+                maxLength={64}
+                data-testid="display-name-input"
+                value={nameInput}
+                onChange={(e) => setNameInput(e.target.value)}
+              />
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setNameFor(null)}>
+                Cancel
+              </Button>
+              <Button type="submit">Save</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Invite member */}
+      <Dialog open={inviteOpen} onOpenChange={setInviteOpen}>
+        <DialogContent>
+          <div className="grid gap-4">
+            <DialogHeader>
+              <DialogTitle>Invite member</DialogTitle>
+              <DialogDescription>
+                Makes a single-use link valid for 48 hours. Copy it and share it securely. The link is shown only once.
+              </DialogDescription>
+            </DialogHeader>
+            <FormError message={formErr} />
+            <RoleSelect id="invite-role" label="Role for new member" value={inviteRole} onChange={setInviteRole} />
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="invite-allows-shared"
+                  checked={inviteRole === "admin" ? true : inviteAllowsShared}
+                  disabled={inviteRole === "admin"}
+                  onCheckedChange={(c) => setInviteAllowsShared(c === true)}
+                />
+                <Label htmlFor="invite-allows-shared" className="font-normal">
+                  Allow access to shared household memory
+                </Label>
+              </div>
+              <p className="m-0 text-xs text-muted-foreground">
+                {inviteRole === "admin"
+                  ? "Admins always see the shared household memory."
+                  : "When off, this member sees only their own personal memory — shared household items stay hidden (system items remain visible)."}
+              </p>
+            </div>
+            {lastInviteUrl ? (
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="invite-link">Invite link</Label>
+                <Input id="invite-link" readOnly value={lastInviteUrl} />
+                {isLoopbackHost(window.location.hostname) ? (
+                  <p className="m-0 text-xs text-muted-foreground">
+                    This link only works on this computer. Open Lumogis at its network address to invite others.
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setInviteOpen(false)}>
+                Close
+              </Button>
+              {lastInviteUrl ? (
+                <Button type="button" variant="secondary" onClick={() => void copyInviteLink()}>
+                  Copy link
+                </Button>
+              ) : null}
+              <Button
+                type="button"
+                disabled={inviteMintM.isPending}
+                onClick={() => {
+                  setFormErr(null);
+                  inviteMintM.mutate();
+                }}
+              >
+                {lastInviteUrl ? "Generate another link" : "Generate invite link"}
+              </Button>
+            </DialogFooter>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Import from backup */}
+      <Dialog open={importOpen} onOpenChange={setImportOpen}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
+          <div className="grid gap-4">
+            <DialogHeader>
+              <DialogTitle>Import from backup</DialogTitle>
+              <DialogDescription>
+                Restores a backup file that is already stored on the server. It does not upload a file from your
+                computer. The new account&apos;s first password is only sent with this request and is not kept in the
+                backup.
+              </DialogDescription>
+            </DialogHeader>
+            {importDialogMsg ? (
+              <Alert variant={importDialogMsg.kind === "error" ? "destructive" : "default"} role={importDialogMsg.kind === "error" ? "alert" : "status"}>
+                <AlertDescription>{importDialogMsg.text}</AlertDescription>
+              </Alert>
+            ) : null}
+            {archivesQ.isPending && <p className="m-0 text-sm text-muted-foreground">Loading backups…</p>}
+            {archivesQ.isError && (
+              <Alert variant="destructive">
+                <AlertDescription>Could not load the list of backups.</AlertDescription>
+              </Alert>
+            )}
             {archivesQ.isSuccess && archivesQ.data.length === 0 && (
-              <p>No export archives found on the server. Use “Export backup” on a user row first.</p>
+              <p className="m-0 text-sm">
+                No backups found on the server. Use “Export backup” in a member&apos;s “…” menu first.
+              </p>
             )}
             {archivesQ.isSuccess && archivesQ.data.length > 0 && (
-              <label style={{ display: "grid", gap: "0.25rem" }}>
-                Backup archive
-                <select
-                  value={importArchiveIdx === null ? "" : String(importArchiveIdx)}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setImportArchiveIdx(v === "" ? null : Number(v));
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="import-archive">Backup archive</Label>
+                <Select
+                  value={importArchiveIdx === null ? null : String(importArchiveIdx)}
+                  onValueChange={(v) => {
+                    setImportArchiveIdx(v == null || v === "" ? null : Number(v));
                     setLastPlan(null);
                     setLastReceipt(null);
                   }}
                 >
-                  <option value="">— Select —</option>
-                  {archivesQ.data.map((a, i) => (
-                    <option key={`${a.user_id}/${a.archive_filename}`} value={String(i)}>
-                      {a.user_id}/{a.archive_filename} ({a.manifest_status}
-                      {a.exported_user_email ? `; was ${a.exported_user_email}` : ""})
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  <SelectTrigger id="import-archive" aria-label="Backup archive" className="w-full">
+                    <SelectValue>
+                      {(v: string | null) => {
+                        const a = v == null ? undefined : archivesQ.data[Number(v)];
+                        return a ? archiveLabel(a) : "Choose a backup";
+                      }}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {archivesQ.data.map((a, i) => (
+                      <SelectItem key={`${a.user_id}/${a.archive_filename}`} value={String(i)}>
+                        {archiveLabel(a)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             )}
-            <label style={{ display: "grid", gap: "0.25rem" }}>
-              New account email
-              <input type="email" required value={impEmail} onChange={(e) => setImpEmail(e.target.value)} />
-            </label>
-            <label style={{ display: "grid", gap: "0.25rem" }}>
-              New account password (min {MIN_PASSWORD_LENGTH})
-              <input
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="import-email">New account email</Label>
+              <Input
+                id="import-email"
+                type="email"
+                required
+                value={impEmail}
+                onChange={(e) => setImpEmail(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="import-password">New account password (at least {MIN_PASSWORD_LENGTH} characters)</Label>
+              <Input
+                id="import-password"
                 type="password"
                 required
                 minLength={MIN_PASSWORD_LENGTH}
@@ -448,38 +1036,34 @@ function AdminUsersMembersView(): JSX.Element {
                 onChange={(e) => setImpPass(e.target.value)}
                 autoComplete="new-password"
               />
-            </label>
-            <label style={{ display: "grid", gap: "0.25rem" }}>
-              Role
-              <select value={impRole} onChange={(e) => setImpRole(e.target.value as "admin" | "user")}>
-                <option value="user">Member</option>
-                <option value="admin">Admin</option>
-              </select>
-            </label>
-            <label style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-              <input
-                type="checkbox"
+            </div>
+            <RoleSelect id="import-role" label="Role" value={impRole} onChange={setImpRole} />
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="import-dry-run"
                 checked={importDryRun}
-                onChange={(e) => {
-                  setImportDryRun(e.target.checked);
+                onCheckedChange={(c) => {
+                  setImportDryRun(c === true);
                   setLastPlan(null);
                   setLastReceipt(null);
                 }}
               />
-              Preview only (dry run — no user created)
-            </label>
+              <Label htmlFor="import-dry-run" className="font-normal">
+                Preview only (no account is created)
+              </Label>
+            </div>
             {lastPlan && (
-              <div role="region" aria-label="Import preview">
-                <p>
-                  <strong>Would succeed:</strong> {lastPlan.would_succeed ? "yes" : "no"}
+              <div role="region" aria-label="Import preview" className="flex flex-col gap-1 text-sm">
+                <p className="m-0">
+                  <strong>{lastPlan.would_succeed ? "The import would work." : "The import would be refused."}</strong>
                 </p>
                 {(() => {
                   const su = safeExportedUserSummary(lastPlan);
                   if (su.email || su.role) {
                     return (
-                      <p>
-                        <strong>Exported user (from manifest):</strong>{" "}
-                        {[su.email, su.role].filter(Boolean).join(" · ")}
+                      <p className="m-0">
+                        Backed up from{" "}
+                        {[su.email, su.role ? roleLabel(su.role) : undefined].filter(Boolean).join(" · ")}.
                       </p>
                     );
                   }
@@ -488,7 +1072,7 @@ function AdminUsersMembersView(): JSX.Element {
                 {lastPlan.warnings.length > 0 && (
                   <div>
                     <strong>Warnings</strong>
-                    <ul>
+                    <ul className="m-0 pl-5">
                       {lastPlan.warnings.map((w) => (
                         <li key={w}>{w}</li>
                       ))}
@@ -496,24 +1080,17 @@ function AdminUsersMembersView(): JSX.Element {
                   </div>
                 )}
                 {lastPlan.missing_sections.length > 0 && (
-                  <p>
-                    <strong>Missing sections:</strong> {lastPlan.missing_sections.join(", ")}
-                  </p>
+                  <p className="m-0">Missing from the backup: {lastPlan.missing_sections.join(", ")}.</p>
                 )}
               </div>
             )}
             {lastReceipt && (
-              <div role="region" aria-label="Import result">
-                <p>
-                  <strong>New user id:</strong> {lastReceipt.new_user_id}
-                </p>
-                <p>
-                  <strong>Sections imported:</strong> {lastReceipt.sections_imported.length}
-                </p>
+              <div role="region" aria-label="Import result" className="flex flex-col gap-1 text-sm">
+                <p className="m-0">Parts imported: {lastReceipt.sections_imported.length}.</p>
                 {(lastReceipt.warnings?.length ?? 0) > 0 && (
                   <div>
                     <strong>Warnings</strong>
-                    <ul>
+                    <ul className="m-0 pl-5">
                       {lastReceipt.warnings!.map((w) => (
                         <li key={w}>{w}</li>
                       ))}
@@ -522,10 +1099,12 @@ function AdminUsersMembersView(): JSX.Element {
                 )}
               </div>
             )}
-            <div className="lumogis-form-actions lumogis-form-actions--stack">
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setImportOpen(false)}>
+                Close
+              </Button>
               <Button
                 type="button"
-                variant="primary"
                 disabled={importM.isPending || !archivesQ.data?.length}
                 onClick={() => {
                   setImportDialogMsg(null);
@@ -534,484 +1113,32 @@ function AdminUsersMembersView(): JSX.Element {
               >
                 {importDryRun ? "Run preview" : "Run import"}
               </Button>
-              <Button type="button" variant="ghost" onClick={() => setImportOpen(false)}>
-                Close
-              </Button>
-            </div>
+            </DialogFooter>
           </div>
-        </div>
-      )}
-      {resetFor && (
-        <div
-          className="lumogis-modal"
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.45)",
-            display: "grid",
-            placeItems: "center",
-            zIndex: 1000,
-          }}
-        >
-          <form
-            className="lumogis-credential-form"
-            style={{
-              background: "var(--lumogis-surface, #1a1a1a)",
-              padding: "1.25rem",
-              borderRadius: 8,
-            }}
-            onSubmit={(e) => {
-              e.preventDefault();
-              setMsg(null);
-              resetPwM.mutate();
-            }}
-          >
-            <h3 style={{ marginTop: 0 }}>Reset password — {resetFor.email}</h3>
-            <label>
-              New password (min {MIN_PASSWORD_LENGTH})
-              <input
-                type="password"
-                required
-                minLength={MIN_PASSWORD_LENGTH}
-                value={resetPass}
-                onChange={(e) => setResetPass(e.target.value)}
-              />
-            </label>
-            <label>
-              Confirm password
-              <input
-                type="password"
-                required
-                minLength={MIN_PASSWORD_LENGTH}
-                value={resetConfirm}
-                onChange={(e) => setResetConfirm(e.target.value)}
-              />
-            </label>
-            <p className="lumogis-field__hint" data-testid="admin-reset-consequence">
-              {adminResetConsequence(resetFor.email, resetActiveTokens)}
-            </p>
-            <div className="lumogis-form-actions lumogis-form-actions--stack">
-              <Button type="submit" variant="primary">
-                Save
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={() => {
-                  setResetFor(null);
-                  setResetPass("");
-                  setResetConfirm("");
-                }}
-              >
-                Cancel
-              </Button>
-            </div>
-          </form>
-        </div>
-      )}
-      {nameFor && (
-        <div
-          className="lumogis-modal"
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.45)",
-            display: "grid",
-            placeItems: "center",
-            zIndex: 1000,
-          }}
-        >
-          <form
-            className="lumogis-credential-form"
-            style={{
-              background: "var(--lumogis-surface, #1a1a1a)",
-              padding: "1.25rem",
-              borderRadius: 8,
-            }}
-            onSubmit={(e) => {
-              e.preventDefault();
-              setMsg(null);
-              // Empty clears the name (→ NULL → email local-part attribution).
-              patchM.mutate({ id: nameFor.id, body: { display_name: nameInput } });
-              setNameFor(null);
-            }}
-          >
-            <h3 style={{ marginTop: 0 }}>Display name — {nameFor.email}</h3>
-            <label>
-              Shown as &ldquo;Shared by …&rdquo; on this member&apos;s shared items. Leave
-              empty to use their email name.
-              <input
-                type="text"
-                maxLength={64}
-                data-testid="display-name-input"
-                value={nameInput}
-                onChange={(e) => setNameInput(e.target.value)}
-              />
-            </label>
-            <div className="lumogis-form-actions lumogis-form-actions--stack">
-              <Button type="submit" variant="primary">
-                Save
-              </Button>
-              <Button type="button" variant="ghost" onClick={() => setNameFor(null)}>
-                Cancel
-              </Button>
-            </div>
-          </form>
-        </div>
-      )}
-      {createOpen && (
-        <div
-          className="lumogis-modal"
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.45)",
-            display: "grid",
-            placeItems: "center",
-            zIndex: 1000,
-          }}
-        >
-          <form
-            className="lumogis-credential-form"
-            style={{
-              background: "var(--lumogis-surface, #1a1a1a)",
-              padding: "1.25rem",
-              borderRadius: 8,
-            }}
-            onSubmit={(e) => {
-              e.preventDefault();
-              setMsg(null);
-              createM.mutate();
-            }}
-          >
-            <h3 style={{ marginTop: 0 }}>New user</h3>
-            <label>
-              Email
-              <input type="email" required value={nEmail} onChange={(e) => setNEmail(e.target.value)} />
-            </label>
-            <label>
-              Password (min 12)
-              <input type="password" required minLength={12} value={nPass} onChange={(e) => setNPass(e.target.value)} />
-            </label>
-            <label>
-              Role
-              <select value={nRole} onChange={(e) => setNRole(e.target.value as "admin" | "user")}>
-                <option value="user">Member</option>
-                <option value="admin">Admin</option>
-              </select>
-            </label>
-            <div className="lumogis-form-actions lumogis-form-actions--stack">
-              <Button type="submit" variant="primary">
-                Create
-              </Button>
-              <Button type="button" variant="ghost" onClick={() => setCreateOpen(false)}>
-                Cancel
-              </Button>
-            </div>
-          </form>
-        </div>
-      )}
-      {inviteOpen && (
-        <div
-          className="lumogis-modal"
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.45)",
-            display: "grid",
-            placeItems: "center",
-            zIndex: 1000,
-          }}
-        >
-          <div
-            className="lumogis-credential-form"
-            style={{
-              background: "var(--lumogis-surface, #1a1a1a)",
-              padding: "1.25rem",
-              borderRadius: 8,
-              maxWidth: "min(36rem, 92vw)",
-            }}
-          >
-            <h3 style={{ marginTop: 0 }}>Invite member</h3>
-            <p style={{ margin: 0, fontSize: "0.9rem", opacity: 0.9 }}>
-              Generates a single-use link valid for 48 hours. Copy and share it securely — the full
-              token is shown only once.
-            </p>
-            <label style={{ display: "grid", gap: "0.25rem", marginTop: "0.75rem" }}>
-              Role for new member
-              <select value={inviteRole} onChange={(e) => setInviteRole(e.target.value as "admin" | "user")}>
-                <option value="user">Member</option>
-                <option value="admin">Admin</option>
-              </select>
-            </label>
-            <label style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginTop: "0.75rem" }}>
-              <input
-                type="checkbox"
-                checked={inviteRole === "admin" ? true : inviteAllowsShared}
-                disabled={inviteRole === "admin"}
-                onChange={(e) => setInviteAllowsShared(e.target.checked)}
-              />
-              Allow access to shared household memory
-            </label>
-            <p style={{ margin: "0.35rem 0 0", fontSize: "0.8rem", opacity: 0.75 }}>
-              {inviteRole === "admin"
-                ? "Admins always see the shared household memory."
-                : "When off, this member sees only their own personal memory — shared household items stay hidden (system items remain visible)."}
-            </p>
-            {lastInviteUrl && (
-              <div style={{ marginTop: "0.75rem" }}>
-                <p style={{ margin: "0 0 0.35rem", fontSize: "0.85rem" }}>Invite link</p>
-                <input readOnly value={lastInviteUrl} style={{ width: "100%" }} />
-                {lastInviteToken ? (
-                  <p style={{ fontSize: "0.8rem", opacity: 0.75, margin: "0.35rem 0 0" }}>
-                    Token prefix: {lastInviteToken.slice(0, 12)}…
-                  </p>
-                ) : null}
-              </div>
-            )}
-            <div className="lumogis-form-actions lumogis-form-actions--stack" style={{ marginTop: "1rem" }}>
-              <Button
-                type="button"
-                variant="primary"
-                disabled={inviteMintM.isPending}
-                onClick={() => inviteMintM.mutate()}
-              >
-                {lastInviteUrl ? "Generate another link" : "Generate invite link"}
-              </Button>
-              {lastInviteUrl ? (
-                <Button type="button" variant="secondary" onClick={() => void copyInviteLink()}>
-                  Copy link
-                </Button>
-              ) : null}
-              <Button type="button" variant="ghost" onClick={() => setInviteOpen(false)}>
-                Close
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-      <div className="lumogis-table-scroll" style={{ marginBottom: "1rem" }}>
-        <h3 style={{ margin: "0 0 0.5rem" }}>Invites</h3>
-        {invitesQ.isPending && <p>Loading invites…</p>}
-        {invitesQ.isError && <p>Could not load invites.</p>}
-        {invitesQ.isSuccess && invitesQ.data.length === 0 && <p>No invites yet.</p>}
-        {invitesQ.isSuccess && invitesQ.data.length > 0 && (
-          <table className="lumogis-dense-table lumogis-responsive-table">
-            <thead>
-              <tr>
-                <th>Role</th>
-                <th>Shared access</th>
-                <th>Status</th>
-                <th>Expires</th>
-                <th>Prefix</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {invitesQ.data.map((inv) => {
-                const status = inviteStatus(inv);
-                const canRevoke = status === "Active";
-                return (
-                  <tr key={inv.id}>
-                    <td data-label="Role">{roleLabel(inv.role)}</td>
-                    <td data-label="Shared access">{inv.role === "admin" || inv.allows_shared ? "Yes" : "No"}</td>
-                    <td data-label="Status">{status}</td>
-                    <td data-label="Expires">{new Date(inv.expires_at).toLocaleString()}</td>
-                    <td data-label="Prefix">{inv.token_prefix ?? "—"}</td>
-                    <td data-label="Actions">
-                      <Button
-                        type="button"
-                        variant="danger"
-                        size="sm"
-                        disabled={!canRevoke || inviteRevokeM.isPending}
-                        onClick={() => {
-                          if (window.confirm("Revoke this invite before it is used?")) {
-                            inviteRevokeM.mutate(inv.id);
-                          }
-                        }}
-                      >
-                        Revoke
-                      </Button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-      </div>
-      <div className="lumogis-table-scroll lumogis-table-scroll--wide" data-testid="admin-users-table-scroll">
-        <table className="lumogis-dense-table lumogis-responsive-table lumogis-dense-table--sticky-actions">
-          <thead>
-            <tr>
-              <th>Email</th>
-              <th>Name</th>
-              <th>Role</th>
-              <th>Last active</th>
-              <th>Disabled</th>
-              <th className="lumogis-dense-table__actions-head">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {listQ.data?.map((u) => {
-              const lastAdmin = isLastActiveAdmin(u);
-              const self = isSelf(u);
-              // Single source of truth for the role toggle so the button label and the
-              // PATCH body can never drift apart.
-              const willPromoteToAdmin = u.role !== "admin";
-              // Reason priority mirrors the backend check order (last-admin guard is
-              // evaluated before the self guard in admin_users.py), so the title stays
-              // consistent with the error the API would return if the click went through.
-              const disableTitle = lastAdmin
-                ? "Cannot remove the last active admin."
-                : self
-                  ? "You can't disable your own account — ask another admin."
-                  : undefined;
-              const deleteTitle = lastAdmin
-                ? "Cannot remove the last active admin."
-                : self
-                  ? "You can't delete your own account — ask another admin."
-                  : undefined;
-              return (
-                <tr key={u.id}>
-                  <td data-label="Email" className="lumogis-cell-identifier">{u.email}</td>
-                  <td data-label="Name" data-testid={`display-name-${u.id}`}>{u.display_name ?? "—"}</td>
-                  <td data-label="Role">{roleLabel(u.role)}</td>
-                  <td data-label="Last active">{formatLastActive(u.last_seen_at)}</td>
-                  <td data-label="Disabled">{u.disabled ? "yes" : "no"}</td>
-                  <td data-label="Actions" className="lumogis-dense-table__actions">
-                    <RowActionsMenu
-                      menuLabel={`More actions for ${u.email}`}
-                      testId={`more-actions-${u.id}`}
-                      primary={
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          size="sm"
-                          title={lastAdmin ? "Cannot remove the last active admin." : undefined}
-                          disabled={lastAdmin}
-                          onClick={() => {
-                            const message = willPromoteToAdmin
-                              ? `Make ${u.email} an Admin? Admins can manage every household member, including other admins.`
-                              : `Change ${u.email} to Member? They will lose admin access to household management. They will be signed out on every device, their MCP tokens revoked and any invites they sent cancelled.`;
-                            if (!window.confirm(message)) return;
-                            setMsg(null);
-                            patchM.mutate({
-                              id: u.id,
-                              body: { role: willPromoteToAdmin ? "admin" : "user" },
-                            });
-                          }}
-                        >
-                          Make {willPromoteToAdmin ? "Admin" : "Member"}
-                        </Button>
-                      }
-                      overflow={
-                        <>
-                          <Button
-                            type="button"
-                            variant="danger"
-                            size="sm"
-                            role="menuitem"
-                            className="lumogis-table-actions__menu-item"
-                            title={disableTitle}
-                            disabled={lastAdmin || u.disabled || self}
-                            onClick={() => {
-                              setMsg(null);
-                              patchM.mutate({ id: u.id, body: { disabled: !u.disabled } });
-                            }}
-                          >
-                            {u.disabled ? "Enable" : "Disable"}
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            size="sm"
-                            role="menuitem"
-                            className="lumogis-table-actions__menu-item"
-                            onClick={() => {
-                              setMsg(null);
-                              setResetPass("");
-                              setResetConfirm("");
-                              setResetFor(u);
-                            }}
-                          >
-                            Reset password
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            role="menuitem"
-                            className="lumogis-table-actions__menu-item"
-                            data-testid={`set-name-${u.id}`}
-                            onClick={() => {
-                              setMsg(null);
-                              setNameInput(u.display_name ?? "");
-                              setNameFor(u);
-                            }}
-                          >
-                            Set name
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            role="menuitem"
-                            className="lumogis-table-actions__menu-item"
-                            disabled={exportingId === u.id}
-                            onClick={() => void runExportBackup(u)}
-                          >
-                            {exportingId === u.id ? "Exporting…" : "Export backup"}
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="danger"
-                            size="sm"
-                            role="menuitem"
-                            className="lumogis-table-actions__menu-item"
-                            title={deleteTitle}
-                            disabled={lastAdmin || self}
-                            onClick={() => {
-                              if (window.confirm(
-                                  `Delete ${u.email}? They will be signed out on every device, their MCP tokens revoked and any invites they sent cancelled.`,
-                                )) {
-                                setMsg(null);
-                                delM.mutate(u.id);
-                              }
-                            }}
-                          >
-                            Delete
-                          </Button>
-                        </>
-                      }
-                    />
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  );
-}
+        </DialogContent>
+      </Dialog>
 
-/**
- * LUM-853: creating `users` rows with sign-in off makes the next restart refuse to boot (two
- * rows, `main.py` `_enforce_auth_consistency`) or stops the bootstrap admin from being created
- * when sign-in is turned on (one row), which strands the single user's data. So in single-user
- * mode no user, invite or import query or control is mounted.
- */
-export function AdminUsersView(): JSX.Element {
-  const { singleUser } = useAuth();
-  if (singleUser) {
-    return (
-      <EmptyState
-        title="Sign-in is off"
-        helperText="With sign-in off this Lumogis has one user, so there is nobody to add or invite. Turn on sign-in first; then add people here."
-        actions={[{ label: "How to turn on sign-in", href: TURN_ON_SIGN_IN_DOC_URL }]}
-      />
-    );
-  }
-  return <AdminUsersMembersView />;
+      {/* Confirmations: change role, turn off, delete, revoke an invite. */}
+      <AlertDialog open={confirm !== null} onOpenChange={(open) => (open ? undefined : setConfirm(null))}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{confirmCopy?.title}</AlertDialogTitle>
+            <AlertDialogDescription>{confirmCopy?.body}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant={confirmCopy?.destructive ? "destructiveSolid" : "default"}
+              onClick={() => {
+                confirmCopy?.run();
+                setConfirm(null);
+              }}
+            >
+              {confirmCopy?.action}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
 }

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Lumogis
 //
-// LUM-652: the send composer. A native <dialog> (built-in focus-trap / Escape)
-// with an embedded "In reply to:" context header so the modal never hides what
+// LUM-652: the send composer. A ui Dialog (focus trap / Escape; full-height on a
+// phone) with an embedded "In reply to:" context header so the modal never hides what
 // you're replying to. Two states in one frame: compose → confirm (SendConfirmCard).
 //
 // Lifecycle (matches the plan): "Review" creates the send proposal (the Ask, which
@@ -15,6 +15,24 @@
 // testable without a live client; EmailInboxView supplies the real bindings.
 
 import { useEffect, useRef, useState } from "react";
+
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 
 import { VoiceDictationButton } from "../../components/VoiceDictationButton";
 import { AttachmentPicker } from "./AttachmentPicker";
@@ -175,7 +193,8 @@ export function EmailComposer(props: EmailComposerProps): JSX.Element | null {
   const addressesDegraded = props.addressesDegraded ?? false;
   const mailboxes = props.mailboxes ?? [];
 
-  const dialogRef = useRef<HTMLDialogElement | null>(null);
+  // LUM-793: the "discard this unsent message?" confirm (was the browser confirm box).
+  const [discardOpen, setDiscardOpen] = useState(false);
   // LUM-830 — which mailbox a composed message leaves from.
   //
   // Only compose mode has a choice to make: a reply and a forward both descend
@@ -255,27 +274,6 @@ export function EmailComposer(props: EmailComposerProps): JSX.Element | null {
   const [sendProposalId, setSendProposalId] = useState<number | null>(null);
   const [failureCode, setFailureCode] = useState<string | null>(null);
   const [failureMessage, setFailureMessage] = useState<string | null>(null);
-
-  // Open/close the native dialog imperatively. Prefer showModal() for the built-in
-  // focus-trap/backdrop; fall back to the `open` attribute where showModal is a
-  // no-op (jsdom) so the contents stay in the accessibility tree.
-  useEffect(() => {
-    const dlg = dialogRef.current;
-    if (!dlg) return;
-    if (open) {
-      if (typeof dlg.showModal === "function") {
-        try {
-          if (!dlg.open) dlg.showModal();
-        } catch {
-          /* already open / unsupported — fall through */
-        }
-      }
-      if (!dlg.open) dlg.open = true;
-    } else if (dlg.open) {
-      if (typeof dlg.close === "function") dlg.close();
-      dlg.open = false;
-    }
-  }, [open]);
 
   // LUM-698: fetch the quoted original. EAGER in forward mode (the disclosure is
   // open by default and the quoted content is the message); LAZY in reply mode —
@@ -535,13 +533,16 @@ export function EmailComposer(props: EmailComposerProps): JSX.Element | null {
   // abandon it). Best-effort — never blocks the UI on the cancel. A sent proposal is
   // consumed, never cancelled.
   // LUM-793: the only thing standing between a failed send and a lost message.
-  // Extracted so the Escape path and the Cancel button share one prompt, and so a
-  // test can drive it. Returns true when the user accepts the discard.
-  function confirmDiscardAfterFailure(): boolean {
-    return window.confirm(
-      "Discard this message? It hasn’t been sent, and closing will lose what you wrote. " +
-        "Use Save to Drafts if you want to keep it.",
-    );
+  // The Escape/close path and the Cancel button share it: after a failed send the
+  // text is unrecoverable, so closing asks first (an AlertDialog, not a native
+  // confirm). Any other close goes straight through.
+  function requestClose() {
+    if (sendStatus === "failed") {
+      setDiscardOpen(true);
+      return;
+    }
+    cancelPendingSend();
+    props.onClose();
   }
 
   function cancelPendingSend() {
@@ -657,44 +658,50 @@ export function EmailComposer(props: EmailComposerProps): JSX.Element | null {
   // Save-to-Drafts is always its own fresh proposal, and reports as "saved".
   const onSaveDraft = () => void runProposal(draftPayload, null, "saved");
 
+  const dialogLabel =
+    mode === "reply" ? "Reply to email" : mode === "forward" ? "Forward email" : "Compose email";
+
   return (
-    <dialog
-      ref={dialogRef}
-      className="lumogis-composer"
-      aria-label={
-        mode === "reply" ? "Reply to email" : mode === "forward" ? "Forward email" : "Compose email"
-      }
-      onCancel={(e) => {
-        // Escape: abandon any pending send proposal, then let the parent close.
-        // LUM-793: but NOT silently after a failed send. The composed text lives only
-        // in React state — there is no draft autosave — so one reflexive Escape on a
-        // failure screen loses the message. It is still in `action_proposals.payload`
-        // server-side, but no surface shows it (that is LUM-793's other half), so from
-        // the user's side it is simply gone. Confirm first; Save to Drafts and Retry
-        // are both one click away on the card behind this dialog.
-        if (sendStatus === "failed" && !confirmDiscardAfterFailure()) {
-          e.preventDefault();
+    <Dialog
+      open
+      onOpenChange={(next, details) => {
+        if (next) return;
+        // The native dialog element never closed on a backdrop click; neither does this
+        // one, because the composed text lives only in React state.
+        if (details.reason === "outside-press") {
+          details.cancel();
           return;
         }
-        cancelPendingSend();
-        props.onClose();
+        // Escape / the close button: abandon any pending send proposal, then let the
+        // parent close. LUM-793: but NOT silently after a failed send. The composed
+        // text lives only in React state — there is no draft autosave — so one
+        // reflexive Escape on a failure screen loses the message. It is still in
+        // `action_proposals.payload` server-side, but no surface shows it (that is
+        // LUM-793's other half), so from the user's side it is simply gone. Confirm
+        // first; Save to Drafts and Retry are both one click away on the card behind
+        // this dialog.
+        requestClose();
       }}
     >
-      {mode === "reply" && replyRecipient ? (
-        <header className="lumogis-composer__context">
-          In reply to: <strong>{replyRecipient}</strong>
-          {originalSubject ? ` — ${originalSubject}` : ""}
-        </header>
-      ) : null}
-      {mode === "forward" ? (
-        <header className="lumogis-composer__context">
-          Forwarding: <strong>{originalSubject || "this email"}</strong>
-          {replyRecipient ? ` — from ${replyRecipient}` : ""}
-        </header>
-      ) : null}
-
+      <DialogContent
+        showCloseButton={false}
+        className="max-h-dvh gap-3 overflow-y-auto max-sm:h-dvh max-sm:max-w-none max-sm:rounded-none sm:max-w-2xl"
+      >
+        <DialogTitle className="sr-only">{dialogLabel}</DialogTitle>
+        {mode === "reply" && replyRecipient ? (
+          <DialogDescription>
+            In reply to: <strong>{replyRecipient}</strong>
+            {originalSubject ? ` — ${originalSubject}` : ""}
+          </DialogDescription>
+        ) : null}
+        {mode === "forward" ? (
+          <DialogDescription>
+            Forwarding: <strong>{originalSubject || "this email"}</strong>
+            {replyRecipient ? ` — from ${replyRecipient}` : ""}
+          </DialogDescription>
+        ) : null}
       {phase === "compose" ? (
-        <div className="lumogis-composer__form">
+        <div className="flex flex-col gap-3">
           {/* LUM-830 — which mailbox this leaves from, named before it is sent.
               ADR-213 asks for the choice to be VISIBLE, not merely correct, so
               the row renders with one mailbox too: a plain statement then, a
@@ -703,29 +710,38 @@ export function EmailComposer(props: EmailComposerProps): JSX.Element | null {
               and offering a choice there would invite changing it, which the
               threading headers make wrong. */}
           {mode === "compose" && mailboxes.length > 0 ? (
-            <div className="lumogis-composer__from">
+            <div className="flex flex-col gap-1">
               {mailboxes.length === 1 ? (
-                <p className="lumogis-composer__from-fixed">
+                <p className="text-sm">
                   From <strong>{mailboxLabel(mailboxes[0])}</strong>
                 </p>
               ) : (
-                <label className="lumogis-composer__from-label">
-                  From
-                  <select
-                    className="lumogis-composer__from-select"
+                <div className="flex flex-col gap-1.5">
+                  <Label id="composer-from-label">From</Label>
+                  <Select
                     value={activeSourceId ?? ""}
-                    onChange={(e) => setChosenSource(e.target.value)}
+                    onValueChange={(v) => setChosenSource(String(v ?? ""))}
                   >
-                    {mailboxes.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {mailboxLabel(m)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                    <SelectTrigger aria-label="From" className="w-full">
+                      <SelectValue>
+                        {(v: string | null) => {
+                          const m = mailboxes.find((x) => x.id === v);
+                          return m ? mailboxLabel(m) : "";
+                        }}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {mailboxes.map((m) => (
+                        <SelectItem key={m.id} value={m.id}>
+                          {mailboxLabel(m)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               )}
               {addressesDegraded ? (
-                <p className="lumogis-composer__from-degraded" role="status">
+                <p className="text-sm text-muted-foreground" role="status">
                   Couldn't load sending addresses — showing mailbox names.
                 </p>
               ) : null}
@@ -734,15 +750,13 @@ export function EmailComposer(props: EmailComposerProps): JSX.Element | null {
           {mode !== "reply" ? (
             <RecipientInput
               suggest={api.suggestRecipients ?? _noSuggestions}
-              className="lumogis-composer__to"
               label="To"
               placeholder="To"
               value={to}
               onChange={setTo}
             />
           ) : null}
-          <input
-            className="lumogis-composer__subject"
+          <Input
             aria-label="Subject"
             placeholder="Subject"
             value={subject}
@@ -760,14 +774,14 @@ export function EmailComposer(props: EmailComposerProps): JSX.Element | null {
               a collapsed disclosure is the version of this feature that mails
               four people by surprise, so it opens when there is something in it. */}
           <details
-            className="lumogis-composer__recipients"
+            className="rounded-lg border px-3 py-2 text-sm"
             data-testid="cc-bcc-disclosure"
             open={(initialCc ?? []).length > 0}
           >
-            <summary>Cc / Bcc</summary>
+            <summary className="cursor-pointer font-medium">Cc / Bcc</summary>
+            <div className="mt-2 flex flex-col gap-2">
             <RecipientInput
               suggest={api.suggestRecipients ?? _noSuggestions}
-              className="lumogis-composer__cc"
               label="Cc"
               placeholder="Cc (comma-separated)"
               value={cc}
@@ -779,15 +793,15 @@ export function EmailComposer(props: EmailComposerProps): JSX.Element | null {
                 suggesting into To does not. */}
             <RecipientInput
               suggest={api.suggestRecipients ?? _noSuggestions}
-              className="lumogis-composer__bcc"
               label="Bcc"
               placeholder="Bcc (comma-separated)"
               value={bcc}
               onChange={setBcc}
             />
+            </div>
           </details>
-          <textarea
-            className="lumogis-composer__body"
+          <Textarea
+            className="min-h-40"
             aria-label="Message"
             placeholder={drafting ? "Drafting…" : "Write your message"}
             value={body}
@@ -802,64 +816,70 @@ export function EmailComposer(props: EmailComposerProps): JSX.Element | null {
               point), which is also what makes the fetch lazy there. */}
           {mode !== "compose" && api.fetchQuote ? (
             <details
-              className="lumogis-composer__quote"
+              className="rounded-lg border px-3 py-2 text-sm"
               data-testid="quote-disclosure"
               open={mode === "forward"}
               onToggle={(e) => {
                 if ((e.currentTarget as HTMLDetailsElement).open) setQuoteRequested(true);
               }}
             >
-              <summary>Quoted original</summary>
-              <textarea
-                className="lumogis-composer__quote-body"
+              <summary className="cursor-pointer font-medium">Quoted original</summary>
+              <Textarea
+                className="mt-2 min-h-32"
                 aria-label="Quoted original"
                 placeholder="The original message will appear here"
                 value={quote}
                 onChange={(e) => setQuote(e.target.value)}
               />
               {mode === "forward" ? (
-                <p className="lumogis-composer__quote-note">
+                <p className="mt-1 text-xs text-muted-foreground">
                   Attachments on the original are not forwarded.
                 </p>
               ) : null}
             </details>
           ) : null}
           {drafting ? (
-            <p className="lumogis-composer__drafting" role="status">
+            <p className="text-sm text-muted-foreground" role="status">
               ✨ Drafting…
             </p>
           ) : body ? (
-            <p className="lumogis-composer__provenance">
+            <p className="text-sm text-muted-foreground">
               ✨ Drafted by Lumogis — edit before sending
             </p>
           ) : null}
           {api.refine ? (
-            <div className="lumogis-composer__refine">
+            <div className="flex flex-col gap-2">
               {refinePreview != null ? (
                 <div
-                  className="lumogis-composer__refine-preview"
+                  className="flex flex-col gap-2 rounded-lg border bg-muted/40 p-3"
                   role="group"
                   aria-label="Refined preview"
                 >
-                  <p className="lumogis-composer__refine-preview-label">Refined preview</p>
-                  <p className="lumogis-composer__refine-preview-body">{refinePreview}</p>
-                  <div className="lumogis-composer__refine-preview-actions">
-                    <button type="button" onClick={applyRefine}>
+                  <p className="text-sm font-medium">Refined preview</p>
+                  <p className="text-sm whitespace-pre-wrap">{refinePreview}</p>
+                  <div className="flex gap-2">
+                    <Button type="button" size="sm" onClick={applyRefine}>
                       Apply
-                    </button>
-                    <button type="button" onClick={() => setRefinePreview(null)}>
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setRefinePreview(null)}
+                    >
                       Discard
-                    </button>
+                    </Button>
                   </div>
                 </div>
               ) : (
                 <>
-                  <div className="lumogis-composer__refine-row" role="group" aria-label="Refine">
+                  <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Refine">
                     {REFINE_PRESETS.map((p) => (
-                      <button
+                      <Button
                         key={p.key}
                         type="button"
-                        className="lumogis-composer__refine-chip"
+                        variant="outline"
+                        size="sm"
                         disabled={refineUnavailable || refining || !body.trim()}
                         title={
                           refineUnavailable ? "Configure a local model to use Refine" : undefined
@@ -867,10 +887,10 @@ export function EmailComposer(props: EmailComposerProps): JSX.Element | null {
                         onClick={() => void runRefine({ preset: p.key })}
                       >
                         {p.label}
-                      </button>
+                      </Button>
                     ))}
-                    <input
-                      className="lumogis-composer__refine-instruction"
+                    <Input
+                      className="min-w-40 flex-1"
                       aria-label="Custom refine instruction"
                       placeholder="or describe a change…"
                       value={customInstruction}
@@ -885,23 +905,23 @@ export function EmailComposer(props: EmailComposerProps): JSX.Element | null {
                       }}
                     />
                     {preRefineBody != null ? (
-                      <button type="button" onClick={undoRefine}>
+                      <Button type="button" size="sm" variant="ghost" onClick={undoRefine}>
                         Undo
-                      </button>
+                      </Button>
                     ) : null}
                   </div>
                   {refining ? (
-                    <p className="lumogis-composer__refine-status" role="status">
+                    <p className="text-sm text-muted-foreground" role="status">
                       ✨ Refining…
                     </p>
                   ) : null}
                   {refineUnavailable ? (
-                    <p className="lumogis-composer__refine-note">
+                    <p className="text-sm text-muted-foreground">
                       Configure a local model to use Refine.
                     </p>
                   ) : null}
                   {refineError ? (
-                    <p className="lumogis-composer__refine-note" role="alert">
+                    <p className="text-sm text-destructive" role="alert">
                       {refineError}
                     </p>
                   ) : null}
@@ -918,28 +938,27 @@ export function EmailComposer(props: EmailComposerProps): JSX.Element | null {
               visually unchanged. */}
           {mode === "forward" && originalAttachments.length > 0 ? (
             <fieldset
-              className="lumogis-composer__forward-attachments"
+              className="flex flex-col gap-2 rounded-lg border px-3 py-2"
               data-testid="forward-attachments"
             >
-              <legend>Attachments on the original</legend>
+              <legend className="px-1 text-sm font-medium">Attachments on the original</legend>
               {originalAttachments.map((row) => (
-                <label key={row.part_index} className="lumogis-composer__forward-attachment">
-                  <input
-                    type="checkbox"
+                <Label key={row.part_index} className="gap-2 font-normal">
+                  <Checkbox
                     checked={forwardPartIndexes.includes(row.part_index)}
-                    onChange={(e) =>
+                    onCheckedChange={(checked) =>
                       setForwardPartIndexes((current) =>
-                        e.target.checked
+                        checked
                           ? [...current, row.part_index]
                           : current.filter((i) => i !== row.part_index),
                       )
                     }
                   />
                   <span>{row.filename}</span>
-                  <span className="lumogis-composer__forward-attachment-size">
+                  <span className="text-xs text-muted-foreground">
                     {formatBytes(row.size_bytes)}
                   </span>
-                </label>
+                </Label>
               ))}
             </fieldset>
           ) : null}
@@ -953,7 +972,7 @@ export function EmailComposer(props: EmailComposerProps): JSX.Element | null {
               disabled={dictating || refining}
             />
           ) : null}
-          <div className="lumogis-composer__actions">
+          <div className="flex flex-wrap items-center gap-2">
             {api.transcribeVoice ? (
               <VoiceDictationButton
                 transcribe={api.transcribeVoice}
@@ -964,9 +983,8 @@ export function EmailComposer(props: EmailComposerProps): JSX.Element | null {
                 }}
               />
             ) : null}
-            <button
+            <Button
               type="button"
-              className="lumogis-composer__review"
               disabled={
                 // LUM-698: a note-less forward is a legitimate send — the
                 // forwarded content IS the message — so forward mode enables on
@@ -980,22 +998,20 @@ export function EmailComposer(props: EmailComposerProps): JSX.Element | null {
               onClick={() => void goToConfirm()}
             >
               Review
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              className="lumogis-composer__cancel"
+              variant="ghost"
               onClick={() => {
                 // LUM-793: reachable after Back from a failed send, where the text is
                 // just as unrecoverable as it is on Escape. Less reflexive than Escape,
                 // but the acceptance criterion is "Escape/close", and a confirm the user
                 // only ever sees after a real failure is cheap.
-                if (sendStatus === "failed" && !confirmDiscardAfterFailure()) return;
-                cancelPendingSend();
-                props.onClose();
+                requestClose();
               }}
             >
               Cancel
-            </button>
+            </Button>
           </div>
         </div>
       ) : (
@@ -1045,6 +1061,32 @@ export function EmailComposer(props: EmailComposerProps): JSX.Element | null {
           }}
         />
       )}
-    </dialog>
+        {/* LUM-793: shown only after a failed send (see requestClose). */}
+        <AlertDialog open={discardOpen} onOpenChange={setDiscardOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Discard this message?</AlertDialogTitle>
+              <AlertDialogDescription>
+                It hasn’t been sent, and closing will lose what you wrote. Use Save to Drafts if
+                you want to keep it.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Keep editing</AlertDialogCancel>
+              <AlertDialogAction
+                variant="destructive"
+                onClick={() => {
+                  setDiscardOpen(false);
+                  cancelPendingSend();
+                  props.onClose();
+                }}
+              >
+                Discard
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </DialogContent>
+    </Dialog>
   );
 }

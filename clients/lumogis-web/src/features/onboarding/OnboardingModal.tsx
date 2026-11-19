@@ -5,12 +5,20 @@ import { useCallback, useMemo, useRef, useState, type JSX } from "react";
 import { useNavigate } from "react-router-dom";
 
 import type { InviteOnboardingHintStored } from "../../api/invites";
-import { ModalFrame } from "./modalFrame";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { OnboardingStepBody } from "./OnboardingSteps";
 
 const DEFAULT_LAST_STEP = 3;
 const INVITE_LAST_STEP = 4;
-const TITLE_ID = "lumogis-onboarding-title";
 
 export interface OnboardingModalProps {
   inviteOnboarding: InviteOnboardingHintStored | null;
@@ -59,7 +67,7 @@ export function OnboardingModal({
 
   const finish = useCallback(async () => {
     // LUM-282. `busy` disables every BUTTON, but ESC is not a button: it is a
-    // document-level keydown in `ModalFrame` (`:56-60`) that calls `onClose`
+    // dialog-level Escape handler (Dialog `onOpenChange`) that calls `onSkip`
     // unconditionally. Without this guard, pressing ESC while a completion is
     // in flight issues a second concurrent PATCH on the same mutation — and the
     // handoff below documents "one intent, one write", which would then be
@@ -133,7 +141,7 @@ export function OnboardingModal({
     try {
       await onComplete();
       handoffDoneRef.current = true;
-      navigate("/me/sources", { state: { fromOnboarding: true } });
+      navigate("/settings/sources", { state: { fromOnboarding: true } });
     } catch {
       // Intentionally swallowed — see 2 above. `completeError` carries the
       // reason to the user; rethrowing would only re-raise the unhandled
@@ -159,41 +167,55 @@ export function OnboardingModal({
   }, [finish]);
 
   return (
-    <ModalFrame open titleId={TITLE_ID} onClose={onSkip}>
-      <h2 id={TITLE_ID} style={{ marginTop: 0 }}>
-        {stepLabel}
-      </h2>
-      <OnboardingStepBody
-        step={step}
-        inviteOnboarding={inviteOnboarding}
-        onGoToSources={() => void onGoToSources()}
-        busy={busy}
-      />
-      {completeError !== null && completeError.length > 0 ? (
-        <p role="alert" style={{ color: "salmon", fontSize: "0.9rem" }}>
-          {completeError}
-        </p>
-      ) : null}
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", marginTop: "1rem" }}>
-        {step > 0 ? (
-          <button type="button" onClick={onBack} disabled={busy}>
-            Back
-          </button>
+    <Dialog
+      open
+      // LUM-993 Pass 7: the hand-made ModalFrame is now the ui Dialog. Escape (and the
+      // Skip button) dismiss and persist, exactly as before; a click outside must NOT, since
+      // dismissing is a one-way write, so pointer dismissal is off.
+      disablePointerDismissal
+      onOpenChange={(next) => {
+        if (!next) onSkip();
+      }}
+    >
+      <DialogContent showCloseButton={false} className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{stepLabel}</DialogTitle>
+          <DialogDescription className="sr-only">
+            A short tour of Lumogis. You can skip it at any time.
+          </DialogDescription>
+        </DialogHeader>
+        <OnboardingStepBody
+          step={step}
+          inviteOnboarding={inviteOnboarding}
+          onGoToSources={() => void onGoToSources()}
+          busy={busy}
+        />
+        {completeError !== null && completeError.length > 0 ? (
+          <Alert variant="destructive">
+            <AlertDescription>{completeError}</AlertDescription>
+          </Alert>
         ) : null}
-        <button type="button" onClick={onSkip} disabled={busy}>
-          Skip
-        </button>
-        {step < lastStep ? (
-          <button type="button" onClick={onNext} disabled={busy}>
-            Next
-          </button>
-        ) : (
-          <button type="button" onClick={onDone} disabled={busy}>
-            Done
-          </button>
-        )}
-      </div>
-    </ModalFrame>
+        <DialogFooter>
+          <Button type="button" variant="ghost" onClick={onSkip} disabled={busy}>
+            Skip
+          </Button>
+          {step > 0 ? (
+            <Button type="button" variant="outline" onClick={onBack} disabled={busy}>
+              Back
+            </Button>
+          ) : null}
+          {step < lastStep ? (
+            <Button type="button" onClick={onNext} disabled={busy}>
+              Next
+            </Button>
+          ) : (
+            <Button type="button" onClick={onDone} disabled={busy}>
+              Done
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

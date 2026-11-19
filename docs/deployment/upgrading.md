@@ -59,6 +59,19 @@ If you forget, **Admin → Diagnostics** shows the warning `compose_file_stale` 
 
 ---
 
+## Turn on speech-to-text after an update
+
+New installs from the Release files have speech-to-text on; **an update does not switch it on** for an install you already have (it is a download of about 1.1 GB and about 3.3 GB of disk, see [Speech-to-text](quickstart.md#speech-to-text)). To turn it on, download the `docker-compose.yml` of the release you run (it carries the speech engine), keep your `.env`, and add these lines to `.env`. Add `stt` to an existing `COMPOSE_PROFILES` line (for example `COMPOSE_PROFILES=stt,graph`) rather than writing a second line, which would replace the first:
+
+```
+COMPOSE_PROFILES=stt
+STT_BACKEND=whisper_sidecar
+STT_SIDECAR_URL=http://lumogis-stt:8000
+STT_MODEL=Systran/faster-whisper-base.en
+```
+
+Then run `docker compose up -d`. Lumogis installs the speech model itself. Phones and other computers need **Admin → Secure address** before the microphone works there. To turn it off again: remove `stt` from `COMPOSE_PROFILES`, set `STT_BACKEND=none`, and run `docker compose stop lumogis-stt && docker compose rm -f lumogis-stt && docker compose up -d`.
+
 ## Choosing the version
 
 `LUMOGIS_VERSION` in `.env` decides which images Compose pulls:
@@ -101,7 +114,7 @@ The `backup` service runs a snapshot every night (03:00, `TZ` in `.env`) into `B
 | --- | --- |
 | Back up now | `docker compose run --rm backup /scripts/backup/backup.sh run` |
 | List snapshots | `ls ai-workspace/backups/snapshots/` |
-| Restore one | `docker compose stop orchestrator lumogis-web` then `docker compose run --rm -it backup /scripts/backup/restore.sh <YYYYMMDD-HHMMSS> --yes`, then `docker compose up -d` |
+| Restore one | `docker compose stop orchestrator lumogis-web falkordb` then `docker compose run --rm --no-deps -it backup /scripts/backup/restore.sh <YYYYMMDD-HHMMSS> --yes`, then `docker compose up -d`. Stop FalkorDB first even when the graph is off (the command then skips it): a running FalkorDB would save its graph over the restored one, and `--no-deps` keeps `run` from starting it again. |
 
 Keep a copy of `.env` somewhere safe as well: the backup does not include it, and it holds the key that decrypts saved passwords.
 
@@ -123,9 +136,15 @@ git pull && make update
 
 `make update` records the running images for `make rollback`, pulls the images it does not build, rebuilds the Lumogis images, copies capture media and the stop-entities list out of the old container, restarts and checks health. `make backup` and `make restore SNAPSHOT=<YYYYMMDD-HHMMSS>` run the commands above.
 
+`make update` keeps the images it replaces (tagged `lumogis-rollback/…`) until the next successful update, so `make rollback` works offline. They take about as much disk as the current Lumogis images; `docker image prune -a` deletes them. The `lumogis-rollback/<project>/<service>:<time>` names are made by `make update` on purpose; leave them while you may still need `make rollback`.
+
+- If an update fails its health check and you run `make update` again while the stack is still unhealthy, the rollback still goes back to the version from before the first attempt, and the update says so on its last line. If the stack became healthy in the meantime (a slow first start), the next update records the images running then.
+- Rollback also returns Postgres and Qdrant to their previous images. If the update changed their version, restore the backup after the rollback (`make restore`).
+- A `docker compose build` without `up` leaves the running containers on images that no longer exist. `make update` then stops and tells you to run `make build` first.
+
 ### Moving a git checkout to the two release files
 
-The release files cover the default stack. Installs that use LibreChat (`COMPOSE_PROFILES=librechat`) or the GPU, speech or LiteLLM overlays stay on a checkout for now.
+The release files cover the default stack. Installs that use LibreChat (`COMPOSE_PROFILES=librechat`) or the GPU or LiteLLM overlays stay on a checkout for now.
 
 0. Bring the checkout to the current release first: `git pull && make update`. This copies capture media and the stop-entities list out of the old orchestrator container, which `docker compose down` would delete.
 1. Back up: `make backup`.

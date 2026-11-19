@@ -292,3 +292,189 @@ def test_adapter_transcribe_no_api_key_in_logs(
     ad.transcribe(b"x", "audio/webm", language=None, user_id="u")
     joined = " ".join(r.getMessage() for r in caplog.records)
     assert "SECRETKEY" not in joined
+
+
+# ── LUM-995: model check / install and typed errors ───────────────────────────
+
+import httpx  # noqa: E402
+from ports.speech_to_text import SpeechModelInstaller  # noqa: E402
+from ports.speech_to_text import SttModelMissing  # noqa: E402
+from ports.speech_to_text import SttModelUnknown  # noqa: E402
+from ports.speech_to_text import SttUnreachable  # noqa: E402
+
+_MODEL = "Systran/faster-whisper-base.en"
+_NOT_INSTALLED_BODY = (
+    '{"detail":"Model \'Systran/faster-whisper-small.en\' is not installed locally. '
+    'You can download the model using `POST /v1/models`"}'
+)
+
+
+def _adapter(api_key: str | None = None, install_timeout_sec: int = 900):
+    return WhisperSidecarSpeechToTextAdapter(
+        base_url="http://127.0.0.1:7",
+        health_path="/health",
+        transcribe_path="/v1/audio/transcriptions",
+        http_timeout_sec=30,
+        ping_timeout_sec=2,
+        api_key=api_key,
+        install_timeout_sec=install_timeout_sec,
+    )
+
+
+def test_model_installed_200_true(monkeypatch: pytest.MonkeyPatch) -> None:
+    ctor = _httpx_client_mock(post_return=None, get_return=MagicMock(status_code=200))
+    inst = _patch_httpx_client(monkeypatch, ctor)
+    assert _adapter().model_installed(_MODEL) is True
+    assert inst.get.call_args[0][0] == f"http://127.0.0.1:7/v1/models/{_MODEL}"
+
+
+def test_model_installed_404_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    ctor = _httpx_client_mock(post_return=None, get_return=MagicMock(status_code=404))
+    _patch_httpx_client(monkeypatch, ctor)
+    assert _adapter().model_installed(_MODEL) is False
+
+
+def test_model_installed_connect_error_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    ctor = _httpx_client_mock(post_return=None, get_return=MagicMock(status_code=200))
+    inst = _patch_httpx_client(monkeypatch, ctor)
+    inst.get.side_effect = httpx.ConnectError("x")
+    with pytest.raises(SttUnreachable):
+        _adapter().model_installed(_MODEL)
+
+
+def test_model_installed_other_status_is_value_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    resp = MagicMock(status_code=500, text="boom")
+    ctor = _httpx_client_mock(post_return=None, get_return=resp)
+    _patch_httpx_client(monkeypatch, ctor)
+    with pytest.raises(ValueError, match="HTTP 500"):
+        _adapter().model_installed(_MODEL)
+
+
+def test_model_check_read_timeout_is_unreachable_not_a_download_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctor = _httpx_client_mock(post_return=None, get_return=MagicMock(status_code=200))
+    inst = _patch_httpx_client(monkeypatch, ctor)
+    inst.get.side_effect = httpx.ReadTimeout("busy")
+    with pytest.raises(SttUnreachable):
+        _adapter().model_installed(_MODEL)
+
+
+@pytest.mark.parametrize("status", [200, 201])
+def test_install_model_200_and_201_ok(monkeypatch: pytest.MonkeyPatch, status: int) -> None:
+    ctor = _httpx_client_mock(post_return=MagicMock(status_code=status))
+    inst = _patch_httpx_client(monkeypatch, ctor)
+    _adapter().install_model(_MODEL)
+    assert inst.post.call_args[0][0] == f"http://127.0.0.1:7/v1/models/{_MODEL}"
+
+
+def test_install_model_404_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
+    ctor = _httpx_client_mock(post_return=MagicMock(status_code=404))
+    _patch_httpx_client(monkeypatch, ctor)
+    with pytest.raises(SttModelUnknown):
+        _adapter().install_model(_MODEL)
+
+
+def test_install_model_5xx_carries_status_and_body(monkeypatch: pytest.MonkeyPatch) -> None:
+    ctor = _httpx_client_mock(post_return=MagicMock(status_code=507, text="no space left"))
+    _patch_httpx_client(monkeypatch, ctor)
+    with pytest.raises(ValueError, match="507.*no space left"):
+        _adapter().install_model(_MODEL)
+
+
+def test_install_model_uses_install_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    ctor = _httpx_client_mock(post_return=MagicMock(status_code=200))
+    inst = _patch_httpx_client(monkeypatch, ctor)
+    _adapter(install_timeout_sec=1234).install_model(_MODEL)
+    tout = inst.post.call_args[1]["timeout"]
+    assert tout.read == 1234.0
+    assert tout.connect == 2.0
+
+
+def test_install_model_connect_error_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    ctor = _httpx_client_mock(post_return=None)
+    inst = _patch_httpx_client(monkeypatch, ctor)
+    inst.post.side_effect = httpx.ConnectTimeout("x")
+    with pytest.raises(SttUnreachable):
+        _adapter().install_model(_MODEL)
+
+
+def test_model_calls_send_bearer_and_never_log_it(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    ctor = _httpx_client_mock(
+        post_return=MagicMock(status_code=200), get_return=MagicMock(status_code=200)
+    )
+    inst = _patch_httpx_client(monkeypatch, ctor)
+    caplog.set_level(logging.DEBUG)
+    ad = _adapter(api_key="SECRETKEY")
+    ad.model_installed(_MODEL)
+    ad.install_model(_MODEL)
+    assert inst.get.call_args[1]["headers"]["Authorization"] == "Bearer SECRETKEY"
+    assert inst.post.call_args[1]["headers"]["Authorization"] == "Bearer SECRETKEY"
+    assert "SECRETKEY" not in " ".join(r.getMessage() for r in caplog.records)
+
+
+def test_transcribe_404_not_installed_raises_model_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    _purge_stt()
+    resp = MagicMock(status_code=404, text=_NOT_INSTALLED_BODY)
+    ctor = _httpx_client_mock(post_return=resp)
+    _patch_httpx_client(monkeypatch, ctor)
+    with pytest.raises(SttModelMissing):
+        _adapter().transcribe(b"x", "audio/webm", language=None, user_id="u")
+
+
+def test_transcribe_route_404_is_not_model_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Both 404s side by side: an unknown route (``{"detail":"Not Found"}``) is a plain error."""
+    _purge_stt()
+    resp = MagicMock(status_code=404, text='{"detail":"Not Found"}')
+    ctor = _httpx_client_mock(post_return=resp)
+    _patch_httpx_client(monkeypatch, ctor)
+    with pytest.raises(ValueError, match="HTTP 404"):
+        _adapter().transcribe(b"x", "audio/webm", language=None, user_id="u")
+
+
+def test_transcribe_connect_error_raises_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    _purge_stt()
+    ctor = _httpx_client_mock(post_return=None)
+    inst = _patch_httpx_client(monkeypatch, ctor)
+    inst.post.side_effect = httpx.ConnectError("refused")
+    with pytest.raises(SttUnreachable):
+        _adapter().transcribe(b"x", "audio/webm", language=None, user_id="u")
+
+
+def test_transcribe_read_timeout_stays_a_plain_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A slow transcription is not an unreachable engine."""
+    _purge_stt()
+    ctor = _httpx_client_mock(post_return=None)
+    inst = _patch_httpx_client(monkeypatch, ctor)
+    inst.post.side_effect = httpx.ReadTimeout("slow")
+    with pytest.raises(httpx.ReadTimeout):
+        _adapter().transcribe(b"x", "audio/webm", language=None, user_id="u")
+
+
+def test_adapter_satisfies_speech_model_installer() -> None:
+    from adapters.fake_stt import FakeSpeechToTextAdapter
+
+    assert isinstance(_adapter(), SpeechModelInstaller)
+    assert not isinstance(FakeSpeechToTextAdapter(), SpeechModelInstaller)
+
+
+def test_stt_model_default_is_speaches_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("STT_MODEL", raising=False)
+    assert config.get_stt_model() == "Systran/faster-whisper-base.en"
+    monkeypatch.setenv("STT_MODEL", "  ")
+    assert config.get_stt_model() == "Systran/faster-whisper-base.en"
+    monkeypatch.setenv("STT_MODEL", "Systran/faster-whisper-base")
+    assert config.get_stt_model() == "Systran/faster-whisper-base"
+
+
+def test_install_timeout_default_and_invalid(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("STT_MODEL_INSTALL_TIMEOUT_SEC", raising=False)
+    assert config.get_stt_model_install_timeout_sec() == 900
+    for bad in ("0", "abc"):
+        monkeypatch.setenv("STT_MODEL_INSTALL_TIMEOUT_SEC", bad)
+        with pytest.raises(RuntimeError):
+            config.get_stt_model_install_timeout_sec()

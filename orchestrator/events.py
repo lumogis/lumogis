@@ -32,6 +32,12 @@ class Event:
     NOTE_CAPTURED = "on_note_captured"
     AUDIO_TRANSCRIBED = "on_audio_transcribed"
     ENTITY_MERGED = "on_entity_merged"
+    # LUM-966: fired (fire_background) after a member's delete of an entry commits,
+    # and again by the retry sweep until both arms are cleared. Kwargs: entity_id,
+    # user_id, projection_ids (ids only, never names). Subscribers: the Core
+    # Qdrant listener (every graph mode) and the graph writer (inprocess) or the
+    # webhook dispatcher (service).
+    ENTITY_DELETED = "on_entity_deleted"
 
     # LUM-586: fired by the document-share entity cascade (off the request path,
     # from the share_document background job) once the Postgres+Qdrant shared

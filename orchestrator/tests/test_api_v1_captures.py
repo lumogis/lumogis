@@ -762,6 +762,40 @@ def test_transcribe_stt_disabled_503(client: TestClient, monkeypatch: pytest.Mon
     assert r.json()["detail"]["code"] == "stt_disabled"
 
 
+@pytest.mark.parametrize(
+    "exc_name, code",
+    [("SttModelMissing", "stt_model_missing"), ("SttUnreachable", "stt_unreachable")],
+)
+def test_capture_transcribe_503_new_codes(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, exc_name: str, code: str
+):
+    """LUM-995: the capture route passes the new codes through, like the voice route."""
+    import ports.speech_to_text as port
+
+    from services import stt_model_readiness
+
+    monkeypatch.setattr(stt_model_readiness, "note_model_missing", lambda: None)
+    _pop_stt_adapter()
+    monkeypatch.setenv("STT_BACKEND", "fake_stt")
+    monkeypatch.setenv("STT_MAX_AUDIO_BYTES", "26214400")
+
+    import config as cfg
+
+    class Engine:
+        def ping(self) -> bool:
+            return True
+
+        def transcribe(self, *a, **k):
+            raise getattr(port, exc_name)("x")
+
+    cfg._instances["speech_to_text:fake_stt"] = Engine()
+    cap_id = client.post("/api/v1/captures", json={"text": "n"}).json()["capture_id"]
+    att_id = _upload_audio_attachment(client, cap_id)
+    r = client.post(f"/api/v1/captures/{cap_id}/transcribe", json={"attachment_id": att_id})
+    assert r.status_code == 503
+    assert r.json()["detail"]["code"] == code
+
+
 def test_transcribe_stt_processing_error_503(client: TestClient, monkeypatch: pytest.MonkeyPatch):
     _pop_stt_adapter()
     monkeypatch.setenv("STT_BACKEND", "fake_stt")

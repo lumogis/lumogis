@@ -8,8 +8,9 @@
 // lists, and a fresh shared smoke stack has documents from other specs.
 //
 // NOT covered here, on purpose:
-//   - the auth-off boot: there is no auth-off Playwright lane (LUM-894 Later). It is covered in
-//     Vitest by tests/auth/singleUserBoot.test.tsx (S1-S13) and ChatPage test 14.
+//   - the boot states (first-admin setup, still starting, sign-in off): Lumogis Web no longer has
+//     an auth-off mode (LUM-981). They are covered in Vitest by tests/auth/setupBoot.test.tsx
+//     (W0-W7) and ChatPage test 14.
 //   - the server's list contents: pytest (orchestrator/tests/test_api_v1_documents.py).
 //   - whether chat really mounts the documents query and gates its stream: Vitest ChatPage
 //     tests 5 and 9.
@@ -79,8 +80,8 @@ test.describe("LUM-853 chat empty-library state", () => {
     const heading = page.getByRole("heading", { name: EMPTY_TITLE });
     await expect(heading).toBeVisible({ timeout: 30_000 });
     await page.getByRole("link", { name: "Connect a source" }).click();
-    await expect(page).toHaveURL(/\/me\/sources$/);
-    await expect(page.getByRole("heading", { name: "Sources" })).toBeVisible();
+    await expect(page).toHaveURL(/\/settings\/sources$/);
+    await expect(page.getByRole("heading", { level: 1, name: "Documents, feeds and pages" })).toBeVisible();
   });
 
   test("mobile 390x844: the empty-library state is usable", async ({ page }) => {
@@ -108,7 +109,7 @@ test.describe("LUM-853 chat empty-library state", () => {
     expect(log && h && h.y >= log.y + log.height - 1).toBeTruthy();
 
     await page.getByRole("link", { name: "Connect a source" }).click();
-    await expect(page).toHaveURL(/\/me\/sources$/);
+    await expect(page).toHaveURL(/\/settings\/sources$/);
   });
 
   test("with a document, chat is unchanged", async ({ page }) => {
@@ -117,7 +118,8 @@ test.describe("LUM-853 chat empty-library state", () => {
     await page.goto("/chat");
 
     await expect(page.getByRole("combobox", { name: "Model" })).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByText(/Lumogis chats are ephemeral/)).toBeVisible();
+    // LUM-993: the one history line replaced the old "ephemeral" sentences.
+    await expect(page.getByText("Open chats stay in this tab. Closed chats are kept as summaries in History.")).toBeVisible();
     await expect(page.getByRole("heading", { name: EMPTY_TITLE })).toHaveCount(0);
   });
 });

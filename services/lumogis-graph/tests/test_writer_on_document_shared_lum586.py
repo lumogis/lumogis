@@ -17,9 +17,16 @@ from graph import writer
 import config
 
 
+class _NoTombstones:
+    """A store whose ``entity_deletions`` lookup finds nothing (LUM-966: no entry was deleted)."""
+
+    def fetch_one(self, sql, params=None):
+        return None
+
+
 def _wire(monkeypatch, *, project_result=True):
     monkeypatch.setattr(config, "get_graph_store", lambda: MockGraphStore())
-    monkeypatch.setattr(config, "get_metadata_store", lambda: object())
+    monkeypatch.setattr(config, "get_metadata_store", lambda: _NoTombstones())
 
     calls: list[dict] = []
 

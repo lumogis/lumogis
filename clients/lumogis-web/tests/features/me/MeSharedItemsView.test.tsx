@@ -3,7 +3,7 @@
 // LUM-583 — MeSharedItemsView: lists the member's shares, per-row unshare calls
 // the correct per-type unpublish route and removes the row, empty + error states.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { ApiClient } from "../../../src/api/client";
@@ -77,12 +77,12 @@ describe("MeSharedItemsView", () => {
     expect(await screen.findByText("tax.pdf")).toBeInTheDocument();
     expect(screen.getByText("Acme Corp")).toBeInTheDocument();
 
-    // Unshare the document → confirm → DELETE /api/v1/files/7/publish.
-    await ev.click(screen.getByTestId("unshare-files:7"));
-    expect(screen.getByTestId("confirm-files:7")).toHaveTextContent(
-      /unshare this document from your household\?/i,
-    );
-    await ev.click(screen.getByTestId("confirm-unshare-files:7"));
+    // Stop sharing the document → confirm → DELETE /api/v1/files/7/publish.
+    await ev.click(screen.getByRole("button", { name: "More actions for tax.pdf" }));
+    await ev.click(await screen.findByRole("menuitem", { name: "Stop sharing" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveTextContent(/stop sharing this document\?/i);
+    await ev.click(within(dialog).getByRole("button", { name: "Stop sharing" }));
 
     await waitFor(() => {
       const del = fetchImpl.mock.calls.filter(
@@ -117,11 +117,39 @@ describe("MeSharedItemsView", () => {
     renderView(client, tokens);
 
     await screen.findByText("tax.pdf");
-    await ev.click(screen.getByTestId("unshare-files:7"));
-    await ev.click(screen.getByTestId("confirm-unshare-files:7"));
+    await ev.click(screen.getByRole("button", { name: "More actions for tax.pdf" }));
+    await ev.click(await screen.findByRole("menuitem", { name: "Stop sharing" }));
+    await ev.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Stop sharing" }));
 
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Couldn't unshare — please retry.");
     expect(alert.textContent ?? "").not.toContain("unpublish_failed");
+  });
+
+  it("Cancel in the confirm dialog unshares nothing", async () => {
+    const { client, tokens, fetchImpl } = setup();
+    const ev = userEvent.setup();
+    renderView(client, tokens);
+
+    await screen.findByText("tax.pdf");
+    await ev.click(screen.getByRole("button", { name: "More actions for tax.pdf" }));
+    await ev.click(await screen.findByRole("menuitem", { name: "Stop sharing" }));
+    await ev.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    expect(
+      fetchImpl.mock.calls.filter((c) => (c[1] as RequestInit)?.method === "DELETE"),
+    ).toHaveLength(0);
+  });
+
+  it("offers a retry when the list fails to load", async () => {
+    const { client, tokens, fetchImpl } = setup();
+    fetchImpl.mockImplementation(async (input: RequestInfo) => {
+      const url = String(input);
+      if (url.includes("/api/v1/auth/me")) return jsonResponse(200, ME);
+      return jsonResponse(500, { detail: "boom" });
+    });
+    renderView(client, tokens);
+    expect(await screen.findByRole("button", { name: "Try again" })).toBeInTheDocument();
   });
 });

@@ -10,9 +10,11 @@ Security:
 """
 
 import hmac
+import ipaddress
 import json
 import logging
 import os
+import re
 import stat
 import subprocess
 import threading
@@ -86,6 +88,47 @@ def _current_compose_file() -> str:
         except Exception:
             pass
     return _DEFAULT_COMPOSE_FILE
+
+
+_ENV_KEY = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=")
+
+
+def _project_env_keys() -> frozenset[str]:
+    """Every key assigned in /project/.env (values are never read here)."""
+    keys: set[str] = set()
+    if _PROJECT_ENV_FILE.exists():
+        try:
+            for line in _PROJECT_ENV_FILE.read_text().splitlines():
+                m = _ENV_KEY.match(line)
+                if m:
+                    keys.add(m.group(1))
+        except Exception:
+            pass
+    return frozenset(keys)
+
+
+# The keys .env had when this sidecar started: its own environment carries their
+# values from that moment (``env_file: .env`` in docker-compose.yml).
+_STARTUP_ENV_KEYS = _project_env_keys()
+
+
+def _compose_env() -> dict[str, str]:
+    """The environment for every ``docker compose`` call (LUM-989).
+
+    Compose gives the process environment precedence over the project's ``.env``.
+    This container was created with ``env_file: .env``, so its environment holds
+    the ``.env`` values of the day it started. Handing that to Compose would make a
+    later change to ``.env`` (Turn on or off of the knowledge graph, a new public
+    address) invisible to anything this sidecar recreates: ``backup`` would keep a
+    stale ``GRAPH_MODE`` and silently drop the graph from backups. So every key
+    that appears in ``.env``, now or at start-up, is removed here and Compose reads
+    it from the file itself. ``COMPOSE_FILE`` and ``RESTART_SECRET`` are read from
+    the file by their own helpers and are unaffected.
+
+    A future endpoint that runs ``docker compose`` must pass this as ``env=``.
+    """
+    drop = _STARTUP_ENV_KEYS | _project_env_keys()
+    return {k: v for k, v in os.environ.items() if k not in drop}
 
 
 # Only these services may be individually restarted.
@@ -199,6 +242,7 @@ def restart(request: Request, body: RestartRequest = RestartRequest()):
             text=True,
             timeout=120,
             cwd=_project_dir(),
+            env=_compose_env(),
         )
     except subprocess.TimeoutExpired:
         raise HTTPException(status_code=504, detail="Command timed out.")
@@ -261,6 +305,7 @@ def _run_compose_ps() -> list[dict]:
         text=True,
         timeout=_COMPOSE_PS_TIMEOUT_SEC,
         cwd=_project_dir(),
+        env=_compose_env(),
     )
     if result.returncode != 0:
         raise RuntimeError(
@@ -346,3 +391,314 @@ def stack_status(request: Request):
         "system_df_busy": system_df_busy,
         "fetched_at": fetched_at,
     }
+
+
+# ---------------------------------------------------------------------------
+# LUM-331 — secure address at home (Lumogis Home DNS)
+#
+# Four fixed operations for Core. No request input ever reaches a command line:
+# every argv below is a constant or a value this sidecar derived itself.
+# ---------------------------------------------------------------------------
+
+# Runs inside a throwaway host-network container: connect() on a UDP socket sends
+# no packet, it only asks the kernel which source address the default route uses.
+HOST_HELPER_PROGRAM = (
+    "import socket\n"
+    "s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)\n"
+    "s.connect(('1.1.1.1', 53))\n"
+    "print(s.getsockname()[0])\n"
+)
+HOST_HELPER_FLAGS = (
+    "--rm",
+    "--pull",
+    "never",
+    "--network",
+    "host",
+    "--read-only",
+    "--cap-drop",
+    "ALL",
+    "--security-opt",
+    "no-new-privileges",
+    "--user",
+    "65534:65534",
+    "--pids-limit",
+    "16",
+    "--memory",
+    "32m",
+    "--entrypoint",
+    "python3",
+)
+_OCTET = r"(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])"
+_DOTTED_QUAD = re.compile(rf"{_OCTET}\.{_OCTET}\.{_OCTET}\.{_OCTET}")
+_IMAGE_ID = re.compile(r"sha256:[0-9a-f]{64}")
+_RFC1918 = (
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+)
+
+CADDY_HOME_FILE = "/etc/caddy/home.d/home.caddy"
+CADDY_PENDING_FILE = CADDY_HOME_FILE + ".pending"
+CADDY_REJECTED_MARKER = "/tmp/lumogis-home-rejected"
+_HOME_STATUS_SCRIPT = (
+    f"test -f {CADDY_HOME_FILE}; echo $?; test -f {CADDY_REJECTED_MARKER}; echo $?"
+)
+_CADDY_EXEC_TIMEOUT_SEC = 30
+_CADDY_RESTART_TIMEOUT_SEC = 60  # compose restart: stop (10 s grace) + start
+
+# Caddy can echo config lines (including the acme-dns password) in errors.
+_REDACT = (
+    re.compile(r"(?i)(password\s+)\S+"),
+    re.compile(r'(?i)("password"\s*:\s*)"[^"]*"'),
+    re.compile(r"(?i)(x-api-key\s*[:=]\s*)\S+"),
+    re.compile(r"()[A-Za-z0-9_-]{43,}"),
+)
+
+
+def _redact(text: str) -> str:
+    for pattern in _REDACT:
+        text = pattern.sub(lambda m: m.group(1) + "***", text)
+    return text
+
+
+def _run(
+    cmd: list[str], timeout: float, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess | None:
+    try:
+        return subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout, cwd=_project_dir(), env=env
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        _log.warning("lum331: %s failed: %s", cmd[:3], exc.__class__.__name__)
+        return None
+
+
+def _caddy_exec(args: list[str]) -> subprocess.CompletedProcess | None:
+    return _run(
+        _compose_cmd(["exec", "-T", "caddy", *args]), _CADDY_EXEC_TIMEOUT_SEC, _compose_env()
+    )
+
+
+def _is_rfc1918(value: str) -> bool:
+    if not _DOTTED_QUAD.fullmatch(value):
+        return False
+    addr = ipaddress.IPv4Address(value)
+    return any(addr in net for net in _RFC1918)
+
+
+def _own_image_id() -> str | None:
+    """This sidecar's own image ID (``sha256:…``), present locally by definition.
+
+    Resolved from compose labels rather than a configured tag, because the release
+    compose builder rewrites only ``image:`` values (never env), so a configured
+    reference would name a tag a release install does not have.
+    """
+    cmd = ["docker", "ps", "-q", "--filter", "label=com.docker.compose.service=stack-control"]
+    if _COMPOSE_PROJECT:
+        cmd += ["--filter", f"label=com.docker.compose.project={_COMPOSE_PROJECT}"]
+    ps = _run(cmd, 10)
+    if ps is None or ps.returncode != 0 or not ps.stdout.split():
+        return None
+    inspect = _run(["docker", "inspect", "--format", "{{.Image}}", ps.stdout.split()[0]], 10)
+    if inspect is None or inspect.returncode != 0:
+        return None
+    image = inspect.stdout.strip()
+    return image if _IMAGE_ID.fullmatch(image) else None
+
+
+@app.get("/host-lan-address")
+def host_lan_address(request: Request):
+    """The host's home-network IPv4 (RFC1918), or ``null`` with a reason."""
+    _check_token(request)
+    info = _run(["docker", "info", "--format", "{{.OperatingSystem}}"], 10)
+    if info is not None and "docker desktop" in info.stdout.lower():
+        # Host networking there is the VM's, not the Mac's or PC's home network.
+        return {"address": None, "reason": "docker_desktop"}
+    image = _own_image_id()
+    if image is None:
+        return {"address": None, "reason": "helper_image_missing"}
+    result = _run(["docker", "run", *HOST_HELPER_FLAGS, image, "-c", HOST_HELPER_PROGRAM], 15)
+    if result is None or result.returncode != 0:
+        return {"address": None, "reason": "failed"}
+    out = result.stdout.strip()
+    if _is_rfc1918(out):
+        return {"address": out, "reason": None}
+    return {"address": None, "reason": "not_rfc1918" if _DOTTED_QUAD.fullmatch(out) else "failed"}
+
+
+@app.post("/caddy/apply")
+def caddy_apply(request: Request):
+    """Validate ``home.caddy.pending`` inside the Caddy container before Core uses it."""
+    _check_token(request)
+    running = _caddy_exec(["true"])
+    if running is None or running.returncode != 0:
+        return {"ok": False, "code": "caddy_unreachable"}
+    present = _caddy_exec(["test", "-f", CADDY_PENDING_FILE])
+    if present is None or present.returncode != 0:
+        # Core wrote the file, so Caddy not seeing it means the shared volume is missing.
+        return {"ok": False, "code": "caddy_volume_missing"}
+    check = _caddy_exec(["/etc/caddy/validate-home.sh"])
+    if check is None:
+        return {"ok": False, "code": "caddy_unreachable"}
+    if check.returncode in (126, 127):
+        return {"ok": False, "code": "caddy_image_outdated"}
+    if check.returncode != 0:
+        return {"ok": False, "code": "caddy_snippet_rejected"}
+    return {"ok": True, "code": "validated"}
+
+
+@app.post("/caddy/reload")
+def caddy_reload(request: Request):
+    """Graceful ``caddy reload`` of the main Caddyfile. Never returns stderr."""
+    _check_token(request)
+    result = _caddy_exec(
+        ["caddy", "reload", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+    )
+    if result is None or result.returncode != 0:
+        detail = _redact((result.stderr if result else "")[-800:])
+        _log.warning("lum331: caddy reload failed: %s", detail)
+        return {"ok": False, "code": "reload_failed"}
+    # The full Caddyfile (household import included) is live again, so a start
+    # without the household site is over: clear preflight.sh's marker, or Core
+    # would re-apply the site on every upkeep run.
+    _caddy_exec(["rm", "-f", CADDY_REJECTED_MARKER])
+    return {"ok": True, "code": "reloaded"}
+
+
+@app.post("/caddy/restart")
+def caddy_restart(request: Request):
+    """Restart the Caddy container (LUM-1004). Never returns stderr.
+
+    A ``caddy reload`` keeps a still-valid certificate in Caddy's in-memory cache
+    even when the site now names another CA (seen live on 2026-11-18, LUM-998
+    step 0), so a CA switch needs a restart: Caddy then loads the certificate for
+    the configured issuer from storage, or obtains one. A dedicated endpoint, not
+    an entry in ``_ALLOWED_SERVICES`` (LUM-331 kept caddy out of the generic
+    restart on purpose); takes no input.
+    """
+    _check_token(request)
+    result = _run(_compose_cmd(["restart", "caddy"]), _CADDY_RESTART_TIMEOUT_SEC, _compose_env())
+    if result is None or result.returncode != 0:
+        detail = _redact((result.stderr if result else "")[-800:])
+        _log.warning("lum1004: caddy restart failed: %s", detail)
+        return {"ok": False, "code": "restart_failed"}
+    return {"ok": True, "code": "restarted"}
+
+
+@app.get("/caddy/home-status")
+def caddy_home_status(request: Request):
+    """Whether Caddy sees ``home.caddy`` and whether its preflight rejected it at start."""
+    _check_token(request)
+    result = _caddy_exec(["sh", "-c", _HOME_STATUS_SCRIPT])
+    if result is None or result.returncode != 0:
+        return {"present": None, "rejected_at_start": None, "reachable": False}
+    lines = result.stdout.split()
+    if len(lines) != 2:
+        return {"present": None, "rejected_at_start": None, "reachable": False}
+    return {"present": lines[0] == "0", "rejected_at_start": lines[1] == "0", "reachable": True}
+
+
+# ---------------------------------------------------------------------------
+# LUM-989 — knowledge graph on / off for installs from the Release files
+#
+# Two fixed sequences for Core, which decides (install kind, memory, consent) and
+# edits .env first; this sidecar only runs the Compose commands. No request input
+# reaches a command line, and nothing but ``{ok, code}`` is returned (stderr goes
+# to the redacted log).
+#
+# Each sequence is one request so that Core being recreated by its own last step
+# cannot cut it short. The request holds one worker thread for up to about 1700 s
+# (the image pull dominates); one lock admits one sequence at a time.
+# ---------------------------------------------------------------------------
+
+GRAPH_SERVICES = ("falkordb", "lumogis-graph")
+# Services that read the graph settings from .env at creation: the backup job
+# (GRAPH_MODE, FALKORDB_URL pick its stores) and Core (registry discovery).
+GRAPH_RECREATE = ("backup", "orchestrator")
+_GRAPH_PULL_TIMEOUT_SEC = 1500
+_GRAPH_STOP_TIMEOUT_SEC = 120
+_GRAPH_RM_TIMEOUT_SEC = 60
+_GRAPH_RECREATE_TIMEOUT_SEC = 120
+
+_graph_lock = threading.Lock()
+
+
+def _graph_step(label: str, args: list[str], timeout: float) -> str | None:
+    """Run one ``docker compose`` step; return None on success, else a failure code."""
+    cmd = _compose_cmd(args)
+    _log.info("lum989: %s: %s", label, " ".join(cmd))
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=_project_dir(),
+            env=_compose_env(),
+        )
+    except subprocess.TimeoutExpired:
+        _log.warning("lum989: %s timed out after %ss", label, timeout)
+        return "timeout"
+    except OSError as exc:
+        _log.warning("lum989: %s could not start: %s", label, exc.__class__.__name__)
+        return "compose_failed"
+    if result.returncode != 0:
+        _log.warning(
+            "lum989: %s exited %s: %s",
+            label,
+            result.returncode,
+            _redact((result.stderr or "")[-400:]),
+        )
+        return "compose_failed"
+    return None
+
+
+def _graph_sequence(steps: list[tuple[str, list[str], float]], ok_code: str) -> dict:
+    if not _graph_lock.acquire(blocking=False):
+        return {"ok": False, "code": "busy"}
+    try:
+        for label, args, timeout in steps:
+            failure = _graph_step(label, args, timeout)
+            if failure is not None:
+                return {"ok": False, "code": failure}
+        return {"ok": True, "code": ok_code}
+    finally:
+        _graph_lock.release()
+
+
+_GRAPH_RECREATE_STEP = (
+    "recreate",
+    ["up", "-d", "--no-build", "--no-deps", "--force-recreate", *GRAPH_RECREATE],
+    _GRAPH_RECREATE_TIMEOUT_SEC,
+)
+
+
+@app.post("/graph/start")
+def graph_start(request: Request):
+    """Start FalkorDB and lumogis-graph, then recreate backup and Core."""
+    _check_token(request)
+    return _graph_sequence(
+        [
+            ("start", ["up", "-d", "--no-build", *GRAPH_SERVICES], _GRAPH_PULL_TIMEOUT_SEC),
+            _GRAPH_RECREATE_STEP,
+        ],
+        "started",
+    )
+
+
+@app.post("/graph/stop")
+def graph_stop(request: Request):
+    """Stop and remove the graph containers (data volume kept), recreate backup and Core.
+
+    ``down`` skips services of an inactive profile, and Turn off has already taken
+    ``graph`` out of COMPOSE_PROFILES, so the services are named (proven to work).
+    """
+    _check_token(request)
+    return _graph_sequence(
+        [
+            ("stop", ["stop", *GRAPH_SERVICES], _GRAPH_STOP_TIMEOUT_SEC),
+            ("rm", ["rm", "-f", *GRAPH_SERVICES], _GRAPH_RM_TIMEOUT_SEC),
+            _GRAPH_RECREATE_STEP,
+        ],
+        "stopped",
+    )

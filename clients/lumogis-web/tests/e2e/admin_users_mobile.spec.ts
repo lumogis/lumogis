@@ -26,13 +26,15 @@ async function expectNoPageHorizontalOverflow(page: Page): Promise<void> {
   ).toBeLessThanOrEqual(clientW + 1);
 }
 
-/** Navigate to /admin/users; returns true when the admin panel actually loaded
- * (a non-admin smoke user is bounced to /chat — mirrors the API 403). */
+/** Navigate to /settings/members; returns true when the admin panel actually loaded
+ * (a non-admin smoke user is sent to Profile — mirrors the API 403). */
 async function gotoAdminUsers(page: Page): Promise<boolean> {
   await loginWithSmokeCredentials(page);
-  await page.goto("/admin/users");
-  await page.waitForURL(/\/admin\/|\/chat/, { timeout: 60_000 });
-  return page.url().includes("/admin");
+  await page.goto("/settings/members");
+  await page.waitForURL(/\/settings\/(members|profile)$/, { timeout: 60_000 });
+  // A non-admin is sent on to Profile once the user loads; wait for a title so it has settled.
+  await page.getByRole("heading", { level: 1 }).waitFor({ timeout: 60_000 });
+  return page.url().includes("/settings/members");
 }
 
 test.describe("LUM-545 mobile admin users table", () => {
@@ -42,13 +44,13 @@ test.describe("LUM-545 mobile admin users table", () => {
 
   test("users table renders with member-count summary, no horizontal overflow", async ({ page }) => {
     if (!(await gotoAdminUsers(page))) {
-      test.skip(true, "Smoke user is not admin — cannot assert /admin/users mobile table.");
+      test.skip(true, "Smoke user is not admin — cannot assert /settings/members mobile table.");
       return;
     }
 
     const main = page.locator("#lumogis-main");
     await expect(main).toBeVisible();
-    await expect(main.getByRole("heading", { name: "Users" })).toBeVisible();
+    await expect(main.getByRole("heading", { level: 1, name: "Members and invites" })).toBeVisible();
     await expect(page.getByRole("table")).toBeVisible();
     // Member-count summary: "<n> member(s) · <m> admin(s)".
     await expect(page.getByText(/\d+ members? · \d+ admins?/)).toBeVisible();
@@ -56,27 +58,27 @@ test.describe("LUM-545 mobile admin users table", () => {
     await expectNoPageHorizontalOverflow(page);
   });
 
-  test("promote/demote raises a confirm dialog (dismiss-only — no mutation)", async ({ page }) => {
+  test("promote/demote asks for confirmation (cancel-only — no mutation)", async ({ page }) => {
     if (!(await gotoAdminUsers(page))) {
       test.skip(true, "Smoke user is not admin.");
       return;
     }
 
-    const roleButton = page.getByRole("button", { name: /^make (admin|member)$/i }).first();
-    if ((await roleButton.count()) === 0 || (await roleButton.isDisabled())) {
+    // Open the first row's "…" menu and pick the role item, which must be enabled.
+    await page.getByRole("button", { name: /more actions/i }).first().click();
+    const roleItem = page.getByRole("menuitem", { name: /^make (admin|member)$/i }).first();
+    if ((await roleItem.getAttribute("aria-disabled")) === "true") {
       // No eligible row (single-user household, or only the last admin present).
       test.skip(true, "No enabled promote/demote control available in this household.");
       return;
     }
 
-    // Capture and DISMISS the confirm so no role change is committed to the live stack.
-    let dialogSeen = false;
-    page.once("dialog", (dialog) => {
-      dialogSeen = true;
-      void dialog.dismiss();
-    });
-    await roleButton.click();
-    await expect.poll(() => dialogSeen).toBe(true);
+    // The confirmation is an alert dialog. CANCEL it so no role change reaches the live stack.
+    await roleItem.click();
+    const dialog = page.getByRole("alertdialog");
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await expect(dialog).toBeHidden();
   });
 
   test("invite member affordance visible (LUM-578)", async ({ page }) => {
@@ -89,7 +91,9 @@ test.describe("LUM-545 mobile admin users table", () => {
     await expect(inviteButton).toBeVisible();
     await inviteButton.click();
     await expect(page.getByRole("heading", { name: "Invite member" })).toBeVisible();
-    await page.getByRole("button", { name: "Close" }).click();
+    // The dialog has an X and a footer Close; Escape closes it either way.
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).toBeHidden();
 
     await expectNoPageHorizontalOverflow(page);
   });

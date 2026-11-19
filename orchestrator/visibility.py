@@ -31,6 +31,7 @@ See also: ``.cursor/plans/personal_shared_system_memory_scopes.plan.md``
 
 from __future__ import annotations
 
+import re
 from typing import Literal
 from typing import Optional
 
@@ -78,9 +79,14 @@ def _validate_scope_filter(scope_filter: Optional[str]) -> Optional[Scope]:
 # ─── Postgres ────────────────────────────────────────────────────────────────
 
 
+_QUALIFIER_RE = re.compile(r"[a-z_][a-z0-9_]*")
+
+
 def visible_filter(
     user: UserContext,
     scope_filter: Optional[str] = None,
+    *,
+    qualifier: str = "",
 ) -> tuple[str, tuple]:
     """Return ``(parenthesised SQL clause, params tuple)``.
 
@@ -97,29 +103,60 @@ def visible_filter(
         scope_filter='shared'   →  (scope = 'shared')
         scope_filter='system'   →  (scope = 'system')
 
+    ``qualifier`` prefixes the ``scope`` / ``user_id`` columns (``"e"`` →
+    ``e.scope``), same contract as :func:`authored_by_filter`. Use it inside a
+    join, where an unqualified ``user_id`` raises ``42702 ambiguous column`` at
+    runtime; never string-replace columns in the returned clause (LUM-161). It
+    is spliced into SQL, so it must be a lower-case identifier.
+
     Always parenthesised so callers can ``AND`` it with their own
     predicates without precedence accidents. Pass-through to a fixed
     set of ``%s`` placeholders — never f-strings into the params.
     """
+    if qualifier and not _QUALIFIER_RE.fullmatch(qualifier):
+        raise ValueError(f"invalid qualifier={qualifier!r}; must match [a-z_][a-z0-9_]*")
+    p = f"{qualifier}." if qualifier else ""
     sf = _validate_scope_filter(scope_filter)
     me = user.user_id
     allows_shared = _effective_allows_shared(user)
     if sf == "personal":
-        return ("(scope = 'personal' AND user_id = %s)", (me,))
+        return (f"({p}scope = 'personal' AND {p}user_id = %s)", (me,))
     if sf == "shared":
         if not allows_shared:
             return ("(FALSE)", ())
-        return ("(scope = 'shared')", ())
+        return (f"({p}scope = 'shared')", ())
     if sf == "system":
-        return ("(scope = 'system')", ())
+        return (f"({p}scope = 'system')", ())
     if allows_shared:
         return (
-            "((scope = 'personal' AND user_id = %s) OR scope IN ('shared','system'))",
+            f"(({p}scope = 'personal' AND {p}user_id = %s) OR {p}scope IN ('shared','system'))",
             (me,),
         )
     return (
-        "((scope = 'personal' AND user_id = %s) OR scope = 'system')",
+        f"(({p}scope = 'personal' AND {p}user_id = %s) OR {p}scope = 'system')",
         (me,),
+    )
+
+
+def not_hidden_sql(viewer_id: str, qualifier: str = "") -> tuple[str, tuple]:
+    """Return ``(SQL clause, params)``: the entry is not hidden by ``viewer_id`` (LUM-966).
+
+    A member's **Hide** of another member's shared entry lives in
+    ``entity_hidden``, keyed by the owner's source row, so one hide covers the
+    source and its projection. Hide is a per-viewer view preference, **not**
+    access control: the hider could already see the row. Every member-facing read
+    of the household-visible ``entities`` set ANDs this with :func:`visible_filter`.
+
+    ``qualifier`` is a lower-case alias (``"e"`` → ``e.published_from``), same
+    contract as :func:`visible_filter`; never request data.
+    """
+    if qualifier and not _QUALIFIER_RE.fullmatch(qualifier):
+        raise ValueError(f"invalid qualifier={qualifier!r}; must match [a-z_][a-z0-9_]*")
+    p = f"{qualifier}." if qualifier else ""
+    return (
+        "NOT EXISTS (SELECT 1 FROM entity_hidden h WHERE h.user_id = %s "
+        f"AND h.entity_key = coalesce({p}published_from, {p}entity_id))",
+        (viewer_id,),
     )
 
 

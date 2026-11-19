@@ -8,9 +8,10 @@ follow-up. The check is defence-in-depth on top of the
 
 * When ``LUMOGIS_PUBLIC_ORIGIN`` is set, browser writes whose ``Origin``
   header does not match are rejected with 403 *before* the route runs.
-* When ``LUMOGIS_PUBLIC_ORIGIN`` is unset (early bring-up), the check
-  is a no-op — the cookie's ``SameSite=Strict`` attribute remains the
-  only defence.
+* When ``LUMOGIS_PUBLIC_ORIGIN`` is unset (LUM-981), a present ``Origin``
+  must equal the request's own scheme plus ``Host`` (see
+  ``test_csrf_derived_origin.py``); an absent ``Origin`` passes, and the
+  cookie's ``SameSite=Strict`` attribute remains the only defence there.
 * ``Authorization: Bearer ...`` callers are exempt (browsers do not
   auto-attach Bearer headers; CSRF cannot mint one).
 * GET / HEAD / OPTIONS are exempt (no state change).
@@ -118,8 +119,10 @@ def test_refresh_403_when_origin_missing_and_pinned(users_store, auth_env, origi
     assert resp.status_code == 403
 
 
-def test_refresh_passthrough_when_public_origin_unset(users_store, auth_env, origin_unset):
-    """Without ``LUMOGIS_PUBLIC_ORIGIN`` set, the check is a no-op."""
+def test_refresh_when_public_origin_unset_refuses_foreign_origin(
+    users_store, auth_env, origin_unset
+):
+    """LUM-981: with no pin, a present Origin must match the request's own address."""
     _seed_admin(users_store)
     client = _make_client()
     _login_and_get_refresh_cookie(client)
@@ -128,6 +131,32 @@ def test_refresh_passthrough_when_public_origin_unset(users_store, auth_env, ori
         "/api/v1/auth/refresh",
         headers={"Origin": "https://anything.example"},
     )
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == "origin mismatch"
+
+
+def test_refresh_when_public_origin_unset_accepts_origin_equal_to_host(
+    users_store, auth_env, origin_unset
+):
+    """TestClient's Host is ``testserver``; the matching http Origin passes."""
+    _seed_admin(users_store)
+    client = _make_client()
+    _login_and_get_refresh_cookie(client)
+
+    resp = client.post(
+        "/api/v1/auth/refresh",
+        headers={"Origin": "http://testserver"},
+    )
+    assert resp.status_code == 200, resp.text
+
+
+def test_refresh_when_public_origin_unset_accepts_no_origin(users_store, auth_env, origin_unset):
+    """No Origin header is not a browser cross-site write; SameSite=Strict covers it."""
+    _seed_admin(users_store)
+    client = _make_client()
+    _login_and_get_refresh_cookie(client)
+
+    resp = client.post("/api/v1/auth/refresh")
     assert resp.status_code == 200, resp.text
 
 
