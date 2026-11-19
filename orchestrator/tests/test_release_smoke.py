@@ -1505,3 +1505,15 @@ def test_fixture_path_matches_core_upload_name():
 def test_going_back_schema_reset_matches_the_upgrade_doc():
     doc = (_ROOT / "docs/deployment/upgrading.md").read_text()
     assert smoke.RESET_SCHEMA_SH in doc
+
+
+def test_graph_suite_keeps_the_chat_model_and_waits_for_it(tmp_path, monkeypatch):
+    """Entity extraction calls the chat model (0.14.0-rc.2 smoke: Ollama 404, no entities)."""
+    w = graph_world(tmp_path, monkeypatch)
+    try:
+        ctx = started_graph_ctx(w)
+        assert "OLLAMA_EXTRA_MODELS" not in smoke.read_env(w.work / ".env")
+        smoke.graph_entities(ctx)
+        assert any("ollama" in a and "list" in a for a in w.argvs())
+    finally:
+        w.close()

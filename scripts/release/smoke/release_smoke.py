@@ -612,7 +612,8 @@ def prepare_install(ctx: Ctx, files_dir: Path, version: str, *, extra_env: Optio
     if ctx.loopback:
         compose.set_env("CADDY_HTTP_HOST_PORT", "127.0.0.1:80")
         compose.set_env("CADDY_HTTPS_HOST_PORT", "127.0.0.1:443")
-    if ctx.suite in ("graph", "upgrade", "secure-address"):
+    # graph keeps the chat model: entity extraction needs it (0.14.0-rc.2 smoke).
+    if ctx.suite in ("upgrade", "secure-address"):
         compose.set_env("OLLAMA_EXTRA_MODELS", "")
     for k, v in (extra_env or {}).items():
         compose.set_env(k, v)
@@ -1017,6 +1018,18 @@ def rejected_destinations() -> str:
     return "destinations unavailable"
 
 
+def wait_chat_model(ctx: Ctx) -> None:
+    """Wait for the entrypoint's background pull of the default chat model."""
+    compose = ctx.compose
+    assert compose is not None
+
+    def model_present() -> bool:
+        proc = compose.exec("ollama", "ollama", "list")
+        return "llama3.2" in (proc.stdout or "")
+
+    ctx.wait(model_present, 900, 15, "chat model llama3.2:3b pulled")
+
+
 def egress_guarded_chat(ctx: Ctx) -> str:
     compose = ctx.compose
     assert compose is not None
@@ -1026,11 +1039,7 @@ def egress_guarded_chat(ctx: Ctx) -> str:
     if pm.get("privacy_effective") != "local_only":
         raise CheckFailed(f"privacy mode is not local_only: {pm.get('privacy_effective')}")
 
-    def model_present() -> bool:
-        proc = compose.exec("ollama", "ollama", "list")
-        return "llama3.2" in (proc.stdout or "")
-
-    ctx.wait(model_present, 900, 15, "chat model llama3.2:3b pulled")
+    wait_chat_model(ctx)
     # Sign in again BEFORE the window, never during it: the window makes no extra calls.
     if ctx.api.auth == "token" and ctx.api.token_age() > 600:
         if not ctx.api.relogin():
@@ -1222,6 +1231,9 @@ def graph_on(ctx: Ctx) -> str:
 
 
 def graph_entities(ctx: Ctx) -> str:
+    # Extraction runs at ingest and calls the chat model; ingesting before the
+    # pull finishes leaves the graph empty (0.14.0-rc.2 smoke: Ollama 404).
+    wait_chat_model(ctx)
     ingest_fixture(ctx)
     ctx.wait(lambda: health_counts(ctx).get("entity_count", 0) > 0, 600, 10, "entity_count > 0")
     return f"entity_count={health_counts(ctx).get('entity_count')}"
