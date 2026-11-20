@@ -51,6 +51,7 @@ never had, and that misreading is why the paperless gap in
 
 from __future__ import annotations
 
+import json
 import os
 import uuid
 from contextlib import contextmanager
@@ -883,8 +884,15 @@ def test_alice_and_bob_have_no_cross_user_document_leakage(
     fake_provider,
     passthrough_extractor,
     tmp_path,
+    monkeypatch,
 ):
-    """End-to-end: Alice's chat sees only Alice's docs; Bob's sees only Bob's."""
+    """End-to-end: Alice's chat sees only Alice's docs; Bob's sees only Bob's.
+
+    Exercises the search_files tool path, so auto-RAG is off here: with it on,
+    the chunk is already injected and search_files skips it as a duplicate.
+    The auto-RAG path has its own test below.
+    """
+    monkeypatch.setenv("LUMOGIS_AUTO_RAG_ENABLED", "false")
     alice_id = _create_user("alice@home.lan", "admin")
     bob_id = _create_user("bob@home.lan", "user")
 
@@ -1873,4 +1881,46 @@ def test_alice_routine_approvals_do_not_elevate_bob(
     assert bob_row is None, (
         f"AUDIT A2 REGRESSION: Bob's routine_do_tracking row exists "
         f"despite Bob never approving anything: {bob_row!r}"
+    )
+
+
+def test_auto_rag_injects_only_the_callers_documents(
+    isolation_env,
+    isolation_store,
+    fake_provider,
+    passthrough_extractor,
+    tmp_path,
+    monkeypatch,
+):
+    """With auto-RAG on (the default since 0.14.1), each user's injected context
+    holds only their own documents (LUM-308)."""
+    monkeypatch.setenv("LUMOGIS_AUTO_RAG_ENABLED", "true")
+    alice_id = _create_user("alice@home.lan", "admin")
+    bob_id = _create_user("bob@home.lan", "user")
+    alice_doc = tmp_path / "alice.txt"
+    alice_doc.write_text(
+        "ALICESECRETSENTINEL isolation probe — only Alice should ever see this string."
+    )
+    bob_doc = tmp_path / "bob.txt"
+    bob_doc.write_text("BOBSECRETSENTINEL isolation probe — only Bob should ever see this string.")
+
+    with _booted_client() as client:
+        _ingest(str(alice_doc), user_id=alice_id)
+        _ingest(str(bob_doc), user_id=bob_id)
+        alice_token = _login(client, "alice@home.lan")
+        bob_token = _login(client, "bob@home.lan")
+        fake_provider.calls.clear()
+        _chat(client, alice_token)
+        alice_seen = json.dumps(fake_provider.calls)
+        fake_provider.calls.clear()
+        _chat(client, bob_token)
+        bob_seen = json.dumps(fake_provider.calls)
+
+    assert "ALICESECRETSENTINEL" in alice_seen, "auto-RAG did not inject Alice's own document"
+    assert "BOBSECRETSENTINEL" not in alice_seen, (
+        "DATA LEAK: Bob's document injected into Alice's chat"
+    )
+    assert "BOBSECRETSENTINEL" in bob_seen, "auto-RAG did not inject Bob's own document"
+    assert "ALICESECRETSENTINEL" not in bob_seen, (
+        "DATA LEAK: Alice's document injected into Bob's chat"
     )

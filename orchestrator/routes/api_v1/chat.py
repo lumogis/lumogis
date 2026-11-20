@@ -136,7 +136,14 @@ def _resolve_scoped_injection(
                 exc_info=True,
             )
             return question, history, set(), [], use_tools
-        return question, injection.messages, auto_rag_point_ids, [], use_tools
+        # LUM-308: name the documents the answer drew on, as scoped chat does.
+        return (
+            question,
+            injection.messages,
+            auto_rag_point_ids,
+            _citations_to_dto(injection.citations),
+            use_tools,
+        )
 
     try:
         scoped_path = resolve_document_file_path(user, body.document_id)

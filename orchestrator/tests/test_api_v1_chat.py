@@ -313,6 +313,34 @@ def test_unscoped_chat_calls_build_injected_context(client, fake_models, monkeyp
     assert captured["auto_rag_point_ids"] is None  # empty set → falsy → None
 
 
+def test_unscoped_chat_returns_its_sources(client, fake_models, monkeypatch):
+    """Unscoped chat returns the documents it used as context_citations (LUM-308)."""
+    import routes.api_v1.chat as v1_chat
+    from models.context_injection import DocumentCitation
+
+    fake_injection = ContextInjectionResult(
+        messages=[{"role": "user", "content": "hi"}],
+        citations=[
+            DocumentCitation(
+                chunk_index=0,
+                file_path="/w/aaaa_boiler-invoice.pdf",
+                score=0.8,
+                score_kind="bi_encoder",
+            )
+        ],
+        auto_rag_point_ids={"p1"},
+    )
+    monkeypatch.setattr(v1_chat, "build_injected_context", lambda *a, **kw: fake_injection)
+    monkeypatch.setattr(v1_chat, "ask", lambda *a, **kw: "14 March 2028.")
+    resp = client.post(
+        "/api/v1/chat/completions",
+        json={"model": "claude", "stream": False, "messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert resp.status_code == 200
+    cites = resp.json()["lumogis"]["context_citations"]
+    assert [c["file_path"] for c in cites] == ["/w/aaaa_boiler-invoice.pdf"]
+
+
 def test_unscoped_chat_falls_back_on_injection_error(client, fake_models, monkeypatch):
     """If build_injected_context raises, unscoped chat falls back to plain history (LUM-504)."""
     import routes.api_v1.chat as v1_chat

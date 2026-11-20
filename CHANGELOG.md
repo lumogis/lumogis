@@ -7,7 +7,11 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased]
+## [0.14.1] — 2026-11-20
+
+### Fixed
+
+- **Chat answers from your documents, and says which ones.** On a new install Chat never looked at your library: the default local model cannot call the search tool, and the setting that looks documents up before each answer (`LUMOGIS_AUTO_RAG_ENABLED`) was off. Asked "When does the boiler warranty run out?" with the invoice in the library, Lumogis answered that it had no access to that information. The setting is now on by default, so existing installs get it with the update too, and each answer that used documents lists them under it as **Looked at:** (file names, once each, best match first). Set `LUMOGIS_AUTO_RAG_ENABLED=false` in `.env` to turn it off; the chat API now also returns `lumogis.context_citations` for chats that are not about one document.
 
 ---
 

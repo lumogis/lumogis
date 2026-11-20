@@ -46,6 +46,8 @@ export interface ChatMessage extends ChatMessageDTO {
   status?: AssistantStatus;
   /** Populated when the stream errors so the UI can show what went wrong. */
   errorDetail?: string;
+  /** Documents Lumogis looked at for the answer (file names), shown under it. */
+  sources?: string[];
 }
 
 export interface ChatThread {
@@ -84,7 +86,7 @@ export type ThreadAction =
       createdAt: number;
     }
   | { type: "APPEND_ASSISTANT_DELTA"; threadId: string; messageId: string; delta: string }
-  | { type: "FINISH_ASSISTANT"; threadId: string; messageId: string }
+  | { type: "FINISH_ASSISTANT"; threadId: string; messageId: string; sources?: string[] }
   | { type: "ABORT_ASSISTANT"; threadId: string; messageId: string }
   | { type: "FAIL_ASSISTANT"; threadId: string; messageId: string; detail: string }
   | {
@@ -188,7 +190,13 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
       return mapThread(state, action.threadId, (t) => ({
         ...t,
         messages: t.messages.map((m) =>
-          m.id === action.messageId ? { ...m, status: "complete" as const } : m,
+          m.id === action.messageId
+            ? {
+                ...m,
+                status: "complete" as const,
+                ...(action.sources !== undefined && action.sources.length > 0 ? { sources: action.sources } : {}),
+              }
+            : m,
         ),
       }));
 

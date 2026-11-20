@@ -455,6 +455,9 @@ def build_injected_context(
         int(doc_fraction * est_window),
     )
     doc_hits = retrieve_document_context(question, user_id, max_tokens=documents_slot_tokens)
+    # The hits behind each document fragment, in order, so the answer can name
+    # its sources (they are trimmed with the fragments below).
+    doc_hits_used = []
     for hit in doc_hits:
         stripped = hit.chunk_text.strip()
         if not stripped:
@@ -463,6 +466,7 @@ def build_injected_context(
             auto_rag_point_ids.add(hit.point_id)
         fragments_plain.append(stripped)
         origin_hints.append(_resolved_document_origin(hit))
+        doc_hits_used.append(hit)
 
     n_doc = len(fragments_plain) - n_session
 
@@ -519,6 +523,16 @@ def build_injected_context(
 
     sess_frags, sess_hints = _fit_plaintext_bundle(sess_frags, sess_hints, session_budget)
     doc_frags, doc_hints = _fit_plaintext_bundle(doc_frags, doc_hints, documents_budget)
+    del doc_hits_used[len(doc_frags) :]
+    doc_citations = [
+        DocumentCitation(
+            chunk_index=hit.chunk_index,
+            file_path=hit.file_path,
+            score=hit.score,
+            score_kind=hit.score_kind,
+        )
+        for hit in doc_hits_used
+    ]
     graph_frags, graph_hints = _fit_plaintext_bundle(graph_frags, graph_hints, entities_budget)
     fragments_plain = sess_frags + doc_frags + graph_frags
     origin_hints = sess_hints + doc_hints + graph_hints
@@ -560,7 +574,7 @@ def build_injected_context(
         }
         return ContextInjectionResult(
             messages=[context_msg, ack_msg] + trimmed_history,
-            citations=[],
+            citations=doc_citations,
             auto_rag_point_ids=point_ids,
         )
 
@@ -586,7 +600,7 @@ def build_injected_context(
     }
     return ContextInjectionResult(
         messages=[context_msg, ack_msg] + trimmed_history,
-        citations=[],
+        citations=doc_citations,
         auto_rag_point_ids=point_ids,
     )
 

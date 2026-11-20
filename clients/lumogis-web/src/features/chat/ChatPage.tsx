@@ -74,6 +74,7 @@ import {
 } from "../../pwa/drafts";
 import { useOnlineStatus } from "../../pwa/useOnlineStatus";
 import { consumeChatStream } from "./ChatStream";
+import { sourceNames } from "./sourceNames";
 import { ConversationSidebar, type PendingSummary } from "./ConversationSidebar";
 import { messageIdForServerSync } from "./messageIdForServerSync";
 import {
@@ -487,7 +488,11 @@ export function ChatPage(): JSX.Element {
         let sawDelta = false;
         let assistantContent = "";
         let streamError: string | null = null;
+        let sources: string[] = [];
         await consumeChatStream(res.body, {
+          onContextCitations: (citations) => {
+            sources = sourceNames(citations);
+          },
           onStatus: (status) => {
             setStreamStatus(status.message);
           },
@@ -547,6 +552,7 @@ export function ChatPage(): JSX.Element {
           type: "FINISH_ASSISTANT",
           threadId: active.id,
           messageId: assistantMessageId,
+          sources,
         });
         scheduleTurnSync(active.id, active.model, [
           {
@@ -871,6 +877,16 @@ function MessageBubble({
           </>
         )}
       </div>
+      {isAssistant && status === "complete" && message.sources !== undefined && message.sources.length > 0 && (
+        <p className="m-0 flex flex-wrap items-center gap-1.5 pt-1 text-xs text-muted-foreground" data-testid="chat-sources">
+          <span>Looked at:</span>
+          {message.sources.map((name) => (
+            <span key={name} className="rounded-full border border-border px-2 py-0.5 text-foreground">
+              {name}
+            </span>
+          ))}
+        </p>
+      )}
       {isAssistant && status === "error" && message.errorDetail !== undefined && (
         <p className="m-0 text-sm text-destructive" role="status">
           {message.errorDetail}
@@ -975,3 +991,4 @@ function humaniseStreamError(literal: string): string {
   if (literal === "empty_response_body") return "The server returned an empty stream.";
   return `Stream error: ${literal}`;
 }
+

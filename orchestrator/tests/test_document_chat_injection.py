@@ -111,3 +111,53 @@ def test_build_injected_context_context_building_hook_unchanged(
         assert captured.get("ok") is True
     finally:
         hooks._listeners[Event.CONTEXT_BUILDING].remove(_subscriber)
+
+
+@pytest.mark.parametrize("sanitiser", [False, True])
+def test_build_injected_context_unscoped_names_its_documents(
+    stub_scoped_dependencies, monkeypatch, sanitiser
+):
+    """Unscoped chat returns citations for the document chunks it injected (LUM-308)."""
+    monkeypatch.setattr("services.memory.retrieve_context", lambda *a, **kw: [])
+    monkeypatch.setattr(config, "get_graph_mode", lambda: "inprocess")
+    hits = [
+        DocumentContextHit(
+            point_id="p1",
+            file_path="/w/uploads/u/aaaa_boiler-invoice.pdf",
+            chunk_text="Warranty valid until 14 March 2028.",
+            score=0.8,
+            score_kind="bi_encoder",
+            chunk_index=0,
+        ),
+        DocumentContextHit(
+            point_id="p2",
+            file_path="/w/uploads/u/bbbb_roof.pdf",
+            chunk_text="   ",
+            score=0.7,
+            score_kind="bi_encoder",
+        ),
+    ]
+    monkeypatch.setattr(
+        "services.auto_rag.retrieve_document_context",
+        lambda *a, **kw: [] if kw.get("scoped") else hits,
+    )
+    monkeypatch.setattr(config, "is_injection_sanitiser_enabled", lambda: sanitiser)
+    monkeypatch.setattr(config, "get_memory_hint_enabled", lambda: False)
+
+    result = chat_route.build_injected_context("When does the warranty run out?", [], "m", "u")
+
+    # The empty chunk is not injected, so it is not a source either.
+    assert [c.file_path for c in result.citations] == ["/w/uploads/u/aaaa_boiler-invoice.pdf"]
+    assert result.citations[0].chunk_index == 0
+
+
+def test_build_injected_context_unscoped_without_documents_has_no_citations(
+    stub_scoped_dependencies, monkeypatch
+):
+    monkeypatch.setattr("services.memory.retrieve_context", lambda *a, **kw: [])
+    monkeypatch.setattr(config, "get_graph_mode", lambda: "inprocess")
+    monkeypatch.setattr("services.auto_rag.retrieve_document_context", lambda *a, **kw: [])
+    monkeypatch.setattr(config, "is_injection_sanitiser_enabled", lambda: False)
+    monkeypatch.setattr(config, "get_memory_hint_enabled", lambda: False)
+    result = chat_route.build_injected_context("hi", [], "m", "u")
+    assert result.citations == []

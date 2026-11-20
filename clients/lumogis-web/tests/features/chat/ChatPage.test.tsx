@@ -270,6 +270,51 @@ describe("ChatPage — render + send", () => {
     expect(screen.queryByRole("button", { name: /stop/i })).not.toBeInTheDocument();
   });
 
+  it("names the documents an answer drew on under it (LUM-308)", async () => {
+    const user = userEvent.setup();
+    // Core sends the citations on the first chunk, as stream_completion does.
+    const citations = {
+      id: "chatcmpl-lumogis",
+      object: "chat.completion.chunk",
+      choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }],
+      lumogis: {
+        context_citations: [
+          { chunk_index: 0, file_path: "/workspace/uploads/u/793df19f88a64bba9137da1f189206c5_boiler-invoice.pdf", score: 0.9, score_kind: "bi_encoder" },
+          { chunk_index: 1, file_path: "/workspace/uploads/u/793df19f88a64bba9137da1f189206c5_boiler-invoice.pdf", score: 0.8, score_kind: "bi_encoder" },
+        ],
+      },
+    };
+    const client = buildClient({
+      chat: () =>
+        sseResponse(
+          sseStreamFrom([
+            `data: ${JSON.stringify(citations)}\n\n`,
+            sseChunk("14 March 2028."),
+            sseChunk("", "stop"),
+            "data: [DONE]\n\n",
+          ]),
+        ),
+    });
+    renderChat(client);
+    await waitFor(() => expect(screen.getByLabelText(/model$/i)).toBeInTheDocument());
+    await user.type(screen.getByLabelText(/^message$/i), "When does the boiler warranty run out?");
+    await user.click(screen.getByRole("button", { name: /send/i }));
+    const sources = await screen.findByTestId("chat-sources");
+    expect(sources).toHaveTextContent("Looked at:");
+    expect(sources).toHaveTextContent("boiler-invoice.pdf");
+    expect(sources.textContent?.match(/boiler-invoice\.pdf/g)).toHaveLength(1);
+  });
+
+  it("shows no Looked at line when the answer used no documents", async () => {
+    const user = userEvent.setup();
+    renderChat(buildClient());
+    await waitFor(() => expect(screen.getByLabelText(/model$/i)).toBeInTheDocument());
+    await user.type(screen.getByLabelText(/^message$/i), "Hi");
+    await user.click(screen.getByRole("button", { name: /send/i }));
+    await waitFor(() => expect(screen.getAllByLabelText(/assistant message/i)[0]).toHaveTextContent("ok"));
+    expect(screen.queryByTestId("chat-sources")).not.toBeInTheDocument();
+  });
+
   it("LUM-876: shows the loading status while waiting, then drops it from the answer", async () => {
     const user = userEvent.setup();
     const encoder = new TextEncoder();

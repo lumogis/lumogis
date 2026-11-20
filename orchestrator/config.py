@@ -1488,8 +1488,12 @@ def get_context_entity_explicit_bonus() -> float:
 
 
 def get_auto_rag_enabled() -> bool:
-    """When true, chat may inject document chunks before the LLM (LUM-308)."""
-    return _env_bool("LUMOGIS_AUTO_RAG_ENABLED", False)
+    """When true, chat may inject document chunks before the LLM (LUM-308).
+
+    On by default since 0.14.1: the default local model has no tools, so
+    without it Chat never read the household's documents.
+    """
+    return _env_bool("LUMOGIS_AUTO_RAG_ENABLED", True)
 
 
 def get_share_inline_max_chunks() -> int:
