@@ -7,11 +7,14 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [0.14.1] — 2026-11-20
+## [0.14.2] — 2026-11-20
+
+0.14.1 was tagged but not published: its release check found the name-learning problem below.
 
 ### Fixed
 
 - **Chat answers from your documents, and says which ones.** On a new install Chat never looked at your library: the default local model cannot call the search tool, and the setting that looks documents up before each answer (`LUMOGIS_AUTO_RAG_ENABLED`) was off. Asked "When does the boiler warranty run out?" with the invoice in the library, Lumogis answered that it had no access to that information. The setting is now on by default, so existing installs get it with the update too, and each answer that used documents lists them under it as **Looked at:** (file names, once each, best match first). Set `LUMOGIS_AUTO_RAG_ENABLED=false` in `.env` to turn it off; the chat API now also returns `lumogis.context_citations` for chats that are not about one document.
+- **Lumogis learns names from your documents again.** With the default local model, most documents gave no entries in **What Lumogis knows** (on the release test document, 1 run in 6 found any). One entry with an empty or "null" list of other names made Lumogis discard every name in that document. Now only that entry is cleaned up or skipped, a reply with small JSON slips (a trailing comma, words around the list) is still read, and Lumogis asks the model once more when a reply cannot be read at all. Names such as "null" or empty strings are no longer stored as another name.
 
 ---
 

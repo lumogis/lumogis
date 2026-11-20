@@ -19,7 +19,6 @@ Resolution rules:
 Entity names are preserved in the original language of the source text.
 """
 
-import json
 import logging
 import os
 import uuid
@@ -29,7 +28,7 @@ import hooks
 from auth import UserContext
 from events import Event
 from models.entities import ExtractedEntity
-from services.llm_json import strip_code_fence
+from services.llm_json import parse_json_list
 from visibility import not_hidden_sql
 from visibility import visible_filter
 
@@ -122,43 +121,95 @@ def extract_entities(session_text: str, *, user_id: str | None = None) -> list[E
         )
         return []
     try:
-        response = provider.chat(
-            messages=[{"role": "user", "content": _EXTRACT_PROMPT + session_text}],
-            system=(
-                "You are a precise entity extractor. "
-                "Respond only with a valid JSON array. "
-                "Never translate entity names — preserve the original language."
-            ),
-            max_tokens=1024,
-        )
-        data = json.loads(strip_code_fence(response.text))
-        if not isinstance(data, list):
-            _log.warning("Entity extraction returned non-list JSON, skipping")
+        data = None
+        for attempt in range(2):
+            response = provider.chat(
+                messages=[{"role": "user", "content": _EXTRACT_PROMPT + session_text}],
+                system=(
+                    "You are a precise entity extractor. "
+                    "Respond only with a valid JSON array. "
+                    "Never translate entity names — preserve the original language."
+                ),
+                max_tokens=1024,
+            )
+            data = parse_json_list(response.text)
+            if data is not None:
+                break
+            _log.warning(
+                "Entity extraction: reply was not a JSON array (attempt %d of 2)", attempt + 1
+            )
+        if data is None:
             return []
 
-        entities = []
-        for item in data:
-            try:
-                entities.append(
-                    ExtractedEntity(
-                        name=item["name"],
-                        entity_type=item.get("entity_type", "CONCEPT"),
-                        aliases=item.get("aliases", []),
-                        context_tags=item.get("context_tags", []),
-                    )
-                )
-            except (KeyError, TypeError) as exc:
-                _log.debug("Skipping malformed entity item %r: %s", item, exc)
-
+        entities = [e for e in (_clean_extracted_item(item) for item in data) if e is not None]
+        if len(entities) < len(data):
+            _log.info("Entity extraction: dropped %d unusable item(s)", len(data) - len(entities))
         _log.info("Extracted %d entities from session text", len(entities))
         return entities
 
-    except json.JSONDecodeError as exc:
-        _log.warning("Entity extraction: JSON parse failed: %s", exc)
-        return []
     except Exception as exc:
         _log.warning("Entity extraction failed: %s", exc)
         return []
+
+
+# Words a model writes where it means "nothing" (seen in the wild: "aliases": ["null"]).
+_EMPTY_WORDS = frozenset({"", "null", "none", "n/a", "na", "-", "[]"})
+_TYPE_SYNONYMS = {
+    "ORGANIZATION": "ORG",
+    "ORGANISATION": "ORG",
+    "COMPANY": "ORG",
+    "PEOPLE": "PERSON",
+}
+
+
+def _clean_strings(value) -> list[str]:
+    """A list of non-empty strings from whatever the model put there."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    for v in value:
+        if not isinstance(v, str):
+            continue
+        v = v.strip()
+        if v.lower() in _EMPTY_WORDS or v in out:
+            continue
+        out.append(v)
+    return out
+
+
+def _clean_extracted_item(item) -> ExtractedEntity | None:
+    """One extracted entity, or ``None`` if the item is unusable.
+
+    Small local models send ``"aliases": null``, ``[""]``, ``["null"]`` or a bare
+    string. Before this, one such item raised a validation error that discarded
+    the whole reply, so most documents got no entities at all.
+    """
+    if not isinstance(item, dict):
+        return None
+    name = item.get("name")
+    if not isinstance(name, str) or name.strip().lower() in _EMPTY_WORDS:
+        return None
+    name = name.strip()
+    raw_type = item.get("entity_type")
+    entity_type = (
+        raw_type.strip().upper() if isinstance(raw_type, str) and raw_type.strip() else "CONCEPT"
+    )
+    entity_type = _TYPE_SYNONYMS.get(entity_type, entity_type)
+    aliases = [a for a in _clean_strings(item.get("aliases")) if a != name]
+    try:
+        return ExtractedEntity(
+            name=name,
+            entity_type=entity_type,
+            aliases=aliases,
+            context_tags=_clean_strings(item.get("context_tags")),
+        )
+    except ValueError as exc:  # pydantic ValidationError is a ValueError
+        _log.debug("Skipping malformed entity item %r: %s", item, exc)
+        return None
 
 
 def resolve_entity(entity: ExtractedEntity, existing: dict | None) -> str:

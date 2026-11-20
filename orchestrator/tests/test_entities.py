@@ -154,6 +154,74 @@ class TestExtractEntities:
         result = extract_entities("Das Bundesamt für Statistik veröffentlichte neue Daten.")
         assert result[0].name == "Bundesamt für Statistik"
 
+    @patch("services.entities.config.get_llm_provider")
+    def test_one_bad_item_does_not_discard_the_others(self, mock_get_llm):
+        """A null alias list used to raise a ValidationError that threw away the
+        whole reply (0.14.1 release smoke: no entities on most runs)."""
+        payload = [
+            {"name": "Lumogis", "entity_type": "ORG", "aliases": None, "context_tags": None},
+            _entity_json("Maren Voss", "PERSON", ["Maren"], ["logbook"]),
+        ]
+        mock_get_llm.return_value.chat.return_value = _llm_response(json.dumps(payload))
+
+        result = extract_entities("Maren Voss used Lumogis.")
+
+        assert [e.name for e in result] == ["Lumogis", "Maren Voss"]
+        assert result[0].aliases == [] and result[0].context_tags == []
+
+    @patch("services.entities.config.get_llm_provider")
+    def test_empty_and_null_words_are_not_aliases(self, mock_get_llm):
+        """LUM-1007: "May" was stored with the other name "null"."""
+        payload = [
+            {"name": "May", "entity_type": "CONCEPT", "aliases": ["null", "", " ", "None", "May"]},
+            {"name": "Anna Becker", "entity_type": "person", "aliases": "Anna"},
+            {"name": "null", "entity_type": "PERSON"},
+            {"name": "Westway", "entity_type": "Organization", "aliases": ["Westway", 7]},
+        ]
+        mock_get_llm.return_value.chat.return_value = _llm_response(json.dumps(payload))
+
+        result = {e.name: e for e in extract_entities("text")}
+
+        assert set(result) == {"May", "Anna Becker", "Westway"}
+        assert result["May"].aliases == []
+        assert result["Anna Becker"].aliases == ["Anna"]
+        assert result["Anna Becker"].entity_type == "PERSON"
+        assert result["Westway"].entity_type == "ORG"
+        assert result["Westway"].aliases == []
+
+    @patch("services.entities.config.get_llm_provider")
+    def test_retries_once_when_the_reply_is_not_json(self, mock_get_llm):
+        good = json.dumps([_entity_json("Tobias Hale", "PERSON")])
+        mock_get_llm.return_value.chat.side_effect = [
+            _llm_response('[{"name": "Tobias Hale", "context_tags": ["baker\'] }'),
+            _llm_response(good),
+        ]
+
+        result = extract_entities("Tobias Hale ran the bakery.")
+
+        assert [e.name for e in result] == ["Tobias Hale"]
+        assert mock_get_llm.return_value.chat.call_count == 2
+
+    @patch("services.entities.config.get_llm_provider")
+    def test_gives_up_after_two_bad_replies(self, mock_get_llm):
+        mock_get_llm.return_value.chat.return_value = _llm_response("sorry, no entities")
+
+        assert extract_entities("Some text.") == []
+        assert mock_get_llm.return_value.chat.call_count == 2
+
+    @patch("services.entities.config.get_llm_provider")
+    def test_trailing_comma_and_prose_are_forgiven(self, mock_get_llm):
+        reply = (
+            'Here are the entities:\n[{"name": "Port Elowen", "entity_type": "CONCEPT",},]\n'
+            "Hope this helps."
+        )
+        mock_get_llm.return_value.chat.return_value = _llm_response(reply)
+
+        result = extract_entities("Port Elowen is a harbour town.")
+
+        assert [e.name for e in result] == ["Port Elowen"]
+        assert mock_get_llm.return_value.chat.call_count == 1
+
 
 # ---------------------------------------------------------------------------
 # store_entities — unit tests
