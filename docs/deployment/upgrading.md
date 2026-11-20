@@ -53,7 +53,7 @@ Updating stops Lumogis for a minute or two. Avoid the backup hour (03:00 by defa
 
 3. Then `docker compose pull && docker compose up -d` as above.
 
-If you forget, **Admin → Diagnostics** shows the warning `compose_file_stale` (the file does not match the images you run), and the orchestrator log says the same at start-up.
+If you forget, **Settings → Diagnostics** shows the warning `compose_file_stale` (the file does not match the images you run), and the orchestrator log says the same at start-up.
 
 **Never edit `docker-compose.yml`:** the next download would undo it. Put local changes in **`docker-compose.override.yml`** next to it, which Compose merges automatically. The **Settings → Ingest paths** page already writes its folder mounts there.
 
@@ -70,7 +70,7 @@ STT_SIDECAR_URL=http://lumogis-stt:8000
 STT_MODEL=Systran/faster-whisper-base.en
 ```
 
-Then run `docker compose up -d`. Lumogis installs the speech model itself. Phones and other computers need **Admin → Secure address** before the microphone works there. To turn it off again: remove `stt` from `COMPOSE_PROFILES`, set `STT_BACKEND=none`, and run `docker compose stop lumogis-stt && docker compose rm -f lumogis-stt && docker compose up -d`.
+Then run `docker compose up -d`. Lumogis installs the speech model itself. Phones and other computers need **Settings → Home address** before the microphone works there. To turn it off again: remove `stt` from `COMPOSE_PROFILES`, set `STT_BACKEND=none`, and run `docker compose stop lumogis-stt && docker compose rm -f lumogis-stt && docker compose up -d`.
 
 ## Choosing the version
 

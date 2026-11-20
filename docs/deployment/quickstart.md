@@ -107,9 +107,9 @@ Or use **Settings → Models** in the web UI.
 Sign-in is on in a new install. There is nothing to switch on and nothing to type into `.env`.
 
 1. **The first admin.** The first person to open Lumogis in a browser sees **Create the admin account**. They enter an email (an ordinary address such as `name@example.com`; names ending in `.local` or `.test` are not accepted) and a password of at least 12 characters, twice, and are signed in as the household admin. This can be done only once. **Do it straight after `docker compose up -d`:** until the admin exists, anyone who can reach this computer can create it. Lumogis logs a reminder every five minutes while it waits (`docker compose logs orchestrator`).
-2. **Invite the household.** Open **Admin → Users** and create an invite link for each person. Open Lumogis at the computer's network address (for example `http://192.168.1.20`), not at `localhost`, so the links you copy work on other devices. Phones and laptops on your home network can sign in over plain HTTP at that address.
+2. **Invite the household.** Open **Settings → Members and invites** and create an invite link for each person. Open Lumogis at the computer's network address (for example `http://192.168.1.20`), not at `localhost`, so the links you copy work on other devices. Phones and laptops on your home network can sign in over plain HTTP at that address.
 3. **`.env` holds generated secrets, so keep a copy.** On the first start Lumogis writes `AUTH_SECRET`, the refresh secret and `LUMOGIS_CREDENTIAL_KEY` into `.env`. The credential key decrypts the passwords you save in Lumogis (for example for email): if you lose it, saved passwords cannot be read and must be entered again. Keep a copy of `.env` with your backups (see [Backup and restore](../guides/backup-restore.md)), and keep the file readable only by you. Lumogis never replaces a secret that is already set.
-4. **A lost admin password.** Another admin can reset it from **Admin → Users**. If you are the only admin, run `python -m scripts.reset_password` from the `orchestrator/` directory inside the container (`docker compose exec orchestrator python -m scripts.reset_password`); see the script's docstring.
+4. **A lost admin password.** Another admin can reset it from **Settings → Members and invites**. If you are the only admin, run `python -m scripts.reset_password` from the `orchestrator/` directory inside the container (`docker compose exec orchestrator python -m scripts.reset_password`); see the script's docstring.
 5. **`AUTH_ENABLED=false` is for development only.** It turns sign-in off for developers and tests. Lumogis Web cannot be used with it: the sign-in page says so and asks you to set `AUTH_ENABLED=true`.
 6. **A public name or a tunnel.** Lumogis accepts the address in the browser, so you do not need to set an address. To create the admin through a public name or a tunnel, set `LUMOGIS_PUBLIC_ORIGIN` in `.env` first, or create the admin at the computer's network address. Email password reset and emailed links also need `LUMOGIS_PUBLIC_ORIGIN`.
 
@@ -134,16 +134,16 @@ For reaching Lumogis safely from outside your network, see [Remote access](remot
 
 The **Dictate** button in chat and in the email composer turns speech into text. In an install from the Release files it is **on from the first start**: the files carry a small speech engine (Speaches, MIT-licensed, running on your computer) and `example.env` switches it on with `COMPOSE_PROFILES=stt`. Audio never leaves your computer.
 
-**Where the microphone works.** Browsers give a page the microphone only over HTTPS or at `localhost`. On a new install that means **on the install computer, at `http://localhost`**. On phones and other computers, Dictate works once **Admin → Secure address** is on ([Secure address at home](remote-access.md#secure-address-at-home)). Until then, on a plain `http://` address, the button is greyed out and says so.
+**Where the microphone works.** Browsers give a page the microphone only over HTTPS or at `localhost`. On a new install that means **on the install computer, at `http://localhost`**. On phones and other computers, Dictate works once **Settings → Home address** is on ([Secure address at home](remote-access.md#secure-address-at-home)). Until then, on a plain `http://` address, the button is greyed out and says so.
 
 **What it costs.**
 
 - **Download:** the speech engine is about **0.85 GB** (0.55 GB on an arm64 computer such as an Apple Silicon Mac), so the first `docker compose up -d` pulls about 1.1 GB more than without it.
-- **Disk:** about **3.3 GB** (the engine image takes about 3 GB once unpacked, the speech model about 0.28 GB). Measured on amd64; the arm64 figure is not measured yet.
-- **Memory:** up to about **0.6 GB** while it transcribes, a little less when idle.
+- **Disk:** about **3.3 GB**, or **2.5 GB** on arm64 (the engine image takes about 3 GB once unpacked, 2.2 GB on arm64; the speech model about 0.28 GB).
+- **Memory:** up to about **0.6 GB** while it transcribes, less when idle (about 0.2 GB on arm64 after a transcription).
 - **One more connection:** the speech engine fetches the speech model from `huggingface.co` once, the first time Lumogis installs it (and again if you reset it), and checks it for updates when it starts. Nothing else, and never your audio; see [TELEMETRY.md](../../TELEMETRY.md).
 
-**First use.** Lumogis installs the speech model itself, a few minutes after the first start (longer on a slow connection). If you press Dictate before it is ready, Lumogis says *"The speech model is still downloading. Try again in a minute."* Admins can see the state in **Admin → Diagnostics** (`speech_to_text.model_state`: `ready` when done).
+**First use.** Lumogis installs the speech model itself, a few minutes after the first start (longer on a slow connection). If you press Dictate before it is ready, Lumogis says *"The speech model is still downloading. Try again in a minute."* Admins can see the state in **Settings → Diagnostics** (`speech_to_text.model_state`: `ready` when done).
 
 **English only by default.** The default model, `Systran/faster-whisper-base.en`, understands English. For other languages set `STT_MODEL=Systran/faster-whisper-base` in `.env` and run `docker compose up -d`; Lumogis installs the new model.
 
@@ -154,7 +154,7 @@ docker compose stop lumogis-stt && docker compose rm -f lumogis-stt
 docker compose up -d
 ```
 
-(`docker compose up -d` alone leaves the container running.) The Dictate button then says *"Speech-to-text is off on this Lumogis."* To get the disk back, delete the model volume: `docker volume rm <project>_lumogis_stt_models` (the project is `lumogis` unless you changed `COMPOSE_PROJECT_NAME`) and `docker image prune`.
+(`docker compose up -d` alone leaves the container running.) The microphone button then no longer shows in chat. To get the disk back, delete the model volume: `docker volume rm <project>_lumogis_stt_models` (the project is `lumogis` unless you changed `COMPOSE_PROJECT_NAME`) and `docker image prune`.
 
 **If dictation keeps failing after the state says `ready`,** the speech model may be damaged (for example after a download that was cut off). Reset it; Lumogis installs it again:
 
@@ -211,11 +211,11 @@ For more issues, see **`docs/guides/troubleshooting.md`**.
 
 The knowledge graph is optional and off by default. Lumogis learns the people, places, organisations and projects in your documents and chats whether the graph is on or off, and search and chat work without it. The graph adds the links between them, so chat can use how people, projects and documents connect as context.
 
-**What it needs.** Two more containers: FalkorDB (the graph database) and the Lumogis graph service. Together they need about 2 GB more memory. Lumogis itself needs about 8 GB, so plan on about 10 GB in total. If you use Docker Desktop, that is the memory Docker Desktop may use (Settings → Resources). Admin → Knowledge graph tells you what Lumogis reads on this machine.
+**What it needs.** Two more containers: FalkorDB (the graph database) and the Lumogis graph service. Together they need about 2 GB more memory. Lumogis itself needs about 8 GB, so plan on about 10 GB in total. If you use Docker Desktop, that is the memory Docker Desktop may use (Settings → Resources). Settings → Knowledge graph tells you what Lumogis reads on this machine.
 
 ### From the Release files
 
-If you installed from the two Release files (`docker-compose.yml` and `example.env`), open **Admin → Knowledge graph** and choose **Turn on**. Lumogis writes the settings into `.env`, downloads the graph images (about 1 GB the first time, so check your free disk space), starts the two containers and restarts itself for a moment. The page says "The knowledge graph is on." once Lumogis can reach the graph service; allow up to five minutes. If the page says this machine is short of memory, you can still turn it on after you confirm that you understand; if Lumogis then becomes slow or the graph keeps stopping, memory is the first thing to check, and **Turn off** undoes it. **Turn off** stops the two containers and keeps the graph's data, so turning it on again picks up where it left off.
+If you installed from the two Release files (`docker-compose.yml` and `example.env`), open **Settings → Knowledge graph** and choose **Turn on**. Lumogis writes the settings into `.env`, downloads the graph images (about 1 GB the first time, so check your free disk space), starts the two containers and restarts itself for a moment. The page says "The knowledge graph is on." once Lumogis can reach the graph service; allow up to five minutes. If the page says this machine is short of memory, you can still turn it on after you confirm that you understand; if Lumogis then becomes slow or the graph keeps stopping, memory is the first thing to check, and **Turn off** undoes it. **Turn off** stops the two containers and keeps the graph's data, so turning it on again picks up where it left off.
 
 The button needs the `docker-compose.yml` of a Release that includes the knowledge graph. If the page says your file is older, download the `docker-compose.yml` of the release you run (keep your `.env`) and run `docker compose up -d`.
 
@@ -237,7 +237,7 @@ On a git checkout the graph image is built on your machine, so there is no butto
 
    Make the secret with `openssl rand -hex 32`.
 2. **Start it.** Run `docker compose up -d` in the Lumogis folder. Do not use `make dev`: it ignores `COMPOSE_FILE`. The first start builds the graph service and takes a few minutes.
-3. **Check it.** Open **Admin → Knowledge graph**. It says "The knowledge graph is on." once Lumogis can reach the graph service; allow up to five minutes after the start.
+3. **Check it.** Open **Settings → Knowledge graph**. It says "The knowledge graph is on." once Lumogis can reach the graph service; allow up to five minutes after the start.
 
 On a small test machine you can cap the graph service's memory with `KG_MEM_LIMIT=1g` in `.env`. Do this for testing only: a large graph needs the full 4 GB.
 

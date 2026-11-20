@@ -26,8 +26,12 @@
 # No pull_request trigger, no inherited secrets, no top-level concurrency (the caller's
 # release-assets group already serialises releases).
 #
-# Runner budget: unmeasured. The first real run's numbers (disk, memory, minutes per
-# cell) go here; each run prints them in its summary (steps "Runner budget").
+# Runner budget, first gated release (0.14.0-rc.3, run 44633846363, 2026-11-19):
+#   minutes per cell (amd64 / arm64): install 8 / 5, graph 7 / 6, upgrade 7 / 5,
+#   secure-address 4 / 3. Limit 75 min per cell.
+#   disk used after install or graph, of 144 GiB: amd64 46-47 GiB, arm64 41 GiB;
+#   images 4.1 GB. Memory: no container above ~3 GiB (Ollama with the chat model)
+#   of 15.5 GiB. Each run prints its own numbers in its summary ("Runner budget").
 
 name: Release smoke
 

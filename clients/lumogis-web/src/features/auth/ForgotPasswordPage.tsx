@@ -121,7 +121,7 @@ export function ForgotPasswordPage(): JSX.Element {
       >
         <p className="m-0 text-sm">
           <strong>If you are a household member:</strong> ask an admin to reset your
-          password from <em>Admin → Users</em>.
+          password from <em>Settings → Members and invites</em>.
         </p>
         <p className="m-0 text-sm">
           <strong>If you are the admin and locked out:</strong> you can reset any
@@ -133,7 +133,7 @@ export function ForgotPasswordPage(): JSX.Element {
           </code>
         </p>
         <p className="m-0 text-sm text-muted-foreground">
-          An admin can enable email reset at <em>Admin → System mail</em>.
+          An admin can enable email reset at <em>Settings → Email Lumogis sends from</em>.
         </p>
         <p className="m-0 text-sm">
           <a href="/" className={AUTH_LINK_CLASS}>

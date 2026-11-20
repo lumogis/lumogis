@@ -12,11 +12,11 @@ Lumogis Web is a progressive web app (PWA). The service worker (`clients/lumogis
 
 ## Secure address at home
 
-**Admin → Secure address** gives this Lumogis a free `https://` name for use **on your home network**, for example `https://kq7f3r2a….homes.lumogis.app`. Phones and laptops on your home Wi-Fi open it with a real certificate, so installing the app, voice input and notifications work without installing anything on them. It does not work away from home: for that, use Option A or B below.
+**Settings → Home address** gives this Lumogis a free `https://` name for use **on your home network**, for example `https://kq7f3r2a….homes.lumogis.app`. Phones and laptops on your home Wi-Fi open it with a real certificate, so installing the app, voice input and notifications work without installing anything on them. It does not work away from home: for that, use Option A or B below.
 
 **Turn it on:**
 
-1. Open **Admin → Secure address**.
+1. Open **Settings → Home address**.
 2. Lumogis looks for this computer's home network address when the page opens and suggests it (the address your phone uses to open Lumogis, for example `192.168.1.20`). Check it, tick the confirmation and press **Turn on secure address**. On Docker Desktop, Lumogis cannot see the address, and the page shows how to find it (`ipconfig getifaddr en0` in a Mac's Terminal, `ipconfig` on Windows); or open Lumogis at `http://<that address>` instead of `localhost` and it fills the address in.
 3. Wait a minute or two while Lumogis gets a name and a certificate. The page shows the address when it is ready, with **Copy address** and **Check on this device**.
 4. Open the address on each device and sign in there once. It is a new address, so the browser keeps a separate sign-in, offline copy and notification setting for it. The old address keeps working.
